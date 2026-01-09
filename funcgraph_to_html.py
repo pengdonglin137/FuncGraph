@@ -729,7 +729,7 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
 </head>
 <body>
     <div class="container">
-        <h1>Ftrace Visualization</h1>
+        <h1>Ftrace Visualization v0.1 @dolinux</h1>
         <div id="content">
 """
 
