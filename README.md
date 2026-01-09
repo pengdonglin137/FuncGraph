@@ -37,6 +37,9 @@ options:
 
 - 参考
 ```bash
-funcgraph_to_html.py --fast  --vmlinux ./bpf_next/vmlinux --kernel-src ${PWD}/bpf_next  --module-dirs ./bpf_next/modules_install/ --base-url https://elixir.bootlin.com/linux/v6.19-rc1/source --output output1.html ftrace.txt
+funcgraph_to_html.py --fast  --vmlinux ./bpf_next/vmlinux --kernel-src ${PWD}/bpf_next  \
+		--module-dirs ./bpf_next/modules_install/ \
+		--base-url https://elixir.bootlin.com/linux/v6.19-rc1/source \
+		--output output1.html ftrace.txt
 ```
 
