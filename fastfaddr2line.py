@@ -23,6 +23,7 @@ class Section:
         self.start_addr = start_addr
         self.end_addr = end_addr
         self.symbols = []  # List of Symbols sorted by addr
+        self.addr_list = []  # Precomputed list of addresses for binary search
 
 def parse_arguments():
     parser = argparse.ArgumentParser(description="Python implementation of faddr2line")
@@ -107,9 +108,11 @@ def load_elf_data(executable, verbose=False):
                 log(f"Error processing symbol {name}: {str(e)}", verbose)
                 continue
         
-        # Sort symbols within each section by address
+        # Sort symbols within each section by address and precompute address lists
         for sec_name, sec_obj in sections.items():
             sec_obj.symbols.sort(key=lambda s: s.addr)
+            # Precompute address list for binary search
+            sec_obj.addr_list = [s.addr for s in sec_obj.symbols]
             log(f"Section {sec_name} has {len(sec_obj.symbols)} symbols", verbose)
         
         elapsed = (time.time() - start_time) * 1000
@@ -135,10 +138,9 @@ def find_matching_symbol(func_name, offset, length, symbol_by_name, sections, ve
             
         sec = sections[sec_name]
         symbols = sec.symbols
+        addrs = sec.addr_list  # Use precomputed address list
         
         # 使用二分查找定位符号在section中的位置
-        # 创建地址列表用于二分查找
-        addrs = [s.addr for s in symbols]
         pos = bisect.bisect_left(addrs, sym.addr)
         
         # 验证找到的位置是否正确
