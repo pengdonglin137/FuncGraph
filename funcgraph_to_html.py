@@ -624,7 +624,7 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Ftrace Visualization</title>
+    <title>Funcgraph Visualization</title>
     <style>
         body {{
             font-family: 'Courier New', monospace;
@@ -729,7 +729,7 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
 </head>
 <body>
     <div class="container">
-        <h1>Ftrace Visualization v0.1 @dolinux</h1>
+        <h1>Funcgraph Visualization v0.1 @dolinux</h1>
         <div id="content">
 """
 
