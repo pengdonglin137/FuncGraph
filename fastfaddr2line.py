@@ -5,6 +5,7 @@ import sys
 import subprocess
 import argparse
 import time
+import bisect
 from collections import defaultdict
 from elftools.elf.elffile import ELFFile
 from elftools.elf.sections import SymbolTableSection
@@ -135,19 +136,29 @@ def find_matching_symbol(func_name, offset, length, symbol_by_name, sections, ve
         sec = sections[sec_name]
         symbols = sec.symbols
         
-        # Use linear search instead of binary search
-        pos = -1
-        for i, s in enumerate(symbols):
-            if s.addr == sym.addr:
-                pos = i
-                break
-                
-        if pos == -1:
-            log(f"Symbol {func_name} not found in section {sec_name}", verbose)
-            continue
+        # 使用二分查找定位符号在section中的位置
+        # 创建地址列表用于二分查找
+        addrs = [s.addr for s in symbols]
+        pos = bisect.bisect_left(addrs, sym.addr)
+        
+        # 验证找到的位置是否正确
+        if pos < len(symbols) and symbols[pos].addr == sym.addr:
+            # 找到符号位置
+            pass
+        else:
+            # 未找到精确匹配，尝试在附近搜索
+            found = False
+            for i in range(max(0, pos-1), min(len(symbols), pos+2)):
+                if symbols[i].addr == sym.addr:
+                    pos = i
+                    found = True
+                    break
             
-        # Improved calculation of actual symbol length
-        # Skip symbols with same address (like aliases)
+            if not found:
+                log(f"Symbol {func_name} (addr 0x{sym.addr:x}) not found in section {sec_name}", verbose)
+                continue
+        
+        # 改进的符号长度计算（处理别名符号）
         actual_len = None
         index = pos + 1
         while index < len(symbols):
@@ -157,13 +168,13 @@ def find_matching_symbol(func_name, offset, length, symbol_by_name, sections, ve
                 break
             index += 1
         
-        # If no next symbol with different address found, use section end
+        # 如果没有找到不同地址的后续符号，使用节结束地址
         if actual_len is None:
             actual_len = sec.end_addr - sym.addr
             
         log(f"Candidate symbol at 0x{sym.addr:x}, calculated length: 0x{actual_len:x}", verbose)
         
-        # Compare with requested length
+        # 比较请求的长度
         if actual_len == length:
             target_addr = sym.addr + offset
             elapsed = (time.time() - start_time) * 1000
@@ -175,7 +186,7 @@ def find_matching_symbol(func_name, offset, length, symbol_by_name, sections, ve
     return None
 
 def start_addr2line(executable, cross_compile="", verbose=False):
-    # Build addr2line command with cross-compilation prefix
+    # 构建addr2line命令
     prefix = cross_compile if cross_compile else ""
     addr2line_cmd = prefix + "addr2line"
     
@@ -196,8 +207,8 @@ def start_addr2line(executable, cross_compile="", verbose=False):
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
-        text=True,  # 文本模式
-        bufsize=1   # 行缓冲
+        text=True,
+        bufsize=1
     )
     
     elapsed = (time.time() - start_time) * 1000
@@ -205,36 +216,36 @@ def start_addr2line(executable, cross_compile="", verbose=False):
     return proc
 
 def get_kernel_src_root(proc, start_addr, verbose=False):
-    """Get kernel source root by analyzing addr2line output for start_kernel"""
-    log(f"Detecting kernel source root using start_kernel at 0x{start_addr:x}", verbose)
+    """通过分析start_kernel的addr2line输出来获取内核源码根目录"""
+    log(f"使用start_kernel地址0x{start_addr:x}检测内核源码根目录", verbose)
     start_time = time.time()
     
-    # 发送地址和哨兵值（按照正确顺序）
+    # 发送地址和哨兵值
     proc.stdin.write(f"{start_addr:x}\n")
     proc.stdin.write(",\n")
     proc.stdin.flush()
-    log(f"Sent start_kernel address 0x{start_addr:x} and sentinel ',' to addr2line", verbose)
+    log(f"已发送start_kernel地址0x{start_addr:x}和哨兵','到addr2line", verbose)
     
-    # 读取输出 - 简化版本，不使用select
+    # 读取输出
     output_lines = []
-    max_lines = 100  # 防止无限循环
+    max_lines = 100
     
     for _ in range(max_lines):
         line = proc.stdout.readline()
-        if not line:  # EOF
+        if not line:
             break
             
         line_stripped = line.rstrip()
-        if not line_stripped:  # 空行
+        if not line_stripped:
             continue
             
-        log(f"Read line: {line_stripped}", verbose)
+        log(f"读取行: {line_stripped}", verbose)
         
-        # 检查终止条件 - 已按要求修改正则表达式
+        # 检查终止条件
         if (line_stripped == "?? ??:0" or 
             line_stripped == "," or 
             re.match(r'^0x00*: ', line_stripped)):
-            log(f"Encountered termination line: {line_stripped}", verbose)
+            log(f"遇到终止行: {line_stripped}", verbose)
             break
             
         # 移除开头的地址部分
@@ -242,23 +253,23 @@ def get_kernel_src_root(proc, start_addr, verbose=False):
         output_lines.append(cleaned_line)
     
     elapsed = (time.time() - start_time) * 1000
-    log(f"Got kernel source root output in {elapsed:.2f}ms", verbose)
+    log(f"获取内核源码根目录输出耗时 {elapsed:.2f}ms", verbose)
     
     if not output_lines:
-        log("No output from addr2line for start_kernel", verbose)
+        log("未收到start_kernel的addr2line输出", verbose)
         return ""
     
     # 合并输出文本
     output_text = "\n".join(output_lines)
-    log(f"Full output: {output_text}", verbose)
+    log(f"完整输出: {output_text}", verbose)
     
-    # 关键修复：使用更灵活的正则表达式匹配路径
+    # 使用灵活的正则表达式匹配路径
     pattern = r'at\s+([^:\s]+):\d+'
     match = re.search(pattern, output_text)
     
     if match:
         full_path = match.group(1)
-        log(f"Found source path: {full_path}", verbose)
+        log(f"找到源文件路径: {full_path}", verbose)
         
         # 尝试提取内核源码根目录
         common_dirs = ["/arch/", "/block/", "/crypto/", "/drivers/", "/fs/", "/include/", 
@@ -275,14 +286,14 @@ def get_kernel_src_root(proc, start_addr, verbose=False):
         
         if best_prefix:
             kernel_src_root = best_prefix.rstrip('/')
-            log(f"Detected kernel source root from common dirs: {kernel_src_root}", verbose)
+            log(f"从公共目录检测到内核源码根目录: {kernel_src_root}", verbose)
             return kernel_src_root
         
         init_main_match = re.search(r'([^:\s]+/init/main\.c):\d+', output_text)
         if init_main_match:
             full_init_path = init_main_match.group(1)
             kernel_src_root = full_init_path.rsplit('/init/main.c', 1)[0]
-            log(f"Detected kernel source root from init/main.c: {kernel_src_root}", verbose)
+            log(f"从init/main.c检测到内核源码根目录: {kernel_src_root}", verbose)
             return kernel_src_root
         
         file_match = re.search(r'([^:\s]+/[a-zA-Z0-9_\-]+\.c):\d+', output_text)
@@ -294,23 +305,23 @@ def get_kernel_src_root(proc, start_addr, verbose=False):
                     candidate = '/'.join(parts[:i])
                     if os.path.exists(candidate) or os.path.isdir(candidate):
                         kernel_src_root = candidate
-                        log(f"Detected kernel source root candidate: {kernel_src_root}", verbose)
+                        log(f"检测到内核源码根目录候选: {kernel_src_root}", verbose)
                         return kernel_src_root
         
         kernel_src_root = os.path.dirname(full_path)
-        log(f"Using directory of source file as root: {kernel_src_root}", verbose)
+        log(f"使用源文件所在目录作为根目录: {kernel_src_root}", verbose)
         return kernel_src_root
     
     file_match = re.search(r'([^:\s]+/[a-zA-Z0-9_\-]+\.[chS]):\d+', output_text)
     if file_match:
         full_path = file_match.group(1)
-        log(f"Found source file via fallback: {full_path}", verbose)
+        log(f"通过回退方式找到源文件: {full_path}", verbose)
         
         init_main_match = re.search(r'([^:\s]+/init/main\.c):\d+', output_text)
         if init_main_match:
             full_init_path = init_main_match.group(1)
             kernel_src_root = full_init_path.rsplit('/init/main.c', 1)[0]
-            log(f"Detected kernel source root from init/main.c: {kernel_src_root}", verbose)
+            log(f"从init/main.c检测到内核源码根目录: {kernel_src_root}", verbose)
             return kernel_src_root
         
         best_prefix = ""
@@ -323,57 +334,56 @@ def get_kernel_src_root(proc, start_addr, verbose=False):
         
         if best_prefix:
             kernel_src_root = best_prefix.rstrip('/')
-            log(f"Detected kernel source root from common dirs: {kernel_src_root}", verbose)
+            log(f"从公共目录检测到内核源码根目录: {kernel_src_root}", verbose)
             return kernel_src_root
     
-    log("Could not determine kernel source root", verbose)
+    log("无法确定内核源码根目录", verbose)
     return ""
 
 def resolve_addresses(proc, addr_specs_and_addrs, kernel_src_root, options):
-    """Resolve addresses using addr2line one by one with empty line separation"""
+    """使用addr2line逐个解析地址，用空行分隔结果"""
     for i, (addr_spec, addr) in enumerate(addr_specs_and_addrs):
-        log(f"Processing address {i+1}/{len(addr_specs_and_addrs)}: {addr_spec} -> 0x{addr:x}", options.verbose)
+        log(f"处理地址 {i+1}/{len(addr_specs_and_addrs)}: {addr_spec} -> 0x{addr:x}", options.verbose)
         start_time = time.time()
         
-        # 关键修复：按照faddr2line的注释实现协议
-        # 1. 发送地址
+        # 发送地址
         proc.stdin.write(f"{addr:x}\n")
         proc.stdin.flush()
-        log(f"Sent address 0x{addr:x} to addr2line", options.verbose)
+        log(f"已发送地址0x{addr:x}到addr2line", options.verbose)
         
-        # 2. 发送哨兵值（逗号）
+        # 发送哨兵值
         proc.stdin.write(",\n")
         proc.stdin.flush()
-        log(f"Sent sentinel ',' to addr2line", options.verbose)
+        log(f"已发送哨兵','到addr2line", options.verbose)
         
-        # 3. 读取输出 - 简化版本，不使用select
+        # 读取输出
         output_lines = []
-        raw_lines = []  # 保存原始行（未处理路径）
-        max_lines = 100  # 防止无限循环
+        raw_lines = []
+        max_lines = 100
         
         for _ in range(max_lines):
             line = proc.stdout.readline()
-            if not line:  # EOF
+            if not line:
                 break
                 
             line_stripped = line.rstrip()
-            if not line_stripped:  # 空行
+            if not line_stripped:
                 continue
                 
-            log(f"Read line: {line_stripped}", options.verbose)
+            log(f"读取行: {line_stripped}", options.verbose)
             
-            # 关键修复：先检查终止条件，再处理行内容
+            # 检查终止条件
             if (line_stripped == "?? ??:0" or 
                 line_stripped == "," or 
                 re.match(r'^0x00*: ', line_stripped)):
-                log(f"Encountered termination line: {line_stripped}", options.verbose)
+                log(f"遇到终止行: {line_stripped}", options.verbose)
                 break
                 
             # 移除开头的地址部分
             cleaned_line_raw = re.sub(r'^0x[0-9a-fA-F]+: ', '', line_stripped)
             raw_lines.append(cleaned_line_raw)
             
-            # 对内容行进行路径处理
+            # 处理路径
             cleaned_line = cleaned_line_raw
             if kernel_src_root:
                 cleaned_line = re.sub(
@@ -389,35 +399,34 @@ def resolve_addresses(proc, addr_specs_and_addrs, kernel_src_root, options):
             output_lines.append(cleaned_line)
         
         elapsed = (time.time() - start_time) * 1000
-        log(f"Got output for 0x{addr:x} in {elapsed:.2f}ms", options.verbose)
+        log(f"获取0x{addr:x}的输出耗时 {elapsed:.2f}ms", options.verbose)
         
-        # 打印地址规范头（像faddr2line一样）
+        # 打印地址规范头
         print(f"{addr_spec}:")
         
         if not output_lines:
-            log(f"No output received for address 0x{addr:x}", options.verbose)
+            log(f"未收到地址0x{addr:x}的输出", options.verbose)
             print("??:0")
         else:
-            # 关键修改：如果开启了list选项，则不打印处理后的行
+            # 如果未开启list选项，打印处理后的行
             if not options.list:
-                # 打印处理后的所有行
                 for line in output_lines:
                     print(line)
         
-        # 如果启用了列表选项，显示源代码上下文（替代处理后的行）
+        # 如果开启list选项，显示源码上下文
         if options.list:
             print_source_code(raw_lines, kernel_src_root, options)
         
-        # 关键修改：在处理完一个地址规范后，如果不是最后一个，则输出空行分隔
+        # 处理完一个地址后，如果不是最后一个，输出空行分隔
         if i < len(addr_specs_and_addrs) - 1:
             print()
 
 def print_source_code(lines, kernel_src_root, options):
-    """Print source code context for given lines in the desired format with alignment"""
+    """以对齐格式打印源码上下文"""
     if not lines:
         return
         
-    # 用于跟踪已处理的文件位置，避免重复输出
+    # 跟踪已处理的位置，避免重复
     processed_locations = set()
     
     for line in lines:
@@ -425,8 +434,7 @@ def print_source_code(lines, kernel_src_root, options):
         if not line.strip():
             continue
             
-        # 匹配文件路径和行号（包括内联函数）
-        # 匹配格式如：path/to/file.c:123 或 (inlined by) path/to/file.c:123
+        # 匹配文件路径和行号
         file_match = re.search(r'([^ \t\n]+):(\d+)', line)
         if not file_match:
             continue
@@ -434,19 +442,19 @@ def print_source_code(lines, kernel_src_root, options):
         file_path = file_match.group(1)
         line_num = int(file_match.group(2))
         
-        # 关键修复：过滤无效行（如 "??:0"）
+        # 过滤无效行
         if file_path == "??" or line_num == 0:
-            log(f"Skipping invalid source location: {file_path}:{line_num}", options.verbose)
+            log(f"跳过无效源码位置: {file_path}:{line_num}", options.verbose)
             continue
             
         location_key = (file_path, line_num)
         
-        # 避免重复处理相同的位置
+        # 避免重复处理相同位置
         if location_key in processed_locations:
             continue
         processed_locations.add(location_key)
         
-        # 打印位置行（原始行）
+        # 打印位置行
         print(line)
         
         try:
@@ -469,59 +477,59 @@ def print_source_code(lines, kernel_src_root, options):
                     break
             
             if not full_path:
-                print(f"  Source file not found: {file_path}")
+                print(f"  源文件未找到: {file_path}")
                 continue
             
             with open(full_path, "r") as f:
                 all_lines = f.readlines()
             
-            # 计算要显示的上下文范围
+            # 计算上下文范围
             start = max(0, line_num - 6)
             end = min(len(all_lines), line_num + 5)
             
             # 打印上下文 - 使用制表符对齐
-            for i in range(start, end):
-                if i + 1 == line_num:
-                    # 当前行：使用 >行号< 格式，后接制表符
-                    print(f">{i+1}<\t{all_lines[i].rstrip()}")
+            for j in range(start, end):
+                if j + 1 == line_num:
+                    # 当前行：使用 >行号< 格式
+                    print(f">{j+1}<\t{all_lines[j].rstrip()}")
                 else:
-                    # 非当前行：行号前后各加一个空格，后接制表符
-                    print(f" {i+1} \t{all_lines[i].rstrip()}")
+                    # 非当前行：行号前后加空格
+                    print(f" {j+1} \t{all_lines[j].rstrip()}")
                 
         except Exception as e:
-            print(f"  Error reading source: {str(e)}")
+            print(f"  读取源码出错: {str(e)}")
         
         # 添加空行分隔不同位置
         print()
 
 def main():
-    # 先解析参数
+    # 解析参数
     options = parse_arguments()
     
-    # 记录脚本启动时间（只在verbose模式下输出）
+    # 记录脚本启动时间
     start_time = time.time()
-    log("Script started", options.verbose)
+    log("脚本启动", options.verbose)
     
     executable = options.executable
     
-    # 从环境变量获取交叉编译前缀
+    # 获取交叉编译前缀
     cross_compile = os.environ.get("CROSS_COMPILE", "")
     if cross_compile and not cross_compile.endswith("-"):
         cross_compile += "-"
     
-    log(f"Using cross-compilation prefix: '{cross_compile}'", options.verbose)
+    log(f"使用交叉编译前缀: '{cross_compile}'", options.verbose)
     
     try:
         symbol_by_name, sections, elf = load_elf_data(executable, options.verbose)
     except Exception as e:
-        print(f"Error loading ELF data: {str(e)}", file=sys.stderr)
+        print(f"加载ELF数据出错: {str(e)}", file=sys.stderr)
         sys.exit(1)
     
     # 启动addr2line进程
     try:
         proc = start_addr2line(executable, cross_compile, options.verbose)
     except FileNotFoundError:
-        print(f"Error: {cross_compile}addr2line not found. Please install binutils.", file=sys.stderr)
+        print(f"错误: 未找到{cross_compile}addr2line。请安装binutils。", file=sys.stderr)
         sys.exit(1)
     
     # 查找start_kernel地址以检测源码根目录
@@ -529,9 +537,9 @@ def main():
     if "start_kernel" in symbol_by_name:
         start_sym = symbol_by_name["start_kernel"][0]
         kernel_src_root = get_kernel_src_root(proc, start_sym.addr, options.verbose)
-        log(f"Detected kernel source root: {kernel_src_root}", options.verbose)
+        log(f"检测到内核源码根目录: {kernel_src_root}", options.verbose)
     else:
-        log("start_kernel symbol not found for source root detection", options.verbose)
+        log("未找到start_kernel符号用于源码根目录检测", options.verbose)
     
     # 处理每个地址规范
     addr_specs_and_addrs = []
@@ -540,7 +548,7 @@ def main():
     for addr_spec in options.addresses:
         match = addr_pattern.match(addr_spec)
         if not match:
-            print(f"Invalid address format: {addr_spec}", file=sys.stderr)
+            print(f"无效的地址格式: {addr_spec}", file=sys.stderr)
             continue
             
         func_name = match.group(1)
@@ -549,18 +557,18 @@ def main():
         
         result = find_matching_symbol(func_name, offset, length, symbol_by_name, sections, options.verbose)
         if not result:
-            print(f"Symbol not found: {addr_spec}", file=sys.stderr)
+            print(f"符号未找到: {addr_spec}", file=sys.stderr)
             continue
             
         sym_addr, _, target_addr = result
         addr_specs_and_addrs.append((addr_spec, target_addr))
-        log(f"Resolved {addr_spec} -> 0x{target_addr:x}", options.verbose)
+        log(f"已解析 {addr_spec} -> 0x{target_addr:x}", options.verbose)
     
     # 使用addr2line解析地址
     if addr_specs_and_addrs:
         resolve_addresses(proc, addr_specs_and_addrs, kernel_src_root, options)
     else:
-        log("No valid addresses to resolve", options.verbose)
+        log("无有效地址可解析", options.verbose)
     
     # 清理
     try:
@@ -570,9 +578,9 @@ def main():
     except:
         pass
     
-    # 记录脚本完成时间（只在verbose模式下输出）
+    # 记录脚本完成时间
     total_elapsed = (time.time() - start_time) * 1000
-    log(f"Script completed in {total_elapsed:.2f}ms", options.verbose)
+    log(f"脚本完成，总耗时 {total_elapsed:.2f}ms", options.verbose)
 
 if __name__ == "__main__":
     main()
