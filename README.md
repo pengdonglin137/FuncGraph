@@ -55,3 +55,9 @@ funcgraph_to_html.py --fast  --vmlinux ./bpf_next/vmlinux --kernel-src ${PWD}/bp
 # cat trace > ~/ftrace.txt
 ```
 
+#### 参考文章
+- [ftrace可视化工具迎来重大升级](https://mp.weixin.qq.com/s/xRVVgF5IDnLXGu2i-TbS5Q)
+- [ftrace可视化工具(续)](https://mp.weixin.qq.com/s/Mq8uTR3c8V1gAR2zklsFPw)
+- [写了一个ftrace可视化工具，支持点击跳转](https://mp.weixin.qq.com/s/rNiWXC8YlZiAjfcjv7QtQA)
+
+
