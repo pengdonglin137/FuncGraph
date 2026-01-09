@@ -43,3 +43,15 @@ funcgraph_to_html.py --fast  --vmlinux ./bpf_next/vmlinux --kernel-src ${PWD}/bp
 		--output output1.html ftrace.txt
 ```
 
+- 抓取trace的方法
+
+```bash
+# cd /sys/kernel/tracing
+# echo 0 > tracing_on 
+# echo 1 > options/funcgraph-retaddr 
+# echo 1 > options/funcgraph-retval  
+# echo function_graph > current_tracer 
+# echo 1 > tracing_on; sleep 1; echo 0 > tracing_on 
+# cat trace > ~/ftrace.txt
+```
+
