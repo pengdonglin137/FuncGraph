@@ -479,7 +479,7 @@ def call_faddr2line_batch(faddr2line_path, target, func_infos, use_list=False, k
             except Exception as e:
                 verbose_print(f"Failed to restore working directory: {str(e)}", verbose)
 
-def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None, base_url=None, kernel_src=None, use_list=False, verbose=False):
+def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None, base_url=None, kernel_src=None, use_list=False, verbose=False, fast_mode=False):
     """生成交互式HTML页面，保留原始空格和格式"""
     if module_dirs is None:
         module_dirs = []
@@ -490,6 +490,16 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
     # 使用绝对路径
     abs_vmlinux_path = os.path.abspath(vmlinux_path)
     abs_faddr2line_path = os.path.abspath(faddr2line_path)
+    
+    # 如果使用fast模式，优先使用fastfaddr2line.py
+    if fast_mode:
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        fast_faddr2line_path = os.path.join(script_dir, 'fastfaddr2line.py')
+        if os.path.exists(fast_faddr2line_path):
+            verbose_print(f"Using fastfaddr2line.py at {fast_faddr2line_path}", verbose)
+            abs_faddr2line_path = fast_faddr2line_path
+        else:
+            verbose_print(f"Warning: fastfaddr2line.py not found at {fast_faddr2line_path}, using fallback", verbose)
     
     # 收集所有需要解析的函数信息（使用字典去重）
     func_info_map = defaultdict(list)  # func_info -> [line_index]
@@ -554,14 +564,27 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
         
         vmlinux_funcs_list = list(adjusted_vmlinux_funcs)
         verbose_print(f"Processing {len(vmlinux_funcs_list)} adjusted kernel functions", verbose)
-        batch_results = call_faddr2line_batch(
-            abs_faddr2line_path, 
-            abs_vmlinux_path, 
-            vmlinux_funcs_list, 
-            use_list,
-            kernel_src,
-            verbose
-        )
+        
+        # 如果是fast模式且处理的是vmlinux，使用fastfaddr2line.py
+        if fast_mode and os.path.basename(abs_faddr2line_path) == 'fastfaddr2line.py':
+            batch_results = call_faddr2line_batch(
+                abs_faddr2line_path, 
+                abs_vmlinux_path, 
+                vmlinux_funcs_list, 
+                use_list,
+                kernel_src,
+                verbose
+            )
+        else:
+            batch_results = call_faddr2line_batch(
+                abs_faddr2line_path, 
+                abs_vmlinux_path, 
+                vmlinux_funcs_list, 
+                use_list,
+                kernel_src,
+                verbose
+            )
+            
         func_locations_map.update(batch_results)
         verbose_print(f"Resolved {len(batch_results)} kernel function locations", verbose)
     
@@ -823,6 +846,10 @@ def main():
                         help='Automatically search common module directories')
     parser.add_argument('--verbose', action='store_true', 
                         help='Enable verbose output for debugging')
+    parser.add_argument('--fast', action='store_true', 
+                        help='Use fastfaddr2line.py for vmlinux processing')
+    parser.add_argument('--use-external', action='store_true', 
+                        help='Force using external faddr2line')
     args = parser.parse_args()
 
     # 检查gawk可用性并决定是否使用--list选项
@@ -833,6 +860,7 @@ def main():
         print("[INFO] Verbose mode enabled", file=sys.stderr)
         print(f"[INFO] gawk available: {gawk_available}", file=sys.stderr)
         print(f"[INFO] Using faddr2line --list option: {use_list}", file=sys.stderr)
+        print(f"[INFO] Using fast mode: {args.fast}", file=sys.stderr)
     
     # 自动添加常见模块目录
     module_dirs = args.module_dirs.copy()
@@ -862,7 +890,7 @@ def main():
             faddr2line_path = potential_path
             verbose_print(f"Found faddr2line in kernel source: {potential_path}", args.verbose)
     
-    if not faddr2line_path:
+    if not faddr2line_path or args.use_external:
         try:
             result = subprocess.run(['which', 'faddr2line'], capture_output=True, text=True, check=True)
             faddr2line_path = result.stdout.strip()
@@ -906,7 +934,8 @@ def main():
         base_url=args.base_url,
         kernel_src=kernel_src,
         use_list=use_list,
-        verbose=args.verbose
+        verbose=args.verbose,
+        fast_mode=args.fast  # 传递fast_mode参数
     )
     
     # 写入输出文件
