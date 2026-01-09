@@ -146,11 +146,19 @@ def find_matching_symbol(func_name, offset, length, symbol_by_name, sections, ve
             log(f"Symbol {func_name} not found in section {sec_name}", verbose)
             continue
             
-        # Calculate actual symbol length
-        if pos < len(symbols) - 1:
-            next_sym = symbols[pos + 1]
-            actual_len = next_sym.addr - sym.addr
-        else:
+        # Improved calculation of actual symbol length
+        # Skip symbols with same address (like aliases)
+        actual_len = None
+        index = pos + 1
+        while index < len(symbols):
+            next_sym = symbols[index]
+            if next_sym.addr > sym.addr:
+                actual_len = next_sym.addr - sym.addr
+                break
+            index += 1
+        
+        # If no next symbol with different address found, use section end
+        if actual_len is None:
             actual_len = sec.end_addr - sym.addr
             
         log(f"Candidate symbol at 0x{sym.addr:x}, calculated length: 0x{actual_len:x}", verbose)
