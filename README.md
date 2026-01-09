@@ -1,39 +1,42 @@
 # funcgraph_visualization
 
+![Funcgraph_retaddr可视化](sample.png)
+
 #### 介绍
-{**以下是 Gitee 平台说明，您可以替换此简介**
-Gitee 是 OSCHINA 推出的基于 Git 的代码托管平台（同时支持 SVN）。专为开发者提供稳定、高效、安全的云端软件开发协作平台
-无论是个人、团队、或是企业，都能够用 Gitee 实现代码托管、项目管理、协作开发。企业项目请看 [https://gitee.com/enterprises](https://gitee.com/enterprises)}
-
-#### 软件架构
-软件架构说明
-
-
-#### 安装教程
-
-1.  xxxx
-2.  xxxx
-3.  xxxx
+用来可视化开启funcgraph-retaddr后的function_graph的trace输出，大幅提高根据trace直接定位到代码行的效率。此外，用python重新实现了Linux内核中的faddr2line的功能，处理性能得到数量级的提升。
 
 #### 使用说明
 
-1.  xxxx
-2.  xxxx
-3.  xxxx
+- 帮助
 
-#### 参与贡献
+```bash
+$ ./funcgraph_to_html.py  -h
+usage: funcgraph_to_html.py [-h] --vmlinux VMLINUX [--kernel-src KERNEL_SRC] [--module-dirs [MODULE_DIRS ...]] [--base-url BASE_URL] [--output OUTPUT] [--auto-search] [--verbose] [--fast] [--use-external]
+                            ftrace_file
 
-1.  Fork 本仓库
-2.  新建 Feat_xxx 分支
-3.  提交代码
-4.  新建 Pull Request
+Convert ftrace output to interactive HTML
 
+positional arguments:
+  ftrace_file           Path to ftrace output file
 
-#### 特技
+options:
+  -h, --help            show this help message and exit
+  --vmlinux VMLINUX     Path to vmlinux file
+  --kernel-src KERNEL_SRC
+                        Path to kernel source root (e.g., /path/to/linux-source)
+  --module-dirs [MODULE_DIRS ...]
+                        Directories to search for kernel modules
+  --base-url BASE_URL   Base URL for source code links
+  --output OUTPUT       Output HTML file path
+  --auto-search         Automatically search common module directories
+  --verbose             Enable verbose output for debugging
+  --fast                Use fastfaddr2line.py for vmlinux processing
+  --use-external        Force using external faddr2line
 
-1.  使用 Readme\_XXX.md 来支持不同的语言，例如 Readme\_en.md, Readme\_zh.md
-2.  Gitee 官方博客 [blog.gitee.com](https://blog.gitee.com)
-3.  你可以 [https://gitee.com/explore](https://gitee.com/explore) 这个地址来了解 Gitee 上的优秀开源项目
-4.  [GVP](https://gitee.com/gvp) 全称是 Gitee 最有价值开源项目，是综合评定出的优秀开源项目
-5.  Gitee 官方提供的使用手册 [https://gitee.com/help](https://gitee.com/help)
-6.  Gitee 封面人物是一档用来展示 Gitee 会员风采的栏目 [https://gitee.com/gitee-stars/](https://gitee.com/gitee-stars/)
+```
+
+- 参考
+```bash
+funcgraph_to_html.py --fast  --vmlinux ./bpf_next/vmlinux --kernel-src ${PWD}/bpf_next  --module-dirs ./bpf_next/modules_install/ --base-url https://elixir.bootlin.com/linux/v6.19-rc1/source --output output1.html ftrace.txt
+```
+
