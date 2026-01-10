@@ -69,10 +69,10 @@ chmod +x *.py
 使用 fastfaddr2line 模式（推荐）：
 
 ```bash
-./funcgraph_to_html.py --fast --vmlinux ./bpf_next/vmlinux \
-    --kernel-src ${PWD}/bpf_next \
-    --module-dirs ./bpf_next/modules_install/ \
-    --base-url https://elixir.bootlin.com/linux/v6.19-rc1/source \
+./funcgraph_to_html.py --fast --vmlinux ./linux-6.18/vmlinux \
+    --kernel-src ./linux-6.18 \
+    --module-dirs ./linux-6.18/modules_install/ \
+    --base-url https://elixir.bootlin.com/linux/v6.18/source \
     --output output.html ftrace.txt
 ```
 
@@ -83,10 +83,7 @@ chmod +x *.py
 ./fastfaddr2line.py -h
 
 # 解析单个地址
-./fastfaddr2line.py vmlinux 0xffffffff81200000
-
-# 批量解析
-./fastfaddr2line.py vmlinux --addr-file addrs.txt
+./fastfaddr2line.py vmlinux arch_stack_walk+0x150/0x4a8
 ```
 
 ## 抓取 trace 的方法
@@ -132,7 +129,7 @@ funcgraph_visualization/
 ## 工作原理
 
 1. **解析 ftrace 输出**：funcgraph_to_html.py 解析 function_graph 格式的 trace 数据
-2. **提取函数地址**：从 trace 中获取每个函数的入口地址
+2. **提取函数地址**：从 trace 中获取每个函数的返回地址
 3. **符号解析**：使用 fastfaddr2line 或 addr2line 将地址转换为源代码位置
 4. **生成 HTML**：构建交互式 HTML 页面，显示函数调用关系和源代码
 
