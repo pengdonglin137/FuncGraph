@@ -417,7 +417,7 @@ def resolve_addresses(proc, addr_specs_and_addrs, kernel_src_root, options):
         
         # 如果开启list选项，显示源码上下文
         if options.list:
-            print_source_code(raw_lines, kernel_src_root, options)
+            print_source_code(output_lines, kernel_src_root, options)
         
         # 处理完一个地址后，如果不是最后一个，输出空行分隔
         if i < len(addr_specs_and_addrs) - 1:
