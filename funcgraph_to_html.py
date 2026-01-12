@@ -22,9 +22,65 @@ def escape_html_preserve_spaces(text):
     escaped = escaped.replace('\t', '&nbsp;&nbsp;&nbsp;&nbsp;')
     return escaped
 
+def highlight_ftrace_line(text):
+    """
+    为ftrace日志行添加语法高亮，保持原始对齐和格式
+    
+    仅添加HTML span标签用于高亮，保留原始字符不转义
+    特殊处理：<...> 形式的标识符中的 < 和 > 替换为空格
+                以避免浏览器误解为HTML标签，同时保持原始对齐和宽度
+    
+    高亮的元素：
+    - CPU编号: <span class="hl-cpu">3)</span>
+    - 时间数值: <span class="hl-time">0.208</span>
+    - 时间单位: <span class="hl-unit">us</span>
+    - 函数名: <span class="hl-func">mutex_unlock</span>
+    - 十六进制地址: <span class="hl-addr">0xf4</span>
+    - 注释: <span class="hl-comment">/* ... */</span>
+    - 符号括号: <span class="hl-symbol">{}</span>
+    
+    返回带有HTML span标签的高亮文本，空格、缩进和所有原始字符完全保持
+    """
+    if not text:
+        return text
+    
+    # 特殊处理：<...> 形式的标识符中的 < 和 > 替换为空格
+    # 匹配模式：< 后跟一个或多个非 > 字符，然后是 >
+    # 替换为：空格 + 内容 + 空格（保持原始宽度）
+    text = re.sub(r'<([^<>]+)>', r' \1 ', text)
+    
+    # 1. 高亮CPU编号 (格式: 空格+数字) 在行首
+    text = re.sub(r'^(\s*\d+\))', r'<span class="hl-cpu">\1</span>', text)
+    
+    # 2. 高亮注释部分 (/* ... */)
+    text = re.sub(r'(/\*[^*]*(?:\*+[^/*][^*]*)*\*+/)', r'<span class="hl-comment">\1</span>', text)
+    
+    # 3. 高亮十六进制地址 (0x...)
+    text = re.sub(r'(0[xX][0-9a-fA-F]+)', r'<span class="hl-addr">\1</span>', text)
+    
+    # 4. 高亮时间数值 (小数点格式)
+    text = re.sub(r'(\d+\.\d+)', r'<span class="hl-time">\1</span>', text)
+    
+    # 5. 高亮时间单位 (us, ms, ns, ks)
+    text = re.sub(r'\b(us|ms|ns|ks)\b', r'<span class="hl-unit">\1</span>', text)
+    
+    # 6. 高亮函数名 (标识符后跟( { 或 ;)
+    text = re.sub(r'([a-zA-Z_]\w*)(?=\s*[\({;])', r'<span class="hl-func">\1</span>', text)
+    
+    # 7. 高亮括号和大括号
+    text = re.sub(r'([{}()\[\];])', r'<span class="hl-symbol">\1</span>', text)
+    
+    return text
+
 def escape_for_pre(text):
     """专为<pre>标签设计的转义函数，保留原始格式"""
     return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+def escape_for_pre_preserve_alignment(text):
+    """为<pre>标签转义函数，保留原始对齐（不转义空格），用于高亮后的内容"""
+    # 对于已经高亮的内容，我们需要谨慎处理
+    # 这个函数假设输入已经包含<span>标签，我们只需要处理标签外的内容
+    return text
 
 def check_gawk_available():
     """检查gawk是否可用"""
@@ -868,6 +924,8 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
             -moz-user-select: text;
             -ms-user-select: text;
             user-select: text;
+            white-space: pre;
+            font-family: 'Courier New', monospace;
         }}
         .expand-btn {{
             display: inline-block;
@@ -1081,6 +1139,69 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
                 box-shadow: none;
             }}
         }}
+        /* Ftrace语法高亮样式 */
+        .hl-cpu {{
+            color: #d73a49;
+            font-weight: bold;
+        }}
+        [data-theme="dark"] .hl-cpu {{
+            color: #f97583;
+            font-weight: bold;
+        }}
+        
+        .hl-time {{
+            color: #005cc5;
+            font-weight: normal;
+        }}
+        [data-theme="dark"] .hl-time {{
+            color: #79b8ff;
+            font-weight: normal;
+        }}
+        
+        .hl-unit {{
+            color: #6f42c1;
+            font-weight: bold;
+        }}
+        [data-theme="dark"] .hl-unit {{
+            color: #b392f0;
+            font-weight: bold;
+        }}
+        
+        .hl-func {{
+            color: #6f42c1;
+            font-weight: bold;
+        }}
+        [data-theme="dark"] .hl-func {{
+            color: #b392f0;
+            font-weight: bold;
+        }}
+        
+        .hl-addr {{
+            color: #032f62;
+            font-family: 'Courier New', monospace;
+        }}
+        [data-theme="dark"] .hl-addr {{
+            color: #79b8ff;
+            font-family: 'Courier New', monospace;
+        }}
+        
+        .hl-comment {{
+            color: #6a737d;
+            font-style: italic;
+        }}
+        [data-theme="dark"] .hl-comment {{
+            color: #8b949e;
+            font-style: italic;
+        }}
+        
+        .hl-symbol {{
+            color: #24292e;
+            font-weight: bold;
+        }}
+        [data-theme="dark"] .hl-symbol {{
+            color: #c9d1d9;
+            font-weight: bold;
+        }}
         @media (max-width: 768px) {{
             body {{
                 padding: 10px;
@@ -1148,7 +1269,9 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
         line_number = idx + 1  # 行号从1开始
         line_anchor_id = f"L{line_number}"  # 使用L{行号}格式作为锚点
         line_id = f"line_{idx}"  # 保留用于JavaScript引用
-        escaped_line = escape_html_preserve_spaces(line_data["raw_line"])
+        
+        # 先应用语法高亮，保持原始空格和对齐
+        escaped_line = highlight_ftrace_line(line_data["raw_line"])
         
         # 检查是否可展开
         is_expandable = line_data['expandable'] and line_data['func_info']
