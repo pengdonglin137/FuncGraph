@@ -105,17 +105,52 @@ def find_module_path(module_name, module_dirs, verbose=False):
     verbose_print(f"Module '{module_name}' not found in any directory", verbose)
     return None
 
+def clean_file_path(file_path, kernel_src=None):
+    """清理文件路径，去除内核源码根目录和其他冗余信息"""
+    if not file_path:
+        return file_path
+    
+    # 如果提供了内核源码路径，尝试去除
+    if kernel_src and os.path.isabs(kernel_src):
+        # 规范化路径
+        kernel_src_norm = os.path.normpath(kernel_src)
+        file_path_norm = os.path.normpath(file_path)
+        
+        # 检查文件路径是否包含内核源码路径
+        if file_path_norm.startswith(kernel_src_norm):
+            # 计算相对路径
+            relative_path = file_path_norm[len(kernel_src_norm):].lstrip(os.sep)
+            return relative_path
+    
+    # 去除内核模块标记，如[kernel]
+    if '[' in file_path and ']' in file_path:
+        file_path = re.sub(r'\[.*?\]', '', file_path).strip()
+    
+    # 去除discriminator信息，如(discriminator 9)
+    file_path = re.sub(r'\s*\(discriminator\s+\d+\)\s*$', '', file_path)
+    file_path = re.sub(r'\s*\(inlined\)\s*$', '', file_path)
+    file_path = re.sub(r'\s*\(.*?\)\s*$', '', file_path)
+    
+    return file_path.strip()
+
 def get_relative_path(full_path, base_path):
     """获取相对于基路径的相对路径"""
-    if not base_path:
+    if not base_path or not full_path:
         return full_path
     
-    # 确保路径以分隔符结尾
+    # 规范化路径
     base_path = os.path.normpath(base_path)
+    full_path = os.path.normpath(full_path)
+    
+    # 如果路径已经是相对路径，直接返回
+    if not os.path.isabs(full_path):
+        return full_path
+    
+    # 确保基路径以分隔符结尾
     if not base_path.endswith(os.sep):
         base_path += os.sep
     
-    # 检查路径是否在基路径下
+    # 检查完整路径是否在基路径下
     if full_path.startswith(base_path):
         return full_path[len(base_path):]
     
@@ -229,8 +264,9 @@ def parse_list_output(output, base_url=None, kernel_src=None):
     # 正则表达式匹配函数块头（如 "function+offset/size:"）
     func_header_re = re.compile(r'^(.*?[^+]+[\+\w]+/[0-9a-fx]+):$')
     
-    # 正则表达式匹配位置行（包括内联标记行）
-    loc_pattern = re.compile(r'^(?:\(inlined by\)\s+)?(.+?)\s+at\s+(.+?):(\d+)\s*$')
+    # 修复正则表达式以匹配包含discriminator信息的行
+    # 修改正则表达式，使其能够匹配包含discriminator的行
+    loc_pattern = re.compile(r'^(?:\(inlined by\)\s+)?(.+?)\s+at\s+(.+?):(\d+).*$')
     
     # 处理所有行
     i = 0
@@ -258,15 +294,21 @@ def parse_list_output(output, base_url=None, kernel_src=None):
             for block_line in block_lines:
                 stripped = block_line.strip()
                 
-                # a. 尝试匹配位置行（包括内联标记行）
+                # a. 尝试匹配位置行（包括内联标记行和包含discriminator的行）
                 loc_match = loc_pattern.match(stripped)
                 if loc_match:
                     func_part = loc_match.group(1).strip()
                     file_path = loc_match.group(2).strip()
                     line_no = loc_match.group(3).strip()
                     
+                    # 清理文件路径，去除内核源码根目录
+                    clean_path = clean_file_path(file_path, kernel_src)
+                    
                     # 获取相对于内核源码的路径
-                    relative_path = get_relative_path(file_path, kernel_src) if kernel_src else file_path
+                    relative_path = get_relative_path(clean_path, kernel_src) if kernel_src else clean_path
+                    
+                    # 进一步清理路径，确保显示相对路径
+                    relative_path = clean_file_path(relative_path, kernel_src)
                     
                     # 构建URL
                     if base_url:
@@ -274,20 +316,28 @@ def parse_list_output(output, base_url=None, kernel_src=None):
                             url = f"{base_url}{relative_path}#L{line_no}"
                         else:
                             url = f"{base_url}/{relative_path}#L{line_no}"
+                        
+                        # 使用清理后的相对路径构建链接文本
                         link_text = f"{func_part} at {relative_path}:{line_no}"
                         # 如果是内联行，添加标记
                         if stripped.startswith('(inlined by)'):
                             link_text = f"(inlined by) {link_text}"
+                        
                         escaped_link = escape_html_preserve_spaces(link_text)
                         escaped_url = html.escape(url)
                         html_output.append(f'<a class="location-link" href="{escaped_url}" target="_blank">{escaped_link}</a>')
                     else:
-                        html_output.append(f'<div class="location-link">{escape_html_preserve_spaces(stripped)}</div>')
+                        # 没有base_url，只显示文本
+                        link_text = f"{func_part} at {relative_path}:{line_no}"
+                        if stripped.startswith('(inlined by)'):
+                            link_text = f"(inlined by) {link_text}"
+                        escaped_link = escape_html_preserve_spaces(link_text)
+                        html_output.append(f'<div class="location-link">{escaped_link}</div>')
                     continue
                 
+                # 其他处理逻辑保持不变...
                 # b. 检查是否是当前行（格式如：>34< ...）
                 if re.match(r'^\s*>(\d+)<', block_line):
-                    # 直接输出整行，添加高亮样式
                     line_html = f'<div class="source-line current-line">{escape_for_pre(block_line)}</div>'
                     html_output.append(line_html)
                     continue
@@ -621,6 +671,58 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
     # 计算统计数据
     total_lines = len(parsed_lines)
     expandable_entries = sum(1 for l in parsed_lines if l['expandable'])
+    
+    # 定义提取行号的函数
+    def extract_line_number(location_str, kernel_src):
+        """从位置字符串中提取行号"""
+        if not location_str:
+            return None
+            
+        # 尝试匹配各种行号格式
+        # 1. 标准格式: file.c:1234
+        # 2. 带discriminator: file.c:1234 (discriminator 9)
+        # 3. 带inlined: file.c:1234 (inlined)
+        # 4. 其他格式
+        
+        # 首先清理字符串
+        clean_str = clean_file_path(location_str, kernel_src)
+        
+        # 尝试从原始字符串提取行号
+        line_match = re.search(r':(\d+)(?:\s|$)', location_str)
+        if line_match:
+            try:
+                return int(line_match.group(1))
+            except (ValueError, IndexError):
+                pass
+        
+        # 如果上述方法失败，尝试其他方法
+        # 查找冒号后的数字
+        match = re.search(r':(\d+)', location_str)
+        if match:
+            try:
+                return int(match.group(1))
+            except (ValueError, IndexError):
+                pass
+        
+        return None
+    
+    # 定义从位置字符串提取文件路径的函数
+    def extract_file_path(location_str, kernel_src):
+        """从位置字符串中提取文件路径"""
+        if not location_str:
+            return ""
+        
+        # 清理字符串
+        cleaned = clean_file_path(location_str, kernel_src)
+        
+        # 如果还有冒号和数字，去除它们
+        # 匹配文件路径:行号格式
+        file_match = re.match(r'^(.*?):\d+', cleaned)
+        if file_match:
+            return file_match.group(1)
+        
+        # 如果没有行号，直接返回清理后的路径
+        return cleaned
     
     # 构建HTML字符串
     html_str = f"""<!DOCTYPE html>
@@ -1060,32 +1162,63 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
                     for loc in loc_list:
                         if base_url:
                             file_path = loc['file']
-                            if '[' in file_path and ']' in file_path:
-                                file_path = re.sub(r'\[.*?\]', '', file_path).strip()
+                            # 清理文件路径
+                            file_path = clean_file_path(file_path, kernel_src)
                             
-                            # 获取相对于内核源码的路径
-                            relative_path = get_relative_path(file_path, kernel_src)
+                            # 提取文件路径和行号
+                            clean_path = extract_file_path(file_path, kernel_src)
+                            line_num = loc.get('line')
                             
-                            # 构建URL
-                            if base_url.endswith('/'):
-                                url = f"{base_url}{relative_path}#L{loc['line']}"
+                            # 如果行号不在loc中，尝试从file_path中提取
+                            if line_num is None:
+                                line_num = extract_line_number(file_path, kernel_src)
+                            
+                            if clean_path and line_num is not None:
+                                # 获取相对于内核源码的路径
+                                relative_path = get_relative_path(clean_path, kernel_src)
+                                
+                                # 构建URL
+                                if base_url.endswith('/'):
+                                    url = f"{base_url}{relative_path}#L{line_num}"
+                                else:
+                                    url = f"{base_url}/{relative_path}#L{line_num}"
+                                
+                                link_text = f"{loc['func']} at {relative_path}:{line_num}"
+                                if loc.get('inlined'):
+                                    link_text = f"(inlined) {link_text}"
+                                
+                                escaped_link = escape_html_preserve_spaces(link_text)
+                                escaped_url = html.escape(url)
+                                html_str += f'<a class="location-link" href="{escaped_url}" target="_blank">{escaped_link}</a>'
                             else:
-                                url = f"{base_url}/{relative_path}#L{loc['line']}"
-                            
-                            link_text = f"{loc['func']} at {relative_path}:{loc['line']}"
-                            if loc['inlined']:
-                                link_text = f"(inlined) {link_text}"
-                            
-                            escaped_link = escape_html_preserve_spaces(link_text)
-                            escaped_url = html.escape(url)
-                            html_str += f'<a class="location-link" href="{escaped_url}" target="_blank">{escaped_link}</a>'
+                                # 无法提取有效路径或行号
+                                link_text = f"{loc['func']} at {file_path}"
+                                if loc.get('inlined'):
+                                    link_text = f"(inlined) {link_text}"
+                                escaped_link = escape_html_preserve_spaces(link_text)
+                                html_str += f'<div class="location-link">{escaped_link}</div>'
                         else:
+                            # 没有base_url，只显示文本
                             file_path = loc['file']
-                            if '[' in file_path and ']' in file_path:
-                                file_path = re.sub(r'\[.*?\]', '', file_path).strip()
+                            # 清理文件路径
+                            file_path = clean_file_path(file_path, kernel_src)
+                            print("file_path: " + file_path)
                             
-                            link_text = f"{loc['func']} at {file_path}:{loc['line']}"
-                            if loc['inlined']:
+                            # 提取文件路径
+                            clean_path = extract_file_path(file_path, kernel_src)
+                            print("clean_path: " + clean_path)
+                            line_num = loc.get('line')
+                            
+                            # 如果行号不在loc中，尝试从file_path中提取
+                            if line_num is None:
+                                line_num = extract_line_number(file_path, kernel_src)
+                            
+                            if clean_path and line_num is not None:
+                                link_text = f"{loc['func']} at {clean_path}:{line_num}"
+                            else:
+                                link_text = f"{loc['func']} at {file_path}"
+                                
+                            if loc.get('inlined'):
                                 link_text = f"(inlined) {link_text}"
                             escaped_link = escape_html_preserve_spaces(link_text)
                             html_str += f'<div class="location-link">{escaped_link}</div>'
@@ -1771,7 +1904,7 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
                     // 从第一个行内容开始
                     range.setStart(allLineContents[0], 0);
                     // 到最后一个行内容结束
-                    range.setEnd(allLineContents[allLineContents.length - 1], allLineContents[allLineContents.length - 1].childNodes.length);
+                    range.setEnd(allLineContents[allLineContents.length - 1], allLineContents[allLines.length - 1].childNodes.length);
                     
                     selection.addRange(range);
                     highlightSelectedLines();
