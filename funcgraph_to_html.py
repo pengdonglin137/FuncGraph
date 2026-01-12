@@ -90,7 +90,7 @@ def highlight_c_code(text):
     """
     轻量级C代码语法高亮，使用简单的正则替换
     
-    仅高亮关键字、字符串和注释，保持简洁
+    仅高亮关键字、字符串、注释和Linux内核特定类型，保持简洁
     """
     try:
         # 先对HTML特殊字符进行转义，避免破坏HTML结构
@@ -115,6 +115,26 @@ def highlight_c_code(text):
         # C语言关键字
         keywords = r'\b(void|int|char|float|double|struct|union|enum|typedef|return|if|else|for|while|do|switch|case|break|continue|default|static|extern|const|volatile|auto|register|goto|sizeof|restrict|inline|_Bool|_Complex|_Imaginary)\b'
         text = re.sub(keywords, r'<span class="c-keyword">\1</span>', text)
+        
+        # Linux内核特定的整数类型 (u8, u16, u32, u64, s8, s16, s32, s64)
+        kernel_int_types = r'\b(u8|u16|u32|u64|s8|s16|s32|s64|__u8|__u16|__u32|__u64|__s8|__s16|__s32|__s64)\b'
+        text = re.sub(kernel_int_types, r'<span class="kernel-type">\1</span>', text)
+        
+        # Linux内核特定的typedef类型
+        kernel_typedef_types = r'\b(pid_t|uid_t|gid_t|dev_t|ino_t|off_t|size_t|ssize_t|atomic_t|spinlock_t|rwlock_t|mutex_t|sector_t|loff_t|umode_t|mode_t|nlink_t|dma_addr_t|gfp_t|fmode_t)\b'
+        text = re.sub(kernel_typedef_types, r'<span class="kernel-type">\1</span>', text)
+        
+        # Linux内核常见结构体和类型
+        kernel_structs = r'\b(list_head|hlist_head|hlist_node|rbtree_node|rb_node|dentry|inode|file|super_block|vfsmount|task_struct|mm_struct|page|zone|vm_area_struct)\b'
+        text = re.sub(kernel_structs, r'<span class="kernel-type">\1</span>', text)
+        
+        # Linux内核属性修饰符(__user, __kernel, __iomem 等)
+        kernel_attributes = r'\b(__user|__kernel|__iomem|__percpu|__rcu|__acquire|__release|__must_hold|__acquires|__releases)\b'
+        text = re.sub(kernel_attributes, r'<span class="kernel-attr">\1</span>', text)
+        
+        # Linux内核常用宏常量
+        kernel_macros = r'\b(GFP_KERNEL|GFP_ATOMIC|GFP_NOFS|GFP_NOIO|GFP_NOWAIT|GFP_TEMPORARY|NULL|true|false|PAGE_SIZE|TASK_RUNNING|TASK_INTERRUPTIBLE|TASK_UNINTERRUPTIBLE|ENOMEM|EINVAL|ENOENT|EAGAIN|EBUSY)\b'
+        text = re.sub(kernel_macros, r'<span class="kernel-macro">\1</span>', text)
         
         # 十六进制数和整数
         text = re.sub(r'\b(0x[0-9a-fA-F]+|0[0-7]+|[0-9]+)\b', r'<span class="c-number">\1</span>', text)
@@ -1319,6 +1339,34 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
         }}
         [data-theme="dark"] .c-number {{
             color: #b392f0;
+        }}
+        
+        /* Linux内核特定类型 */
+        .kernel-type {{
+            color: #0184bc;  /* 青色用于内核类型 */
+            font-weight: bold;
+        }}
+        [data-theme="dark"] .kernel-type {{
+            color: #58a6ff;
+            font-weight: bold;
+        }}
+        
+        /* Linux内核属性修饰符 */
+        .kernel-attr {{
+            color: #9e1a1a;  /* 深红色用于属性 */
+        }}
+        [data-theme="dark"] .kernel-attr {{
+            color: #ff7b72;
+        }}
+        
+        /* Linux内核常用宏常量 */
+        .kernel-macro {{
+            color: #e36209;  /* 橙色用于宏常量 */
+            font-weight: bold;
+        }}
+        [data-theme="dark"] .kernel-macro {{
+            color: #fb8500;
+            font-weight: bold;
         }}
         
         .line-number {{
