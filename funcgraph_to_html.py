@@ -853,6 +853,13 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
             -ms-user-select: none;
             user-select: none;
             flex-shrink: 0;
+            cursor: pointer;
+            border-radius: 3px;
+            padding-left: 5px;
+            transition: background-color 0.2s, color 0.2s;
+        }}
+        .line-number:hover {{
+            background-color: var(--line-hover);
         }}
         .line-content {{
             flex-grow: 1;
@@ -1151,7 +1158,7 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
         if is_expandable:
             html_str += f' onclick="handleLineClick(event, \'{line_id}\')" ondblclick="handleDoubleClick(event, \'{line_id}\')"'
         html_str += '>'
-        html_str += f'<span class="line-number">{line_number}</span>'
+        html_str += f'<span class="line-number" onclick="updateAnchor(\'{line_anchor_id}\', event)" title="Click to copy anchor link">{line_number}</span>'
         html_str += f'<span class="line-content">{escaped_line}</span>'
         
         if is_expandable:
@@ -2014,6 +2021,28 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
                 highlightedLine.classList.remove('highlighted');
                 highlightedLine = null;
             }
+        }
+        
+        // 更新锚点并复制到剪贴板
+        function updateAnchor(anchorId, event) {
+            event.stopPropagation();
+            
+            // 更新URL hash
+            window.location.hash = anchorId;
+            
+            // 获取当前完整URL
+            const fullUrl = window.location.href;
+            
+            // 尝试复制到剪贴板（静默操作，不显示任何反馈）
+            navigator.clipboard.writeText(fullUrl).catch(() => {
+                // 降级方案
+                const textArea = document.createElement('textarea');
+                textArea.value = fullUrl;
+                document.body.appendChild(textArea);
+                textArea.select();
+                document.execCommand('copy');
+                document.body.removeChild(textArea);
+            });
         }
         
         // 处理锚点导航
