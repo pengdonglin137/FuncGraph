@@ -76,11 +76,57 @@ def escape_for_pre(text):
     """专为<pre>标签设计的转义函数，保留原始格式"""
     return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
-def escape_for_pre_preserve_alignment(text):
-    """为<pre>标签转义函数，保留原始对齐（不转义空格），用于高亮后的内容"""
-    # 对于已经高亮的内容，我们需要谨慎处理
-    # 这个函数假设输入已经包含<span>标签，我们只需要处理标签外的内容
-    return text
+def check_pygments_available():
+    """检查Pygments库是否可用"""
+    try:
+        import pygments
+        from pygments.lexers import CLexer
+        from pygments.formatters import HtmlFormatter
+        return True
+    except ImportError:
+        return False
+
+def highlight_c_code(text):
+    """
+    轻量级C代码语法高亮，使用简单的正则替换
+    
+    仅高亮关键字、字符串和注释，保持简洁
+    """
+    try:
+        # 先对HTML特殊字符进行转义，避免破坏HTML结构
+        text = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        
+        # 使用占位符临时保存注释，避免冲突
+        comments = []
+        def save_comment(match):
+            idx = len(comments)
+            comments.append(match.group(0))
+            return f'___COMMENT_{idx}___'
+        
+        # 保存所有注释（转义后的文本）
+        text = re.sub(r'//[^\n]*', save_comment, text)
+        
+        # 字符串（双引号）
+        text = re.sub(r'("(?:\\.|[^"\\])*")', r'<span class="c-string">\1</span>', text)
+        
+        # 字符（单引号）
+        text = re.sub(r"('(?:\\.|[^'\\])*')", r'<span class="c-string">\1</span>', text)
+        
+        # C语言关键字
+        keywords = r'\b(void|int|char|float|double|struct|union|enum|typedef|return|if|else|for|while|do|switch|case|break|continue|default|static|extern|const|volatile|auto|register|goto|sizeof|restrict|inline|_Bool|_Complex|_Imaginary)\b'
+        text = re.sub(keywords, r'<span class="c-keyword">\1</span>', text)
+        
+        # 十六进制数和整数
+        text = re.sub(r'\b(0x[0-9a-fA-F]+|0[0-7]+|[0-9]+)\b', r'<span class="c-number">\1</span>', text)
+        
+        # 恢复注释，添加高亮
+        for idx, comment in enumerate(comments):
+            text = text.replace(f'___COMMENT_{idx}___', f'<span class="c-comment">{comment}</span>')
+        
+        return text
+    except Exception as e:
+        verbose_print(f"Failed to highlight C code: {str(e)}", False)
+        return text
 
 def check_gawk_available():
     """检查gawk是否可用"""
@@ -312,8 +358,15 @@ def adjust_function_offset(func_info):
     except ValueError:
         return func_info  # 解析失败，返回原始字符串
 
-def parse_list_output(output, base_url=None, kernel_src=None):
-    """解析faddr2line --list的输出并转换为HTML"""
+def parse_list_output(output, base_url=None, kernel_src=None, highlight_code=False):
+    """解析faddr2line --list的输出并转换为HTML
+    
+    参数：
+        output: faddr2line --list 的输出
+        base_url: 源代码链接的基础URL
+        kernel_src: 内核源码根目录
+        highlight_code: 是否对C源代码进行语法高亮
+    """
     lines = output.splitlines()
     html_output = []
     
@@ -394,13 +447,45 @@ def parse_list_output(output, base_url=None, kernel_src=None):
                 # 其他处理逻辑保持不变...
                 # b. 检查是否是当前行（格式如：>34< ...）
                 if re.match(r'^\s*>(\d+)<', block_line):
-                    line_html = f'<div class="source-line current-line">{escape_for_pre(block_line)}</div>'
+                    if highlight_code:
+                        # 提取行号和源代码
+                        match = re.match(r'^(\s*>)(\d+)(<\s*)(.*)', block_line)
+                        if match:
+                            prefix = match.group(1)  # 前面的空格和 >
+                            line_no = match.group(2)
+                            bracket = match.group(3)  # < 和后面的空格
+                            code_line = match.group(4)
+                            # 只对代码部分高亮，保持行号格式不变
+                            highlighted_code = highlight_c_code(code_line)
+                            # 使用原始的前缀和括号，确保对齐
+                            line_html = f'<div class="source-line current-line">{escape_html_preserve_spaces(prefix + line_no + bracket)}{highlighted_code}</div>'
+                        else:
+                            line_html = f'<div class="source-line current-line">{escape_for_pre(block_line)}</div>'
+                    else:
+                        line_html = f'<div class="source-line current-line">{escape_for_pre(block_line)}</div>'
                     html_output.append(line_html)
                     continue
                 
                 # c. 其他行直接添加（保持原样）
                 if stripped:  # 跳过空行
-                    html_output.append(f'<div class="source-line">{escape_for_pre(block_line)}</div>')
+                    if highlight_code:
+                        # 对其他行，需要保持行号和代码部分的对齐
+                        # 格式通常是: " 行号  代码" 或 " 行号 代码"
+                        match = re.match(r'^(\s+)(\d+)(\s+)(.*)', block_line)
+                        if match:
+                            prefix = match.group(1)  # 前面的空格
+                            line_no = match.group(2)
+                            separator = match.group(3)  # 行号后的空格
+                            code_line = match.group(4)
+                            # 只对代码部分高亮
+                            highlighted_code = highlight_c_code(code_line)
+                            line_html = f'<div class="source-line">{escape_html_preserve_spaces(prefix + line_no + separator)}{highlighted_code}</div>'
+                        else:
+                            # 无法解析，使用原始行
+                            line_html = f'<div class="source-line">{escape_for_pre(block_line)}</div>'
+                        html_output.append(line_html)
+                    else:
+                        html_output.append(f'<div class="source-line">{escape_for_pre(block_line)}</div>')
             
             # 在函数块之间添加空行
             html_output.append('<div style="height: 10px;"></div>')
@@ -585,7 +670,7 @@ def call_faddr2line_batch(faddr2line_path, target, func_infos, use_list=False, k
             except Exception as e:
                 verbose_print(f"Failed to restore working directory: {str(e)}", verbose)
 
-def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None, base_url=None, kernel_src=None, use_list=False, verbose=False, fast_mode=False):
+def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None, base_url=None, kernel_src=None, use_list=False, verbose=False, fast_mode=False, highlight_code=False):
     """生成交互式HTML页面，保留原始空格和格式"""
     if module_dirs is None:
         module_dirs = []
@@ -1202,6 +1287,48 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
             color: #c9d1d9;
             font-weight: bold;
         }}
+        
+        /* C代码简洁语法高亮 */
+        .c-keyword {{
+            color: #d73a49;  /* 红色用于关键字 */
+            font-weight: bold;
+        }}
+        [data-theme="dark"] .c-keyword {{
+            color: #f97583;
+            font-weight: bold;
+        }}
+        
+        .c-string {{
+            color: #032f62;  /* 蓝色用于字符串 */
+        }}
+        [data-theme="dark"] .c-string {{
+            color: #79b8ff;
+        }}
+        
+        .c-comment {{
+            color: #6a737d;  /* 灰色用于注释 */
+            font-style: italic;
+        }}
+        [data-theme="dark"] .c-comment {{
+            color: #8b949e;
+            font-style: italic;
+        }}
+        
+        .c-number {{
+            color: #6f42c1;  /* 紫色用于数字 */
+        }}
+        [data-theme="dark"] .c-number {{
+            color: #b392f0;
+        }}
+        
+        .line-number {{
+            color: #6a737d;
+            margin-right: 8px;
+        }}
+        [data-theme="dark"] .line-number {{
+            color: #8b949e;
+        }}
+        
         @media (max-width: 768px) {{
             body {{
                 padding: 10px;
@@ -1370,7 +1497,7 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
                             html_str += f'<div class="location-link">{escaped_link}</div>'
                 elif isinstance(locations, str):
                     # 原始输出（--list模式）
-                    html_str += parse_list_output(locations, base_url, kernel_src)
+                    html_str += parse_list_output(locations, base_url, kernel_src, highlight_code)
                 else:
                     # 未知格式
                     html_str += f'<div class="location-link">Source information unavailable for: {escape_html_preserve_spaces(adjusted_func_info)}</div>'
@@ -2247,6 +2374,8 @@ def main():
                         help='Use fastfaddr2line.py for vmlinux processing')
     parser.add_argument('--use-external', action='store_true', 
                         help='Force using external faddr2line')
+    parser.add_argument('--highlight-code', action='store_true',
+                        help='Enable syntax highlighting for C source code (requires Pygments)')
     args = parser.parse_args()
 
     # 检查gawk可用性并决定是否使用--list选项
@@ -2332,7 +2461,8 @@ def main():
         kernel_src=kernel_src,
         use_list=use_list,
         verbose=args.verbose,
-        fast_mode=args.fast  # 传递fast_mode参数
+        fast_mode=args.fast,  # 传递fast_mode参数
+        highlight_code=args.highlight_code  # 传递highlight_code参数
     )
     
     # 写入输出文件
