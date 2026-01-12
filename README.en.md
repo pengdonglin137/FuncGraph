@@ -99,9 +99,7 @@ echo 1 > options/funcgraph-args
 echo function_graph > current_tracer
 
 # Start tracing (stop after running for 1 second)
-echo 1 > tracing_on
-sleep 1
-echo 0 > tracing_on
+echo 1 > tracing_on; sleep 1; echo 0 > tracing_on
 
 # Save the trace results
 cat trace > ~/ftrace.txt
@@ -140,6 +138,3 @@ This project is licensed under an open-source license. For detailed information,
 ## Contribution
 
 Issues and Pull Requests are welcome to improve this project.
-
-### How to Use This File
-You can save the above content as `README.en.md` (consistent with the project structure mentioned in the original document) in the root directory of the `funcgraph_visualization` project. This file maintains the original Markdown structure, technical accuracy, and readability, while fully translating the content into natural and accurate English suitable for technical documentation.
