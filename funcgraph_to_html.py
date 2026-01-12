@@ -1059,6 +1059,21 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
         .keyboard-hint-close:hover {{
             color: var(--btn-danger);
         }}
+        /* 锚点目标行高亮样式 */
+        .line-container:target {{
+            background-color: var(--line-highlighted);
+            animation: pulse-highlight 1s ease-out;
+        }}
+        @keyframes pulse-highlight {{
+            0% {{
+                background-color: var(--line-highlighted);
+                box-shadow: 0 0 10px rgba(255, 193, 7, 0.5);
+            }}
+            100% {{
+                background-color: transparent;
+                box-shadow: none;
+            }}
+        }}
         @media (max-width: 768px) {{
             body {{
                 padding: 10px;
@@ -1123,15 +1138,16 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
 
     # 添加行号并输出原始ftrace日志
     for idx, line_data in enumerate(parsed_lines):
-        line_id = f"line_{idx}"
         line_number = idx + 1  # 行号从1开始
+        line_anchor_id = f"L{line_number}"  # 使用L{行号}格式作为锚点
+        line_id = f"line_{idx}"  # 保留用于JavaScript引用
         escaped_line = escape_html_preserve_spaces(line_data["raw_line"])
         
         # 检查是否可展开
         is_expandable = line_data['expandable'] and line_data['func_info']
         expandable_class = "expandable" if is_expandable else ""
         
-        html_str += f'<div class="line-container {expandable_class}" id="{line_id}_container" data-line-number="{line_number}"'
+        html_str += f'<div class="line-container {expandable_class}" id="{line_anchor_id}" data-line-number="{line_number}" data-line-id="{line_id}"'
         if is_expandable:
             html_str += f' onclick="handleLineClick(event, \'{line_id}\')" ondblclick="handleDoubleClick(event, \'{line_id}\')"'
         html_str += '>'
@@ -1152,7 +1168,7 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
             locations = func_locations_map.get(adjusted_func_info, {})
             
             # 为expanded-content添加内联样式style="display: none;"，确保初始状态
-            html_str += f'<div class="expanded-content" id="{line_id}_content" style="display: none;">'
+            html_str += f'<div class="expanded-content" id="{line_id}_content" style="display: none;">' 
             
             if locations:
                 # 检查是结构化数据还是原始输出
@@ -1620,8 +1636,8 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
             const scrollY = window.scrollY;
             
             const content = document.getElementById(lineId + '_content');
-            const btn = document.querySelector('#' + lineId + '_container .expand-btn');
-            const container = document.getElementById(lineId + '_container');
+            const btn = document.querySelector('[data-line-id="' + lineId + '"] .expand-btn');
+            const container = document.querySelector('[data-line-id="' + lineId + '"]');
             
             // 使用getComputedStyle获取计算后的显示状态
             const computedStyle = window.getComputedStyle(content);
@@ -2000,6 +2016,33 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
             }
         }
         
+        // 处理锚点导航
+        function handleAnchorNavigation() {
+            const hash = window.location.hash.substring(1);
+            if (hash) {
+                // 尝试查找锚点元素
+                const element = document.getElementById(hash);
+                if (element && element.classList.contains('line-container')) {
+                    // 如果是行容器，清除其他高亮，然后高亮此行
+                    const allLines = document.querySelectorAll('.line-container');
+                    allLines.forEach(line => line.classList.remove('highlighted'));
+                    element.classList.add('highlighted');
+                    
+                    // 平滑滚动到该行
+                    setTimeout(() => {
+                        element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    }, 100);
+                    
+                    // 设置键盘选中
+                    const lineId = element.getAttribute('data-line-id');
+                    const lineIndex = allLines.length > 0 ? Array.from(allLines).findIndex(line => line.getAttribute('data-line-id') === lineId) : -1;
+                    if (lineIndex >= 0) {
+                        setKeyboardSelectedLine(lineIndex, false);
+                    }
+                }
+            }
+        }
+        
         // 初始加载时
         window.addEventListener('load', function() {
             // 恢复主题
@@ -2017,16 +2060,13 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
             // 初始化键盘导航
             initKeyboardNavigation();
             
-            // 如果有hash，跳转到对应位置
-            if (window.location.hash) {
-                const id = window.location.hash.substring(1);
-                const element = document.getElementById(id);
-                if (element) {
-                    setTimeout(() => {
-                        element.scrollIntoView({ behavior: 'smooth' });
-                    }, 100);
-                }
-            }
+            // 处理锚点导航
+            handleAnchorNavigation();
+        });
+        
+        // 监听hash变化，支持动态锚点导航
+        window.addEventListener('hashchange', function() {
+            handleAnchorNavigation();
         });
     </script>
 </body>
