@@ -2,99 +2,319 @@
 #
 # CPU  DURATION                  FUNCTION CALLS
 # |     |   |                     |   |   |   |
- 3)               |  mutex_unlock() { /* <-rb_simple_write+0xf4/0x170 */
- 3)   0.208 us    |    __mutex_unlock_slowpath(); /* <-rb_simple_write+0xf4/0x170 */
- 3)   0.904 us    |  } /* mutex_unlock */
- 3)   0.107 us    |  preempt_count_add(); /* <-vfs_write+0x143/0x530 */
- 3)   0.086 us    |  preempt_count_sub(); /* <-vfs_write+0x172/0x530 */
- 3)   0.082 us    |  fpregs_assert_state_consistent(); /* <-do_syscall_64+0xcd/0xf80 */
- 3)               |  __x64_sys_dup2() { /* <-do_syscall_64+0x6b/0xf80 */
- 3)               |    ksys_dup3() { /* <-__x64_sys_dup2+0x2b/0x230 */
- 3)               |      _raw_spin_lock() { /* <-ksys_dup3+0x62/0x160 */
- 3)   0.085 us    |        preempt_count_add(); /* <-_raw_spin_lock+0x17/0x40 */
- 3)   0.088 us    |        do_raw_spin_lock(); /* <-ksys_dup3+0x62/0x160 */
- 3)   0.447 us    |      } /* _raw_spin_lock */
- 3)   0.081 us    |      expand_files(); /* <-ksys_dup3+0x6d/0x160 ret=0 */
- 3)               |      do_dup2() { /* <-__x64_sys_dup2+0x2b/0x230 */
- 3)               |        _raw_spin_unlock() { /* <-do_dup2+0xaf/0x1b0 */
- 3)   0.076 us    |          do_raw_spin_unlock(); /* <-_raw_spin_unlock+0x23/0x50 */
- 3)   0.079 us    |          preempt_count_sub(); /* <-_raw_spin_unlock+0x2d/0x50 */
- 3)   0.397 us    |        } /* _raw_spin_unlock */
- 3)               |        filp_close() { /* <-do_dup2+0xbf/0x1b0 */
- 3)               |          filp_flush() { /* <-filp_close+0x14/0x30 */
- 3)   0.074 us    |            dnotify_flush(); /* <-filp_flush+0x79/0xa0 */
- 3)   0.072 us    |            locks_remove_posix(); /* <-filp_flush+0x84/0xa0 */
- 3)   0.376 us    |          } /* filp_flush ret=0 */
- 3)               |          fput_close() { /* <-filp_close+0x1f/0x30 */
- 3)               |            __fput_deferred() { /* <-filp_close+0x1f/0x30 */
- 3)               |              task_work_add() { /* <-__fput_deferred+0x4d/0x110 */
- 3)   0.083 us    |                kick_process(); /* <-task_work_add+0x86/0x100 */
- 3)   0.236 us    |              } /* task_work_add ret=0 */
- 3)   0.402 us    |            } /* __fput_deferred */
- 3)   0.556 us    |          } /* fput_close */
- 3)   1.156 us    |        } /* filp_close ret=0 */
- 3)   1.812 us    |      } /* do_dup2 ret=1 */
- 3)   2.666 us    |    } /* ksys_dup3 ret=1 */
- 3)   2.824 us    |  } /* __x64_sys_dup2 ret=1 */
- 3)               |  task_work_run() { /* <-exit_to_user_mode_loop+0x12f/0x4b0 */
- 3)               |    _raw_spin_lock_irq() { /* <-task_work_run+0x45/0x90 */
- 3)   0.075 us    |      preempt_count_add(); /* <-_raw_spin_lock_irq+0x1f/0x50 */
- 3)   0.082 us    |      do_raw_spin_lock(); /* <-task_work_run+0x45/0x90 */
- 3)   0.436 us    |    } /* _raw_spin_lock_irq */
- 3)               |    _raw_spin_unlock_irq() { /* <-task_work_run+0x4d/0x90 */
- 3)   0.075 us    |      do_raw_spin_unlock(); /* <-_raw_spin_unlock_irq+0x23/0x50 */
- 3)   0.080 us    |      preempt_count_sub(); /* <-_raw_spin_unlock_irq+0x33/0x50 */
- 3)   0.438 us    |    } /* _raw_spin_unlock_irq */
- 3)               |    ____fput() { /* <-task_work_run+0x5c/0x90 */
- 3)               |      __fput() { /* <-task_work_run+0x5c/0x90 */
- 3)   0.070 us    |        __cond_resched(); /* <-__fput+0x36/0x2c0 ret=0 */
- 3)   0.073 us    |        locks_remove_file(); /* <-__fput+0xc7/0x2c0 */
- 3)               |        security_file_release() { /* <-__fput+0xcf/0x2c0 */
- 3)   0.071 us    |          bpf_lsm_file_release(); /* <-security_file_release+0x20/0x40 */
- 3)   0.078 us    |          ima_file_free(); /* <-security_file_release+0x3d/0x40 */
- 3)   0.382 us    |        } /* security_file_release */
- 3)               |        mutex_lock_nested() { /* <-tracing_release_generic_tr+0x1f/0x60 */
- 3)               |          __mutex_lock() { /* <-tracing_release_generic_tr+0x1f/0x60 */
- 3)   0.071 us    |            __cond_resched(); /* <-__mutex_lock+0x5e/0x10e0 ret=0 */
- 3)   0.075 us    |            preempt_count_add(); /* <-__mutex_lock+0x7c/0x10e0 */
- 3)   0.075 us    |            preempt_count_sub(); /* <-__mutex_lock+0x13d/0x10e0 */
- 3)   0.589 us    |          } /* __mutex_lock ret=0 */
- 3)   0.733 us    |        } /* mutex_lock_nested */
- 3)               |        mutex_unlock() { /* <-tracing_release_generic_tr+0x50/0x60 */
- 3)   0.085 us    |          __mutex_unlock_slowpath(); /* <-tracing_release_generic_tr+0x50/0x60 */
- 3)   0.227 us    |        } /* mutex_unlock */
- 3)   0.077 us    |        module_put(); /* <-__fput+0x115/0x2c0 */
- 3)   0.072 us    |        file_f_owner_release(); /* <-__fput+0x11d/0x2c0 */
- 3)               |        mnt_put_write_access() { /* <-__fput+0x1e7/0x2c0 */
- 3)   0.079 us    |          preempt_count_add(); /* <-mnt_put_write_access+0x17/0x50 */
- 3)   0.077 us    |          preempt_count_sub(); /* <-mnt_put_write_access+0x29/0x50 */
- 3)   0.610 us    |        } /* mnt_put_write_access */
- 3)               |        dput() { /* <-__fput+0x141/0x2c0 */
- 3)   0.073 us    |          __cond_resched(); /* <-dput+0x1e/0x220 ret=0 */
- 3)   0.074 us    |          __rcu_read_lock(); /* <-dput+0x23/0x220 */
- 3)               |          _raw_spin_lock() { /* <-dput+0x1e1/0x220 */
- 3)   0.077 us    |            preempt_count_add(); /* <-_raw_spin_lock+0x17/0x40 */
- 3)   0.085 us    |            do_raw_spin_lock(); /* <-dput+0x1e1/0x220 */
- 3)   0.453 us    |          } /* _raw_spin_lock */
- 3)               |          _raw_spin_unlock() { /* <-dput+0x108/0x220 */
- 3)   0.074 us    |            do_raw_spin_unlock(); /* <-_raw_spin_unlock+0x23/0x50 */
- 3)   0.075 us    |            preempt_count_sub(); /* <-_raw_spin_unlock+0x2d/0x50 */
- 3)   0.397 us    |          } /* _raw_spin_unlock */
- 3)   0.078 us    |          __rcu_read_unlock(); /* <-__fput+0x141/0x2c0 */
- 3)   1.621 us    |        } /* dput */
- 3)               |        mntput() { /* <-__fput+0x155/0x2c0 */
- 3)               |          mntput_no_expire() { /* <-__fput+0x155/0x2c0 */
- 3)   0.073 us    |            __rcu_read_lock(); /* <-mntput_no_expire+0xe/0x100 */
- 3)   0.089 us    |            __rcu_read_unlock(); /* <-__fput+0x155/0x2c0 */
- 3)   0.447 us    |          } /* mntput_no_expire */
- 3)   0.592 us    |        } /* mntput */
- 3)               |        security_file_free() { /* <-__fput+0x15d/0x2c0 */
- 3)   0.070 us    |          bpf_lsm_file_free_security(); /* <-security_file_free+0x3e/0x70 */
- 3)               |          kmem_cache_free() { /* <-__fput+0x15d/0x2c0 */
- 3)   0.072 us    |            kmemleak_free(); /* <-kmem_cache_free+0x26f/0x5f0 */
- 3)   0.264 us    |          } /* kmem_cache_free */
- 3)   0.560 us    |        } /* security_file_free */
- 3)               |        kmem_cache_free() { /* <-task_work_run+0x5c/0x90 */
- 3)               |          __memcg_slab_free_hook() { /* <-kmem_cache_free+0x42c/0x5f0 */
- 3)               |            refill_obj_stock() { /* <-__memcg_slab_free_hook+0x104/0x210 */
- 3)   0.075 us    |              preempt_count_add(); /* <-refill_obj_stock+0x2f/0x530 */
+ 3)               |            pick_next_task(rq=0xffff88807ddad800, prev=0xffff888007949bc0, rf=0xffffc900013f3e00) { /* <-__schedule+0x154/0x700 */
+ 3)               |              pick_next_task_fair(rq=0xffff88807ddad800, prev=0xffff888007949bc0, rf=0xffffc900013f3e00) { /* <-__pick_next_task+0x3b/0x150 */
+ 3)   0.081 us    |                pick_task_fair(rq=0xffff88807ddad800); /* <-pick_next_task_fair+0x48/0x3b0 ret=0x0 */
+ 3)               |                sched_balance_newidle(this_rq=0xffff88807ddad800, rf=0xffffc900013f3e00) { /* <-pick_next_task_fair+0x32/0x3b0 */
+ 3)               |                  __rcu_read_lock() { /* <-sched_balance_newidle+0x121/0x780 */
+ 3)   0.077 us    |                    rcu_preempt_read_enter(); /* <-__rcu_read_lock+0xe/0x30 */
+ 3)   0.228 us    |                  } /* __rcu_read_lock */
+ 3)               |                  rcu_read_lock_held() { /* <-sched_balance_newidle+0x3e1/0x780 */
+ 3)               |                    rcu_read_lock_held_common(ret=0xffffc900013f3d1f) { /* <-rcu_read_lock_held+0x26/0x70 */
+ 3)               |                      rcu_lockdep_current_cpu_online() { /* <-rcu_read_lock_held_common+0x2a/0x40 */
+ 3)               |                        rcu_rdp_cpu_online.isra.0() { /* <-rcu_lockdep_current_cpu_online+0x48/0x70 */
+ 3)   0.074 us    |                          rcu_rnp_online_cpus(rnp=0xffffffff83781280); /* <-rcu_rdp_cpu_online.isra.0+0xe/0x20 ret=0xff */
+ 3)   0.225 us    |                        } /* rcu_rdp_cpu_online.isra.0 ret=0x1 */
+ 3)   0.377 us    |                      } /* rcu_lockdep_current_cpu_online ret=true */
+ 3)   0.527 us    |                    } /* rcu_read_lock_held_common ret=false */
+ 3)   0.692 us    |                  } /* rcu_read_lock_held ret=1 */
+ 3)   0.075 us    |                  __msecs_to_jiffies(m=0x8); /* <-sched_balance_newidle+0x548/0x780 ret=0x1 */
+ 3)               |                  __rcu_read_unlock() { /* <-sched_balance_newidle+0x36d/0x780 */
+ 3)   0.074 us    |                    rcu_preempt_read_exit(); /* <-__rcu_read_unlock+0x17/0x50 ret=0 */
+ 3)   0.224 us    |                  } /* __rcu_read_unlock */
+ 3)   0.082 us    |                  nohz_newidle_balance.isra.0(); /* <-sched_balance_newidle+0x393/0x780 ret=0xffffaf7b */
+ 3)   2.094 us    |                } /* sched_balance_newidle ret=0 */
+ 3)   2.513 us    |              } /* pick_next_task_fair ret=0x0 */
+ 3)   0.076 us    |              pick_task_idle(rq=0xffff88807ddad800); /* <-__pick_next_task+0x134/0x150 ret=0xffff888006058000 */
+ 3)               |              put_prev_task_fair(rq=0xffff88807ddad800, prev=0xffff888007949bc0, next=0xffff888006058000) { /* <-__pick_next_task+0x104/0x150 */
+ 3)               |                put_prev_entity(cfs_rq=0xffff888008e4d800, prev=0xffff888007949c40) { /* <-put_prev_task_fair+0x22/0x40 */
+ 3)   0.076 us    |                  check_cfs_rq_runtime(cfs_rq=0xffff888008e4d800); /* <-put_prev_entity+0x1b/0xa0 ret=false */
+ 3)   0.244 us    |                } /* put_prev_entity */
+ 3)               |                put_prev_entity(cfs_rq=0xffff88807ddad940, prev=0xffff8880057f4e00) { /* <-put_prev_task_fair+0x22/0x40 */
+ 3)   0.074 us    |                  check_cfs_rq_runtime(cfs_rq=0xffff88807ddad940); /* <-put_prev_entity+0x1b/0xa0 ret=false */
+ 3)   0.224 us    |                } /* put_prev_entity */
+ 3)   0.719 us    |              } /* put_prev_task_fair */
+ 3)   0.076 us    |              set_next_task_idle(rq=0xffff88807ddad800, next=0xffff888006058000, first=0x1); /* <-__pick_next_task+0x11d/0x150 */
+ 3)   3.977 us    |            } /* pick_next_task ret=0xffff888006058000 */
+ 3)   0.074 us    |            migrate_disable_switch.isra.0(); /* <-__schedule+0x1a4/0x700 ret=0x0 */
+ 3)               |            psi_account_irqtime(rq=0xffff88807ddad800, curr=0xffff888007949bc0, prev=0xffff888006058000) { /* <-__schedule+0x1b2/0x700 */
+ 3)               |              rcu_read_lock_sched_held() { /* <-psi_account_irqtime+0x28d/0x450 */
+ 3)               |                rcu_read_lock_held_common(ret=0xffffc900013f3da7) { /* <-rcu_read_lock_sched_held+0x26/0x90 */
+ 3)               |                  rcu_lockdep_current_cpu_online() { /* <-rcu_read_lock_held_common+0x2a/0x40 */
+ 3)               |                    rcu_rdp_cpu_online.isra.0() { /* <-rcu_lockdep_current_cpu_online+0x48/0x70 */
+ 3)   0.074 us    |                      rcu_rnp_online_cpus(rnp=0xffffffff83781280); /* <-rcu_rdp_cpu_online.isra.0+0xe/0x20 ret=0xff */
+ 3)   0.225 us    |                    } /* rcu_rdp_cpu_online.isra.0 ret=0x1 */
+ 3)   0.375 us    |                  } /* rcu_lockdep_current_cpu_online ret=true */
+ 3)   0.530 us    |                } /* rcu_read_lock_held_common ret=false */
+ 3)   0.687 us    |              } /* rcu_read_lock_sched_held ret=1 */
+ 3)               |              rcu_read_lock_sched_held() { /* <-psi_account_irqtime+0x323/0x450 */
+ 3)               |                rcu_read_lock_held_common(ret=0xffffc900013f3da7) { /* <-rcu_read_lock_sched_held+0x26/0x90 */
+ 3)               |                  rcu_lockdep_current_cpu_online() { /* <-rcu_read_lock_held_common+0x2a/0x40 */
+ 3)               |                    rcu_rdp_cpu_online.isra.0() { /* <-rcu_lockdep_current_cpu_online+0x48/0x70 */
+ 3)   0.075 us    |                      rcu_rnp_online_cpus(rnp=0xffffffff83781280); /* <-rcu_rdp_cpu_online.isra.0+0xe/0x20 ret=0xff */
+ 3)   0.223 us    |                    } /* rcu_rdp_cpu_online.isra.0 ret=0x1 */
+ 3)   0.455 us    |                  } /* rcu_lockdep_current_cpu_online ret=true */
+ 3)   0.604 us    |                } /* rcu_read_lock_held_common ret=false */
+ 3)   0.764 us    |              } /* rcu_read_lock_sched_held ret=1 */
+ 3)               |              rcu_read_lock_sched_held() { /* <-psi_account_irqtime+0x3b5/0x450 */
+ 3)               |                rcu_read_lock_held_common(ret=0xffffc900013f3da7) { /* <-rcu_read_lock_sched_held+0x26/0x90 */
+ 3)               |                  rcu_lockdep_current_cpu_online() { /* <-rcu_read_lock_held_common+0x2a/0x40 */
+ 3)               |                    rcu_rdp_cpu_online.isra.0() { /* <-rcu_lockdep_current_cpu_online+0x48/0x70 */
+ 3)   0.076 us    |                      rcu_rnp_online_cpus(rnp=0xffffffff83781280); /* <-rcu_rdp_cpu_online.isra.0+0xe/0x20 ret=0xff */
+ 3)   0.226 us    |                    } /* rcu_rdp_cpu_online.isra.0 ret=0x1 */
+ 3)   0.376 us    |                  } /* rcu_lockdep_current_cpu_online ret=true */
+ 3)   0.527 us    |                } /* rcu_read_lock_held_common ret=false */
+ 3)   0.699 us    |              } /* rcu_read_lock_sched_held ret=1 */
+ 3)   0.105 us    |              record_times(groupc=0xffffe8ff3fda9340, now=0x15e09ea887); /* <-psi_account_irqtime+0x21b/0x450 */
+ 3)   0.138 us    |              record_times(groupc=0xffffe8ff3fd8c980, now=0x15e09ea887); /* <-psi_account_irqtime+0x21b/0x450 */
+ 3)   0.138 us    |              record_times(groupc=0xffffe8ff3fd87280, now=0x15e09ea887); /* <-psi_account_irqtime+0x21b/0x450 */
+ 3)   0.077 us    |              record_times(groupc=0xffff88807dd98180, now=0x15e09ea887); /* <-psi_account_irqtime+0x21b/0x450 */
+ 3)   3.657 us    |            } /* psi_account_irqtime */
+ 3)               |            psi_task_switch(prev=0xffff888007949bc0, next=0xffff888006058000, sleep=0x1) { /* <-__schedule+0x60b/0x700 */
+ 3)   0.085 us    |              psi_flags_change(task=0xffff888007949bc0, clear=20, set=0); /* <-psi_task_switch+0xdd/0x450 */
+ 3)               |              rcu_read_lock_sched_held() { /* <-psi_task_switch+0x3b7/0x450 */
+ 3)               |                rcu_read_lock_held_common(ret=0xffffc900013f3d87) { /* <-rcu_read_lock_sched_held+0x26/0x90 */
+ 3)               |                  rcu_lockdep_current_cpu_online() { /* <-rcu_read_lock_held_common+0x2a/0x40 */
+ 3)               |                    rcu_rdp_cpu_online.isra.0() { /* <-rcu_lockdep_current_cpu_online+0x48/0x70 */
+ 3)   0.076 us    |                      rcu_rnp_online_cpus(rnp=0xffffffff83781280); /* <-rcu_rdp_cpu_online.isra.0+0xe/0x20 ret=0xff */
+ 3)   0.226 us    |                    } /* rcu_rdp_cpu_online.isra.0 ret=0x1 */
+ 3)   0.376 us    |                  } /* rcu_lockdep_current_cpu_online ret=true */
+ 3)   0.529 us    |                } /* rcu_read_lock_held_common ret=false */
+ 3)   0.694 us    |              } /* rcu_read_lock_sched_held ret=1 */
+ 3)               |              psi_group_change(group=0xffff888101de6000, cpu=3, clear=0x14, set=0x0, now=0x15e09eb029, wake_clock=0x1) { /* <-psi_task_switch+0x152/0x450 */
+ 3)   0.100 us    |                test_states(tasks=0xffffe8ff3fda9340, state_mask=0x0); /* <-psi_group_change+0x120/0x2c0 ret=0x0 */
+ 3)   0.081 us    |                record_times(groupc=0xffffe8ff3fda9340, now=0x15e09eb029); /* <-psi_group_change+0x137/0x2c0 */
+ 3)   0.501 us    |              } /* psi_group_change */
+ 3)               |              psi_group_change(group=0xffff888101dbf800, cpu=3, clear=0x14, set=0x0, now=0x15e09eb029, wake_clock=0x1) { /* <-psi_task_switch+0x152/0x450 */
+ 3)   0.073 us    |                test_states(tasks=0xffffe8ff3fd8c980, state_mask=0x0); /* <-psi_group_change+0x120/0x2c0 ret=0x0 */
+ 3)   0.074 us    |                record_times(groupc=0xffffe8ff3fd8c980, now=0x15e09eb029); /* <-psi_group_change+0x137/0x2c0 */
+ 3)   0.415 us    |              } /* psi_group_change */
+ 3)               |              psi_group_change(group=0xffff888101701800, cpu=3, clear=0x14, set=0x0, now=0x15e09eb029, wake_clock=0x1) { /* <-psi_task_switch+0x152/0x450 */
+ 3)   0.076 us    |                test_states(tasks=0xffffe8ff3fd87280, state_mask=0x0); /* <-psi_group_change+0x120/0x2c0 ret=0x0 */
+ 3)   0.073 us    |                record_times(groupc=0xffffe8ff3fd87280, now=0x15e09eb029); /* <-psi_group_change+0x137/0x2c0 */
+ 3)   0.384 us    |              } /* psi_group_change */
+ 3)               |              psi_group_change(group=0xffffffff83698860, cpu=3, clear=0x14, set=0x0, now=0x15e09eb029, wake_clock=0x1) { /* <-psi_task_switch+0x152/0x450 */
+ 3)   0.074 us    |                test_states(tasks=0xffff88807dd98180, state_mask=0x0); /* <-psi_group_change+0x120/0x2c0 ret=0x0 */
+ 3)   0.075 us    |                record_times(groupc=0xffff88807dd98180, now=0x15e09eb029); /* <-psi_group_change+0x137/0x2c0 */
+ 3)   0.459 us    |              } /* psi_group_change */
+ 3)   3.250 us    |            } /* psi_task_switch */
+ 3)   0.268 us    |            __traceiter_sched_switch(__data=0x0, preempt=0x0, prev=0xffff888007949bc0, next=0xffff888006058000, prev_state=0x1); /* <-__schedule+0x3c9/0x700 ret=0 */
+ 3)   0.074 us    |            enter_lazy_tlb(mm=0xffff8880071ec7c0, tsk=0xffff888006058000); /* <-__schedule+0x5e1/0x700 */
+ 3)               |            save_fpregs_to_fpstate(fpu=0xffff88800794b380) { /* <-__switch_to+0x30f/0x530 */
+ 3)   0.096 us    |              update_avx_timestamp(fpu=0xffff88800794b380); /* <-__switch_to+0x30f/0x530 */
+ 3)   0.284 us    |            } /* save_fpregs_to_fpstate */
+ ------------------------------------------
+ 3)    bash-431    =>    <idle>-0   
+ ------------------------------------------
+
+ 3)               |  finish_task_switch.isra.0() { /* <-__schedule+0x2f9/0x700 */
+ 3)               |    __balance_callbacks(rq=0xffff88807ddad800) { /* <-finish_task_switch.isra.0+0xad/0x220 */
+ 3)   0.105 us    |      do_balance_callbacks(rq=0xffff88807ddad800, head=0x0); /* <-finish_task_switch.isra.0+0xad/0x220 */
+ 3)   0.264 us    |    } /* __balance_callbacks */
+ 3)               |    raw_spin_rq_unlock(rq=0xffff88807ddad800) { /* <-finish_task_switch.isra.0+0xb5/0x220 */
+ 3)               |      _raw_spin_unlock(lock=0xffff88807ddad800) { /* <-finish_task_switch.isra.0+0xb5/0x220 */
+ 3)   0.078 us    |        do_raw_spin_unlock(lock=0xffff88807ddad800); /* <-_raw_spin_unlock+0x23/0x50 */
+ 3)   0.082 us    |        preempt_count_sub(val=1); /* <-_raw_spin_unlock+0x2d/0x50 */
+ 3)   0.398 us    |      } /* _raw_spin_unlock */
+ 3)   0.545 us    |    } /* raw_spin_rq_unlock */
+ 3)   1.175 us    |  } /* finish_task_switch.isra.0 ret=0xffffffff81381f60 */
+ 3)               |  do_idle() { /* <-cpu_startup_entry+0x29/0x30 */
+ 3)   0.079 us    |    nohz_run_idle_balance(cpu=3); /* <-do_idle+0x15/0xc0 */
+ 3)               |    tick_nohz_idle_enter() { /* <-do_idle+0x26/0xc0 */
+ 3)               |      tick_nohz_start_idle(ts=0xffff88807dd9c880) { /* <-tick_nohz_idle_enter+0x6e/0x90 */
+ 3)   0.196 us    |        ktime_get(); /* <-tick_nohz_start_idle+0x4d/0xc0 ret=93933535693 */
+ 3)   0.531 us    |      } /* tick_nohz_start_idle */
+ 3)   0.768 us    |    } /* tick_nohz_idle_enter */
+ 3)               |    arch_cpu_idle_enter() { /* <-do_idle+0x3e/0xc0 */
+ 3)   2.049 us    |      tsc_verify_tsc_adjust(resume=0x0); /* <-arch_cpu_idle_enter+0x10/0x20 */
+ 3)   0.099 us    |      local_touch_nmi(); /* <-do_idle+0x3e/0xc0 */
+ 3)   2.421 us    |    } /* arch_cpu_idle_enter */
+ 3)               |    cpuidle_idle_call() { /* <-do_idle+0x7b/0xc0 */
+ 3)   0.097 us    |      cpuidle_get_cpu_driver(dev=0x0); /* <-cpuidle_idle_call+0x2e/0x150 ret=0x0 */
+ 3)   0.079 us    |      cpuidle_not_available(drv=0x0, dev=0x0); /* <-cpuidle_idle_call+0x4f/0x150 ret=true */
+ 3)               |      tick_nohz_idle_stop_tick() { /* <-cpuidle_idle_call+0x114/0x150 */
+ 3)               |        can_stop_idle_tick(cpu=3, ts=0xffff88807dd9c880) { /* <-tick_nohz_idle_stop_tick+0x9d/0xd0 */
+ 3)   0.075 us    |          report_idle_softirq(); /* <-can_stop_idle_tick+0x2a/0x40 ret=false */
+ 3)   0.253 us    |        } /* can_stop_idle_tick ret=true */
+ 3)               |        tick_nohz_next_event(ts=0xffff88807dd9c880, cpu=3) { /* <-tick_nohz_idle_stop_tick+0xac/0xd0 */
+ 3)   0.205 us    |          get_jiffies_update(basej=0xffffc900000d7e78); /* <-tick_nohz_next_event+0x2c/0x160 ret=0x15deaa0e80 */
+ 3)   0.084 us    |          rcu_needs_cpu(); /* <-tick_nohz_next_event+0x46/0x160 ret=0 */
+ 3)               |          get_next_timer_interrupt(basej=0xffffaf79, basem=0x15deaa0e80) { /* <-tick_nohz_next_event+0x107/0x160 */
+ 3)               |            _raw_spin_lock(lock=0xffff88807dd98d00) { /* <-__get_next_timer_interrupt+0x6b/0x250 */
+ 3)   0.149 us    |              preempt_count_add(val=1); /* <-_raw_spin_lock+0x17/0x40 */
+ 3)   0.088 us    |              do_raw_spin_lock(lock=0xffff88807dd98d00); /* <-__get_next_timer_interrupt+0x6b/0x250 */
+ 3)   0.598 us    |            } /* _raw_spin_lock */
+ 3)               |            _raw_spin_lock_nested(lock=0xffff88807dd99dc0, subclass=1) { /* <-__get_next_timer_interrupt+0x78/0x250 */
+ 3)   0.074 us    |              preempt_count_add(val=1); /* <-_raw_spin_lock_nested+0x1c/0x50 */
+ 3)   0.083 us    |              do_raw_spin_lock(lock=0xffff88807dd99dc0); /* <-__get_next_timer_interrupt+0x78/0x250 */
+ 3)   0.506 us    |            } /* _raw_spin_lock_nested */
+ 3)               |            fetch_next_timer_interrupt(basej=0xffffaf79, basem=0x15deaa0e80, base_local=0xffff88807dd98d00, base_global=0xffff88807dd99dc0, tevt=0xffffc900000d7e28) { /* <-__get_next_timer_interrupt+0x8e/0x250 */
+ 3)   0.076 us    |              next_timer_interrupt(base=0xffff88807dd98d00, basej=0xffffaf79); /* <-fetch_next_timer_interrupt+0x29/0xf0 ret=0xffffaf8a */
+ 3)   0.075 us    |              next_timer_interrupt(base=0xffff88807dd99dc0, basej=0xffffaf79); /* <-fetch_next_timer_interrupt+0x37/0xf0 ret=0xffffaf80 */
+ 3)   0.412 us    |            } /* fetch_next_timer_interrupt ret=0xffffaf80 */
+ 3)               |            timer_use_tmigr(basej=0xffffaf79, basem=0x15deaa0e80, nextevt=0xffffc900000d7e20, tick_stop_path=0x0, timer_base_idle=0x0, tevt=0xffffc900000d7e28) { /* <-__get_next_timer_interrupt+0x183/0x250 */
+ 3)               |              tmigr_quick_check(nextevt=0x15e2d62c00) { /* <-timer_use_tmigr+0x6a/0x80 */
+ 3)   0.127 us    |                tmigr_check_migrator_and_lonely(group=0xffff888005720a80, childmask=0x8); /* <-tmigr_quick_check+0x3e/0x90 ret=false */
+ 3)   0.297 us    |              } /* tmigr_quick_check ret=0x7fffffffffffffff */
+ 3)   0.476 us    |            } /* timer_use_tmigr */
+ 3)               |            _raw_spin_unlock(lock=0xffff88807dd99dc0) { /* <-__get_next_timer_interrupt+0x115/0x250 */
+ 3)   0.080 us    |              do_raw_spin_unlock(lock=0xffff88807dd99dc0); /* <-_raw_spin_unlock+0x23/0x50 */
+ 3)   0.080 us    |              preempt_count_sub(val=1); /* <-_raw_spin_unlock+0x2d/0x50 */
+ 3)   0.407 us    |            } /* _raw_spin_unlock */
+ 3)               |            _raw_spin_unlock(lock=0xffff88807dd98d00) { /* <-__get_next_timer_interrupt+0x11d/0x250 */
+ 3)   0.080 us    |              do_raw_spin_unlock(lock=0xffff88807dd98d00); /* <-_raw_spin_unlock+0x23/0x50 */
+ 3)   0.080 us    |              preempt_count_sub(val=1); /* <-_raw_spin_unlock+0x2d/0x50 */
+ 3)   0.399 us    |            } /* _raw_spin_unlock */
+ 3)               |            cmp_next_hrtimer_event(basem=0x15deaa0e80, expires=0x15e8cc0d00) { /* <-__get_next_timer_interrupt+0x12a/0x250 */
+ 3)               |              hrtimer_get_next_event() { /* <-cmp_next_hrtimer_event+0x12/0x50 */
+ 3)               |                _raw_spin_lock_irqsave(lock=0xffff88807dd9bf40) { /* <-hrtimer_get_next_event+0x2f/0x60 */
+ 3)   0.074 us    |                  preempt_count_add(val=1); /* <-_raw_spin_lock_irqsave+0x26/0x60 */
+ 3)   0.079 us    |                  do_raw_spin_lock(lock=0xffff88807dd9bf40); /* <-_raw_spin_lock_irqsave+0x4a/0x60 */
+ 3)   0.490 us    |                } /* _raw_spin_lock_irqsave ret=0x86 */
+ 3)               |                _raw_spin_unlock_irqrestore(lock=0xffff88807dd9bf40, flags=0x86) { /* <-hrtimer_get_next_event+0x53/0x60 */
+ 3)   0.080 us    |                  do_raw_spin_unlock(lock=0xffff88807dd9bf40); /* <-_raw_spin_unlock_irqrestore+0x27/0x60 */
+ 3)   0.074 us    |                  preempt_count_sub(val=1); /* <-_raw_spin_unlock_irqrestore+0x3c/0x60 */
+ 3)   0.395 us    |                } /* _raw_spin_unlock_irqrestore */
+ 3)   1.137 us    |              } /* hrtimer_get_next_event ret=0x7fffffffffffffff */
+ 3)   1.296 us    |            } /* cmp_next_hrtimer_event ret=0x15e8cc0d00 */
+ 3)   4.779 us    |          } /* get_next_timer_interrupt ret=0x15e8cc0d00 */
+ 3)   0.151 us    |          timekeeping_max_deferment(); /* <-tick_nohz_next_event+0x6f/0x160 ret=0xcd42e4dffb */
+ 3)   5.719 us    |        } /* tick_nohz_next_event ret=94100000000 */
+ 3)               |        tick_nohz_stop_tick(ts=0xffff88807dd9c880, cpu=3) { /* <-tick_nohz_idle_stop_tick+0x58/0xd0 */
+ 3)               |          timer_base_try_to_set_idle(basej=0xffffaf79, basem=0x15deaa0e80, idle=0xffffc900000d7e77) { /* <-tick_nohz_stop_tick+0x61/0x310 */
+ 3)               |            _raw_spin_lock(lock=0xffff88807dd98d00) { /* <-__get_next_timer_interrupt+0x6b/0x250 */
+ 3)   0.080 us    |              preempt_count_add(val=1); /* <-_raw_spin_lock+0x17/0x40 */
+ 3)   0.157 us    |              do_raw_spin_lock(lock=0xffff88807dd98d00); /* <-__get_next_timer_interrupt+0x6b/0x250 */
+ 3)   0.516 us    |            } /* _raw_spin_lock */
+ 3)               |            _raw_spin_lock_nested(lock=0xffff88807dd99dc0, subclass=1) { /* <-__get_next_timer_interrupt+0x78/0x250 */
+ 3)   0.078 us    |              preempt_count_add(val=1); /* <-_raw_spin_lock_nested+0x1c/0x50 */
+ 3)   0.081 us    |              do_raw_spin_lock(lock=0xffff88807dd99dc0); /* <-__get_next_timer_interrupt+0x78/0x250 */
+ 3)   0.423 us    |            } /* _raw_spin_lock_nested */
+ 3)               |            fetch_next_timer_interrupt(basej=0xffffaf79, basem=0x15deaa0e80, base_local=0xffff88807dd98d00, base_global=0xffff88807dd99dc0, tevt=0xffffc900000d7e20) { /* <-__get_next_timer_interrupt+0x8e/0x250 */
+ 3)   0.077 us    |              next_timer_interrupt(base=0xffff88807dd98d00, basej=0xffffaf79); /* <-fetch_next_timer_interrupt+0x29/0xf0 ret=0xffffaf8a */
+ 3)   0.076 us    |              next_timer_interrupt(base=0xffff88807dd99dc0, basej=0xffffaf79); /* <-fetch_next_timer_interrupt+0x37/0xf0 ret=0xffffaf80 */
+ 3)   0.386 us    |            } /* fetch_next_timer_interrupt ret=0xffffaf80 */
+ 3)               |            timer_use_tmigr(basej=0xffffaf79, basem=0x15deaa0e80, nextevt=0xffffc900000d7e18, tick_stop_path=0xffffc900000d7e77, timer_base_idle=0x0, tevt=0xffffc900000d7e20) { /* <-__get_next_timer_interrupt+0x183/0x250 */
+ 3)               |              tmigr_cpu_deactivate(nextexp=0x15e2d62c00) { /* <-timer_use_tmigr+0x2a/0x80 */
+ 3)               |                _raw_spin_lock(lock=0xffff88807dd9c9a0) { /* <-tmigr_cpu_deactivate+0x37/0xe0 */
+ 3)   0.080 us    |                  preempt_count_add(val=1); /* <-_raw_spin_lock+0x17/0x40 */
+ 3)   0.080 us    |                  do_raw_spin_lock(lock=0xffff88807dd9c9a0); /* <-tmigr_cpu_deactivate+0x37/0xe0 */
+ 3)   0.466 us    |                } /* _raw_spin_lock */
+ 3)               |                __tmigr_cpu_deactivate(tmc=0xffff88807dd9c9a0, nextexp=0x15e2d62c00) { /* <-tmigr_cpu_deactivate+0x42/0xe0 */
+ 3)               |                  walk_groups(up=0xffffffff81444740, data=0xffffc900000d7d88, tmc=0xffff88807dd9c9a0) { /* <-__tmigr_cpu_deactivate+0x7e/0xa0 */
+ 3)               |                    __walk_groups.isra.0() { /* <-__tmigr_cpu_deactivate+0x7e/0xa0 */
+ 3)               |                      tmigr_inactive_up(group=0xffff888005720a80, child=0x0, data=0xffffc900000d7d88) { /* <-__walk_groups.isra.0+0x1f/0x70 */
+ 3)               |                        tmigr_update_events(group=0xffff888005720a80, child=0x0, data=0xffffc900000d7d88) { /* <-tmigr_inactive_up+0xb3/0x180 */
+ 3)               |                          _raw_spin_lock(lock=0xffff888005720a80) { /* <-tmigr_update_events+0x171/0x2c0 */
+ 3)   0.080 us    |                            preempt_count_add(val=1); /* <-_raw_spin_lock+0x17/0x40 */
+ 3)   0.081 us    |                            do_raw_spin_lock(lock=0xffff888005720a80); /* <-tmigr_update_events+0x171/0x2c0 */
+ 3)   0.480 us    |                          } /* _raw_spin_lock */
+ 3)               |                          _raw_spin_unlock(lock=0xffff888005720a80) { /* <-tmigr_update_events+0x12e/0x2c0 */
+ 3)   0.082 us    |                            do_raw_spin_unlock(lock=0xffff888005720a80); /* <-_raw_spin_unlock+0x23/0x50 */
+ 3)   0.077 us    |                            preempt_count_sub(val=1); /* <-_raw_spin_unlock+0x2d/0x50 */
+ 3)   0.404 us    |                          } /* _raw_spin_unlock */
+ 3)   1.166 us    |                        } /* tmigr_update_events ret=false */
+ 3)   1.362 us    |                      } /* tmigr_inactive_up ret=true */
+ 3)   1.557 us    |                    } /* __walk_groups.isra.0 ret=0x1 */
+ 3)   1.756 us    |                  } /* walk_groups */
+ 3)   1.927 us    |                } /* __tmigr_cpu_deactivate ret=0x7fffffffffffffff */
+ 3)               |                _raw_spin_unlock(lock=0xffff88807dd9c9a0) { /* <-tmigr_cpu_deactivate+0x6b/0xe0 */
+ 3)   0.077 us    |                  do_raw_spin_unlock(lock=0xffff88807dd9c9a0); /* <-_raw_spin_unlock+0x23/0x50 */
+ 3)   0.075 us    |                  preempt_count_sub(val=1); /* <-_raw_spin_unlock+0x2d/0x50 */
+ 3)   0.396 us    |                } /* _raw_spin_unlock */
+ 3)   3.117 us    |              } /* tmigr_cpu_deactivate ret=0x7fffffffffffffff */
+ 3)   3.288 us    |            } /* timer_use_tmigr */
+ 3)               |            _raw_spin_unlock(lock=0xffff88807dd99dc0) { /* <-__get_next_timer_interrupt+0x115/0x250 */
+ 3)   0.079 us    |              do_raw_spin_unlock(lock=0xffff88807dd99dc0); /* <-_raw_spin_unlock+0x23/0x50 */
+ 3)   0.075 us    |              preempt_count_sub(val=1); /* <-_raw_spin_unlock+0x2d/0x50 */
+ 3)   0.388 us    |            } /* _raw_spin_unlock */
+ 3)               |            _raw_spin_unlock(lock=0xffff88807dd98d00) { /* <-__get_next_timer_interrupt+0x11d/0x250 */
+ 3)   0.172 us    |              do_raw_spin_unlock(lock=0xffff88807dd98d00); /* <-_raw_spin_unlock+0x23/0x50 */
+ 3)   0.073 us    |              preempt_count_sub(val=1); /* <-_raw_spin_unlock+0x2d/0x50 */
+ 3)   0.496 us    |            } /* _raw_spin_unlock */
+ 3)               |            cmp_next_hrtimer_event(basem=0x15deaa0e80, expires=0x15e8cc0d00) { /* <-__get_next_timer_interrupt+0x12a/0x250 */
+ 3)               |              hrtimer_get_next_event() { /* <-cmp_next_hrtimer_event+0x12/0x50 */
+ 3)               |                _raw_spin_lock_irqsave(lock=0xffff88807dd9bf40) { /* <-hrtimer_get_next_event+0x2f/0x60 */
+ 3)   0.077 us    |                  preempt_count_add(val=1); /* <-_raw_spin_lock_irqsave+0x26/0x60 */
+ 3)   0.078 us    |                  do_raw_spin_lock(lock=0xffff88807dd9bf40); /* <-_raw_spin_lock_irqsave+0x4a/0x60 */
+ 3)   0.421 us    |                } /* _raw_spin_lock_irqsave ret=0x92 */
+ 3)               |                _raw_spin_unlock_irqrestore(lock=0xffff88807dd9bf40, flags=0x92) { /* <-hrtimer_get_next_event+0x53/0x60 */
+ 3)   0.080 us    |                  do_raw_spin_unlock(lock=0xffff88807dd9bf40); /* <-_raw_spin_unlock_irqrestore+0x27/0x60 */
+ 3)   0.076 us    |                  preempt_count_sub(val=1); /* <-_raw_spin_unlock_irqrestore+0x3c/0x60 */
+ 3)   0.393 us    |                } /* _raw_spin_unlock_irqrestore */
+ 3)   1.041 us    |              } /* hrtimer_get_next_event ret=0x7fffffffffffffff */
+ 3)   1.198 us    |            } /* cmp_next_hrtimer_event ret=0x15e8cc0d00 */
+ 3)   7.378 us    |          } /* timer_base_try_to_set_idle ret=0x15e8cc0d00 */
+ 3)               |          calc_load_nohz_start() { /* <-tick_nohz_stop_tick+0x139/0x310 */
+ 3)               |            calc_load_nohz_fold(rq=0xffff88807ddad800) { /* <-tick_nohz_stop_tick+0x139/0x310 */
+ 3)   0.078 us    |              calc_load_fold_active(this_rq=0xffff88807ddad800, adjust=0); /* <-calc_load_nohz_fold+0xc/0x40 ret=-1 */
+ 3)   0.302 us    |            } /* calc_load_nohz_fold */
+ 3)   0.463 us    |          } /* calc_load_nohz_start */
+ 3)               |          quiet_vmstat() { /* <-tick_nohz_stop_tick+0x13e/0x310 */
+ 3)               |            need_update(cpu=3) { /* <-quiet_vmstat+0x32/0x40 */
+ 3)   0.077 us    |              first_online_pgdat(); /* <-need_update+0x13/0xa0 ret=0xffff88807fffb2c0 */
+ 3)   0.358 us    |            } /* need_update ret=true */
+ 3)               |            refresh_cpu_vm_stats(do_pagesets=0x0) { /* <-tick_nohz_stop_tick+0x13e/0x310 */
+ 3)   0.076 us    |              first_online_pgdat(); /* <-refresh_cpu_vm_stats+0x8e/0x270 ret=0xffff88807fffb2c0 */
+ 3)   0.080 us    |              next_zone(zone=0xffff88807fffb2c0); /* <-refresh_cpu_vm_stats+0xae/0x270 ret=0xffff88807fffba00 */
+ 3)   0.075 us    |              next_zone(zone=0xffff88807fffba00); /* <-refresh_cpu_vm_stats+0xae/0x270 ret=0xffff88807fffc140 */
+ 3)   0.075 us    |              next_zone(zone=0xffff88807fffc140); /* <-refresh_cpu_vm_stats+0xae/0x270 ret=0xffff88807fffc880 */
+ 3)               |              next_zone(zone=0xffff88807fffc880) { /* <-refresh_cpu_vm_stats+0xae/0x270 */
+ 3)   0.088 us    |                next_online_pgdat(pgdat=0xffff88807fffb2c0); /* <-refresh_cpu_vm_stats+0xae/0x270 ret=0xffff88813fff92c0 */
+ 3)   0.246 us    |              } /* next_zone ret=0xffff88813fff92c0 */
+ 3)   0.083 us    |              next_zone(zone=0xffff88813fff92c0); /* <-refresh_cpu_vm_stats+0xae/0x270 ret=0xffff88813fff9a00 */
+ 3)   0.075 us    |              next_zone(zone=0xffff88813fff9a00); /* <-refresh_cpu_vm_stats+0xae/0x270 ret=0xffff88813fffa140 */
+ 3)   0.074 us    |              next_zone(zone=0xffff88813fffa140); /* <-refresh_cpu_vm_stats+0xae/0x270 ret=0xffff88813fffa880 */
+ 3)               |              next_zone(zone=0xffff88813fffa880) { /* <-refresh_cpu_vm_stats+0xae/0x270 */
+ 3)   0.100 us    |                next_online_pgdat(pgdat=0xffff88813fff92c0); /* <-refresh_cpu_vm_stats+0xae/0x270 ret=0x0 */
+ 3)   0.253 us    |              } /* next_zone ret=0x0 */
+ 3)   0.076 us    |              first_online_pgdat(); /* <-refresh_cpu_vm_stats+0x1b1/0x270 ret=0xffff88807fffb2c0 */
+ 3)   0.080 us    |              next_online_pgdat(pgdat=0xffff88807fffb2c0); /* <-refresh_cpu_vm_stats+0x215/0x270 ret=0xffff88813fff92c0 */
+ 3)   0.157 us    |              next_online_pgdat(pgdat=0xffff88813fff92c0); /* <-refresh_cpu_vm_stats+0x215/0x270 ret=0x0 */
+ 3)   0.241 us    |              fold_diff(zone_diff=0xffffc900000d7d3c, node_diff=0xffffc900000d7d64); /* <-refresh_cpu_vm_stats+0x228/0x270 ret=5 */
+ 3)   3.234 us    |            } /* refresh_cpu_vm_stats ret=5 */
+ 3)   3.856 us    |          } /* quiet_vmstat */
+ 3)               |          hrtimer_start_range_ns(timer=0xffff88807dd9c898, tim=94100000000, delta_ns=0x0, mode=10) { /* <-tick_nohz_stop_tick+0xd7/0x310 */
+ 3)               |            lock_hrtimer_base(timer=0xffff88807dd9c898, flags=0xffffc900000d7e38) { /* <-hrtimer_start_range_ns+0x4d/0xb0 */
+ 3)               |              _raw_spin_lock_irqsave(lock=0xffff88807dd9bf40) { /* <-lock_hrtimer_base+0x25/0x50 */
+ 3)   0.079 us    |                preempt_count_add(val=1); /* <-_raw_spin_lock_irqsave+0x26/0x60 */
+ 3)   0.079 us    |                do_raw_spin_lock(lock=0xffff88807dd9bf40); /* <-_raw_spin_lock_irqsave+0x4a/0x60 */
+ 3)   0.425 us    |              } /* _raw_spin_lock_irqsave ret=0x82 */
+ 3)   0.578 us    |            } /* lock_hrtimer_base ret=0xffff88807dd9bfc0 */
+ 3)               |            __hrtimer_start_range_ns(timer=0xffff88807dd9c898, tim=94100000000, delta_ns=0x0, mode=10, base=0xffff88807dd9bfc0) { /* <-hrtimer_start_range_ns+0x61/0xb0 */
+ 3)   0.146 us    |              __remove_hrtimer(timer=0xffff88807dd9c898, base=0xffff88807dd9bfc0, newstate=0x1, reprogram=0); /* <-__hrtimer_start_range_ns+0x141/0x220 */
+ 3)   0.077 us    |              ktime_add_safe(lhs=94100000000, rhs=0); /* <-__hrtimer_start_range_ns+0x6f/0x220 ret=94100000000 */
+ 3)   0.113 us    |              enqueue_hrtimer(timer=0xffff88807dd9c898, base=0xffff88807dd9bfc0, mode=10); /* <-__hrtimer_start_range_ns+0x88/0x220 ret=true */
+ 3)               |              hrtimer_force_reprogram(cpu_base=0xffff88807dd9bf40, skip_equal=1) { /* <-__hrtimer_start_range_ns+0x96/0x220 */
+ 3)               |                hrtimer_update_next_event(cpu_base=0xffff88807dd9bf40) { /* <-hrtimer_force_reprogram+0x11/0x30 */
+ 3)               |                  __hrtimer_get_next_event(cpu_base=0xffff88807dd9bf40, active_mask=0xf0) { /* <-hrtimer_update_next_event+0x28/0x60 */
+ 3)               |                    __hrtimer_next_event_base(cpu_base=0xffff88807dd9bf40, exclude=0x0, active=0x0, expires_next=9223372036854775807) { /* <-__hrtimer_get_next_event+0x6c/0x80 */
+ 3)   0.081 us    |                      __next_base(cpu_base=0xffff88807dd9bf40, active=0xffffc900000d7d7c); /* <-__hrtimer_next_event_base+0x29/0x90 ret=0x0 */
+ 3)   0.241 us    |                    } /* __hrtimer_next_event_base ret=9223372036854775807 */
+ 3)   0.412 us    |                  } /* __hrtimer_get_next_event ret=9223372036854775807 */
+ 3)               |                  __hrtimer_get_next_event(cpu_base=0xffff88807dd9bf40, active_mask=0xf) { /* <-hrtimer_update_next_event+0x3c/0x60 */
+ 3)               |                    __hrtimer_next_event_base(cpu_base=0xffff88807dd9bf40, exclude=0x0, active=0x3, expires_next=9223372036854775807) { /* <-hrtimer_update_next_event+0x3c/0x60 */
+ 3)   0.080 us    |                      __next_base(cpu_base=0xffff88807dd9bf40, active=0xffffc900000d7d94); /* <-__hrtimer_next_event_base+0x29/0x90 ret=0xffff88807dd9bfc0 */
+ 3)   0.076 us    |                      __next_base(cpu_base=0xffff88807dd9bf40, active=0xffffc900000d7d94); /* <-__hrtimer_next_event_base+0x29/0x90 ret=0xffff88807dd9c040 */
+ 3)   0.080 us    |                      __next_base(cpu_base=0xffff88807dd9bf40, active=0xffffc900000d7d94); /* <-__hrtimer_next_event_base+0x29/0x90 ret=0x0 */
+ 3)   0.618 us    |                    } /* __hrtimer_next_event_base ret=94100000000 */
+ 3)   0.781 us    |                  } /* __hrtimer_get_next_event ret=94100000000 */
+ 3)   1.436 us    |                } /* hrtimer_update_next_event ret=94100000000 */
+ 3)               |                __hrtimer_reprogram.constprop.0() { /* <-__hrtimer_start_range_ns+0x96/0x220 */
+ 3)               |                  tick_program_event(expires=94100000000, force=1) { /* <-__hrtimer_start_range_ns+0x96/0x220 */
+ 3)               |                    clockevents_program_event(dev=0xffff88807dd97a00, expires=94100000000, force=0x1) { /* <-__hrtimer_start_range_ns+0x96/0x220 */
+ 3)   0.172 us    |                      ktime_get(); /* <-clockevents_program_event+0x51/0xf0 ret=93933560950 */
+ 3)   1.113 us    |                      lapic_next_deadline(delta=0x29e7844, evt=0xffff88807dd97a00); /* <-clockevents_program_event+0x8d/0xf0 ret=0 */
+ 3)   1.617 us    |                    } /* clockevents_program_event ret=0 */
+ 3)   1.803 us    |                  } /* tick_program_event ret=0 */
+ 3)   2.011 us    |                } /* __hrtimer_reprogram.constprop.0 ret=0x0 */
+ 3)   3.681 us    |              } /* hrtimer_force_reprogram */
+ 3)   4.447 us    |            } /* __hrtimer_start_range_ns ret=0 */
+ 3)               |            _raw_spin_unlock_irqrestore(lock=0xffff88807dd9bf40, flags=0x82) { /* <-hrtimer_start_range_ns+0x75/0xb0 */
+ 3)   0.082 us    |              do_raw_spin_unlock(lock=0xffff88807dd9bf40); /* <-_raw_spin_unlock_irqrestore+0x27/0x60 */
+ 3)   0.077 us    |              preempt_count_sub(val=1); /* <-_raw_spin_unlock_irqrestore+0x3c/0x60 */
+ 3)   0.422 us    |            } /* _raw_spin_unlock_irqrestore */
+ 3)   5.767 us    |          } /* hrtimer_start_range_ns */
+ 3) + 17.930 us   |        } /* tick_nohz_stop_tick */
+ 3)   0.091 us    |        nohz_balance_enter_idle(cpu=3); /* <-cpuidle_idle_call+0x114/0x150 */
+ 3) + 24.545 us   |      } /* tick_nohz_idle_stop_tick */
