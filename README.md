@@ -6,7 +6,7 @@
 
 ## 介绍
 
-funcgraph_visualization 是一个强大的 ftrace 可视化工具，主要用于：
+funcgraph_visualization 是一个用 **AI** 开发的强大的 ftrace 可视化工具，主要用于：
 
 1. **可视化 funcgraph-retaddr 输出**：将 Linux 内核的 function_graph tracer 输出转换为交互式 HTML 格式，大幅提高通过 trace 直接定位代码行的效率
 2. **快速 faddr2line 实现**：使用 Python 重写了 Linux 内核中的 faddr2line 功能，处理性能得到数量级的提升
