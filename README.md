@@ -39,14 +39,7 @@ chmod +x *.py
 
 ## 使用方法
 
-### 基本用法
-
-```bash
-./funcgraph_to_html.py --vmlinux ./path/to/vmlinux --kernel-src /path/to/linux-source \
-    --output output.html ftrace.txt
-```
-
-### 完整参数说明
+### 参数说明
 
 ```bash
 ./funcgraph_to_html.py -h
@@ -64,19 +57,19 @@ chmod +x *.py
 - `--fast`：使用 fastfaddr2line.py 处理 vmlinux
 - `--use-external`：强制使用外部 faddr2line
 
-### 高级用法
+### 用法
 
-使用 fastfaddr2line 模式（推荐）：
+#### 使用 fastfaddr2line
 
 ```bash
-./funcgraph_to_html.py --fast --vmlinux ./linux-6.18/vmlinux \
-    --kernel-src ./linux-6.18 \
-    --module-dirs ./linux-6.18/modules_install/ \
+./funcgraph_to_html.py --fast --vmlinux /home/pengdl/work/linux-6.18/vmlinux \
+    --kernel-src /home/pengdl/work/linux-6.18 \
+    --module-dirs /home/pengl/work/linux-6.18/modules_install/ \
     --base-url https://elixir.bootlin.com/linux/v6.18/source \
     --output output.html ftrace.txt
 ```
 
-### 单独使用 fastfaddr2line
+#### 单独使用 fastfaddr2line
 
 ```bash
 # 查看帮助
@@ -97,9 +90,12 @@ cd /sys/kernel/tracing
 # 停止当前追踪
 echo 0 > tracing_on
 
-# 启用 return 地址和返回值显示
+# 启动函数返回地址跟踪 （**必选**）
 echo 1 > options/funcgraph-retaddr
+# 启动函数返回值跟踪（可选）
 echo 1 > options/funcgraph-retval
+# 启动函数参数跟踪（可选）
+echo 1 > options/funcgraph-args
 
 # 设置 function_graph tracer
 echo function_graph > current_tracer
