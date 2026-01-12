@@ -101,9 +101,7 @@ echo 1 > options/funcgraph-args
 echo function_graph > current_tracer
 
 # 开始追踪（运行 1 秒后停止）
-echo 1 > tracing_on
-sleep 1
-echo 0 > tracing_on
+echo 1 > tracing_on; sleep 1; echo 0 > tracing_on
 
 # 保存 trace 结果
 cat trace > ~/ftrace.txt
