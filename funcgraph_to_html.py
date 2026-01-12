@@ -618,6 +618,10 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
         func_locations_map.update(batch_results)
         verbose_print(f"Resolved {len(batch_results)} function locations for module {module_name}", verbose)
     
+    # 计算统计数据
+    total_lines = len(parsed_lines)
+    expandable_entries = sum(1 for l in parsed_lines if l['expandable'])
+    
     # 构建HTML字符串
     html_str = f"""<!DOCTYPE html>
 <html lang="en">
@@ -626,24 +630,84 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Funcgraph Visualization</title>
     <style>
+        :root {{
+            --bg-color: #f5f5f5;
+            --container-bg: white;
+            --text-color: #333;
+            --line-hover: #f0f0f0;
+            --line-selected: #e3f2fd;
+            --line-highlighted: #fff8e1;
+            --line-keyboard-select: #e1f5fe;
+            --border-color: #ddd;
+            --summary-bg: #f8f9fa;
+            --summary-text: #6c757d;
+            --btn-primary: #4CAF50;
+            --btn-primary-hover: #45a049;
+            --btn-danger: #f44336;
+            --btn-danger-hover: #d32f2f;
+            --link-color: #0366d6;
+            --expanded-bg: #f9f9f9;
+        }}
+        [data-theme="dark"] {{
+            --bg-color: #1a1a1a;
+            --container-bg: #2d2d2d;
+            --text-color: #e0e0e0;
+            --line-hover: #3a3a3a;
+            --line-selected: #2c3e50;
+            --line-highlighted: #5d4037;
+            --line-keyboard-select: #01579b;
+            --border-color: #444;
+            --summary-bg: #2c2c2c;
+            --summary-text: #aaa;
+            --btn-primary: #4CAF50;
+            --btn-primary-hover: #45a049;
+            --btn-danger: #f44336;
+            --btn-danger-hover: #d32f2f;
+            --link-color: #64b5f6;
+            --expanded-bg: #363636;
+        }}
         body {{
             font-family: 'Courier New', monospace;
-            background-color: #f5f5f5;
+            background-color: var(--bg-color);
             padding: 20px;
             line-height: 1.5;
             margin: 0;
+            color: var(--text-color);
+            transition: background-color 0.3s, color 0.3s;
         }}
         .container {{
-            background: white;
+            background: var(--container-bg);
             padding: 20px;
             border-radius: 8px;
             box-shadow: 0 2px 10px rgba(0,0,0,0.1);
             overflow-x: auto;
+            transition: background-color 0.3s;
         }}
         h1 {{
             text-align: center;
-            color: #333;
-            margin-bottom: 20px;
+            color: var(--text-color);
+            margin-bottom: 10px;
+        }}
+        .header-controls {{
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 15px;
+            gap: 10px;
+            flex-wrap: wrap;
+        }}
+        .theme-toggle {{
+            padding: 8px 12px;
+            background-color: var(--btn-primary);
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+            transition: background-color 0.2s;
+        }}
+        .theme-toggle:hover {{
+            background-color: var(--btn-primary-hover);
         }}
         .line-container {{
             display: flex;
@@ -654,27 +718,53 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
             white-space: pre;
             font-family: 'Courier New', monospace;
             font-size: 14px;
+            cursor: default;
+            -webkit-user-select: none;
+            -moz-user-select: none;
+            -ms-user-select: none;
+            user-select: none;
         }}
-        .line-container:hover {{
-            background-color: #f0f0f0;
+        .line-container.expandable {{
+            cursor: pointer;
+        }}
+        .line-container.expandable:hover {{
+            background-color: var(--line-hover);
+        }}
+        .line-container.expandable.selected {{
+            background-color: var(--line-selected);
+        }}
+        .line-container.expandable.highlighted {{
+            background-color: var(--line-highlighted);
+        }}
+        .line-container.expandable.keyboard-selected {{
+            background-color: var(--line-keyboard-select);
+            outline: 2px solid var(--btn-primary);
         }}
         .line-number {{
             display: inline-block;
             width: 40px;
             text-align: right;
             padding-right: 10px;
-            color: #999;
+            color: var(--summary-text);
+            -webkit-user-select: none;
+            -moz-user-select: none;
+            -ms-user-select: none;
             user-select: none;
             flex-shrink: 0;
         }}
         .line-content {{
             flex-grow: 1;
+            padding: 2px 0;
+            -webkit-user-select: text;
+            -moz-user-select: text;
+            -ms-user-select: text;
+            user-select: text;
         }}
         .expand-btn {{
             display: inline-block;
             width: 16px;
             height: 16px;
-            background-color: #4CAF50;
+            background-color: var(--btn-primary);
             color: white;
             border-radius: 50%;
             text-align: center;
@@ -683,20 +773,24 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
             margin-left: 5px;
             cursor: pointer;
             opacity: 0.5;
-            transition: opacity 0.2s;
+            transition: opacity 0.2s, background-color 0.2s;
+            -webkit-user-select: none;
+            -moz-user-select: none;
+            -ms-user-select: none;
             user-select: none;
             vertical-align: middle;
             flex-shrink: 0;
         }}
         .expand-btn:hover {{
             opacity: 1;
+            background-color: var(--btn-primary-hover);
         }}
         .expanded-content {{
             display: none;
             margin-left: 50px;
             padding: 10px;
-            background-color: #f9f9f9;
-            border-left: 2px solid #4CAF50;
+            background-color: var(--expanded-bg);
+            border-left: 2px solid var(--btn-primary);
             border-radius: 0 4px 4px 0;
             white-space: pre;
             font-family: 'Courier New', monospace;
@@ -705,14 +799,14 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
         .location-link {{
             display: block;
             padding: 3px 5px;
-            color: #0366d6;
+            color: var(--link-color);
             text-decoration: none;
             margin: 2px 0;
             border-radius: 3px;
             white-space: pre;
         }}
         .location-link:hover {{
-            background-color: #eaeaea;
+            background-color: var(--line-hover);
             text-decoration: underline;
         }}
         .source-line {{
@@ -723,13 +817,205 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
             font-size: 12px;
         }}
         .current-line {{
-            background-color: #fff3cd;
+            background-color: var(--line-highlighted);
+        }}
+        .summary {{
+            background-color: var(--summary-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 5px;
+            padding: 8px 12px;
+            margin-bottom: 15px;
+            font-size: 12px;
+            color: var(--summary-text);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }}
+        .summary span {{
+            margin: 0 5px;
+        }}
+        .controls {{
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            z-index: 1000;
+            display: flex;
+            gap: 5px;
+        }}
+        .control-btn {{
+            padding: 8px 12px;
+            background-color: var(--btn-primary);
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+            transition: background-color 0.2s;
+        }}
+        .control-btn:hover {{
+            background-color: var(--btn-primary-hover);
+        }}
+        .control-btn.collapse {{
+            background-color: var(--btn-danger);
+        }}
+        .control-btn.collapse:hover {{
+            background-color: var(--btn-danger-hover);
+        }}
+        .copy-btn {{
+            position: fixed;
+            bottom: 60px;
+            right: 20px;
+            padding: 8px 12px;
+            background-color: #2196F3;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+            transition: background-color 0.2s;
+            z-index: 1000;
+        }}
+        .copy-btn:hover {{
+            background-color: #1976D2;
+        }}
+        .jump-to-top {{
+            position: fixed;
+            bottom: 100px;
+            right: 20px;
+            padding: 8px 12px;
+            background-color: #9C27B0;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+            transition: background-color 0.2s;
+            z-index: 1000;
+        }}
+        .jump-to-top:hover {{
+            background-color: #7B1FA2;
+        }}
+        .progress-bar {{
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 0%;
+            height: 3px;
+            background-color: var(--btn-primary);
+            z-index: 2000;
+            transition: width 0.3s ease;
+        }}
+        .keyboard-hint {{
+            position: fixed;
+            bottom: 20px;
+            left: 20px;
+            background-color: var(--container-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 4px;
+            padding: 8px 12px;
+            font-size: 12px;
+            color: var(--text-color);
+            z-index: 1000;
+            max-width: 300px;
+            opacity: 0.9;
+            display: none;
+        }}
+        .keyboard-hint h3 {{
+            margin: 0 0 5px 0;
+            font-size: 12px;
+        }}
+        .keyboard-hint ul {{
+            margin: 0;
+            padding-left: 15px;
+        }}
+        .keyboard-hint li {{
+            margin: 2px 0;
+        }}
+        .keyboard-hint kbd {{
+            background-color: var(--bg-color);
+            border: 1px solid var(--border-color);
+            border-radius: 3px;
+            padding: 1px 4px;
+            font-family: monospace;
+            font-size: 11px;
+        }}
+        .keyboard-hint-close {{
+            position: absolute;
+            top: 5px;
+            right: 5px;
+            background: none;
+            border: none;
+            color: var(--text-color);
+            cursor: pointer;
+            font-size: 14px;
+            padding: 0;
+            width: 20px;
+            height: 20px;
+            line-height: 20px;
+            text-align: center;
+        }}
+        .keyboard-hint-close:hover {{
+            color: var(--btn-danger);
+        }}
+        @media (max-width: 768px) {{
+            body {{
+                padding: 10px;
+            }}
+            .container {{
+                padding: 10px;
+            }}
+            .line-container {{
+                font-size: 12px;
+            }}
+            .expanded-content {{
+                margin-left: 30px;
+                padding: 5px;
+                font-size: 11px;
+            }}
+            .controls {{
+                bottom: 10px;
+                right: 10px;
+            }}
+            .copy-btn {{
+                bottom: 50px;
+                right: 10px;
+            }}
+            .jump-to-top {{
+                bottom: 90px;
+                right: 10px;
+            }}
+            .keyboard-hint {{
+                bottom: 10px;
+                left: 10px;
+                font-size: 10px;
+                max-width: 200px;
+            }}
         }}
     </style>
 </head>
 <body>
+    <div class="progress-bar" id="progressBar"></div>
+    
     <div class="container">
-        <h1>Funcgraph Visualization v0.1 @dolinux</h1>
+        <h1>Funcgraph Visualization v0.2 @dolinux</h1>
+        
+        <div class="header-controls">
+            <div></div> <!-- 占位元素 -->
+            <button class="theme-toggle" onclick="toggleTheme()">Theme</button>
+        </div>
+        
+        <div class="summary">
+            <div>
+                <span>Lines: {total_lines}</span>
+                <span>•</span>
+                <span>Expandable: {expandable_entries}</span>
+                <span>•</span>
+                <span>Kernel Functions: {len(vmlinux_funcs)}</span>
+                <span>•</span>
+                <span>Modules: {len(module_funcs)}</span>
+            </div>
+        </div>
+        
         <div id="content">
 """
 
@@ -739,16 +1025,23 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
         line_number = idx + 1  # 行号从1开始
         escaped_line = escape_html_preserve_spaces(line_data["raw_line"])
         
-        html_str += f'<div class="line-container" id="{line_id}_container">'
+        # 检查是否可展开
+        is_expandable = line_data['expandable'] and line_data['func_info']
+        expandable_class = "expandable" if is_expandable else ""
+        
+        html_str += f'<div class="line-container {expandable_class}" id="{line_id}_container" data-line-number="{line_number}"'
+        if is_expandable:
+            html_str += f' onclick="handleLineClick(event, \'{line_id}\')" ondblclick="handleDoubleClick(event, \'{line_id}\')"'
+        html_str += '>'
         html_str += f'<span class="line-number">{line_number}</span>'
         html_str += f'<span class="line-content">{escaped_line}</span>'
         
-        if line_data['expandable'] and line_data['func_info']:
-            html_str += f'<span class="expand-btn" onclick="toggleExpand(\'{line_id}\')">+</span>'
+        if is_expandable:
+            html_str += f'<span class="expand-btn">+</span>'
         
         html_str += '</div>'
         
-        if line_data['expandable'] and line_data['func_info']:
+        if is_expandable:
             # 获取调整后的函数信息
             func_info = line_data['func_info']
             adjusted_func_info = adjust_func_info(func_info)
@@ -756,7 +1049,8 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
             # 从预取的数据中获取位置信息
             locations = func_locations_map.get(adjusted_func_info, {})
             
-            html_str += f'<div class="expanded-content" id="{line_id}_content">'
+            # 为expanded-content添加内联样式style="display: none;"，确保初始状态
+            html_str += f'<div class="expanded-content" id="{line_id}_content" style="display: none;">'
             
             if locations:
                 # 检查是结构化数据还是原始输出
@@ -800,9 +1094,9 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
                     html_str += parse_list_output(locations, base_url, kernel_src)
                 else:
                     # 未知格式
-                    html_str += f'<div class="location-link">Source information unavailable</div>'
+                    html_str += f'<div class="location-link">Source information unavailable for: {escape_html_preserve_spaces(adjusted_func_info)}</div>'
             else:
-                html_str += '<div class="location-link">Source information unavailable</div>'
+                html_str += f'<div class="location-link">Source information unavailable for: {escape_html_preserve_spaces(adjusted_func_info)}</div>'
             
             html_str += '</div>'
     
@@ -810,19 +1104,797 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
         </div>
     </div>
     
+    <div class="keyboard-hint" id="keyboardHint">
+        <button class="keyboard-hint-close" onclick="closeKeyboardHint()">×</button>
+        <h3>Keyboard Shortcuts</h3>
+        <ul>
+            <li><kbd>j</kbd>/<kbd>k</kbd> or <kbd>↓</kbd>/<kbd>↑</kbd>: Move to next/prev expandable line</li>
+            <li><kbd>h</kbd>/<kbd>l</kbd>: Scroll left/right</li>
+            <li><kbd>Enter</kbd>: Expand/collapse</li>
+            <li><kbd>Space</kbd>: Scroll down</li>
+            <li><kbd>Esc</kbd>: Clear selection</li>
+            <li><kbd>Ctrl+S</kbd>: Save state</li>
+        </ul>
+    </div>
+    
+    <div class="controls">
+        <button class="jump-to-top" onclick="scrollToTop()">Top</button>
+        <button class="copy-btn" onclick="copyVisibleContent()">Copy</button>
+        <button class="control-btn" onclick="expandAll()">Expand All</button>
+        <button class="control-btn collapse" onclick="collapseAll()">Collapse All</button>
+    </div>
+    
     <script>
-        function toggleExpand(lineId) {
-            const content = document.getElementById(lineId + '_content');
-            const btn = event.target;
-            
-            if (content.style.display === 'block') {
-                content.style.display = 'none';
-                btn.textContent = '+';
-            } else {
-                content.style.display = 'block';
-                btn.textContent = '-';
+        // 标记是否正在进行文本选择
+        let isSelectingText = false;
+        // 记录鼠标按下时的位置和时间
+        let mouseDownInfo = { x: 0, y: 0, time: 0 };
+        // 记录当前高亮行
+        let highlightedLine = null;
+        // 当前主题
+        let currentTheme = localStorage.getItem('theme') || 'light';
+        // 记录展开状态
+        let expandedLines = JSON.parse(localStorage.getItem('expandedLines')) || {};
+        // 双击选择相关变量
+        let lastClickTime = 0;
+        let lastClickTarget = null;
+        let doubleClickTimer = null;
+        let clickTimer = null;
+        let doubleClickState = 0; // 0: 初始状态, 1: 第一次双击选中单词, 2: 第二次双击选中整行
+        // 键盘导航相关变量
+        let keyboardSelectedLine = null;
+        let keyboardSelectedIndex = -1;
+        let allLines = [];
+        let expandableLines = [];
+        let expandableLineIndices = [];
+        let keyboardHintTimer = null;
+        // 记录当前滚动位置
+        let scrollPositionBeforeClick = { x: 0, y: 0 };
+        // 是否显示过键盘提示
+        let keyboardHintShown = localStorage.getItem('keyboardHintShown') === 'true';
+        
+        // 初始化主题
+        document.documentElement.setAttribute('data-theme', currentTheme);
+        
+        // 初始化展开状态
+        function restoreExpandedState() {
+            for (const [lineId, isExpanded] of Object.entries(expandedLines)) {
+                if (isExpanded) {
+                    const content = document.getElementById(lineId + '_content');
+                    const btn = document.querySelector('#' + lineId + '_container .expand-btn');
+                    const container = document.getElementById(lineId + '_container');
+                    
+                    if (content && btn && container) {
+                        content.style.display = 'block';
+                        if (btn) btn.textContent = '-';
+                        container.classList.add('selected');
+                    }
+                }
             }
         }
+        
+        // 保存展开状态
+        function saveExpandedState(lineId, isExpanded) {
+            expandedLines[lineId] = isExpanded;
+            localStorage.setItem('expandedLines', JSON.stringify(expandedLines));
+        }
+        
+        // 初始化键盘导航
+        function initKeyboardNavigation() {
+            allLines = Array.from(document.querySelectorAll('.line-container'));
+            expandableLines = Array.from(document.querySelectorAll('.line-container.expandable'));
+            
+            // 收集所有可展开行的索引
+            expandableLineIndices = [];
+            allLines.forEach((line, index) => {
+                if (line.classList.contains('expandable')) {
+                    expandableLineIndices.push(index);
+                }
+            });
+            
+            // 如果有可展开行，设置默认选中第一个可展开行
+            if (expandableLineIndices.length > 0) {
+                setKeyboardSelectedLine(expandableLineIndices[0], false);
+            } else if (allLines.length > 0) {
+                // 如果没有可展开行，选中第一行
+                setKeyboardSelectedLine(0, false);
+            }
+            
+            // 初始显示键盘提示，但只在第一次加载页面时
+            if (!keyboardHintShown) {
+                showKeyboardHint();
+                localStorage.setItem('keyboardHintShown', 'true');
+                keyboardHintShown = true;
+            }
+        }
+        
+        // 显示键盘提示
+        function showKeyboardHint() {
+            const hint = document.getElementById('keyboardHint');
+            hint.style.display = 'block';
+            
+            // 8秒后自动隐藏
+            if (keyboardHintTimer) {
+                clearTimeout(keyboardHintTimer);
+            }
+            keyboardHintTimer = setTimeout(() => {
+                hint.style.display = 'none';
+            }, 8000);
+        }
+        
+        // 关闭键盘提示
+        function closeKeyboardHint() {
+            const hint = document.getElementById('keyboardHint');
+            hint.style.display = 'none';
+            if (keyboardHintTimer) {
+                clearTimeout(keyboardHintTimer);
+                keyboardHintTimer = null;
+            }
+        }
+        
+        // 设置键盘选中的行
+        function setKeyboardSelectedLine(index, scrollIntoView = true) {
+            // 清除之前的选择
+            if (keyboardSelectedLine) {
+                keyboardSelectedLine.classList.remove('keyboard-selected');
+            }
+            
+            if (index < 0) index = 0;
+            if (index >= allLines.length) index = allLines.length - 1;
+            
+            keyboardSelectedIndex = index;
+            keyboardSelectedLine = allLines[index];
+            
+            // 添加新的选择样式
+            if (keyboardSelectedLine) {
+                keyboardSelectedLine.classList.add('keyboard-selected');
+                
+                // 只有在需要滚动时才滚动
+                if (scrollIntoView) {
+                    // 获取当前行的位置
+                    const rect = keyboardSelectedLine.getBoundingClientRect();
+                    const windowHeight = window.innerHeight;
+                    
+                    // 计算行在视口中的位置
+                    const lineTop = rect.top;
+                    const lineBottom = rect.bottom;
+                    const lineHeight = rect.height;
+                    
+                    // 判断是否需要滚动到中间
+                    // 如果当前行接近视口底部（距离底部小于2行高度），则滚动到中间
+                    // 如果当前行接近视口顶部（距离顶部小于1行高度），也滚动到中间
+                    const nearBottom = windowHeight - lineBottom < lineHeight * 2;
+                    const nearTop = lineTop < lineHeight;
+                    
+                    if (nearBottom || nearTop || lineTop < 0 || lineBottom > windowHeight) {
+                        // 如果接近边界或不在视口中，滚动到中间
+                        keyboardSelectedLine.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    } else {
+                        // 否则，使用nearest，尽可能少滚动
+                        keyboardSelectedLine.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+                    }
+                }
+            }
+        }
+        
+        // 导航到下一个可展开行
+        function navigateToExpandableLine(direction) {
+            if (expandableLineIndices.length === 0) {
+                return; // 没有可展开行
+            }
+            
+            let currentExpandableIndex = -1;
+            
+            // 找到当前行在可展开行列表中的位置
+            for (let i = 0; i < expandableLineIndices.length; i++) {
+                if (expandableLineIndices[i] === keyboardSelectedIndex) {
+                    currentExpandableIndex = i;
+                    break;
+                }
+            }
+            
+            // 如果当前行不是可展开行，找到最近的可展开行
+            if (currentExpandableIndex === -1) {
+                if (direction > 0) {
+                    // 向下查找
+                    for (let i = 0; i < expandableLineIndices.length; i++) {
+                        if (expandableLineIndices[i] > keyboardSelectedIndex) {
+                            currentExpandableIndex = i;
+                            break;
+                        }
+                    }
+                    // 如果没找到，从第一个开始
+                    if (currentExpandableIndex === -1) {
+                        currentExpandableIndex = 0;
+                    }
+                } else {
+                    // 向上查找
+                    for (let i = expandableLineIndices.length - 1; i >= 0; i--) {
+                        if (expandableLineIndices[i] < keyboardSelectedIndex) {
+                            currentExpandableIndex = i;
+                            break;
+                        }
+                    }
+                    // 如果没找到，从最后一个开始
+                    if (currentExpandableIndex === -1) {
+                        currentExpandableIndex = expandableLineIndices.length - 1;
+                    }
+                }
+            }
+            
+            // 计算下一个索引
+            let nextIndex = currentExpandableIndex + direction;
+            
+            // 处理循环
+            if (nextIndex < 0) {
+                nextIndex = expandableLineIndices.length - 1; // 循环到最后一个
+            } else if (nextIndex >= expandableLineIndices.length) {
+                nextIndex = 0; // 循环到第一个
+            }
+            
+            // 设置新的选中行
+            setKeyboardSelectedLine(expandableLineIndices[nextIndex], true);
+        }
+        
+        // 处理行点击事件 - 现在只处理单击
+        function handleLineClick(event, lineId) {
+            // 记录点击前的滚动位置
+            scrollPositionBeforeClick = {
+                x: window.scrollX,
+                y: window.scrollY
+            };
+            
+            // 阻止默认行为，防止可能的滚动
+            event.preventDefault();
+            
+            // 检查是否正在进行文本选择
+            const selection = window.getSelection();
+            const hasSelection = selection.toString().trim().length > 0;
+            
+            // 检查鼠标移动距离，判断是否是拖动选择
+            const mouseUpInfo = { x: event.clientX, y: event.clientY, time: Date.now() };
+            const distance = Math.sqrt(
+                Math.pow(mouseUpInfo.x - mouseDownInfo.x, 2) + 
+                Math.pow(mouseUpInfo.y - mouseDownInfo.y, 2)
+            );
+            const timeDiff = mouseUpInfo.time - mouseDownInfo.time;
+            
+            // 如果存在文本选择，并且是拖动操作，则不触发展开/收起
+            if (hasSelection && (distance > 5 || timeDiff > 200)) {
+                // 高亮被选中的行
+                highlightSelectedLines();
+                return;
+            }
+            
+            // 清除之前的点击定时器
+            if (clickTimer) {
+                clearTimeout(clickTimer);
+                clickTimer = null;
+            }
+            
+            // 如果是双击事件的一部分，则不执行单击
+            if (doubleClickTimer) {
+                clearTimeout(doubleClickTimer);
+                doubleClickTimer = null;
+                return;
+            }
+            
+            // 设置键盘选中行，但不滚动
+            const lineIndex = allLines.findIndex(line => line.id === lineId + '_container');
+            if (lineIndex >= 0) {
+                setKeyboardSelectedLine(lineIndex, false);
+            }
+            
+            // 设置延迟执行单击事件，以便在双击时可以取消
+            clickTimer = setTimeout(() => {
+                toggleExpand(lineId, event);
+                clickTimer = null;
+            }, 200);
+        }
+        
+        // 处理双击事件
+        function handleDoubleClick(event, lineId) {
+            // 阻止事件冒泡
+            event.stopPropagation();
+            
+            // 清除单击定时器
+            if (clickTimer) {
+                clearTimeout(clickTimer);
+                clickTimer = null;
+            }
+            
+            // 检查是否点击的是.line-content
+            const lineContent = event.target.closest('.line-content');
+            if (!lineContent) return;
+            
+            // 检查是否在可展开行内
+            const lineContainer = event.target.closest('.line-container');
+            if (!lineContainer) return;
+            
+            const now = Date.now();
+            const timeDiff = now - lastClickTime;
+            const target = event.target;
+            
+            if (timeDiff < 500 && target === lastClickTarget) {
+                // 快速双击相同目标
+                doubleClickState = (doubleClickState + 1) % 3;
+                
+                if (doubleClickState === 1) {
+                    // 第一次双击：选中单词（浏览器默认行为）
+                    // 我们让浏览器处理默认的双击选中单词行为
+                    
+                    // 设置定时器，在一定时间后重置状态
+                    if (doubleClickTimer) {
+                        clearTimeout(doubleClickTimer);
+                    }
+                    doubleClickTimer = setTimeout(() => {
+                        doubleClickState = 0;
+                        doubleClickTimer = null;
+                    }, 500);
+                    
+                    return;
+                } else if (doubleClickState === 2) {
+                    // 第二次双击：选中整行文本
+                    event.preventDefault();
+                    
+                    // 获取行内容
+                    const lineText = lineContent.textContent;
+                    
+                    // 创建选择范围
+                    const range = document.createRange();
+                    range.selectNodeContents(lineContent);
+                    
+                    // 清除当前选择
+                    const selection = window.getSelection();
+                    selection.removeAllRanges();
+                    selection.addRange(range);
+                    
+                    // 高亮被选中的行
+                    highlightSelectedLines();
+                    
+                    // 重置双击状态
+                    doubleClickState = 0;
+                    if (doubleClickTimer) {
+                        clearTimeout(doubleClickTimer);
+                        doubleClickTimer = null;
+                    }
+                }
+            } else {
+                // 新的双击序列
+                doubleClickState = 1;
+                
+                // 第一次双击：让浏览器默认选中单词
+                // 我们只需要记录时间和目标
+                
+                // 设置定时器，在一定时间后重置状态
+                if (doubleClickTimer) {
+                    clearTimeout(doubleClickTimer);
+                }
+                doubleClickTimer = setTimeout(() => {
+                    doubleClickState = 0;
+                    doubleClickTimer = null;
+                }, 500);
+            }
+            
+            lastClickTime = now;
+            lastClickTarget = target;
+        }
+        
+        // 切换展开/收起状态 - 只影响当前行，不滚动
+        function toggleExpand(lineId, event) {
+            // 保存当前滚动位置
+            const scrollX = window.scrollX;
+            const scrollY = window.scrollY;
+            
+            const content = document.getElementById(lineId + '_content');
+            const btn = document.querySelector('#' + lineId + '_container .expand-btn');
+            const container = document.getElementById(lineId + '_container');
+            
+            // 使用getComputedStyle获取计算后的显示状态
+            const computedStyle = window.getComputedStyle(content);
+            const isCurrentlyVisible = computedStyle.display === 'block';
+            
+            if (isCurrentlyVisible) {
+                // 收起当前行
+                content.style.display = 'none';
+                if (btn) btn.textContent = '+';
+                container.classList.remove('selected');
+                saveExpandedState(lineId, false);
+            } else {
+                // 展开当前行
+                content.style.display = 'block';
+                if (btn) btn.textContent = '-';
+                container.classList.add('selected');
+                saveExpandedState(lineId, true);
+            }
+            
+            // 恢复滚动位置
+            setTimeout(() => {
+                window.scrollTo(scrollX, scrollY);
+            }, 0);
+        }
+        
+        // 切换主题
+        function toggleTheme() {
+            currentTheme = currentTheme === 'light' ? 'dark' : 'light';
+            document.documentElement.setAttribute('data-theme', currentTheme);
+            localStorage.setItem('theme', currentTheme);
+        }
+        
+        // 高亮被选中的行
+        function highlightSelectedLines() {
+            // 清除之前的高亮
+            if (highlightedLine) {
+                highlightedLine.classList.remove('highlighted');
+            }
+            
+            // 获取当前选择
+            const selection = window.getSelection();
+            if (selection.rangeCount > 0 && selection.toString().trim().length > 0) {
+                const range = selection.getRangeAt(0);
+                const container = range.commonAncestorContainer;
+                
+                // 向上查找包含的行容器
+                let current = container;
+                while (current && current.nodeType === Node.ELEMENT_NODE) {
+                    if (current.classList && current.classList.contains('line-container')) {
+                        current.classList.add('highlighted');
+                        highlightedLine = current;
+                        break;
+                    }
+                    current = current.parentElement;
+                }
+            }
+        }
+        
+        // 复制可见内容
+        function copyVisibleContent() {
+            const visibleLines = [];
+            const lines = document.querySelectorAll('.line-container');
+            
+            lines.forEach(line => {
+                const lineNumber = line.querySelector('.line-number').textContent;
+                const lineContent = line.querySelector('.line-content').textContent;
+                visibleLines.push(`${lineNumber} ${lineContent}`);
+            });
+            
+            const textToCopy = visibleLines.join('\\n');
+            
+            navigator.clipboard.writeText(textToCopy).then(() => {
+                // 显示简单的复制成功提示
+                const originalText = event.target.textContent;
+                event.target.textContent = 'Copied!';
+                setTimeout(() => {
+                    event.target.textContent = originalText;
+                }, 1000);
+            }).catch(err => {
+                console.error('Failed to copy: ', err);
+                // 降级方案
+                const textArea = document.createElement('textarea');
+                textArea.value = textToCopy;
+                document.body.appendChild(textArea);
+                textArea.select();
+                document.execCommand('copy');
+                document.body.removeChild(textArea);
+                const originalText = event.target.textContent;
+                event.target.textContent = 'Copied!';
+                setTimeout(() => {
+                    event.target.textContent = originalText;
+                }, 1000);
+            });
+        }
+        
+        // 滚动到顶部
+        function scrollToTop() {
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+        }
+        
+        // 监听滚动，更新进度条
+        function updateProgressBar() {
+            const winScroll = document.body.scrollTop || document.documentElement.scrollTop;
+            const height = document.documentElement.scrollHeight - document.documentElement.clientHeight;
+            const scrolled = (winScroll / height) * 100;
+            document.getElementById("progressBar").style.width = scrolled + "%";
+        }
+        
+        // 记录鼠标按下事件
+        document.addEventListener('mousedown', function(event) {
+            mouseDownInfo = {
+                x: event.clientX,
+                y: event.clientY,
+                time: Date.now()
+            };
+        });
+        
+        // 监听文本选择变化
+        document.addEventListener('selectionchange', function() {
+            const selection = window.getSelection();
+            isSelectingText = selection.toString().trim().length > 0;
+            
+            if (isSelectingText) {
+                highlightSelectedLines();
+            } else {
+                // 清除高亮
+                if (highlightedLine) {
+                    highlightedLine.classList.remove('highlighted');
+                    highlightedLine = null;
+                }
+            }
+        });
+        
+        // 添加键盘快捷键支持
+        document.addEventListener('keydown', function(event) {
+            // 检查是否在输入框中
+            if (event.target.matches('input, textarea, select')) {
+                return;
+            }
+            
+            // 按下ESC键取消选择
+            if (event.key === 'Escape' || event.keyCode === 27) {
+                // 清除高亮
+                if (highlightedLine) {
+                    highlightedLine.classList.remove('highlighted');
+                    highlightedLine = null;
+                }
+                // 清除文本选择
+                window.getSelection().removeAllRanges();
+            }
+            
+            // VIM风格导航键和方向键
+            let handled = false;
+            
+            // 处理垂直移动（j/k 和上下箭头键）- 只导航到可展开行
+            if (event.key === 'j' || event.key === 'ArrowDown') {
+                event.preventDefault();
+                handled = true;
+                if (expandableLineIndices.length > 0) {
+                    navigateToExpandableLine(1); // 向下导航
+                }
+            } else if (event.key === 'k' || event.key === 'ArrowUp') {
+                event.preventDefault();
+                handled = true;
+                if (expandableLineIndices.length > 0) {
+                    navigateToExpandableLine(-1); // 向上导航
+                }
+            }
+            
+            // 处理水平滚动（h/l 键）
+            if (event.key === 'h') {
+                event.preventDefault();
+                handled = true;
+                // 向左滚动
+                window.scrollBy({ left: -100, behavior: 'smooth' });
+            } else if (event.key === 'l') {
+                event.preventDefault();
+                handled = true;
+                // 向右滚动
+                window.scrollBy({ left: 100, behavior: 'smooth' });
+            }
+            
+            // 处理其他功能键
+            if (!handled) {
+                switch (event.key) {
+                    case 'Enter': // 切换展开/收起状态
+                        event.preventDefault();
+                        if (keyboardSelectedLine && keyboardSelectedLine.classList.contains('expandable')) {
+                            const lineId = keyboardSelectedLine.id.replace('_container', '');
+                            toggleExpand(lineId, event);
+                        }
+                        break;
+                        
+                    case ' ': // 空格键向下滚动
+                        if (!event.target.matches('input, textarea')) {
+                            event.preventDefault();
+                            window.scrollBy({ top: window.innerHeight * 0.8, behavior: 'smooth' });
+                        }
+                        break;
+                        
+                    case 'g': // gg: 跳转到顶部
+                        if (!event.shiftKey) {
+                            event.preventDefault();
+                            if (event.repeat) break;
+                            if (expandableLineIndices.length > 0) {
+                                setKeyboardSelectedLine(expandableLineIndices[0], true);
+                            } else if (allLines.length > 0) {
+                                setKeyboardSelectedLine(0, true);
+                            }
+                        }
+                        break;
+                        
+                    case 'G': // Shift+G: 跳转到底部
+                        if (event.shiftKey) {
+                            event.preventDefault();
+                            if (event.repeat) break;
+                            if (expandableLineIndices.length > 0) {
+                                setKeyboardSelectedLine(expandableLineIndices[expandableLineIndices.length - 1], true);
+                            } else if (allLines.length > 0) {
+                                setKeyboardSelectedLine(allLines.length - 1, true);
+                            }
+                        }
+                        break;
+                        
+                    case 'Home': // Home键跳转到顶部
+                        event.preventDefault();
+                        if (expandableLineIndices.length > 0) {
+                            setKeyboardSelectedLine(expandableLineIndices[0], true);
+                        } else if (allLines.length > 0) {
+                            setKeyboardSelectedLine(0, true);
+                        }
+                        break;
+                        
+                    case 'End': // End键跳转到底部
+                        event.preventDefault();
+                        if (expandableLineIndices.length > 0) {
+                            setKeyboardSelectedLine(expandableLineIndices[expandableLineIndices.length - 1], true);
+                        } else if (allLines.length > 0) {
+                            setKeyboardSelectedLine(allLines.length - 1, true);
+                        }
+                        break;
+                        
+                    case 'PageDown': // PageDown向下翻页
+                        event.preventDefault();
+                        window.scrollBy({ top: window.innerHeight * 0.9, behavior: 'smooth' });
+                        break;
+                        
+                    case 'PageUp': // PageUp向上翻页
+                        event.preventDefault();
+                        window.scrollBy({ top: -window.innerHeight * 0.9, behavior: 'smooth' });
+                        break;
+                        
+                    case '?': // 问号键显示键盘提示
+                        event.preventDefault();
+                        showKeyboardHint();
+                        break;
+                }
+            }
+            
+            // Ctrl+S 保存当前视图状态
+            if ((event.ctrlKey || event.metaKey) && event.key === 's') {
+                event.preventDefault();
+                saveViewState();
+            }
+            
+            // Ctrl+A 选中所有文本
+            if ((event.ctrlKey || event.metaKey) && event.key === 'a') {
+                // 防止默认的全选行为，因为我们需要选择特定的内容
+                event.preventDefault();
+                
+                // 选中所有行内容
+                const allLineContents = document.querySelectorAll('.line-content');
+                if (allLineContents.length > 0) {
+                    const range = document.createRange();
+                    const selection = window.getSelection();
+                    
+                    // 清除当前选择
+                    selection.removeAllRanges();
+                    
+                    // 从第一个行内容开始
+                    range.setStart(allLineContents[0], 0);
+                    // 到最后一个行内容结束
+                    range.setEnd(allLineContents[allLineContents.length - 1], allLineContents[allLineContents.length - 1].childNodes.length);
+                    
+                    selection.addRange(range);
+                    highlightSelectedLines();
+                }
+            }
+        });
+        
+        // 获取当前可见的行
+        function getVisibleLines() {
+            const viewportTop = window.scrollY;
+            const viewportBottom = viewportTop + window.innerHeight;
+            const visibleLines = [];
+            
+            allLines.forEach(line => {
+                const rect = line.getBoundingClientRect();
+                const lineTop = rect.top + window.scrollY;
+                const lineBottom = rect.bottom + window.scrollY;
+                
+                // 检查行是否在视口中
+                if (lineBottom > viewportTop && lineTop < viewportBottom) {
+                    visibleLines.push(line);
+                }
+            });
+            
+            return visibleLines;
+        }
+        
+        // 保存视图状态
+        function saveViewState() {
+            const state = {
+                scrollPosition: window.scrollY,
+                expandedLines: expandedLines
+            };
+            localStorage.setItem('viewState', JSON.stringify(state));
+            
+            // 显示保存成功提示
+            const saveBtn = document.querySelector('.control-btn');
+            if (saveBtn) {
+                const originalText = saveBtn.textContent;
+                saveBtn.textContent = 'Saved!';
+                setTimeout(() => {
+                    saveBtn.textContent = originalText;
+                }, 1000);
+            }
+        }
+        
+        // 恢复视图状态
+        function restoreViewState() {
+            const savedState = localStorage.getItem('viewState');
+            if (savedState) {
+                const state = JSON.parse(savedState);
+                window.scrollTo(0, state.scrollPosition);
+            }
+        }
+        
+        // 展开所有可展开行
+        function expandAll() {
+            const expandableLines = document.querySelectorAll('.line-container.expandable');
+            expandableLines.forEach(container => {
+                const lineId = container.id.replace('_container', '');
+                const content = document.getElementById(lineId + '_content');
+                const btn = container.querySelector('.expand-btn');
+                
+                if (content) {
+                    content.style.display = 'block';
+                    if (btn) btn.textContent = '-';
+                    container.classList.add('selected');
+                    saveExpandedState(lineId, true);
+                }
+            });
+        }
+        
+        // 收起所有可展开行
+        function collapseAll() {
+            const expandableLines = document.querySelectorAll('.line-container.expandable');
+            expandableLines.forEach(container => {
+                const lineId = container.id.replace('_container', '');
+                const content = document.getElementById(lineId + '_content');
+                const btn = container.querySelector('.expand-btn');
+                
+                if (content) {
+                    content.style.display = 'none';
+                    if (btn) btn.textContent = '+';
+                    container.classList.remove('selected');
+                    saveExpandedState(lineId, false);
+                }
+            });
+            
+            // 清除高亮
+            if (highlightedLine) {
+                highlightedLine.classList.remove('highlighted');
+                highlightedLine = null;
+            }
+        }
+        
+        // 初始加载时
+        window.addEventListener('load', function() {
+            // 恢复主题
+            document.documentElement.setAttribute('data-theme', currentTheme);
+            
+            // 恢复展开状态
+            restoreExpandedState();
+            
+            // 恢复视图状态
+            restoreViewState();
+            
+            // 监听滚动事件
+            window.addEventListener('scroll', updateProgressBar);
+            
+            // 初始化键盘导航
+            initKeyboardNavigation();
+            
+            // 如果有hash，跳转到对应位置
+            if (window.location.hash) {
+                const id = window.location.hash.substring(1);
+                const element = document.getElementById(id);
+                if (element) {
+                    setTimeout(() => {
+                        element.scrollIntoView({ behavior: 'smooth' });
+                    }, 100);
+                }
+            }
+        });
     </script>
 </body>
 </html>
