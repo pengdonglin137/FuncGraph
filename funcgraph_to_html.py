@@ -10,6 +10,13 @@ import fnmatch
 from collections import defaultdict
 import time
 
+# ==================== 配置变量 ====================
+# 修改这里来定制 HTML 的显示
+APP_VERSION = "0.2"      # 应用版本号
+APP_AUTHOR = "@dolinux"  # 作者信息
+APP_TITLE = "FuncGraph"  # 应用标题
+# ================================================
+
 def verbose_print(message, verbose_flag, end='\n'):
     """根据verbose标志输出调试信息"""
     if verbose_flag:
@@ -987,7 +994,44 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
         h1 {{
             text-align: center;
             color: var(--text-color);
-            margin-bottom: 10px;
+            margin-bottom: 15px;
+            font-size: 26px;
+            font-weight: 600;
+            letter-spacing: 1px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 12px;
+            flex-wrap: wrap;
+        }}
+        .title-main {{
+            display: inline;
+        }}
+        .title-meta {{
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            white-space: nowrap;
+        }}
+        .version-badge {{
+            display: inline-block;
+            color: var(--text-color);
+            opacity: 0.6;
+            padding: 0 6px;
+            font-size: 11px;
+            font-weight: 500;
+        }}
+        [data-theme="dark"] .version-badge {{
+            opacity: 0.6;
+        }}
+        .author-badge {{
+            display: inline-block;
+            color: var(--text-color);
+            font-size: 11px;
+            padding: 0 6px;
+            border-left: 1px solid var(--border-color);
+            opacity: 0.5;
+            padding-left: 10px;
         }}
         .header-controls {{
             display: flex;
@@ -1455,7 +1499,13 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
     <div class="progress-bar" id="progressBar"></div>
     
     <div class="container">
-        <h1>Funcgraph Visualization v0.2 @dolinux</h1>
+        <h1>
+            <span class="title-main">{APP_TITLE}</span>
+            <span class="title-meta">
+                <span class="version-badge">v{APP_VERSION}</span>
+                <span class="author-badge">{APP_AUTHOR}</span>
+            </span>
+        </h1>
         
         <div class="header-controls">
             <div></div> <!-- 占位元素 -->
