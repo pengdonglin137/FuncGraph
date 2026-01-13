@@ -37,6 +37,8 @@ def parse_arguments():
     parser.add_argument("-l", "--list", action="store_true", help="Show source code")
     parser.add_argument("-C", "--demangle", action="store_true", help="Demangle C++ symbols")
     parser.add_argument("--verbose", "-v", action="store_true", help="Enable verbose logging")
+    parser.add_argument("--path-prefix", type=str, default=None,
+                        help="Alternative path prefix to strip from file paths (used when kernel-src differs from source path)")
     return parser.parse_args()
 
 def log(message, verbose_flag):
@@ -46,20 +48,39 @@ def log(message, verbose_flag):
         millis = int((time.time() % 1) * 1000)
         print(f"[{timestamp}.{millis:03d}] {message}", file=sys.stderr)
 
-def shorten_path(path, kernel_src_root, basename_only=False):
-    """Convert absolute path to relative path based on kernel source root"""
-    if not kernel_src_root or not path.startswith(kernel_src_root):
+def shorten_path(path, kernel_src_root, basename_only=False, path_prefix=None):
+    """Convert absolute path to relative path based on kernel source root
+    
+    参数：
+        path: 文件路径
+        kernel_src_root: 内核源码根目录
+        basename_only: 是否只返回文件名
+        path_prefix: 备选的路径前缀（当kernel_src_root不匹配时使用）
+    """
+    # 首先尝试使用kernel_src_root
+    if kernel_src_root and path.startswith(kernel_src_root):
+        # Extract relative path
+        rel_path = path[len(kernel_src_root):].lstrip("/")
+        
         if basename_only:
-            return os.path.basename(path)
-        return path
+            return os.path.basename(rel_path)
+        
+        return rel_path
     
-    # Extract relative path
-    rel_path = path[len(kernel_src_root):].lstrip("/")
+    # 如果kernel_src_root不匹配，尝试使用path_prefix
+    if path_prefix and path.startswith(path_prefix):
+        # Extract relative path
+        rel_path = path[len(path_prefix):].lstrip("/")
+        
+        if basename_only:
+            return os.path.basename(rel_path)
+        
+        return rel_path
     
+    # 都不匹配，返回原始路径
     if basename_only:
-        return os.path.basename(rel_path)
-    
-    return rel_path
+        return os.path.basename(path)
+    return path
 
 def load_elf_data(executable, verbose=False):
     log(f"Loading ELF data from {executable}", verbose)
@@ -390,7 +411,7 @@ def resolve_addresses(proc, addr_specs_and_addrs, kernel_src_root, options):
             if kernel_src_root:
                 cleaned_line = re.sub(
                     r'([^ \t\n]+/[a-zA-Z0-9_\-]+\.[chS]):(\d+)',
-                    lambda m: shorten_path(m.group(1), kernel_src_root, options.basenames) + ":" + m.group(2),
+                    lambda m: shorten_path(m.group(1), kernel_src_root, options.basenames, options.path_prefix) + ":" + m.group(2),
                     cleaned_line
                 )
             elif options.basenames:
@@ -465,6 +486,12 @@ def print_source_code(lines, kernel_src_root, options):
             if kernel_src_root and file_path.startswith(kernel_src_root):
                 rel_file = file_path[len(kernel_src_root):].lstrip("/")
                 search_paths.append(rel_file)
+            
+            # 如果path_prefix可用且文件路径以它开头，也尝试提取相对路径
+            if options.path_prefix and file_path.startswith(options.path_prefix):
+                rel_file = file_path[len(options.path_prefix):].lstrip("/")
+                if rel_file not in search_paths:
+                    search_paths.append(rel_file)
             
             # 添加basename版本
             basename = os.path.basename(file_path)
