@@ -1872,9 +1872,21 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
             }
             
             // 设置键盘选中行，但不滚动
-            const lineIndex = allLines.findIndex(line => line.id === lineId + '_container');
-            if (lineIndex >= 0) {
-                setKeyboardSelectedLine(lineIndex, false);
+            // 根据 data-line-id 查找对应的行元素
+            let clickedLine = null;
+            const allLineElements = Array.from(document.querySelectorAll('.line-container'));
+            for (let line of allLineElements) {
+                if (line.getAttribute('data-line-id') === lineId) {
+                    clickedLine = line;
+                    break;
+                }
+            }
+            
+            if (clickedLine) {
+                const lineIndex = allLineElements.findIndex(line => line === clickedLine);
+                if (lineIndex >= 0) {
+                    setKeyboardSelectedLine(lineIndex, false);
+                }
             }
             
             // 设置延迟执行单击事件，以便在双击时可以取消
@@ -2121,6 +2133,57 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
                 return;
             }
             
+            // Enter键特殊处理：在链接上按Enter时，用来展开/收起，而不是打开链接
+            if (event.key === 'Enter' || event.keyCode === 13) {
+                let handled = false;
+                
+                // 检查当前焦点是否在可展开行内（包括链接）
+                let focusedLine = null;
+                let element = event.target;
+                
+                // 向上查找包含 expandable 类的行容器
+                while (element && element !== document.body) {
+                    if (element.classList && element.classList.contains('line-container') && element.classList.contains('expandable')) {
+                        focusedLine = element;
+                        break;
+                    }
+                    element = element.parentElement;
+                }
+                
+                // 如果找到可展开行，触发展开/收起
+                if (focusedLine) {
+                    event.preventDefault();
+                    const lineId = focusedLine.getAttribute('data-line-id');
+                    if (lineId) {
+                        toggleExpand(lineId, event);
+                        handled = true;
+                    }
+                }
+                
+                // 如果当前没有焦点在链接上，使用键盘选中的行
+                if (!handled && keyboardSelectedLine && keyboardSelectedLine.classList.contains('expandable')) {
+                    event.preventDefault();
+                    const lineId = keyboardSelectedLine.getAttribute('data-line-id');
+                    if (lineId) {
+                        toggleExpand(lineId, event);
+                        handled = true;
+                    }
+                }
+                
+                // 如果没有可展开行被处理，但 keyboardSelectedLine 不可展开，尝试展开当前行
+                if (!handled && keyboardSelectedLine) {
+                    event.preventDefault();
+                    const lineId = keyboardSelectedLine.getAttribute('data-line-id');
+                    if (lineId) {
+                        toggleExpand(lineId, event);
+                    }
+                }
+                
+                if (handled) {
+                    return;
+                }
+            }
+            
             // 按下ESC键取消选择
             if (event.key === 'Escape' || event.keyCode === 27) {
                 // 清除高亮
@@ -2166,13 +2229,6 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
             // 处理其他功能键
             if (!handled) {
                 switch (event.key) {
-                    case 'Enter': // 切换展开/收起状态
-                        event.preventDefault();
-                        if (keyboardSelectedLine && keyboardSelectedLine.classList.contains('expandable')) {
-                            const lineId = keyboardSelectedLine.id.replace('_container', '');
-                            toggleExpand(lineId, event);
-                        }
-                        break;
                         
                     case ' ': // 空格键向下滚动
                         if (!event.target.matches('input, textarea')) {
