@@ -732,7 +732,75 @@ def call_faddr2line_batch(faddr2line_path, target, func_infos, use_list=False, k
             except Exception as e:
                 verbose_print(f"Failed to restore working directory: {str(e)}", verbose)
 
-def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None, base_url=None, kernel_src=None, use_list=False, verbose=False, fast_mode=False, highlight_code=False, path_prefix=None):
+def get_environment_info():
+    """收集运行环境信息"""
+    import platform
+    from datetime import datetime
+    
+    env_info = []
+    
+    # Python 版本
+    python_version = f"{platform.python_version()}"
+    env_info.append(("Python", python_version))
+    
+    # 操作系统
+    system = platform.system()
+    release = platform.release()
+    env_info.append(("OS", f"{system} {release}"))
+    
+    # 主机名
+    hostname = platform.node()
+    env_info.append(("Hostname", hostname))
+    
+    # 处理器信息
+    processor = platform.processor()
+    if processor:
+        env_info.append(("Processor", processor))
+    
+    # 生成时间
+    current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    env_info.append(("Generated At", current_time))
+    
+    return env_info
+
+def format_args_info(args):
+    """格式化脚本接收到的实际参数"""
+    if not args:
+        return []
+    
+    # 获取所有参数
+    args_dict = vars(args)
+    
+    # 定义要隐藏的内部参数
+    hidden_params = {'verbose'}  # 不需要在HTML中显示的参数
+    
+    info_items = []
+    for key, value in args_dict.items():
+        if key in hidden_params:
+            continue
+        
+        # 格式化参数显示
+        display_key = key.replace('_', ' ').title()
+        
+        # 处理值的显示
+        if isinstance(value, bool):
+            display_value = "Yes" if value else "No"
+        elif isinstance(value, list):
+            display_value = f"{len(value)} items" if value else "(empty)"
+        elif isinstance(value, str) and len(value) > 60:
+            # 长字符串只显示文件名或后面部分
+            if '/' in value:
+                display_value = os.path.basename(value)
+            else:
+                display_value = value[-50:]
+        else:
+            display_value = str(value) if value is not None else "(none)"
+        
+        info_items.append((display_key, display_value))
+    
+    return info_items
+
+def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None, base_url=None, kernel_src=None, use_list=False, verbose=False, fast_mode=False, highlight_code=False, path_prefix=None, script_args=None):
     """生成交互式HTML页面，保留原始空格和格式"""
     if module_dirs is None:
         module_dirs = []
@@ -930,6 +998,28 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
         # 如果没有行号，直接返回清理后的路径
         return cleaned
     
+    # 生成信息面板内容
+    info_items = format_args_info(script_args)
+    env_items = get_environment_info()
+    
+    info_content_html = ""
+    
+    # 添加环境信息部分
+    if env_items:
+        info_content_html += '                <div style="font-weight: 600; color: var(--text-color); margin-bottom: 8px; font-size: 11px;">Environment</div>\n'
+        for label, value in env_items:
+            info_content_html += f'                <div class="info-item"><div class="info-label">{label}:</div><div class="info-value">{html.escape(str(value))}</div></div>\n'
+        info_content_html += '                <div style="border-top: 1px solid var(--border-color); margin: 8px 0;"></div>\n'
+    
+    # 添加脚本参数部分
+    if info_items:
+        info_content_html += '                <div style="font-weight: 600; color: var(--text-color); margin-bottom: 8px; font-size: 11px;">Parameters</div>\n'
+        for label, value in info_items:
+            info_content_html += f'                <div class="info-item"><div class="info-label">{label}:</div><div class="info-value">{html.escape(str(value))}</div></div>\n'
+    
+    if not env_items and not info_items:
+        info_content_html = '                <div style="color: var(--summary-text); font-size: 12px;">No information available</div>'
+    
     # 构建HTML字符串
     html_str = f"""<!DOCTYPE html>
 <html lang="en">
@@ -1032,6 +1122,74 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
             border-left: 1px solid var(--border-color);
             opacity: 0.5;
             padding-left: 10px;
+        }}
+        .info-panel {{
+            margin-top: 12px;
+            padding: 12px;
+            background-color: rgba(0, 0, 0, 0.02);
+            border-radius: 6px;
+            border-left: 3px solid var(--btn-primary);
+        }}
+        [data-theme="dark"] .info-panel {{
+            background-color: rgba(255, 255, 255, 0.03);
+        }}
+        .info-toggle {{
+            display: flex;
+            align-items: center;
+            cursor: pointer;
+            user-select: none;
+            padding: 8px;
+            margin: -8px;
+            font-size: 13px;
+            font-weight: 500;
+            color: var(--text-color);
+            transition: opacity 0.2s;
+        }}
+        .info-toggle:hover {{
+            opacity: 0.8;
+        }}
+        .info-toggle-icon {{
+            display: inline-block;
+            margin-right: 8px;
+            transition: transform 0.3s;
+            font-size: 14px;
+        }}
+        .info-toggle-icon.expanded {{
+            transform: rotate(90deg);
+        }}
+        .info-panel {{
+            display: none;
+            margin-top: 8px;
+            padding: 12px;
+            background-color: rgba(0, 0, 0, 0.02);
+            border-radius: 4px;
+            border-left: 3px solid var(--btn-primary);
+        }}
+        .info-panel.show {{
+            display: block;
+        }}
+        [data-theme="dark"] .info-panel {{
+            background-color: rgba(255, 255, 255, 0.03);
+        }}
+        .info-item {{
+            display: flex;
+            margin-bottom: 6px;
+            font-size: 11px;
+            line-height: 1.5;
+        }}
+        .info-item:last-child {{
+            margin-bottom: 0;
+        }}
+        .info-label {{
+            min-width: 100px;
+            font-weight: 600;
+            color: var(--summary-text);
+            margin-right: 12px;
+        }}
+        .info-value {{
+            flex: 1;
+            color: var(--text-color);
+            word-break: break-all;
         }}
         .header-controls {{
             display: flex;
@@ -1178,15 +1336,84 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
             border: 1px solid var(--border-color);
             border-radius: 5px;
             padding: 8px 12px;
-            margin-bottom: 15px;
+            margin-bottom: 0;
             font-size: 12px;
             color: var(--summary-text);
             display: flex;
             justify-content: space-between;
             align-items: center;
+            gap: 15px;
+        }}
+        .summary > div:first-child {{
+            flex: 1;
         }}
         .summary span {{
             margin: 0 5px;
+        }}
+        .info-toggle-btn {{
+            display: flex;
+            align-items: center;
+            cursor: pointer;
+            user-select: none;
+            padding: 4px 8px;
+            border-radius: 4px;
+            transition: background-color 0.2s;
+            font-size: 12px;
+            color: var(--text-color);
+            white-space: nowrap;
+        }}
+        .info-toggle-btn:hover {{
+            background-color: rgba(0, 0, 0, 0.05);
+        }}
+        [data-theme="dark"] .info-toggle-btn:hover {{
+            background-color: rgba(255, 255, 255, 0.05);
+        }}
+        .info-toggle-icon {{
+            display: inline-block;
+            margin-right: 6px;
+            transition: transform 0.3s;
+            font-size: 12px;
+        }}
+        .info-toggle-icon.expanded {{
+            transform: rotate(90deg);
+        }}
+        .info-panel {{
+            display: none;
+            margin: 0;
+            padding: 12px;
+            background-color: rgba(0, 0, 0, 0.02);
+            border-radius: 0 0 5px 5px;
+            border: 1px solid var(--border-color);
+            border-top: none;
+            border-left: 3px solid var(--btn-primary);
+            margin-bottom: 15px;
+            font-size: 11px;
+        }}
+        .info-panel.show {{
+            display: block;
+        }}
+        [data-theme="dark"] .info-panel {{
+            background-color: rgba(255, 255, 255, 0.03);
+        }}
+        .info-item {{
+            display: flex;
+            margin-bottom: 6px;
+            font-size: 11px;
+            line-height: 1.5;
+        }}
+        .info-item:last-child {{
+            margin-bottom: 0;
+        }}
+        .info-label {{
+            min-width: 100px;
+            font-weight: 600;
+            color: var(--summary-text);
+            margin-right: 12px;
+        }}
+        .info-value {{
+            flex: 1;
+            color: var(--text-color);
+            word-break: break-all;
         }}
         .controls {{
             position: fixed;
@@ -1522,6 +1749,14 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
                 <span>•</span>
                 <span>Modules: {len(module_funcs)}</span>
             </div>
+            <div class="info-toggle-btn" onclick="toggleInfoPanel()">
+                <span class="info-toggle-icon">▶</span>
+                <span>⚙️ 详情</span>
+            </div>
+        </div>
+        
+        <div class="info-panel" id="infoPanel">
+            {{INFO_CONTENT_PLACEHOLDER}}
         </div>
         
         <div id="content">
@@ -2074,6 +2309,36 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
             localStorage.setItem('theme', currentTheme);
         }
         
+        // 切换信息面板展开/折叠
+        function toggleInfoPanel() {
+            const panel = document.getElementById('infoPanel');
+            const toggleBtn = document.querySelector('.info-toggle-btn');
+            const icon = toggleBtn.querySelector('.info-toggle-icon');
+            const isExpanded = panel.classList.contains('show');
+            
+            if (isExpanded) {
+                panel.classList.remove('show');
+                icon.classList.remove('expanded');
+                localStorage.setItem('infoPanelExpanded', 'false');
+            } else {
+                panel.classList.add('show');
+                icon.classList.add('expanded');
+                localStorage.setItem('infoPanelExpanded', 'true');
+            }
+        }
+        
+        // 初始化信息面板状态
+        function initInfoPanel() {
+            const expanded = localStorage.getItem('infoPanelExpanded') === 'true';
+            if (expanded) {
+                const panel = document.getElementById('infoPanel');
+                const toggleBtn = document.querySelector('.info-toggle-btn');
+                const icon = toggleBtn.querySelector('.info-toggle-icon');
+                panel.classList.add('show');
+                icon.classList.add('expanded');
+            }
+        }
+        
         // 高亮被选中的行
         function highlightSelectedLines() {
             // 清除之前的高亮
@@ -2520,6 +2785,9 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
             // 恢复视图状态
             restoreViewState();
             
+            // 初始化信息面板
+            initInfoPanel();
+            
             // 监听滚动事件
             window.addEventListener('scroll', updateProgressBar);
             
@@ -2541,6 +2809,10 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
     
     elapsed = time.time() - start_time
     verbose_print(f"HTML generation completed in {elapsed:.2f} seconds", verbose)
+    
+    # 替换信息面板占位符
+    html_str = html_str.replace('{INFO_CONTENT_PLACEHOLDER}', info_content_html)
+    
     return html_str
 
 def main():
@@ -2652,7 +2924,8 @@ def main():
         verbose=args.verbose,
         fast_mode=args.fast,  # 传递fast_mode参数
         highlight_code=args.highlight_code,  # 传递highlight_code参数
-        path_prefix=args.path_prefix  # 传递path_prefix参数
+        path_prefix=args.path_prefix,  # 传递path_prefix参数
+        script_args=args  # 传递命令行参数用于显示
     )
     
     # 写入输出文件
