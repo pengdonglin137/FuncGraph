@@ -1605,7 +1605,6 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
             <li><kbd>Enter</kbd>: Expand/collapse</li>
             <li><kbd>Space</kbd>: Scroll down</li>
             <li><kbd>Esc</kbd>: Clear selection</li>
-            <li><kbd>Ctrl+S</kbd>: Save state</li>
         </ul>
     </div>
     
@@ -2315,11 +2314,6 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
                 }
             }
             
-            // Ctrl+S 保存当前视图状态
-            if ((event.ctrlKey || event.metaKey) && event.key === 's') {
-                event.preventDefault();
-                saveViewState();
-            }
             
             // Ctrl+A 选中所有文本
             if ((event.ctrlKey || event.metaKey) && event.key === 'a') {
@@ -2366,24 +2360,6 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
             return visibleLines;
         }
         
-        // 保存视图状态
-        function saveViewState() {
-            const state = {
-                scrollPosition: window.scrollY,
-                expandedLines: expandedLines
-            };
-            localStorage.setItem('viewState', JSON.stringify(state));
-            
-            // 显示保存成功提示
-            const saveBtn = document.querySelector('.control-btn');
-            if (saveBtn) {
-                const originalText = saveBtn.textContent;
-                saveBtn.textContent = 'Saved!';
-                setTimeout(() => {
-                    saveBtn.textContent = originalText;
-                }, 1000);
-            }
-        }
         
         // 恢复视图状态
         function restoreViewState() {
