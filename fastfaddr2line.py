@@ -37,8 +37,10 @@ def parse_arguments():
     parser.add_argument("-l", "--list", action="store_true", help="Show source code")
     parser.add_argument("-C", "--demangle", action="store_true", help="Demangle C++ symbols")
     parser.add_argument("--verbose", "-v", action="store_true", help="Enable verbose logging")
-    parser.add_argument("--path-prefix", type=str, default=None,
-                        help="Alternative path prefix to strip from file paths (used when kernel-src differs from source path)")
+    parser.add_argument("--path-prefix", type=str, action='append', default=[],
+                        help="Alternative path prefix to strip from file paths (can specify multiple)")
+    parser.add_argument("--module-srcs", type=str, action='append', default=[],
+                        help="Module source code root directories (can specify multiple)")
     return parser.parse_args()
 
 def log(message, verbose_flag):
@@ -50,33 +52,75 @@ def log(message, verbose_flag):
 
 def shorten_path(path, kernel_src_root, basename_only=False, path_prefix=None):
     """Convert absolute path to relative path based on kernel source root
-    
+
     参数：
         path: 文件路径
         kernel_src_root: 内核源码根目录
         basename_only: 是否只返回文件名
-        path_prefix: 备选的路径前缀（当kernel_src_root不匹配时使用）
+        path_prefix: 备选的路径前缀列表（当kernel_src_root不匹配时使用）
     """
     # 首先尝试使用kernel_src_root
     if kernel_src_root and path.startswith(kernel_src_root):
         # Extract relative path
         rel_path = path[len(kernel_src_root):].lstrip("/")
-        
+
         if basename_only:
             return os.path.basename(rel_path)
-        
+
         return rel_path
-    
-    # 如果kernel_src_root不匹配，尝试使用path_prefix
-    if path_prefix and path.startswith(path_prefix):
-        # Extract relative path
-        rel_path = path[len(path_prefix):].lstrip("/")
-        
-        if basename_only:
-            return os.path.basename(rel_path)
-        
-        return rel_path
-    
+
+    # 如果kernel_src_root不匹配，尝试使用path_prefix列表
+    if path_prefix:
+        # 确保path_prefix是列表
+        if not isinstance(path_prefix, list):
+            path_prefix = [path_prefix]
+
+        # 尝试每个path_prefix
+        for prefix in path_prefix:
+            if not prefix:
+                continue
+
+            # 规范化前缀，移除末尾的斜杠
+            prefix_norm = prefix.rstrip('/')
+
+            if os.path.isabs(prefix_norm):
+                # 绝对路径：直接比较
+                if path.startswith(prefix_norm):
+                    rel_path = path[len(prefix_norm):].lstrip("/")
+                    if basename_only:
+                        return os.path.basename(rel_path)
+                    return rel_path
+            else:
+                # 相对路径：尝试多种方式匹配
+
+                # 方式1：作为当前工作目录的子目录
+                abs_prefix = os.path.abspath(prefix_norm)
+                if path.startswith(abs_prefix):
+                    rel_path = path[len(abs_prefix):].lstrip("/")
+                    if basename_only:
+                        return os.path.basename(rel_path)
+                    return rel_path
+
+                # 方式2：路径以相对前缀开头
+                if path.startswith(prefix_norm + '/'):
+                    rel_path = path[len(prefix_norm) + 1:]
+                    if basename_only:
+                        return os.path.basename(rel_path)
+                    return rel_path
+
+                # 方式3：作为路径中的任意部分
+                path_parts = path.split('/')
+                prefix_parts = prefix_norm.split('/')
+
+                # 尝试在路径中找到匹配的连续部分
+                for i in range(len(path_parts) - len(prefix_parts) + 1):
+                    if path_parts[i:i+len(prefix_parts)] == prefix_parts:
+                        # 找到匹配，返回剩余部分
+                        remaining = '/'.join(path_parts[i+len(prefix_parts):])
+                        if basename_only:
+                            return os.path.basename(remaining)
+                        return remaining
+
     # 都不匹配，返回原始路径
     if basename_only:
         return os.path.basename(path)
@@ -471,28 +515,46 @@ def resolve_addresses(proc, addr_specs_and_addrs, kernel_src_root, options):
             # 移除开头的地址部分
             cleaned_line_raw = re.sub(r'^0x[0-9a-fA-F]+: ', '', line_stripped)
             raw_lines.append(cleaned_line_raw)
-            
-            # 处理路径
-            cleaned_line = cleaned_line_raw
-            if kernel_src_root:
-                cleaned_line = re.sub(
-                    r'([^ \t\n]+/[a-zA-Z0-9_\-]+\.[chS]):(\d+)',
-                    lambda m: shorten_path(m.group(1), kernel_src_root, options.basenames, options.path_prefix) + ":" + m.group(2),
-                    cleaned_line
-                )
-            elif options.basenames:
-                match = re.search(r'([^ \t\n]+/([a-zA-Z0-9_\-]+\.[chS])):(\d+)', cleaned_line)
-                if match:
-                    cleaned_line = cleaned_line.replace(match.group(1), match.group(2))
-            
-            output_lines.append(cleaned_line)
         
         elapsed = (time.time() - start_time) * 1000
         log(f"获取0x{addr:x}的输出耗时 {elapsed:.2f}ms", options.verbose)
-        
+
+        # 处理raw_lines，清理路径
+        # addr2line --pretty-print 的输出格式是: 函数名 at 路径:行号
+        # 我们需要清理路径部分
+        output_lines = []
+
+        for line in raw_lines:
+            line = line.strip()
+            if not line:
+                continue
+
+            # 检查是否是内联函数行
+            if line.startswith('(inlined by)'):
+                # 格式: (inlined by) 函数名 at 路径:行号
+                match = re.match(r'\(inlined by\) (.+) at ([^:]+):(\d+)', line)
+                if match:
+                    func_name = match.group(1)
+                    file_path = match.group(2)
+                    line_num = match.group(3)
+                    cleaned_path = shorten_path(file_path, kernel_src_root, options.basenames, options.path_prefix)
+                    output_lines.append(f" (inlined by) {func_name} at {cleaned_path}:{line_num}")
+            else:
+                # 普通函数行: 函数名 at 路径:行号
+                match = re.match(r'(.+) at ([^:]+):(\d+)', line)
+                if match:
+                    func_name = match.group(1)
+                    file_path = match.group(2)
+                    line_num = match.group(3)
+                    cleaned_path = shorten_path(file_path, kernel_src_root, options.basenames, options.path_prefix)
+                    output_lines.append(f"{func_name} at {cleaned_path}:{line_num}")
+                else:
+                    # 如果不匹配，保持原样（可能是错误信息）
+                    output_lines.append(line)
+
         # 打印地址规范头
         print(f"{addr_spec}:")
-        
+
         if not output_lines:
             log(f"未收到地址0x{addr:x}的输出", options.verbose)
             print("??:0")
@@ -514,88 +576,282 @@ def print_source_code(lines, kernel_src_root, options):
     """以对齐格式打印源码上下文"""
     if not lines:
         return
-        
+
     # 跟踪已处理的位置，避免重复
     processed_locations = set()
-    
+
     for line in lines:
         # 跳过空行
         if not line.strip():
             continue
-            
-        # 匹配文件路径和行号
-        file_match = re.search(r'([^ \t\n]+):(\d+)', line)
-        if not file_match:
-            continue
-            
-        file_path = file_match.group(1)
-        line_num = int(file_match.group(2))
-        
-        # 过滤无效行
-        if file_path == "??" or line_num == 0:
-            log(f"跳过无效源码位置: {file_path}:{line_num}", options.verbose)
-            continue
-            
-        location_key = (file_path, line_num)
-        
-        # 避免重复处理相同位置
-        if location_key in processed_locations:
-            continue
-        processed_locations.add(location_key)
-        
-        # 打印位置行
-        print(line)
-        
-        try:
-            # 尝试查找文件
-            search_paths = [file_path]
-            if kernel_src_root and file_path.startswith(kernel_src_root):
-                rel_file = file_path[len(kernel_src_root):].lstrip("/")
-                search_paths.append(rel_file)
-            
-            # 如果path_prefix可用且文件路径以它开头，也尝试提取相对路径
-            if options.path_prefix and file_path.startswith(options.path_prefix):
-                rel_file = file_path[len(options.path_prefix):].lstrip("/")
-                if rel_file not in search_paths:
-                    search_paths.append(rel_file)
-            
-            # 添加basename版本
-            basename = os.path.basename(file_path)
-            search_paths.append(basename)
-            if kernel_src_root:
-                search_paths.append(os.path.join(kernel_src_root, basename))
-            
-            full_path = None
-            for path in search_paths:
-                if os.path.exists(path):
-                    full_path = path
-                    break
-            
-            if not full_path:
-                print(f"  源文件未找到: {file_path}")
-                continue
-            
-            with open(full_path, "r") as f:
-                all_lines = f.readlines()
-            
-            # 计算上下文范围
-            start = max(0, line_num - 6)
-            end = min(len(all_lines), line_num + 5)
-            
-            # 打印上下文 - 使用制表符对齐
-            for j in range(start, end):
-                if j + 1 == line_num:
-                    # 当前行：使用 >行号< 格式
-                    print(f">{j+1}<\t{all_lines[j].rstrip()}")
-                else:
-                    # 非当前行：行号前后加空格
-                    print(f" {j+1} \t{all_lines[j].rstrip()}")
-                
-        except Exception as e:
-            print(f"  读取源码出错: {str(e)}")
-        
-        # 添加空行分隔不同位置
-        print()
+
+        # 检查是否是内联函数行
+        if line.startswith('(inlined by)'):
+            # 格式: (inlined by) 函数名 at 路径:行号
+            match = re.match(r'\(inlined by\) (.+) at ([^:]+):(\d+)', line)
+            if match:
+                func_name = match.group(1)
+                file_path = match.group(2)
+                line_num = int(match.group(3))
+
+                # 过滤无效行
+                if file_path == "??" or line_num == 0:
+                    log(f"跳过无效源码位置: {file_path}:{line_num}", options.verbose)
+                    continue
+
+                location_key = (file_path, line_num)
+
+                # 避免重复处理相同位置
+                if location_key in processed_locations:
+                    continue
+                processed_locations.add(location_key)
+
+                # 打印内联函数信息和位置行
+                cleaned_path = shorten_path(file_path, kernel_src_root, options.basenames, options.path_prefix)
+                print(f" (inlined by) {func_name} at {cleaned_path}:{line_num}")
+
+                # 尝试显示源码
+                try:
+                    # 尝试查找文件
+                    search_paths = [file_path]
+                    if kernel_src_root and file_path.startswith(kernel_src_root):
+                        rel_file = file_path[len(kernel_src_root):].lstrip("/")
+                        search_paths.append(rel_file)
+
+                    # 如果path_prefix可用，尝试提取相对路径
+                    if options.path_prefix:
+                        if not isinstance(options.path_prefix, list):
+                            path_prefix_list = [options.path_prefix]
+                        else:
+                            path_prefix_list = options.path_prefix
+
+                        for prefix in path_prefix_list:
+                            if prefix:
+                                if os.path.isabs(prefix):
+                                    if file_path.startswith(prefix):
+                                        rel_file = file_path[len(prefix):].lstrip("/")
+                                        if rel_file not in search_paths:
+                                            search_paths.append(rel_file)
+                                else:
+                                    abs_prefix = os.path.abspath(prefix)
+                                    if file_path.startswith(abs_prefix):
+                                        rel_file = file_path[len(abs_prefix):].lstrip("/")
+                                        if rel_file not in search_paths:
+                                            search_paths.append(rel_file)
+
+                                    path_parts = file_path.split('/')
+                                    prefix_parts = prefix.split('/')
+
+                                    for i in range(len(path_parts) - len(prefix_parts) + 1):
+                                        if path_parts[i:i+len(prefix_parts)] == prefix_parts:
+                                            remaining = '/'.join(path_parts[i+len(prefix_parts):])
+                                            if remaining not in search_paths:
+                                                search_paths.append(remaining)
+
+                    # 添加basename版本
+                    basename = os.path.basename(file_path)
+                    search_paths.append(basename)
+                    if kernel_src_root:
+                        search_paths.append(os.path.join(kernel_src_root, basename))
+
+                    # 如果提供了module_srcs，尝试在模块源码目录中查找
+                    if options.module_srcs:
+                        if not isinstance(options.module_srcs, list):
+                            module_srcs_list = [options.module_srcs]
+                        else:
+                            module_srcs_list = options.module_srcs
+
+                        for search_path in search_paths[:]:
+                            for module_src in module_srcs_list:
+                                if not module_src:
+                                    continue
+                                full_path_test = os.path.join(module_src, search_path)
+                                if full_path_test not in search_paths:
+                                    search_paths.append(full_path_test)
+
+                    # 尝试处理模块名中下划线和中划线的转换
+                    # 内核模块加载时会将中划线(-)替换为下划线(_)
+                    # 所以需要尝试反向转换
+                    additional_paths = []
+                    for path in search_paths:
+                        # 尝试将下划线替换为中划线
+                        if '_' in path:
+                            path_with_hyphen = path.replace('_', '-')
+                            if path_with_hyphen not in search_paths and path_with_hyphen not in additional_paths:
+                                additional_paths.append(path_with_hyphen)
+                        # 尝试将中划线替换为下划线
+                        if '-' in path:
+                            path_with_underscore = path.replace('-', '_')
+                            if path_with_underscore not in search_paths and path_with_underscore not in additional_paths:
+                                additional_paths.append(path_with_underscore)
+
+                    if additional_paths:
+                        search_paths.extend(additional_paths)
+
+                    full_path = None
+                    for path in search_paths:
+                        if os.path.exists(path):
+                            full_path = path
+                            break
+
+                    if not full_path:
+                        print(f"  源文件未找到: {file_path}")
+                        continue
+
+                    with open(full_path, "r") as f:
+                        all_lines = f.readlines()
+
+                    # 计算上下文范围
+                    start = max(0, line_num - 6)
+                    end = min(len(all_lines), line_num + 5)
+
+                    # 打印上下文 - 使用制表符对齐
+                    for j in range(start, end):
+                        if j + 1 == line_num:
+                            # 当前行：使用 >行号< 格式
+                            print(f">{j+1}<\t{all_lines[j].rstrip()}")
+                        else:
+                            # 非当前行：行号前后加空格
+                            print(f" {j+1} \t{all_lines[j].rstrip()}")
+
+                except Exception as e:
+                    print(f"  读取源码出错: {str(e)}")
+
+                # 添加空行分隔不同位置
+                print()
+        else:
+            # 普通函数行: 函数名 at 路径:行号
+            match = re.match(r'(.+) at ([^:]+):(\d+)', line)
+            if match:
+                func_name = match.group(1)
+                file_path = match.group(2)
+                line_num = int(match.group(3))
+
+                # 过滤无效行
+                if file_path == "??" or line_num == 0:
+                    log(f"跳过无效源码位置: {file_path}:{line_num}", options.verbose)
+                    continue
+
+                location_key = (file_path, line_num)
+
+                # 避免重复处理相同位置
+                if location_key in processed_locations:
+                    continue
+                processed_locations.add(location_key)
+
+                # 打印函数名和位置行
+                cleaned_path = shorten_path(file_path, kernel_src_root, options.basenames, options.path_prefix)
+                print(f"{func_name} at {cleaned_path}:{line_num}")
+
+                # 尝试显示源码
+                try:
+                    # 尝试查找文件
+                    search_paths = [file_path]
+                    if kernel_src_root and file_path.startswith(kernel_src_root):
+                        rel_file = file_path[len(kernel_src_root):].lstrip("/")
+                        search_paths.append(rel_file)
+
+                    # 如果path_prefix可用，尝试提取相对路径
+                    if options.path_prefix:
+                        if not isinstance(options.path_prefix, list):
+                            path_prefix_list = [options.path_prefix]
+                        else:
+                            path_prefix_list = options.path_prefix
+
+                        for prefix in path_prefix_list:
+                            if prefix:
+                                if os.path.isabs(prefix):
+                                    if file_path.startswith(prefix):
+                                        rel_file = file_path[len(prefix):].lstrip("/")
+                                        if rel_file not in search_paths:
+                                            search_paths.append(rel_file)
+                                else:
+                                    abs_prefix = os.path.abspath(prefix)
+                                    if file_path.startswith(abs_prefix):
+                                        rel_file = file_path[len(abs_prefix):].lstrip("/")
+                                        if rel_file not in search_paths:
+                                            search_paths.append(rel_file)
+
+                                    path_parts = file_path.split('/')
+                                    prefix_parts = prefix.split('/')
+
+                                    for i in range(len(path_parts) - len(prefix_parts) + 1):
+                                        if path_parts[i:i+len(prefix_parts)] == prefix_parts:
+                                            remaining = '/'.join(path_parts[i+len(prefix_parts):])
+                                            if remaining not in search_paths:
+                                                search_paths.append(remaining)
+
+                    # 添加basename版本
+                    basename = os.path.basename(file_path)
+                    search_paths.append(basename)
+                    if kernel_src_root:
+                        search_paths.append(os.path.join(kernel_src_root, basename))
+
+                    # 如果提供了module_srcs，尝试在模块源码目录中查找
+                    if options.module_srcs:
+                        if not isinstance(options.module_srcs, list):
+                            module_srcs_list = [options.module_srcs]
+                        else:
+                            module_srcs_list = options.module_srcs
+
+                        for search_path in search_paths[:]:
+                            for module_src in module_srcs_list:
+                                if not module_src:
+                                    continue
+                                full_path_test = os.path.join(module_src, search_path)
+                                if full_path_test not in search_paths:
+                                    search_paths.append(full_path_test)
+
+                    # 尝试处理模块名中下划线和中划线的转换
+                    # 内核模块加载时会将中划线(-)替换为下划线(_)
+                    # 所以需要尝试反向转换
+                    additional_paths = []
+                    for path in search_paths:
+                        # 尝试将下划线替换为中划线
+                        if '_' in path:
+                            path_with_hyphen = path.replace('_', '-')
+                            if path_with_hyphen not in search_paths and path_with_hyphen not in additional_paths:
+                                additional_paths.append(path_with_hyphen)
+                        # 尝试将中划线替换为下划线
+                        if '-' in path:
+                            path_with_underscore = path.replace('-', '_')
+                            if path_with_underscore not in search_paths and path_with_underscore not in additional_paths:
+                                additional_paths.append(path_with_underscore)
+
+                    if additional_paths:
+                        search_paths.extend(additional_paths)
+
+                    full_path = None
+                    for path in search_paths:
+                        if os.path.exists(path):
+                            full_path = path
+                            break
+
+                    if not full_path:
+                        print(f"  源文件未找到: {file_path}")
+                        continue
+
+                    with open(full_path, "r") as f:
+                        all_lines = f.readlines()
+
+                    # 计算上下文范围
+                    start = max(0, line_num - 6)
+                    end = min(len(all_lines), line_num + 5)
+
+                    # 打印上下文 - 使用制表符对齐
+                    for j in range(start, end):
+                        if j + 1 == line_num:
+                            # 当前行：使用 >行号< 格式
+                            print(f">{j+1}<\t{all_lines[j].rstrip()}")
+                        else:
+                            # 非当前行：行号前后加空格
+                            print(f" {j+1} \t{all_lines[j].rstrip()}")
+
+                except Exception as e:
+                    print(f"  读取源码出错: {str(e)}")
+
+                # 添加空行分隔不同位置
+                print()
 
 def main():
     # 解析参数

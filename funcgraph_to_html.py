@@ -168,9 +168,9 @@ def find_module_path(module_name, module_dirs, verbose=False):
     if not module_dirs:
         verbose_print(f"No module directories provided for {module_name}", verbose)
         return None
-        
+
     verbose_print(f"Searching for module '{module_name}' in {len(module_dirs)} directories", verbose)
-    
+
     # 尝试多种可能的模块文件名模式
     patterns = [
         f"{module_name}.ko",
@@ -181,15 +181,15 @@ def find_module_path(module_name, module_dirs, verbose=False):
         f"*.ko",  # 通配符匹配
         f"*.ko.debug"
     ]
-    
+
     # 递归搜索所有目录
     for module_dir in module_dirs:
         if not os.path.isdir(module_dir):
             verbose_print(f"Skipping non-existent directory: {module_dir}", verbose)
             continue
-            
+
         verbose_print(f"Searching in directory: {module_dir}", verbose)
-            
+
         # 遍历目录及其所有子目录
         for root, dirs, files in os.walk(module_dir):
             for pattern in patterns:
@@ -208,18 +208,18 @@ def find_module_path(module_name, module_dirs, verbose=False):
                     if os.path.exists(candidate):
                         verbose_print(f"Found exact match: {candidate}", verbose)
                         return os.path.abspath(candidate)
-    
+
     # 尝试使用find命令进行深度搜索（如果可用）
     try:
         verbose_print("Trying find command for deeper search", verbose)
         for module_dir in module_dirs:
             if not os.path.isdir(module_dir):
                 continue
-                
+
             # 使用find命令搜索
-            cmd = ['find', module_dir, '-type', 'f', 
-                   '(', '-name', f'{module_name}.ko', 
-                   '-o', '-name', f'{module_name}.ko.debug', 
+            cmd = ['find', module_dir, '-type', 'f',
+                   '(', '-name', f'{module_name}.ko',
+                   '-o', '-name', f'{module_name}.ko.debug',
                    '-o', '-name', f'*{module_name}*.ko', ')']
             verbose_print(f"Running find command: {' '.join(cmd)}", verbose)
             result = subprocess.run(cmd, capture_output=True, text=True, check=True)
@@ -230,53 +230,123 @@ def find_module_path(module_name, module_dirs, verbose=False):
     except (subprocess.CalledProcessError, FileNotFoundError) as e:
         verbose_print(f"Find command failed: {str(e)}", verbose)
         pass
-    
+
+    # 尝试处理模块名中下划线和中划线的转换
+    # 内核模块加载时会将中划线(-)替换为下划线(_)
+    # 所以需要尝试反向转换
+    if '_' in module_name:
+        module_name_hyphen = module_name.replace('_', '-')
+        verbose_print(f"Trying with hyphenated name: {module_name_hyphen}", verbose)
+
+        # 递归调用查找函数
+        result = find_module_path(module_name_hyphen, module_dirs, verbose)
+        if result:
+            return result
+
+    if '-' in module_name:
+        module_name_underscore = module_name.replace('-', '_')
+        verbose_print(f"Trying with underscored name: {module_name_underscore}", verbose)
+
+        # 递归调用查找函数
+        result = find_module_path(module_name_underscore, module_dirs, verbose)
+        if result:
+            return result
+
     verbose_print(f"Module '{module_name}' not found in any directory", verbose)
     return None
 
-def clean_file_path(file_path, kernel_src=None, path_prefix=None):
+def build_source_url(base_url, relative_path, line_no):
+    """构建源代码链接URL，根据base_url决定使用#L还是#格式
+
+    参数：
+        base_url: 基础URL
+        relative_path: 相对路径
+        line_no: 行号
+
+    返回：
+        完整的URL字符串
+    """
+    if not base_url:
+        return None
+
+    # 检查是否是OpenGrok URL（包含opengrok字符串）
+    is_opengrok = 'opengrok' in base_url.lower()
+
+    # 使用#还是#L
+    line_anchor = '#' if is_opengrok else '#L'
+
+    if base_url.endswith('/'):
+        return f"{base_url}{relative_path}{line_anchor}{line_no}"
+    else:
+        return f"{base_url}/{relative_path}{line_anchor}{line_no}"
+
+def clean_file_path(file_path, kernel_src=None, path_prefix=None, module_src=None):
     """清理文件路径，去除内核源码根目录和其他冗余信息
-    
+
     参数：
         file_path: 文件路径
-        kernel_src: 内核源码根目录
-        path_prefix: 备选的路径前缀，当kernel_src不匹配时使用
+        kernel_src: 内核源码根目录（单个路径）
+        path_prefix: 备选的路径前缀（可以是列表）
+        module_src: 模块源码根目录（可以是列表）
     """
     if not file_path:
         return file_path
-    
-    # 如果提供了内核源码路径，尝试去除
-    if kernel_src and os.path.isabs(kernel_src):
+
+    # 确保path_prefix和module_src是列表
+    if path_prefix and not isinstance(path_prefix, list):
+        path_prefix = [path_prefix]
+    if module_src and not isinstance(module_src, list):
+        module_src = [module_src]
+
+    # 尝试所有可能的源码路径（按优先级顺序）
+    all_src_paths = []
+
+    # 1. 内核源码路径（单个）
+    if kernel_src:
+        all_src_paths.append(kernel_src)
+
+    # 2. 模块源码路径
+    if module_src:
+        all_src_paths.extend(module_src)
+
+    # 3. Path prefix路径
+    if path_prefix:
+        all_src_paths.extend(path_prefix)
+
+    # 尝试匹配每个源码路径
+    for src_path in all_src_paths:
+        if not src_path:
+            continue
+
         # 规范化路径
-        kernel_src_norm = os.path.normpath(kernel_src)
+        src_path_norm = os.path.normpath(src_path)
         file_path_norm = os.path.normpath(file_path)
-        
-        # 检查文件路径是否包含内核源码路径
-        if file_path_norm.startswith(kernel_src_norm):
-            # 计算相对路径
-            relative_path = file_path_norm[len(kernel_src_norm):].lstrip(os.sep)
-            return relative_path
-    
-    # 如果kernel_src未匹配，尝试使用path_prefix
-    if path_prefix and os.path.isabs(file_path):
-        path_prefix_norm = os.path.normpath(path_prefix)
-        file_path_norm = os.path.normpath(file_path)
-        
-        # 检查文件路径是否以path_prefix开头
-        if file_path_norm.startswith(path_prefix_norm):
-            # 计算相对路径
-            relative_path = file_path_norm[len(path_prefix_norm):].lstrip(os.sep)
-            return relative_path
-    
+
+        # 处理相对路径和绝对路径
+        if os.path.isabs(src_path):
+            # 绝对路径：直接比较
+            if file_path_norm.startswith(src_path_norm):
+                # 计算相对路径
+                relative_path = file_path_norm[len(src_path_norm):].lstrip(os.sep)
+                return relative_path
+        else:
+            # 相对路径：转换为绝对路径进行比较
+            abs_src_path = os.path.abspath(src_path)
+            abs_src_path_norm = os.path.normpath(abs_src_path)
+            if file_path_norm.startswith(abs_src_path_norm):
+                # 计算相对路径
+                relative_path = file_path_norm[len(abs_src_path_norm):].lstrip(os.sep)
+                return relative_path
+
     # 去除内核模块标记，如[kernel]
     if '[' in file_path and ']' in file_path:
         file_path = re.sub(r'\[.*?\]', '', file_path).strip()
-    
+
     # 去除discriminator信息，如(discriminator 9)
     file_path = re.sub(r'\s*\(discriminator\s+\d+\)\s*$', '', file_path)
     file_path = re.sub(r'\s*\(inlined\)\s*$', '', file_path)
     file_path = re.sub(r'\s*\(.*?\)\s*$', '', file_path)
-    
+
     return file_path.strip()
 
 def get_relative_path(full_path, base_path):
@@ -402,15 +472,16 @@ def adjust_function_offset(func_info):
     except ValueError:
         return func_info  # 解析失败，返回原始字符串
 
-def parse_list_output(output, base_url=None, kernel_src=None, highlight_code=False, path_prefix=None):
+def parse_list_output(output, base_url=None, kernel_src=None, highlight_code=False, path_prefix=None, module_src=None):
     """解析faddr2line --list的输出并转换为HTML
-    
+
     参数：
         output: faddr2line --list 的输出
         base_url: 源代码链接的基础URL
-        kernel_src: 内核源码根目录
+        kernel_src: 内核源码根目录（单个路径）
         highlight_code: 是否对C源代码进行语法高亮
-        path_prefix: 备选的路径前缀，当kernel_src不匹配时使用
+        path_prefix: 备选的路径前缀（可以是列表）
+        module_src: 模块源码根目录（可以是列表）
     """
     lines = output.splitlines()
     html_output = []
@@ -455,28 +526,25 @@ def parse_list_output(output, base_url=None, kernel_src=None, highlight_code=Fal
                     file_path = loc_match.group(2).strip()
                     line_no = loc_match.group(3).strip()
                     
-                    # 清理文件路径，去除内核源码根目录或备选路径前缀
-                    clean_path = clean_file_path(file_path, kernel_src, path_prefix)
-                    
+                    # 清理文件路径，去除内核源码根目录、模块源码根目录或备选路径前缀
+                    clean_path = clean_file_path(file_path, kernel_src, path_prefix, module_src)
+
                     # 获取相对于内核源码的路径
                     relative_path = get_relative_path(clean_path, kernel_src) if kernel_src else clean_path
-                    
+
                     # 进一步清理路径，确保显示相对路径
-                    relative_path = clean_file_path(relative_path, kernel_src, path_prefix)
+                    relative_path = clean_file_path(relative_path, kernel_src, path_prefix, module_src)
                     
                     # 构建URL
                     if base_url:
-                        if base_url.endswith('/'):
-                            url = f"{base_url}{relative_path}#L{line_no}"
-                        else:
-                            url = f"{base_url}/{relative_path}#L{line_no}"
-                        
+                        url = build_source_url(base_url, relative_path, line_no)
+
                         # 使用清理后的相对路径构建链接文本
                         link_text = f"{func_part} at {relative_path}:{line_no}"
                         # 如果是内联行，添加标记
                         if stripped.startswith('(inlined by)'):
                             link_text = f"(inlined by) {link_text}"
-                        
+
                         escaped_link = escape_html_preserve_spaces(link_text)
                         escaped_url = html.escape(url)
                         html_output.append(f'<a class="location-link" href="{escaped_url}" target="_blank">{escaped_link}</a>')
@@ -542,17 +610,19 @@ def parse_list_output(output, base_url=None, kernel_src=None, highlight_code=Fal
     
     return ''.join(html_output)
 
-def call_faddr2line_batch(faddr2line_path, target, func_infos, use_list=False, kernel_src=None, verbose=False, path_prefix=None):
+def call_faddr2line_batch(faddr2line_path, target, func_infos, use_list=False, kernel_src=None, verbose=False, path_prefix=None, module_src=None, module_srcs=None):
     """调用faddr2line获取多个函数的源代码位置信息
-    
+
     参数：
         faddr2line_path: faddr2line工具路径
         target: 目标文件（vmlinux等）
         func_infos: 函数信息列表
         use_list: 是否使用--list模式
-        kernel_src: 内核源码根目录
+        kernel_src: 内核源码根目录（单个路径）
         verbose: 是否输出详细信息
-        path_prefix: 备选的路径前缀（用于fastfaddr2line）
+        path_prefix: 备选的路径前缀（可以是列表，用于fastfaddr2line）
+        module_src: 模块源码根目录（可以是列表，用于路径清理）
+        module_srcs: 模块源码根目录（可以是列表，用于fastfaddr2line查找源码）
     """
     if not func_infos:
         verbose_print("No function infos provided to faddr2line", verbose)
@@ -592,12 +662,31 @@ def call_faddr2line_batch(faddr2line_path, target, func_infos, use_list=False, k
         if use_list:
             # 使用--list选项时，使用批处理模式
             cmd = [abs_faddr2line_path, '--list']
-            
-            # 如果是fastfaddr2line且提供了path_prefix，添加参数
-            if path_prefix and os.path.basename(abs_faddr2line_path) == 'fastfaddr2line.py':
-                cmd.extend(['--path-prefix', os.path.abspath(path_prefix)])
-                verbose_print(f"Adding --path-prefix parameter: {os.path.abspath(path_prefix)}", verbose)
-            
+
+            # 如果是fastfaddr2line，添加额外参数
+            if os.path.basename(abs_faddr2line_path) == 'fastfaddr2line.py':
+                # 添加path_prefix参数（保持原样）
+                if path_prefix:
+                    # 确保path_prefix是列表
+                    if not isinstance(path_prefix, list):
+                        path_prefix = [path_prefix]
+                    # 为每个path_prefix添加参数（保持原样）
+                    for prefix in path_prefix:
+                        if prefix:
+                            cmd.extend(['--path-prefix', prefix])
+                            verbose_print(f"Adding --path-prefix parameter: {prefix}", verbose)
+
+                # 添加module_srcs参数
+                if module_srcs:
+                    # 确保module_srcs是列表
+                    if not isinstance(module_srcs, list):
+                        module_srcs = [module_srcs]
+                    # 为每个module_src添加参数
+                    for module_src in module_srcs:
+                        if module_src:
+                            cmd.extend(['--module-srcs', os.path.abspath(module_src)])
+                            verbose_print(f"Adding --module-srcs parameter: {os.path.abspath(module_src)}", verbose)
+
             cmd.extend([abs_target] + func_infos)
             verbose_print(f"Executing batch command: {' '.join(cmd)}", verbose)
             try:
@@ -652,7 +741,31 @@ def call_faddr2line_batch(faddr2line_path, target, func_infos, use_list=False, k
                 total_funcs = len(func_infos)
                 for i, func_info in enumerate(func_infos):
                     verbose_print(f"Processing function {i+1}/{total_funcs}: {func_info}", verbose)
-                    cmd = [abs_faddr2line_path, '--list', abs_target, func_info]
+                    cmd = [abs_faddr2line_path, '--list', abs_target]
+
+                    # 如果是fastfaddr2line，添加额外参数
+                    if os.path.basename(abs_faddr2line_path) == 'fastfaddr2line.py':
+                        # 添加path_prefix参数（保持原样）
+                        if path_prefix:
+                            # 确保path_prefix是列表
+                            if not isinstance(path_prefix, list):
+                                path_prefix = [path_prefix]
+                            # 为每个path_prefix添加参数（保持原样）
+                            for prefix in path_prefix:
+                                if prefix:
+                                    cmd.extend(['--path-prefix', prefix])
+
+                        # 添加module_srcs参数
+                        if module_srcs:
+                            # 确保module_srcs是列表
+                            if not isinstance(module_srcs, list):
+                                module_srcs = [module_srcs]
+                            # 为每个module_src添加参数
+                            for module_src in module_srcs:
+                                if module_src:
+                                    cmd.extend(['--module-srcs', os.path.abspath(module_src)])
+
+                    cmd.append(func_info)
                     try:
                         result = subprocess.run(cmd, capture_output=True, text=True, check=True)
                         results[func_info] = result.stdout
@@ -661,7 +774,33 @@ def call_faddr2line_batch(faddr2line_path, target, func_infos, use_list=False, k
                 return results
         else:
             # 标准批量处理模式 - 一次传递所有函数地址
-            cmd = [abs_faddr2line_path, abs_target] + func_infos
+            cmd = [abs_faddr2line_path, abs_target]
+
+            # 如果是fastfaddr2line，添加额外参数
+            if os.path.basename(abs_faddr2line_path) == 'fastfaddr2line.py':
+                # 添加path_prefix参数（保持原样）
+                if path_prefix:
+                    # 确保path_prefix是列表
+                    if not isinstance(path_prefix, list):
+                        path_prefix = [path_prefix]
+                    # 为每个path_prefix添加参数（保持原样）
+                    for prefix in path_prefix:
+                        if prefix:
+                            cmd.extend(['--path-prefix', prefix])
+                            verbose_print(f"Adding --path-prefix parameter: {prefix}", verbose)
+
+                # 添加module_srcs参数
+                if module_srcs:
+                    # 确保module_srcs是列表
+                    if not isinstance(module_srcs, list):
+                        module_srcs = [module_srcs]
+                    # 为每个module_src添加参数
+                    for module_src in module_srcs:
+                        if module_src:
+                            cmd.extend(['--module-srcs', os.path.abspath(module_src)])
+                            verbose_print(f"Adding --module-srcs parameter: {os.path.abspath(module_src)}", verbose)
+
+            cmd.extend(func_infos)
             verbose_print(f"Executing batch command: {' '.join(cmd)}", verbose)
             try:
                 result = subprocess.run(cmd, capture_output=True, text=True, check=True)
@@ -767,26 +906,30 @@ def format_args_info(args):
     """格式化脚本接收到的实际参数"""
     if not args:
         return []
-    
+
     # 获取所有参数
     args_dict = vars(args)
-    
+
     # 定义要隐藏的内部参数
     hidden_params = {'verbose'}  # 不需要在HTML中显示的参数
-    
+
     info_items = []
     for key, value in args_dict.items():
         if key in hidden_params:
             continue
-        
+
         # 格式化参数显示
         display_key = key.replace('_', ' ').title()
-        
+
         # 处理值的显示
         if isinstance(value, bool):
             display_value = "Yes" if value else "No"
         elif isinstance(value, list):
-            display_value = f"{len(value)} items" if value else "(empty)"
+            if value:
+                # 显示完整的列表内容，用逗号分隔
+                display_value = ", ".join(str(v) for v in value)
+            else:
+                display_value = "(empty)"
         elif isinstance(value, str) and len(value) > 60:
             # 长字符串只显示文件名或后面部分
             if '/' in value:
@@ -795,15 +938,25 @@ def format_args_info(args):
                 display_value = value[-50:]
         else:
             display_value = str(value) if value is not None else "(none)"
-        
+
         info_items.append((display_key, display_value))
-    
+
     return info_items
 
-def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None, base_url=None, kernel_src=None, use_list=False, verbose=False, fast_mode=False, highlight_code=False, path_prefix=None, script_args=None):
+def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None, base_url=None, kernel_src=None, use_list=False, verbose=False, fast_mode=False, highlight_code=False, path_prefix=None, module_src=None, module_srcs=None, script_args=None):
     """生成交互式HTML页面，保留原始空格和格式"""
     if module_dirs is None:
         module_dirs = []
+
+    # 确保path_prefix、module_src和module_srcs是列表
+    if path_prefix and not isinstance(path_prefix, list):
+        path_prefix = [path_prefix]
+    if module_src and not isinstance(module_src, list):
+        module_src = [module_src]
+    if module_srcs and not isinstance(module_srcs, list):
+        module_srcs = [module_srcs]
+
+    # kernel_src保持单个路径（可以是None）
     
     verbose_print("Generating HTML content", verbose)
     start_time = time.time()
@@ -889,23 +1042,27 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
         # 如果是fast模式且处理的是vmlinux，使用fastfaddr2line.py
         if fast_mode and os.path.basename(abs_faddr2line_path) == 'fastfaddr2line.py':
             batch_results = call_faddr2line_batch(
-                abs_faddr2line_path, 
-                abs_vmlinux_path, 
-                vmlinux_funcs_list, 
+                abs_faddr2line_path,
+                abs_vmlinux_path,
+                vmlinux_funcs_list,
                 use_list,
                 kernel_src,
                 verbose,
-                path_prefix
+                path_prefix,
+                module_src,
+                module_srcs
             )
         else:
             batch_results = call_faddr2line_batch(
-                abs_faddr2line_path, 
-                abs_vmlinux_path, 
-                vmlinux_funcs_list, 
+                abs_faddr2line_path,
+                abs_vmlinux_path,
+                vmlinux_funcs_list,
                 use_list,
                 kernel_src,
                 verbose,
-                None  # 原生faddr2line不支持path_prefix
+                None,  # 原生faddr2line不支持path_prefix
+                module_src,
+                None   # 原生faddr2line不支持module_srcs
             )
             
         func_locations_map.update(batch_results)
@@ -928,16 +1085,20 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
         for func in funcs:
             adjusted_func = adjust_func_info(func)
             adjusted_funcs.add(adjusted_func)
-        
+
         funcs_list = list(adjusted_funcs)
+        # 如果使用fastfaddr2line.py，传递path_prefix和module_srcs；否则传递None
+        should_pass_fast_args = fast_mode and os.path.basename(abs_faddr2line_path) == 'fastfaddr2line.py'
         batch_results = call_faddr2line_batch(
-            abs_faddr2line_path, 
-            module_path, 
-            funcs_list, 
+            abs_faddr2line_path,
+            module_path,
+            funcs_list,
             use_list,
             kernel_src,
             verbose,
-            path_prefix if fast_mode else None  # 仅在fast模式下传递path_prefix
+            path_prefix if should_pass_fast_args else None,
+            module_src,
+            module_srcs if should_pass_fast_args else None
         )
         func_locations_map.update(batch_results)
         verbose_print(f"Resolved {len(batch_results)} function locations for module {module_name}", verbose)
@@ -947,20 +1108,20 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
     expandable_entries = sum(1 for l in parsed_lines if l['expandable'])
     
     # 定义提取行号的函数
-    def extract_line_number(location_str, kernel_src, path_prefix=None):
+    def extract_line_number(location_str, kernel_src, path_prefix=None, module_src=None):
         """从位置字符串中提取行号"""
         if not location_str:
             return None
-            
+
         # 尝试匹配各种行号格式
         # 1. 标准格式: file.c:1234
         # 2. 带discriminator: file.c:1234 (discriminator 9)
         # 3. 带inlined: file.c:1234 (inlined)
         # 4. 其他格式
-        
+
         # 首先清理字符串
-        clean_str = clean_file_path(location_str, kernel_src, path_prefix)
-        
+        clean_str = clean_file_path(location_str, kernel_src, path_prefix, module_src)
+
         # 尝试从原始字符串提取行号
         line_match = re.search(r':(\d+)(?:\s|$)', location_str)
         if line_match:
@@ -968,7 +1129,7 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
                 return int(line_match.group(1))
             except (ValueError, IndexError):
                 pass
-        
+
         # 如果上述方法失败，尝试其他方法
         # 查找冒号后的数字
         match = re.search(r':(\d+)', location_str)
@@ -977,24 +1138,24 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
                 return int(match.group(1))
             except (ValueError, IndexError):
                 pass
-        
+
         return None
-    
+
     # 定义从位置字符串提取文件路径的函数
-    def extract_file_path(location_str, kernel_src, path_prefix=None):
+    def extract_file_path(location_str, kernel_src, path_prefix=None, module_src=None):
         """从位置字符串中提取文件路径"""
         if not location_str:
             return ""
-        
+
         # 清理字符串
-        cleaned = clean_file_path(location_str, kernel_src, path_prefix)
-        
+        cleaned = clean_file_path(location_str, kernel_src, path_prefix, module_src)
+
         # 如果还有冒号和数字，去除它们
         # 匹配文件路径:行号格式
         file_match = re.match(r'^(.*?):\d+', cleaned)
         if file_match:
             return file_match.group(1)
-        
+
         # 如果没有行号，直接返回清理后的路径
         return cleaned
     
@@ -1820,17 +1981,14 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
                             if clean_path and line_num is not None:
                                 # 获取相对于内核源码的路径
                                 relative_path = get_relative_path(clean_path, kernel_src)
-                                
+
                                 # 构建URL
-                                if base_url.endswith('/'):
-                                    url = f"{base_url}{relative_path}#L{line_num}"
-                                else:
-                                    url = f"{base_url}/{relative_path}#L{line_num}"
-                                
+                                url = build_source_url(base_url, relative_path, line_num)
+
                                 link_text = f"{loc['func']} at {relative_path}:{line_num}"
                                 if loc.get('inlined'):
                                     link_text = f"(inlined) {link_text}"
-                                
+
                                 escaped_link = escape_html_preserve_spaces(link_text)
                                 escaped_url = html.escape(url)
                                 html_str += f'<a class="location-link" href="{escaped_url}" target="_blank">{escaped_link}</a>'
@@ -1868,7 +2026,7 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
                             html_str += f'<div class="location-link">{escaped_link}</div>'
                 elif isinstance(locations, str):
                     # 原始输出（--list模式）
-                    html_str += parse_list_output(locations, base_url, kernel_src, highlight_code, path_prefix)
+                    html_str += parse_list_output(locations, base_url, kernel_src, highlight_code, path_prefix, module_src)
                 else:
                     # 未知格式
                     html_str += f'<div class="location-link">Source information unavailable for: {escape_html_preserve_spaces(adjusted_func_info)}</div>'
@@ -2819,24 +2977,26 @@ def main():
     parser = argparse.ArgumentParser(description='Convert ftrace output to interactive HTML')
     parser.add_argument('ftrace_file', help='Path to ftrace output file')
     parser.add_argument('--vmlinux', required=True, help='Path to vmlinux file')
-    parser.add_argument('--kernel-src', 
-                        help='Path to kernel source root (e.g., /path/to/linux-source)')
+    parser.add_argument('--kernel-src', type=str,
+                        help='Path to kernel source root')
     parser.add_argument('--module-dirs', nargs='*', default=[],
                         help='Directories to search for kernel modules')
+    parser.add_argument('--module-srcs', nargs='*', default=[],
+                        help='Module source code root directories (can specify multiple paths)')
     parser.add_argument('--base-url', help='Base URL for source code links')
     parser.add_argument('--output', default='ftrace_viz.html', help='Output HTML file path')
-    parser.add_argument('--auto-search', action='store_true', 
+    parser.add_argument('--auto-search', action='store_true',
                         help='Automatically search common module directories')
-    parser.add_argument('--verbose', action='store_true', 
+    parser.add_argument('--verbose', action='store_true',
                         help='Enable verbose output for debugging')
-    parser.add_argument('--fast', action='store_true', 
+    parser.add_argument('--fast', action='store_true',
                         help='Use fastfaddr2line.py for vmlinux processing')
-    parser.add_argument('--use-external', action='store_true', 
+    parser.add_argument('--use-external', action='store_true',
                         help='Force using external faddr2line')
     parser.add_argument('--highlight-code', action='store_true',
                         help='Enable syntax highlighting for C source code (requires Pygments)')
-    parser.add_argument('--path-prefix', type=str, default=None,
-                        help='Alternative path prefix to strip from file paths (used when kernel-src path differs from faddr2line output)')
+    parser.add_argument('--path-prefix', nargs='*', default=[],
+                        help='Alternative path prefixes to strip from file paths (can specify multiple paths)')
     args = parser.parse_args()
 
     # 检查gawk可用性并决定是否使用--list选项
@@ -2894,12 +3054,27 @@ def main():
     # 使用绝对路径
     faddr2line_path = os.path.abspath(faddr2line_path)
     vmlinux_path = os.path.abspath(args.vmlinux)
-    kernel_src = os.path.abspath(args.kernel_src) if args.kernel_src else None
-    
+
+    # 处理内核源码路径（单个）
+    kernel_src_abs = os.path.abspath(args.kernel_src) if args.kernel_src else None
+
+    # 处理多个path_prefix路径（保持原样，不转换为绝对路径）
+    path_prefix = args.path_prefix if args.path_prefix else []
+
+    # 处理多个module_srcs路径
+    module_srcs_abs = []
+    if args.module_srcs:
+        for src in args.module_srcs:
+            module_srcs_abs.append(os.path.abspath(src))
+
     verbose_print(f"Using faddr2line: {faddr2line_path}", args.verbose)
     verbose_print(f"Using vmlinux: {vmlinux_path}", args.verbose)
-    if kernel_src:
-        verbose_print(f"Using kernel source: {kernel_src}", args.verbose)
+    if kernel_src_abs:
+        verbose_print(f"Using kernel source: {kernel_src_abs}", args.verbose)
+    if path_prefix:
+        verbose_print(f"Using path prefix paths: {path_prefix}", args.verbose)
+    if module_srcs_abs:
+        verbose_print(f"Using module source paths: {module_srcs_abs}", args.verbose)
     
     # 解析ftrace文件
     start_time = time.time()
@@ -2914,17 +3089,19 @@ def main():
     
     # 生成HTML
     html_content = generate_html(
-        parsed_lines, 
-        vmlinux_path, 
+        parsed_lines,
+        vmlinux_path,
         faddr2line_path,
-        module_dirs=module_dirs,
+        module_dirs=module_dirs,  # 传递原始模块目录列表（用于auto-search）
         base_url=args.base_url,
-        kernel_src=kernel_src,
+        kernel_src=kernel_src_abs,  # 传递单个绝对路径
         use_list=use_list,
         verbose=args.verbose,
         fast_mode=args.fast,  # 传递fast_mode参数
         highlight_code=args.highlight_code,  # 传递highlight_code参数
-        path_prefix=args.path_prefix,  # 传递path_prefix参数
+        path_prefix=path_prefix,  # 传递原始路径列表
+        module_src=module_srcs_abs,  # 传递处理后的绝对路径列表（用于路径清理）
+        module_srcs=module_srcs_abs,  # 传递处理后的绝对路径列表（用于fastfaddr2line查找源码）
         script_args=args  # 传递命令行参数用于显示
     )
     
