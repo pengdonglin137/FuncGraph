@@ -950,14 +950,11 @@ def parse_module_url(module_url_str, base_url):
     参数格式：
     - None: 返回空字典，所有模块使用base_url
     - "http://example.com": 返回空字典，所有模块使用这个URL
-    - "http://example.com,mod1,mod2,http://example.com/other,mod3,mod4":
-      - 'http://example.com' 后面有 ',mod1,mod2'，所以 mod1 和 mod2 使用 http://example.com
-      - 'http://example.com/other' 后面有 ',mod3,mod4'，所以 mod3 和 mod4 使用 http://example.com/other
-      - 其他模块使用 base_url
-    - "http://example.com,http://example.com/other,mod1,mod2":
-      - 'http://example.com' 后面没有逗号连接的模块
-      - 'http://example.com/other' 后面有 ',mod1,mod2'，所以 mod1 和 mod2 使用 http://example.com/other
-      - 其他模块使用 http://example.com
+    - "http://example.com:mod1,mod2": 返回 {'mod1': 'http://example.com', 'mod2': 'http://example.com'}，其他模块使用base_url
+    - "http://example.com:mod1,mod2,http://example.com/other:mod3,mod4":
+      - mod1,mod2使用http://example.com
+      - mod3,mod4使用http://example.com/other
+      - 其他模块使用base_url
 
     返回值：
     - module_url_map: 模块名 -> URL 的映射
@@ -967,41 +964,94 @@ def parse_module_url(module_url_str, base_url):
         # 没有提供module_url，使用base_url
         return {}, base_url
 
-    # 按逗号分割
-    parts = [part.strip() for part in module_url_str.split(',')]
+    import re
 
-    # 解析URL和模块名的映射关系
+    # 找出所有URL:modules模式
+    # 格式：url:mod1,mod2 或 url
+    # 多个URL:modules对之间用逗号分隔
+
+    # 首先检查是否有冒号
+    if ':' not in module_url_str:
+        # 没有冒号，说明只有URL
+        # 验证URL格式
+        if not module_url_str.startswith(('http://', 'https://')):
+            print(f"Warning: module-url '{module_url_str}' does not start with http:// or https://", file=sys.stderr)
+            return {}, base_url
+
+        # 所有模块使用这个URL
+        return {}, module_url_str
+
+    # 有冒号，需要解析
+    # 使用正则表达式找到所有 URL:modules 对
+
+    # 方法：使用正则表达式匹配 URL 和它后面的模块列表
+    # 模式：URL:modules，其中 modules 是直到下一个 URL 或结束的所有内容
+
+    # 使用正则表达式：https?://[^:,]+:([^,]+(?:,[^,]+)*)?
+    # 但这会匹配到 URL:mod1，然后 mod2 会被忽略
+
+    # 更好的方法：找到所有 URL，然后解析它们后面的模块列表
+    # URL 模式：http:// 或 https:// 开头，后面跟着非逗号字符，直到冒号
+
+    # 使用正则表达式找到所有 URL 的位置
+    # 匹配模式：https?://[^:,]+
+    url_pattern = r'https?://[^:,]+'
+    urls = re.findall(url_pattern, module_url_str)
+
+    if not urls:
+        # 没有找到 URL，说明格式错误
+        print(f"Warning: module-url '{module_url_str}' contains no valid URLs", file=sys.stderr)
+        return {}, base_url
+
+    # 找到每个 URL 在字符串中的位置
+    url_positions = []
+    for url in urls:
+        pos = module_url_str.find(url)
+        if pos != -1:
+            url_positions.append((pos, url))
+
+    # 按位置排序
+    url_positions.sort()
+
+    # 解析每个 URL 和它后面的模块
     module_url_map = {}
+    urls_without_modules = []
 
-    # 收集所有URL和它们对应的模块名
-    url_to_modules = {}  # URL -> [module1, module2, ...]
-    urls_without_modules = []  # 没有模块名的URL
-
-    current_url = None
-    pending_modules = []
-
-    for part in parts:
-        if part.startswith(('http://', 'https://')):
-            # 如果之前有URL和模块名，保存映射
-            if current_url and pending_modules:
-                url_to_modules[current_url] = pending_modules
-                pending_modules = []
-            elif current_url and not pending_modules:
-                # 这个URL后面没有模块名
-                urls_without_modules.append(current_url)
-
-            # 设置当前URL
-            current_url = part
+    for i, (pos, url) in enumerate(url_positions):
+        # 找出这个 URL 后面的内容
+        if i + 1 < len(url_positions):
+            next_pos = url_positions[i + 1][0]
+            content_after = module_url_str[pos + len(url):next_pos]
         else:
-            # 模块名
-            pending_modules.append(part)
+            # 最后一个 URL
+            content_after = module_url_str[pos + len(url):]
 
-    # 处理最后的URL和模块名
-    if current_url:
-        if pending_modules:
-            url_to_modules[current_url] = pending_modules
+        # 去掉开头的冒号和空格
+        content_after = content_after.lstrip(':').strip()
+
+        # 验证URL格式
+        if not url.startswith(('http://', 'https://')):
+            print(f"Warning: URL '{url}' does not start with http:// or https://", file=sys.stderr)
+            continue
+
+        if not content_after:
+            # 没有模块名，这个URL作为默认URL
+            urls_without_modules.append(url)
         else:
-            urls_without_modules.append(current_url)
+            # 有模块名，按逗号分割
+            # 但需要排除其中的 URL
+            module_list = []
+            for part in content_after.split(','):
+                part = part.strip()
+                if part and not part.startswith(('http://', 'https://')):
+                    module_list.append(part)
+
+            # 有模块名，分配给这个URL
+            for module_name in module_list:
+                # 检查模块名是否包含非法字符
+                if not module_name.replace('-', '_').replace('.', '_').isalnum():
+                    print(f"Warning: module name '{module_name}' contains potentially invalid characters", file=sys.stderr)
+                module_url_map[module_name] = url
 
     # 确定默认URL
     default_url = base_url
@@ -1009,10 +1059,70 @@ def parse_module_url(module_url_str, base_url):
     # 如果有URL没有模块名，使用第一个这样的URL作为默认
     if urls_without_modules:
         default_url = urls_without_modules[0]
-    # 如果所有URL都有模块名，使用base_url作为默认
-    # （因为没有指定默认URL，所以使用base_url）
 
-    # 构建模块到URL的映射
+    return module_url_map, default_url
+
+
+def parse_module_url_old_format(module_url_str, base_url):
+    """处理旧格式的module-url解析"""
+    parts = [part.strip() for part in module_url_str.split(',')]
+    parts = [part for part in parts if part]
+
+    if not parts:
+        return {}, base_url
+
+    # 找出所有URL和模块名
+    urls = []
+    module_names = []
+
+    for part in parts:
+        if part.startswith(('http://', 'https://')):
+            urls.append(part)
+        else:
+            # 模块名，检查是否包含非法字符
+            if not part.replace('-', '_').replace('.', '_').isalnum():
+                print(f"Warning: module name '{part}' contains potentially invalid characters", file=sys.stderr)
+            module_names.append(part)
+
+    if not urls:
+        print(f"Warning: module-url '{module_url_str}' contains no valid URLs", file=sys.stderr)
+        return {}, base_url
+
+    if not module_names:
+        return {}, urls[0]
+
+    if len(urls) == 1:
+        return {}, urls[0]
+
+    # 重新解析，找出URL和模块名的对应关系
+    module_url_map = {}
+    url_to_modules = {}
+    urls_without_modules = []
+
+    current_url = None
+    pending_modules = []
+
+    for part in parts:
+        if part.startswith(('http://', 'https://')):
+            if current_url and pending_modules:
+                url_to_modules[current_url] = pending_modules
+                pending_modules = []
+            elif current_url and not pending_modules:
+                urls_without_modules.append(current_url)
+            current_url = part
+        else:
+            pending_modules.append(part)
+
+    if current_url:
+        if pending_modules:
+            url_to_modules[current_url] = pending_modules
+        else:
+            urls_without_modules.append(current_url)
+
+    default_url = base_url
+    if urls_without_modules:
+        default_url = urls_without_modules[0]
+
     for url, modules in url_to_modules.items():
         for module_name in modules:
             module_url_map[module_name] = url
@@ -1025,11 +1135,53 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
     if module_dirs is None:
         module_dirs = []
 
-    # 解析module_url参数
-    module_url_map, default_module_url = parse_module_url(module_url, base_url)
+    # 解析module_url参数（支持多个--module-url参数）
+    if module_url is None:
+        module_url_list = []
+    elif isinstance(module_url, list):
+        module_url_list = module_url
+    else:
+        module_url_list = [module_url]
 
-    verbose_print(f"Module URL map: {module_url_map}", verbose)
+    # 合并所有module_url参数的解析结果
+    combined_module_url_map = {}
+    default_module_url = base_url
+
+    for module_url_str in module_url_list:
+        url_map, default_url = parse_module_url(module_url_str, base_url)
+
+        # 合并映射
+        combined_module_url_map.update(url_map)
+
+        # 如果这个参数提供了默认URL（即没有跟模块名），更新默认URL
+        # （后面的参数会覆盖前面的）
+        if default_url != base_url:
+            default_module_url = default_url
+
+    # 如果没有提供任何module_url参数，使用base_url作为默认
+    if not module_url_list:
+        default_module_url = base_url
+
+    verbose_print(f"Module URL map: {combined_module_url_map}", verbose)
     verbose_print(f"Default module URL: {default_module_url}", verbose)
+
+    # 验证module_url_map中的模块名是否在parsed_lines中存在
+    if combined_module_url_map and parsed_lines:
+        available_modules = set()
+        for line_data in parsed_lines:
+            if line_data.get('module_name'):
+                available_modules.add(line_data['module_name'])
+
+        # 检查是否有未使用的模块映射
+        unused_mappings = set(combined_module_url_map.keys()) - available_modules
+        if unused_mappings:
+            print(f"Warning: module-url specifies mappings for modules not found in trace: {', '.join(sorted(unused_mappings))}", file=sys.stderr)
+
+        # 检查是否有模块没有URL映射但default_module_url不是base_url
+        if default_module_url and default_module_url != base_url:
+            unmapped_modules = available_modules - set(combined_module_url_map.keys())
+            if unmapped_modules:
+                verbose_print(f"Modules using default URL '{default_module_url}': {', '.join(sorted(unmapped_modules))}", verbose)
 
     # 确保path_prefix、module_src和module_srcs是列表
     if path_prefix and not isinstance(path_prefix, list):
@@ -1040,6 +1192,10 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
         module_srcs = [module_srcs]
 
     # kernel_src保持单个路径（可以是None）
+
+    # 为了兼容后续代码，使用旧的变量名
+    module_url_map = combined_module_url_map
+    # default_module_url 已经设置好了
 
     verbose_print("Generating HTML content", verbose)
     start_time = time.time()
@@ -3081,7 +3237,7 @@ def main():
     parser.add_argument('--module-srcs', nargs='*', default=[],
                         help='Module source code root directories (can specify multiple paths)')
     parser.add_argument('--base-url', help='Base URL for source code links')
-    parser.add_argument('--module-url', help='Base URL for module source code links (if different from base-url)')
+    parser.add_argument('--module-url', action='append', help='Module URL mapping (can be specified multiple times, format: url:mod1,mod2)')
     parser.add_argument('--output', default='ftrace_viz.html', help='Output HTML file path')
     parser.add_argument('--auto-search', action='store_true',
                         help='Automatically search common module directories')
@@ -3096,6 +3252,93 @@ def main():
     parser.add_argument('--path-prefix', nargs='*', default=[],
                         help='Alternative path prefixes to strip from file paths (can specify multiple paths)')
     args = parser.parse_args()
+
+    # 参数健壮性检查
+    # 检查ftrace文件是否存在
+    if not os.path.exists(args.ftrace_file):
+        print(f"Error: ftrace file '{args.ftrace_file}' does not exist", file=sys.stderr)
+        sys.exit(1)
+
+    if not os.path.isfile(args.ftrace_file):
+        print(f"Error: '{args.ftrace_file}' is not a regular file", file=sys.stderr)
+        sys.exit(1)
+
+    # 检查vmlinux文件是否存在
+    if not os.path.exists(args.vmlinux):
+        print(f"Error: vmlinux file '{args.vmlinux}' does not exist", file=sys.stderr)
+        sys.exit(1)
+
+    if not os.path.isfile(args.vmlinux):
+        print(f"Error: '{args.vmlinux}' is not a regular file", file=sys.stderr)
+        sys.exit(1)
+
+    # 检查kernel-src路径（如果提供）
+    if args.kernel_src:
+        if not os.path.exists(args.kernel_src):
+            print(f"Error: kernel source directory '{args.kernel_src}' does not exist", file=sys.stderr)
+            sys.exit(1)
+        if not os.path.isdir(args.kernel_src):
+            print(f"Error: '{args.kernel_src}' is not a directory", file=sys.stderr)
+            sys.exit(1)
+
+    # 检查module-dirs路径
+    for module_dir in args.module_dirs:
+        if not os.path.exists(module_dir):
+            print(f"Warning: module directory '{module_dir}' does not exist", file=sys.stderr)
+        elif not os.path.isdir(module_dir):
+            print(f"Warning: '{module_dir}' is not a directory", file=sys.stderr)
+
+    # 检查module-srcs路径
+    for module_src in args.module_srcs:
+        if not os.path.exists(module_src):
+            print(f"Warning: module source directory '{module_src}' does not exist", file=sys.stderr)
+        elif not os.path.isdir(module_src):
+            print(f"Warning: '{module_src}' is not a directory", file=sys.stderr)
+
+    # 检查URL格式（如果提供）
+    if args.base_url:
+        if not args.base_url.startswith(('http://', 'https://')):
+            print(f"Warning: base-url '{args.base_url}' does not start with http:// or https://", file=sys.stderr)
+
+    if args.module_url:
+        # 检查module_url格式（支持多个--module-url参数）
+        for module_url_str in args.module_url:
+            # 检查是否有冒号分隔
+            if ':' in module_url_str:
+                # 有冒号分隔，检查URL和模块名
+                import re
+                pattern = r'([^,]+):([^,]+)'
+                matches = re.findall(pattern, module_url_str)
+                for url, modules in matches:
+                    url = url.strip()
+                    modules = modules.strip()
+
+                    # 检查URL格式
+                    if not url.startswith(('http://', 'https://')):
+                        print(f"Warning: URL '{url}' in module-url does not start with http:// or https://", file=sys.stderr)
+
+                    # 检查模块名
+                    module_list = [m.strip() for m in modules.split(',') if m.strip()]
+                    for module_name in module_list:
+                        if not module_name.replace('-', '_').replace('.', '_').isalnum():
+                            print(f"Warning: module name '{module_name}' in module-url contains potentially invalid characters", file=sys.stderr)
+            else:
+                # 没有冒号，只有URL
+                if not module_url_str.startswith(('http://', 'https://')):
+                    print(f"Warning: module-url '{module_url_str}' does not start with http:// or https://", file=sys.stderr)
+
+    # 检查输出目录是否可写
+    output_dir = os.path.dirname(args.output) or '.'
+    if not os.path.exists(output_dir):
+        print(f"Error: output directory '{output_dir}' does not exist", file=sys.stderr)
+        sys.exit(1)
+    if not os.access(output_dir, os.W_OK):
+        print(f"Error: output directory '{output_dir}' is not writable", file=sys.stderr)
+        sys.exit(1)
+
+    # 检查fast和use-external互斥
+    if args.fast and args.use_external:
+        print(f"Warning: --fast and --use-external are both specified, --use-external will be ignored", file=sys.stderr)
 
     # 检查gawk可用性并决定是否使用--list选项
     gawk_available = check_gawk_available()
