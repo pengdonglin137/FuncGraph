@@ -100,6 +100,74 @@
             opacity: 0.5;
             padding-left: 10px;
         }
+        .info-panel {
+            margin-top: 12px;
+            padding: 12px;
+            background-color: rgba(0, 0, 0, 0.02);
+            border-radius: 6px;
+            border-left: 3px solid var(--btn-primary);
+        }
+        [data-theme="dark"] .info-panel {
+            background-color: rgba(255, 255, 255, 0.03);
+        }
+        .info-toggle {
+            display: flex;
+            align-items: center;
+            cursor: pointer;
+            user-select: none;
+            padding: 8px;
+            margin: -8px;
+            font-size: 13px;
+            font-weight: 500;
+            color: var(--text-color);
+            transition: opacity 0.2s;
+        }
+        .info-toggle:hover {
+            opacity: 0.8;
+        }
+        .info-toggle-icon {
+            display: inline-block;
+            margin-right: 8px;
+            transition: transform 0.3s;
+            font-size: 14px;
+        }
+        .info-toggle-icon.expanded {
+            transform: rotate(90deg);
+        }
+        .info-panel {
+            display: none;
+            margin-top: 8px;
+            padding: 12px;
+            background-color: rgba(0, 0, 0, 0.02);
+            border-radius: 4px;
+            border-left: 3px solid var(--btn-primary);
+        }
+        .info-panel.show {
+            display: block;
+        }
+        [data-theme="dark"] .info-panel {
+            background-color: rgba(255, 255, 255, 0.03);
+        }
+        .info-item {
+            display: flex;
+            margin-bottom: 6px;
+            font-size: 11px;
+            line-height: 1.5;
+        }
+        .info-item:last-child {
+            margin-bottom: 0;
+        }
+        .info-label {
+            min-width: 100px;
+            font-weight: 600;
+            color: var(--summary-text);
+            margin-right: 12px;
+        }
+        .info-value {
+            flex: 1;
+            color: var(--text-color);
+            word-break: break-all;
+        }
         .header-controls {
             display: flex;
             justify-content: space-between;
@@ -245,15 +313,84 @@
             border: 1px solid var(--border-color);
             border-radius: 5px;
             padding: 8px 12px;
-            margin-bottom: 15px;
+            margin-bottom: 0;
             font-size: 12px;
             color: var(--summary-text);
             display: flex;
             justify-content: space-between;
             align-items: center;
+            gap: 15px;
+        }
+        .summary > div:first-child {
+            flex: 1;
         }
         .summary span {
             margin: 0 5px;
+        }
+        .info-toggle-btn {
+            display: flex;
+            align-items: center;
+            cursor: pointer;
+            user-select: none;
+            padding: 4px 8px;
+            border-radius: 4px;
+            transition: background-color 0.2s;
+            font-size: 12px;
+            color: var(--text-color);
+            white-space: nowrap;
+        }
+        .info-toggle-btn:hover {
+            background-color: rgba(0, 0, 0, 0.05);
+        }
+        [data-theme="dark"] .info-toggle-btn:hover {
+            background-color: rgba(255, 255, 255, 0.05);
+        }
+        .info-toggle-icon {
+            display: inline-block;
+            margin-right: 6px;
+            transition: transform 0.3s;
+            font-size: 12px;
+        }
+        .info-toggle-icon.expanded {
+            transform: rotate(90deg);
+        }
+        .info-panel {
+            display: none;
+            margin: 0;
+            padding: 12px;
+            background-color: rgba(0, 0, 0, 0.02);
+            border-radius: 0 0 5px 5px;
+            border: 1px solid var(--border-color);
+            border-top: none;
+            border-left: 3px solid var(--btn-primary);
+            margin-bottom: 15px;
+            font-size: 11px;
+        }
+        .info-panel.show {
+            display: block;
+        }
+        [data-theme="dark"] .info-panel {
+            background-color: rgba(255, 255, 255, 0.03);
+        }
+        .info-item {
+            display: flex;
+            margin-bottom: 6px;
+            font-size: 11px;
+            line-height: 1.5;
+        }
+        .info-item:last-child {
+            margin-bottom: 0;
+        }
+        .info-label {
+            min-width: 100px;
+            font-weight: 600;
+            color: var(--summary-text);
+            margin-right: 12px;
+        }
+        .info-value {
+            flex: 1;
+            color: var(--text-color);
+            word-break: break-all;
         }
         .controls {
             position: fixed;
@@ -589,6 +726,33 @@
                 <span>•</span>
                 <span>Modules: 0</span>
             </div>
+            <div class="info-toggle-btn" onclick="toggleInfoPanel()">
+                <span class="info-toggle-icon">▶</span>
+                <span>⚙️ 详情</span>
+            </div>
+        </div>
+        
+        <div class="info-panel" id="infoPanel">
+                            <div style="font-weight: 600; color: var(--text-color); margin-bottom: 8px; font-size: 11px;">Environment</div>
+                <div class="info-item"><div class="info-label">Python:</div><div class="info-value">3.10.12</div></div>
+                <div class="info-item"><div class="info-label">OS:</div><div class="info-value">Linux 6.8.0-90-generic</div></div>
+                <div class="info-item"><div class="info-label">Hostname:</div><div class="info-value">pengdl-pc</div></div>
+                <div class="info-item"><div class="info-label">Processor:</div><div class="info-value">x86_64</div></div>
+                <div class="info-item"><div class="info-label">Generated At:</div><div class="info-value">2026-01-13 13:03:28</div></div>
+                <div style="border-top: 1px solid var(--border-color); margin: 8px 0;"></div>
+                <div style="font-weight: 600; color: var(--text-color); margin-bottom: 8px; font-size: 11px;">Parameters</div>
+                <div class="info-item"><div class="info-label">Ftrace File:</div><div class="info-value">ftrace.txt</div></div>
+                <div class="info-item"><div class="info-label">Vmlinux:</div><div class="info-value">./linux-6.18_/x86_64/vmlinux</div></div>
+                <div class="info-item"><div class="info-label">Kernel Src:</div><div class="info-value">/vol_1t/Qemu/x86_64/linux-6.18_</div></div>
+                <div class="info-item"><div class="info-label">Module Dirs:</div><div class="info-value">1 items</div></div>
+                <div class="info-item"><div class="info-label">Base Url:</div><div class="info-value">https://elixir.bootlin.com/linux/v6.18/source</div></div>
+                <div class="info-item"><div class="info-label">Output:</div><div class="info-value">x86_64_ftrace.txt.html</div></div>
+                <div class="info-item"><div class="info-label">Auto Search:</div><div class="info-value">No</div></div>
+                <div class="info-item"><div class="info-label">Fast:</div><div class="info-value">Yes</div></div>
+                <div class="info-item"><div class="info-label">Use External:</div><div class="info-value">No</div></div>
+                <div class="info-item"><div class="info-label">Highlight Code:</div><div class="info-value">No</div></div>
+                <div class="info-item"><div class="info-label">Path Prefix:</div><div class="info-value">(none)</div></div>
+
         </div>
         
         <div id="content">
@@ -1022,6 +1186,36 @@
             currentTheme = currentTheme === 'light' ? 'dark' : 'light';
             document.documentElement.setAttribute('data-theme', currentTheme);
             localStorage.setItem('theme', currentTheme);
+        }
+        
+        // 切换信息面板展开/折叠
+        function toggleInfoPanel() {
+            const panel = document.getElementById('infoPanel');
+            const toggleBtn = document.querySelector('.info-toggle-btn');
+            const icon = toggleBtn.querySelector('.info-toggle-icon');
+            const isExpanded = panel.classList.contains('show');
+            
+            if (isExpanded) {
+                panel.classList.remove('show');
+                icon.classList.remove('expanded');
+                localStorage.setItem('infoPanelExpanded', 'false');
+            } else {
+                panel.classList.add('show');
+                icon.classList.add('expanded');
+                localStorage.setItem('infoPanelExpanded', 'true');
+            }
+        }
+        
+        // 初始化信息面板状态
+        function initInfoPanel() {
+            const expanded = localStorage.getItem('infoPanelExpanded') === 'true';
+            if (expanded) {
+                const panel = document.getElementById('infoPanel');
+                const toggleBtn = document.querySelector('.info-toggle-btn');
+                const icon = toggleBtn.querySelector('.info-toggle-icon');
+                panel.classList.add('show');
+                icon.classList.add('expanded');
+            }
         }
         
         // 高亮被选中的行
@@ -1469,6 +1663,9 @@
             
             // 恢复视图状态
             restoreViewState();
+            
+            // 初始化信息面板
+            initInfoPanel();
             
             // 监听滚动事件
             window.addEventListener('scroll', updateProgressBar);
