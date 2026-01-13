@@ -943,10 +943,14 @@ def format_args_info(args):
 
     return info_items
 
-def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None, base_url=None, kernel_src=None, use_list=False, verbose=False, fast_mode=False, highlight_code=False, path_prefix=None, module_src=None, module_srcs=None, script_args=None):
+def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None, base_url=None, module_url=None, kernel_src=None, use_list=False, verbose=False, fast_mode=False, highlight_code=False, path_prefix=None, module_src=None, module_srcs=None, script_args=None):
     """生成交互式HTML页面，保留原始空格和格式"""
     if module_dirs is None:
         module_dirs = []
+
+    # 如果没有提供module_url，则使用base_url作为模块URL
+    if module_url is None:
+        module_url = base_url
 
     # 确保path_prefix、module_src和module_srcs是列表
     if path_prefix and not isinstance(path_prefix, list):
@@ -957,7 +961,7 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
         module_srcs = [module_srcs]
 
     # kernel_src保持单个路径（可以是None）
-    
+
     verbose_print("Generating HTML content", verbose)
     start_time = time.time()
     
@@ -1960,30 +1964,34 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
             html_str += f'<div class="expanded-content" id="{line_id}_content" style="display: none;">' 
             
             if locations:
+                # 确定使用哪个URL：如果是模块函数且提供了module_url，则使用module_url；否则使用base_url
+                is_module = line_data.get('module_name') is not None
+                current_base_url = module_url if (is_module and module_url) else base_url
+
                 # 检查是结构化数据还是原始输出
                 if isinstance(locations, dict) and 'func' in str(next(iter(locations.values()), {})):
                     # 结构化数据（标准模式）
                     loc_list = locations.get(adjusted_func_info, [])
                     for loc in loc_list:
-                        if base_url:
+                        if current_base_url:
                             file_path = loc['file']
                             # 清理文件路径
                             file_path = clean_file_path(file_path, kernel_src, path_prefix)
-                            
+
                             # 提取文件路径和行号
                             clean_path = extract_file_path(file_path, kernel_src, path_prefix)
                             line_num = loc.get('line')
-                            
+
                             # 如果行号不在loc中，尝试从file_path中提取
                             if line_num is None:
                                 line_num = extract_line_number(file_path, kernel_src, path_prefix)
-                            
+
                             if clean_path and line_num is not None:
                                 # 获取相对于内核源码的路径
                                 relative_path = get_relative_path(clean_path, kernel_src)
 
                                 # 构建URL
-                                url = build_source_url(base_url, relative_path, line_num)
+                                url = build_source_url(current_base_url, relative_path, line_num)
 
                                 link_text = f"{loc['func']} at {relative_path}:{line_num}"
                                 if loc.get('inlined'):
@@ -2005,28 +2013,28 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
                             # 清理文件路径
                             file_path = clean_file_path(file_path, kernel_src, path_prefix)
                             print("file_path: " + file_path)
-                            
+
                             # 提取文件路径
                             clean_path = extract_file_path(file_path, kernel_src, path_prefix)
                             print("clean_path: " + clean_path)
                             line_num = loc.get('line')
-                            
+
                             # 如果行号不在loc中，尝试从file_path中提取
                             if line_num is None:
                                 line_num = extract_line_number(file_path, kernel_src, path_prefix)
-                            
+
                             if clean_path and line_num is not None:
                                 link_text = f"{loc['func']} at {clean_path}:{line_num}"
                             else:
                                 link_text = f"{loc['func']} at {file_path}"
-                                
+
                             if loc.get('inlined'):
                                 link_text = f"(inlined) {link_text}"
                             escaped_link = escape_html_preserve_spaces(link_text)
                             html_str += f'<div class="location-link">{escaped_link}</div>'
                 elif isinstance(locations, str):
                     # 原始输出（--list模式）
-                    html_str += parse_list_output(locations, base_url, kernel_src, highlight_code, path_prefix, module_src)
+                    html_str += parse_list_output(locations, current_base_url, kernel_src, highlight_code, path_prefix, module_src)
                 else:
                     # 未知格式
                     html_str += f'<div class="location-link">Source information unavailable for: {escape_html_preserve_spaces(adjusted_func_info)}</div>'
@@ -2984,6 +2992,7 @@ def main():
     parser.add_argument('--module-srcs', nargs='*', default=[],
                         help='Module source code root directories (can specify multiple paths)')
     parser.add_argument('--base-url', help='Base URL for source code links')
+    parser.add_argument('--module-url', help='Base URL for module source code links (if different from base-url)')
     parser.add_argument('--output', default='ftrace_viz.html', help='Output HTML file path')
     parser.add_argument('--auto-search', action='store_true',
                         help='Automatically search common module directories')
@@ -3094,6 +3103,7 @@ def main():
         faddr2line_path,
         module_dirs=module_dirs,  # 传递原始模块目录列表（用于auto-search）
         base_url=args.base_url,
+        module_url=args.module_url,  # 传递模块URL
         kernel_src=kernel_src_abs,  # 传递单个绝对路径
         use_list=use_list,
         verbose=args.verbose,
