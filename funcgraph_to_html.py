@@ -943,14 +943,93 @@ def format_args_info(args):
 
     return info_items
 
+def parse_module_url(module_url_str, base_url):
+    """
+    解析module_url参数，返回模块名到URL的映射
+
+    参数格式：
+    - None: 返回空字典，所有模块使用base_url
+    - "http://example.com": 返回空字典，所有模块使用这个URL
+    - "http://example.com,mod1,mod2,http://example.com/other,mod3,mod4":
+      - 'http://example.com' 后面有 ',mod1,mod2'，所以 mod1 和 mod2 使用 http://example.com
+      - 'http://example.com/other' 后面有 ',mod3,mod4'，所以 mod3 和 mod4 使用 http://example.com/other
+      - 其他模块使用 base_url
+    - "http://example.com,http://example.com/other,mod1,mod2":
+      - 'http://example.com' 后面没有逗号连接的模块
+      - 'http://example.com/other' 后面有 ',mod1,mod2'，所以 mod1 和 mod2 使用 http://example.com/other
+      - 其他模块使用 http://example.com
+
+    返回值：
+    - module_url_map: 模块名 -> URL 的映射
+    - default_module_url: 默认模块URL（未在映射中的模块使用）
+    """
+    if not module_url_str:
+        # 没有提供module_url，使用base_url
+        return {}, base_url
+
+    # 按逗号分割
+    parts = [part.strip() for part in module_url_str.split(',')]
+
+    # 解析URL和模块名的映射关系
+    module_url_map = {}
+
+    # 收集所有URL和它们对应的模块名
+    url_to_modules = {}  # URL -> [module1, module2, ...]
+    urls_without_modules = []  # 没有模块名的URL
+
+    current_url = None
+    pending_modules = []
+
+    for part in parts:
+        if part.startswith(('http://', 'https://')):
+            # 如果之前有URL和模块名，保存映射
+            if current_url and pending_modules:
+                url_to_modules[current_url] = pending_modules
+                pending_modules = []
+            elif current_url and not pending_modules:
+                # 这个URL后面没有模块名
+                urls_without_modules.append(current_url)
+
+            # 设置当前URL
+            current_url = part
+        else:
+            # 模块名
+            pending_modules.append(part)
+
+    # 处理最后的URL和模块名
+    if current_url:
+        if pending_modules:
+            url_to_modules[current_url] = pending_modules
+        else:
+            urls_without_modules.append(current_url)
+
+    # 确定默认URL
+    default_url = base_url
+
+    # 如果有URL没有模块名，使用第一个这样的URL作为默认
+    if urls_without_modules:
+        default_url = urls_without_modules[0]
+    # 如果所有URL都有模块名，使用base_url作为默认
+    # （因为没有指定默认URL，所以使用base_url）
+
+    # 构建模块到URL的映射
+    for url, modules in url_to_modules.items():
+        for module_name in modules:
+            module_url_map[module_name] = url
+
+    return module_url_map, default_url
+
+
 def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None, base_url=None, module_url=None, kernel_src=None, use_list=False, verbose=False, fast_mode=False, highlight_code=False, path_prefix=None, module_src=None, module_srcs=None, script_args=None):
     """生成交互式HTML页面，保留原始空格和格式"""
     if module_dirs is None:
         module_dirs = []
 
-    # 如果没有提供module_url，则使用base_url作为模块URL
-    if module_url is None:
-        module_url = base_url
+    # 解析module_url参数
+    module_url_map, default_module_url = parse_module_url(module_url, base_url)
+
+    verbose_print(f"Module URL map: {module_url_map}", verbose)
+    verbose_print(f"Default module URL: {default_module_url}", verbose)
 
     # 确保path_prefix、module_src和module_srcs是列表
     if path_prefix and not isinstance(path_prefix, list):
@@ -1964,9 +2043,19 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
             html_str += f'<div class="expanded-content" id="{line_id}_content" style="display: none;">' 
             
             if locations:
-                # 确定使用哪个URL：如果是模块函数且提供了module_url，则使用module_url；否则使用base_url
+                # 确定使用哪个URL
                 is_module = line_data.get('module_name') is not None
-                current_base_url = module_url if (is_module and module_url) else base_url
+                module_name = line_data.get('module_name')
+
+                if is_module:
+                    # 模块函数：优先使用module_url_map，然后是default_module_url，最后是base_url
+                    if module_name and module_name in module_url_map:
+                        current_base_url = module_url_map[module_name]
+                    else:
+                        current_base_url = default_module_url if default_module_url else base_url
+                else:
+                    # 内核函数：使用base_url
+                    current_base_url = base_url
 
                 # 检查是结构化数据还是原始输出
                 if isinstance(locations, dict) and 'func' in str(next(iter(locations.values()), {})):
