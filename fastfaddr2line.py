@@ -141,47 +141,113 @@ def load_elf_data(executable, verbose=False):
         return symbol_by_name, sections, elf
 
 def find_matching_symbol(func_name, offset, length, symbol_by_name, sections, verbose=False):
-    log(f"Searching for symbol: {func_name}+0x{offset:x}/0x{length:x}", verbose)
+    # 根据length参数决定日志格式
+    if length > 0:
+        log(f"Searching for symbol: {func_name}+0x{offset:x}/0x{length:x}", verbose)
+    else:
+        log(f"Searching for symbol: {func_name}+0x{offset:x} (no length validation)", verbose)
+
     start_time = time.time()
-    
+
     if func_name not in symbol_by_name:
         log(f"Symbol '{func_name}' not found in symbol table", verbose)
         return None
-    
+
     candidates = symbol_by_name[func_name]
     log(f"Found {len(candidates)} candidate symbols for '{func_name}'", verbose)
-    
+
+    # 如果指定了长度（length > 0），首先尝试匹配精确长度
+    if length > 0:
+        for sym in candidates:
+            sec_name = sym.section
+            if sec_name not in sections:
+                log(f"Section {sec_name} not found for symbol {func_name}", verbose)
+                continue
+
+            sec = sections[sec_name]
+            symbols = sec.symbols
+            addrs = sec.addr_list  # Use precomputed address list
+
+            # Use binary search to locate symbol position in section
+            pos = bisect.bisect_left(addrs, sym.addr)
+
+            # Verify the located position is correct
+            if pos < len(symbols) and symbols[pos].addr == sym.addr:
+                # Exact match found
+                pass
+            else:
+                # No exact match, try nearby positions
+                found = False
+                for i in range(max(0, pos-1), min(len(symbols), pos+2)):
+                    if symbols[i].addr == sym.addr:
+                        pos = i
+                        found = True
+                        break
+
+                if not found:
+                    log(f"Symbol {func_name} (addr 0x{sym.addr:x}) not found in section {sec_name}", verbose)
+                    continue
+
+            # Improved symbol length calculation (handles aliased symbols)
+            actual_len = None
+            index = pos + 1
+            while index < len(symbols):
+                next_sym = symbols[index]
+                if next_sym.addr > sym.addr:
+                    actual_len = next_sym.addr - sym.addr
+                    break
+                index += 1
+
+            # If no subsequent symbol with a different address, use section end
+            if actual_len is None:
+                actual_len = sec.end_addr - sym.addr
+
+            log(f"Candidate symbol at 0x{sym.addr:x}, calculated length: 0x{actual_len:x}", verbose)
+
+            # Compare against requested length
+            if actual_len == length:
+                target_addr = sym.addr + offset
+                elapsed = (time.time() - start_time) * 1000
+                log(f"Match found! Target address: 0x{target_addr:x} (search took {elapsed:.2f}ms)", verbose)
+                return sym.addr, sec_name, target_addr
+
+        # Fallback attempt: try to match without length requirement
+        log(f"No exact length match found, trying fallback without length requirement...", verbose)
+
+    # 通用的符号匹配逻辑（适用于无长度要求或长度匹配失败的情况）
     for sym in candidates:
         sec_name = sym.section
         if sec_name not in sections:
             log(f"Section {sec_name} not found for symbol {func_name}", verbose)
             continue
-            
+
         sec = sections[sec_name]
         symbols = sec.symbols
-        addrs = sec.addr_list  # Use precomputed address list
-        
-        # 使用二分查找定位符号在section中的位置
+        addrs = sec.addr_list
+
+        # Use binary search to locate symbol position in section
         pos = bisect.bisect_left(addrs, sym.addr)
-        
-        # 验证找到的位置是否正确
+
+        # Verify the located position is correct
         if pos < len(symbols) and symbols[pos].addr == sym.addr:
-            # 找到符号位置
             pass
         else:
-            # 未找到精确匹配，尝试在附近搜索
             found = False
             for i in range(max(0, pos-1), min(len(symbols), pos+2)):
                 if symbols[i].addr == sym.addr:
                     pos = i
                     found = True
                     break
-            
+
             if not found:
                 log(f"Symbol {func_name} (addr 0x{sym.addr:x}) not found in section {sec_name}", verbose)
                 continue
-        
-        # 改进的符号长度计算（处理别名符号）
+
+        # Calculate target address without length validation
+        target_addr = sym.addr + offset
+
+        # Verify the target address is within reasonable bounds
+        # Check if offset is reasonable (within symbol bounds or close)
         actual_len = None
         index = pos + 1
         while index < len(symbols):
@@ -190,22 +256,22 @@ def find_matching_symbol(func_name, offset, length, symbol_by_name, sections, ve
                 actual_len = next_sym.addr - sym.addr
                 break
             index += 1
-        
-        # 如果没有找到不同地址的后续符号，使用节结束地址
+
         if actual_len is None:
             actual_len = sec.end_addr - sym.addr
-            
-        log(f"Candidate symbol at 0x{sym.addr:x}, calculated length: 0x{actual_len:x}", verbose)
-        
-        # 比较请求的长度
-        if actual_len == length:
-            target_addr = sym.addr + offset
+
+        # Allow offset within symbol bounds or up to 16 bytes beyond
+        # 如果length=0，不进行长度验证；否则验证偏移是否在合理范围内
+        if length == 0 or offset <= actual_len + 16:
             elapsed = (time.time() - start_time) * 1000
-            log(f"Match found! Target address: 0x{target_addr:x} (search took {elapsed:.2f}ms)", verbose)
+            log(f"Match found! Target address: 0x{target_addr:x} (offset 0x{offset:x} within bounds 0x{actual_len:x})", verbose)
             return sym.addr, sec_name, target_addr
-    
+
     elapsed = (time.time() - start_time) * 1000
-    log(f"No matching symbol found for {func_name}+0x{offset:x}/0x{length:x} (search took {elapsed:.2f}ms)", verbose)
+    if length > 0:
+        log(f"No matching symbol found for {func_name}+0x{offset:x}/0x{length:x} even with fallback (search took {elapsed:.2f}ms)", verbose)
+    else:
+        log(f"No matching symbol found for {func_name}+0x{offset:x} (search took {elapsed:.2f}ms)", verbose)
     return None
 
 def start_addr2line(executable, cross_compile="", verbose=False):
@@ -572,44 +638,59 @@ def main():
     
     # 处理每个地址规范
     addr_specs_and_addrs = []
-    addr_pattern = re.compile(r"([^+]+)\+0x([0-9a-fA-F]+)/0x([0-9a-fA-F]+)")
-    
+    # 支持两种格式: func+offset/length 和 func+offset
+    addr_pattern_full = re.compile(r"([^+]+)\+0x([0-9a-fA-F]+)/0x([0-9a-fA-F]+)")
+    addr_pattern_short = re.compile(r"([^+]+)\+0x([0-9a-fA-F]+)")
+
     for addr_spec in options.addresses:
-        match = addr_pattern.match(addr_spec)
-        if not match:
-            print(f"无效的地址格式: {addr_spec}", file=sys.stderr)
-            continue
-            
-        func_name = match.group(1)
-        offset = int(match.group(2), 16)
-        length = int(match.group(3), 16)
-        
-        result = find_matching_symbol(func_name, offset, length, symbol_by_name, sections, options.verbose)
-        if not result:
-            print(f"符号未找到: {addr_spec}", file=sys.stderr)
-            continue
-            
+        # 首先尝试匹配完整格式 func+offset/length
+        match = addr_pattern_full.match(addr_spec)
+        if match:
+            func_name = match.group(1)
+            offset = int(match.group(2), 16)
+            length = int(match.group(3), 16)
+
+            result = find_matching_symbol(func_name, offset, length, symbol_by_name, sections, options.verbose)
+            if not result:
+                print(f"Symbol not found: {addr_spec}", file=sys.stderr)
+                continue
+        else:
+            # 尝试匹配简短格式 func+offset
+            match = addr_pattern_short.match(addr_spec)
+            if not match:
+                print(f"无效的地址格式: {addr_spec}", file=sys.stderr)
+                continue
+
+            func_name = match.group(1)
+            offset = int(match.group(2), 16)
+            length = 0  # 使用0作为长度，表示不验证长度
+
+            result = find_matching_symbol(func_name, offset, length, symbol_by_name, sections, options.verbose)
+            if not result:
+                print(f"Symbol not found: {addr_spec}", file=sys.stderr)
+                continue
+
         sym_addr, _, target_addr = result
         addr_specs_and_addrs.append((addr_spec, target_addr))
-        log(f"已解析 {addr_spec} -> 0x{target_addr:x}", options.verbose)
+        log(f"Resolved {addr_spec} -> 0x{target_addr:x}", options.verbose)
     
-    # 使用addr2line解析地址
+    # Resolve addresses using addr2line
     if addr_specs_and_addrs:
         resolve_addresses(proc, addr_specs_and_addrs, kernel_src_root, options)
     else:
-        log("无有效地址可解析", options.verbose)
-    
-    # 清理
+        log("No valid addresses to resolve", options.verbose)
+
+    # Cleanup
     try:
         proc.stdin.close()
         proc.terminate()
         proc.wait(timeout=1)
     except:
         pass
-    
-    # 记录脚本完成时间
+
+    # Record script completion time
     total_elapsed = (time.time() - start_time) * 1000
-    log(f"脚本完成，总耗时 {total_elapsed:.2f}ms", options.verbose)
+    log(f"Script completed in {total_elapsed:.2f}ms", options.verbose)
 
 if __name__ == "__main__":
     main()
