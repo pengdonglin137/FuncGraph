@@ -1758,7 +1758,7 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
             padding: 4px 8px;
             border-radius: 4px;
             transition: background-color 0.2s;
-            font-size: 12px;
+            font-size: 16px;
             color: var(--text-color);
             white-space: nowrap;
         }}
@@ -2151,7 +2151,7 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
             </div>
             <div class="info-toggle-btn" onclick="toggleInfoPanel()">
                 <span class="info-toggle-icon">▶</span>
-                <span>⚙️ 详情</span>
+                <span>ⓘ</span>
             </div>
         </div>
         
