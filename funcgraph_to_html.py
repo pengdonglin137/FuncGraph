@@ -2128,10 +2128,17 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
         
         // 添加键盘快捷键支持
         document.addEventListener('keydown', function(event) {
+            console.log('🔑 Keydown event:', 'key=', event.key, 'keyCode=', event.keyCode, 'code=', event.code);
+            
             // 检查是否在输入框中
             if (event.target.matches('input, textarea, select')) {
+                console.log('⏸ 在输入框中，跳过处理');
                 return;
             }
+            
+            // DEBUG: 记录所有按键（可以注释掉）
+            // console.log('Keydown:', event.key, 'keyCode:', event.keyCode);
+
             
             // Enter键特殊处理：在链接上按Enter时，用来展开/收起，而不是打开链接
             if (event.key === 'Enter' || event.keyCode === 13) {
@@ -2197,15 +2204,16 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
             
             // VIM风格导航键和方向键
             let handled = false;
+            const keyLower = event.key.toLowerCase();
             
             // 处理垂直移动（j/k 和上下箭头键）- 只导航到可展开行
-            if (event.key === 'j' || event.key === 'ArrowDown') {
+            if (keyLower === 'j' || event.key === 'ArrowDown') {
                 event.preventDefault();
                 handled = true;
                 if (expandableLineIndices.length > 0) {
                     navigateToExpandableLine(1); // 向下导航
                 }
-            } else if (event.key === 'k' || event.key === 'ArrowUp') {
+            } else if (keyLower === 'k' || event.key === 'ArrowUp') {
                 event.preventDefault();
                 handled = true;
                 if (expandableLineIndices.length > 0) {
@@ -2214,16 +2222,27 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
             }
             
             // 处理水平滚动（h/l 键）
-            if (event.key === 'h') {
+            // 支持大小写，Shift+h 和 Shift+l 也有效
+            if (keyLower === 'h') {
+                console.log('👈 检测到 h 键，执行左滚动');
                 event.preventDefault();
                 handled = true;
-                // 向左滚动
-                window.scrollBy({ left: -100, behavior: 'smooth' });
-            } else if (event.key === 'l') {
+                // 向左滚动容器
+                var container = document.querySelector('.container');
+                if (container) {
+                    container.scrollBy({ left: -100, behavior: 'smooth' });
+                    console.log('✓ 容器已左滚，当前 scrollLeft:', container.scrollLeft);
+                }
+            } else if (keyLower === 'l') {
+                console.log('👉 检测到 l 键，执行右滚动');
                 event.preventDefault();
                 handled = true;
-                // 向右滚动
-                window.scrollBy({ left: 100, behavior: 'smooth' });
+                // 向右滚动容器
+                var container = document.querySelector('.container');
+                if (container) {
+                    container.scrollBy({ left: 100, behavior: 'smooth' });
+                    console.log('✓ 容器已右滚，当前 scrollLeft:', container.scrollLeft);
+                }
             }
             
             // 处理其他功能键
