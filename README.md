@@ -16,6 +16,7 @@ FuncGraph是一个用 **AI** 开发的 ftrace 可视化工具，主要用于：
 - **交互式 HTML 输出**：点击函数即可跳转到对应源代码位置
 - **支持内核模块**：可解析内核模块的符号信息
 - **源代码链接**：支持设置 base-url，直接链接到在线代码仓库（如 bootlin）
+- **多模块 URL 支持**：支持为不同模块设置不同的源代码 URL
 - **高性能处理**：fastfaddr2line.py 比传统 addr2line 方式快几个数量级
 - **灵活的参数配置**：支持指定 vmlinux、内核源码、模块目录等
 
@@ -42,7 +43,7 @@ chmod +x *.py
 ### 参数说明
 
 ```bash
-./funcgraph_to_html.py -h
+./funcgraph.py -h
 ```
 
 参数说明：
@@ -50,22 +51,56 @@ chmod +x *.py
 - `--vmlinux VMLINUX`：vmlinux 文件路径
 - `--kernel-src KERNEL_SRC`：内核源码根目录
 - `--module-dirs [MODULE_DIRS ...]`：内核模块搜索目录
+- `--module-srcs [MODULE_SRCS ...]`：模块源码根目录（可指定多个路径）
 - `--base-url BASE_URL`：源代码链接的基础 URL
+- `--module-url MODULE_URL`：模块 URL 映射（可多次指定，格式：url:mod1,mod2）
 - `--output OUTPUT`：输出 HTML 文件路径
 - `--auto-search`：自动搜索常见模块目录
 - `--verbose`：启用详细调试输出
 - `--fast`：使用 fastfaddr2line.py 处理 vmlinux
 - `--use-external`：强制使用外部 faddr2line
+- `--highlight-code`：启用 C 源代码语法高亮（需要 Pygments）
+- `--path-prefix [PATH_PREFIX ...]`：备选的路径前缀（可指定多个路径）
 
-### 用法
+### 用法示例
 
-#### 使用 fastfaddr2line
+#### 基本用法
 
 ```bash
-./funcgraph_to_html.py --fast --vmlinux /home/pengdl/work/linux-6.18/vmlinux \
+./funcgraph.py --fast --vmlinux /home/pengdl/work/linux-6.18/vmlinux \
     --kernel-src /home/pengdl/work/linux-6.18 \
-    --module-dirs /home/pengl/work/linux-6.18/modules_install/ \
+    --module-dirs /home/pengdl/work/linux-6.18/modules_install/ \
     --base-url https://elixir.bootlin.com/linux/v6.18/source \
+    --output output.html ftrace.txt
+```
+
+#### 使用多个模块 URL
+
+为不同模块设置不同的源代码 URL：
+
+```bash
+./funcgraph.py --fast --vmlinux /home/pengdl/work/linux-6.18/vmlinux \
+    --kernel-src /home/pengdl/work/linux-6.18 \
+    --base-url https://elixir.bootlin.com/linux/v6.18/source \
+    --module-url https://url1.com:mod1,mod2 \
+    --module-url https://url2.com:mod3,mod4 \
+    --module-url https://default.com \
+    --output output.html ftrace.txt
+```
+
+说明：
+- `mod1,mod2` 使用 `https://url1.com`
+- `mod3,mod4` 使用 `https://url2.com`
+- 其他模块使用 `https://default.com`
+- 如果没有指定默认 URL，则使用 `--base-url`
+
+#### 启用语法高亮
+
+```bash
+./funcgraph.py --fast --vmlinux /home/pengdl/work/linux-6.18/vmlinux \
+    --kernel-src /home/pengdl/work/linux-6.18 \
+    --base-url https://elixir.bootlin.com/linux/v6.18/source \
+    --highlight-code \
     --output output.html ftrace.txt
 ```
 
@@ -113,7 +148,7 @@ cat trace > ~/ftrace.txt
 funcgraph_visualization/
 ├── README.md                    # 中文说明文档
 ├── README.en.md                 # 英文说明文档
-├── funcgraph_to_html.py         # 主程序：将 ftrace 转换为 HTML
+├── funcgraph.py                 # 主程序：将 ftrace 转换为 HTML
 ├── fastfaddr2line.py            # 高性能地址解析工具
 ├── ftrace.txt                   # trace 数据示例
 ├── sample.png                   # 输出效果截图
@@ -122,7 +157,7 @@ funcgraph_visualization/
 
 ## 工作原理
 
-1. **解析 ftrace 输出**：funcgraph_to_html.py 解析 function_graph 格式的 trace 数据
+1. **解析 ftrace 输出**：funcgraph.py 解析 function_graph 格式的 trace 数据
 2. **提取函数地址**：从 trace 中获取每个函数的返回地址
 3. **符号解析**：使用 fastfaddr2line 或 addr2line 将地址转换为源代码位置
 4. **生成 HTML**：构建交互式 HTML 页面，显示函数调用关系和源代码

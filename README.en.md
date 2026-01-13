@@ -1,10 +1,10 @@
-# funcgraph_visualization
+# FuncGraph
 
 ![Funcgraph_retaddr Visualization Example](sample.png)
 
 ## Introduction
 
-funcgraph_visualization is a powerful ftrace visualization tool primarily designed for:
+FuncGraph is a powerful ftrace visualization tool developed with **AI assistance**, primarily designed for:
 
 1. **Visualizing funcgraph-retaddr output**: Converts the output of the Linux kernel's function_graph tracer into an interactive HTML format, significantly improving the efficiency of locating code lines directly through traces.
 2. **Fast faddr2line implementation**: Rewrote the faddr2line functionality in the Linux kernel using Python, achieving an order-of-magnitude improvement in processing performance.
@@ -14,6 +14,7 @@ funcgraph_visualization is a powerful ftrace visualization tool primarily design
 - **Interactive HTML output**: Click on functions to jump to the corresponding source code location
 - **Kernel module support**: Parses symbol information of kernel modules
 - **Source code linking**: Supports setting a base-url to directly link to online code repositories (e.g., bootlin)
+- **Multiple module URL support**: Supports setting different source code URLs for different modules
 - **High-performance processing**: fastfaddr2line.py is several orders of magnitude faster than the traditional addr2line approach
 - **Flexible parameter configuration**: Supports specifying vmlinux, kernel source code, module directories, etc.
 
@@ -40,7 +41,7 @@ chmod +x *.py
 ### Parameter Description
 
 ```bash
-./funcgraph_to_html.py -h
+./funcgraph.py -h
 ```
 
 Parameter explanation:
@@ -48,22 +49,56 @@ Parameter explanation:
 - `--vmlinux VMLINUX`: Path to the vmlinux file
 - `--kernel-src KERNEL_SRC`: Root directory of the kernel source code
 - `--module-dirs [MODULE_DIRS ...]`: Kernel module search directories
+- `--module-srcs [MODULE_SRCS ...]`: Module source code root directories (can specify multiple paths)
 - `--base-url BASE_URL`: Base URL for source code links
+- `--module-url MODULE_URL`: Module URL mapping (can be specified multiple times, format: url:mod1,mod2)
 - `--output OUTPUT`: Path to the output HTML file
 - `--auto-search`: Automatically search common module directories
 - `--verbose`: Enable detailed debug output
 - `--fast`: Use fastfaddr2line.py to process vmlinux
 - `--use-external`: Force use of external faddr2line
+- `--highlight-code`: Enable C source code syntax highlighting (requires Pygments)
+- `--path-prefix [PATH_PREFIX ...]`: Alternative path prefixes (can specify multiple paths)
 
 ### Usage Examples
 
-#### Using fastfaddr2line
+#### Basic Usage
 
 ```bash
-./funcgraph_to_html.py --fast --vmlinux /home/pengdl/work/linux-6.18/vmlinux \
+./funcgraph.py --fast --vmlinux /home/pengdl/work/linux-6.18/vmlinux \
     --kernel-src /home/pengdl/work/linux-6.18 \
-    --module-dirs /home/pengl/work/linux-6.18/modules_install/ \
+    --module-dirs /home/pengdl/work/linux-6.18/modules_install/ \
     --base-url https://elixir.bootlin.com/linux/v6.18/source \
+    --output output.html ftrace.txt
+```
+
+#### Using Multiple Module URLs
+
+Set different source code URLs for different modules:
+
+```bash
+./funcgraph.py --fast --vmlinux /home/pengdl/work/linux-6.18/vmlinux \
+    --kernel-src /home/pengdl/work/linux-6.18 \
+    --base-url https://elixir.bootlin.com/linux/v6.18/source \
+    --module-url https://url1.com:mod1,mod2 \
+    --module-url https://url2.com:mod3,mod4 \
+    --module-url https://default.com \
+    --output output.html ftrace.txt
+```
+
+Explanation:
+- `mod1,mod2` use `https://url1.com`
+- `mod3,mod4` use `https://url2.com`
+- Other modules use `https://default.com`
+- If no default URL is specified, `--base-url` will be used
+
+#### Enable Syntax Highlighting
+
+```bash
+./funcgraph.py --fast --vmlinux /home/pengdl/work/linux-6.18/vmlinux \
+    --kernel-src /home/pengdl/work/linux-6.18 \
+    --base-url https://elixir.bootlin.com/linux/v6.18/source \
+    --highlight-code \
     --output output.html ftrace.txt
 ```
 
@@ -111,7 +146,7 @@ cat trace > ~/ftrace.txt
 funcgraph_visualization/
 ├── README.md                    # Chinese documentation
 ├── README.en.md                 # English documentation
-├── funcgraph_to_html.py         # Main program: convert ftrace to HTML
+├── funcgraph.py                 # Main program: convert ftrace to HTML
 ├── fastfaddr2line.py            # High-performance address parsing tool
 ├── ftrace.txt                   # Example trace data
 ├── sample.png                   # Screenshot of output effect
@@ -120,7 +155,7 @@ funcgraph_visualization/
 
 ## Working Principle
 
-1. **Parse ftrace output**: funcgraph_to_html.py parses trace data in function_graph format
+1. **Parse ftrace output**: funcgraph.py parses trace data in function_graph format
 2. **Extract function addresses**: Retrieve the return address of each function from the trace
 3. **Symbol resolution**: Convert addresses to source code locations using fastfaddr2line or addr2line
 4. **Generate HTML**: Build an interactive HTML page showing function call relationships and source code
