@@ -114,6 +114,29 @@ chmod +x *.py
 ./fastfaddr2line.py vmlinux arch_stack_walk+0x150/0x4a8
 ```
 
+#### 使用交叉编译工具链
+
+对于交叉编译的内核，可以使用 `CROSS_COMPILE` 环境变量指定工具链前缀：
+
+```bash
+# 设置交叉编译前缀
+export CROSS_COMPILE=aarch64-linux-gnu-
+
+# 使用 fastfaddr2line 解析地址
+./fastfaddr2line.py vmlinux arch_stack_walk+0x150/0x4a8
+
+# 或者使用 funcgraph.py 生成 HTML
+./funcgraph.py --fast --vmlinux vmlinux \
+    --kernel-src /path/to/kernel \
+    --base-url https://elixir.bootlin.com/linux/v6.18/source \
+    --output output.html ftrace.txt
+```
+
+说明：
+- `CROSS_COMPILE` 环境变量会自动传递给底层的 `addr2line` 工具
+- 确保交叉编译工具链已安装并在 PATH 中
+- 工具链前缀不需要包含最后的 `-`，脚本会自动添加
+
 ## 抓取 trace 的方法
 
 在 Linux 系统上执行以下命令来抓取 function_graph trace：

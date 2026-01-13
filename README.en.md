@@ -112,6 +112,29 @@ Explanation:
 ./fastfaddr2line.py vmlinux arch_stack_walk+0x150/0x4a8
 ```
 
+#### Using Cross-Compilation Toolchain
+
+For cross-compiled kernels, you can use the `CROSS_COMPILE` environment variable to specify the toolchain prefix:
+
+```bash
+# Set cross-compilation prefix
+export CROSS_COMPILE=aarch64-linux-gnu-
+
+# Use fastfaddr2line to parse addresses
+./fastfaddr2line.py vmlinux arch_stack_walk+0x150/0x4a8
+
+# Or use funcgraph.py to generate HTML
+./funcgraph.py --fast --vmlinux vmlinux \
+    --kernel-src /path/to/kernel \
+    --base-url https://elixir.bootlin.com/linux/v6.18/source \
+    --output output.html ftrace.txt
+```
+
+Note:
+- The `CROSS_COMPILE` environment variable is automatically passed to the underlying `addr2line` tool
+- Ensure the cross-compilation toolchain is installed and available in PATH
+- The toolchain prefix does not need to include the trailing `-`, the script will add it automatically
+
 ## Method to Capture Traces
 
 Execute the following commands on a Linux system to capture function_graph traces:
