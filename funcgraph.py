@@ -71,8 +71,11 @@ def highlight_ftrace_line(text):
     # 5. 高亮时间单位 (us, ms, ns, ks)
     text = re.sub(r'\b(us|ms|ns|ks)\b', r'<span class="hl-unit">\1</span>', text)
     
-    # 6. 高亮函数名 (标识符后跟( { 或 ;)
-    text = re.sub(r'([a-zA-Z_]\w*)(?=\s*[\({;])', r'<span class="hl-func">\1</span>', text)
+    # 6. 高亮函数名 (标识符后跟( { 或 ; 或空格+[)
+    # 支持普通函数: func_name(
+    # 支持模块函数: func_name [module]()
+    # 支持带参数的函数: func_name(arg1, arg2)
+    text = re.sub(r'([a-zA-Z_]\w*)(?=\s*(?:[\({;]|\s+\[))', r'<span class="hl-func">\1</span>', text)
     
     # 7. 高亮括号和大括号
     text = re.sub(r'([{}()\[\];])', r'<span class="hl-symbol">\1</span>', text)
@@ -994,9 +997,19 @@ def parse_module_url(module_url_str, base_url):
     # URL 模式：http:// 或 https:// 开头，后面跟着非逗号字符，直到冒号
 
     # 使用正则表达式找到所有 URL 的位置
-    # 匹配模式：https?://[^:,]+
-    url_pattern = r'https?://[^:,]+'
+    # 匹配模式：https?://[^:,]+，但需要确保匹配到完整的 URL
+    # 对于 https://url1.com:mod1，应该匹配 https://url1.com，而不是 https
+    # 问题：https?://[^:,]+ 会匹配到 https，因为遇到冒号就停止了
+    # 解决方案：使用 https?://[^:,]+ 但确保后面有冒号或结束
+    # 或者更简单：找到所有以 http:// 或 https:// 开头，后面跟着非逗号字符，直到遇到冒号或逗号或结束
+    # 使用模式：https?://[^:,]+(?=:[^,]*,|$)
+    url_pattern = r'https?://[^:,]+(?=:[^,]*,|$)'
     urls = re.findall(url_pattern, module_url_str)
+
+    # 如果没有匹配到，尝试更宽松的模式
+    if not urls:
+        url_pattern = r'https?://[^:,]+'
+        urls = re.findall(url_pattern, module_url_str)
 
     if not urls:
         # 没有找到 URL，说明格式错误
@@ -3303,29 +3316,30 @@ def main():
     if args.module_url:
         # 检查module_url格式（支持多个--module-url参数）
         for module_url_str in args.module_url:
-            # 检查是否有冒号分隔
-            if ':' in module_url_str:
-                # 有冒号分隔，检查URL和模块名
-                import re
-                pattern = r'([^,]+):([^,]+)'
-                matches = re.findall(pattern, module_url_str)
-                for url, modules in matches:
-                    url = url.strip()
-                    modules = modules.strip()
-
-                    # 检查URL格式
-                    if not url.startswith(('http://', 'https://')):
-                        print(f"Warning: URL '{url}' in module-url does not start with http:// or https://", file=sys.stderr)
-
-                    # 检查模块名
-                    module_list = [m.strip() for m in modules.split(',') if m.strip()]
-                    for module_name in module_list:
-                        if not module_name.replace('-', '_').replace('.', '_').isalnum():
-                            print(f"Warning: module name '{module_name}' in module-url contains potentially invalid characters", file=sys.stderr)
-            else:
+            # 使用与parse_module_url相同的逻辑来验证
+            # 首先检查是否有冒号
+            if ':' not in module_url_str:
                 # 没有冒号，只有URL
                 if not module_url_str.startswith(('http://', 'https://')):
                     print(f"Warning: module-url '{module_url_str}' does not start with http:// or https://", file=sys.stderr)
+                continue
+
+            # 有冒号，需要解析
+            import re
+            # 使用与parse_module_url相同的正则表达式
+            url_pattern = r'https?://[^:,]+(?=:[^,]*,|$)'
+            urls = re.findall(url_pattern, module_url_str)
+
+            if not urls:
+                # 尝试更宽松的模式
+                url_pattern = r'https?://[^:,]+'
+                urls = re.findall(url_pattern, module_url_str)
+
+            for url in urls:
+                url = url.strip()
+                # 检查URL格式
+                if not url.startswith(('http://', 'https://')):
+                    print(f"Warning: URL '{url}' in module-url does not start with http:// or https://", file=sys.stderr)
 
     # 检查输出目录是否可写
     output_dir = os.path.dirname(args.output) or '.'
