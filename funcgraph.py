@@ -2479,11 +2479,23 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
                 <span>ⓘ</span>
             </div>
         </div>
-        
+
         <div class="info-panel" id="infoPanel">
             {{INFO_CONTENT_PLACEHOLDER}}
         </div>
-        
+
+        <!-- 控制按钮 - 立即显示，不用等待内容加载 -->
+        <div class="controls">
+            <!-- 过滤窗口占位符，稍后插入 -->
+            <div id="filterPlaceholder"></div>
+            <div class="right-buttons">
+                <button class="control-btn" onclick="scrollToTop()">Top</button>
+                <button class="control-btn" onclick="copyVisibleContent(event)">Copy</button>
+                <button class="control-btn" onclick="expandAll()">Expand All</button>
+                <button class="control-btn collapse" onclick="collapseAll()">Collapse All</button>
+            </div>
+        </div>
+
         <div id="content">
 """
 
@@ -2620,11 +2632,11 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
                 html_str += f'<div class="location-link">Source information unavailable for: {escape_html_preserve_spaces(adjusted_func_info)}</div>'
             
             html_str += '</div>'
-    
+
     html_str += """
         </div>
     </div>
-    
+
     <div class="keyboard-hint" id="keyboardHint">
         <button class="keyboard-hint-close" onclick="closeKeyboardHint()">×</button>
         <h3>Keyboard Shortcuts</h3>
@@ -2636,17 +2648,7 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
             <li><kbd>Esc</kbd>: Clear selection</li>
         </ul>
     </div>
-    
-    <div class="controls">
-        {filter_html}
-        <div class="right-buttons">
-            <button class="control-btn" onclick="scrollToTop()">Top</button>
-            <button class="control-btn" onclick="copyVisibleContent(event)">Copy</button>
-            <button class="control-btn" onclick="expandAll()">Expand All</button>
-            <button class="control-btn collapse" onclick="collapseAll()">Collapse All</button>
-        </div>
-    </div>
-    
+
     <script>
         // 标记是否正在进行文本选择
         let isSelectingText = false;
@@ -4178,8 +4180,9 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
     # 替换信息面板占位符
     html_str = html_str.replace('{INFO_CONTENT_PLACEHOLDER}', info_content_html)
 
-    # 替换过滤框占位符
-    html_str = html_str.replace('{filter_html}', filter_html)
+    # 将过滤窗口插入到 filterPlaceholder 位置
+    if filter_html:
+        html_str = html_str.replace('<div id="filterPlaceholder"></div>', filter_html)
 
     return html_str
 
