@@ -3484,41 +3484,66 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
             }
         }
         
-        // 复制可见内容
+        // 复制可见内容（纯文本模式，只复制 trace 内容）
         function copyVisibleContent(event) {
-            const visibleLines = [];
             const lines = document.querySelectorAll('.line-container');
 
+            // 构建文本，只复制 trace 内容（不包含行号）
+            const textLines = [];
             lines.forEach(line => {
-                const lineNumber = line.querySelector('.line-number').textContent;
                 const lineContent = line.querySelector('.line-content').textContent;
-                visibleLines.push(`${lineNumber} ${lineContent}`);
+                textLines.push(lineContent);
             });
+            const textToCopy = textLines.join('\\n');
 
-            const textToCopy = visibleLines.join('\\n');
+            // 复制到剪贴板
+            if (navigator.clipboard) {
+                navigator.clipboard.writeText(textToCopy).then(() => {
+                    // 显示成功提示
+                    const originalText = event.target.textContent;
+                    event.target.textContent = 'Copied!';
+                    event.target.style.background = 'rgba(34, 197, 94, 0.8)';
+                    setTimeout(() => {
+                        event.target.textContent = originalText;
+                        event.target.style.background = '';
+                    }, 1000);
+                }).catch(err => {
+                    console.error('Failed to copy: ', err);
+                    // 降级方案
+                    fallbackCopy(textToCopy, event.target);
+                });
+            } else {
+                // 老浏览器降级
+                fallbackCopy(textToCopy, event.target);
+            }
+        }
 
-            navigator.clipboard.writeText(textToCopy).then(() => {
-                // 显示简单的复制成功提示
-                const originalText = event.target.textContent;
-                event.target.textContent = 'Copied!';
-                setTimeout(() => {
-                    event.target.textContent = originalText;
-                }, 1000);
-            }).catch(err => {
-                console.error('Failed to copy: ', err);
-                // 降级方案
-                const textArea = document.createElement('textarea');
-                textArea.value = textToCopy;
-                document.body.appendChild(textArea);
-                textArea.select();
+        // 降级复制方案
+        function fallbackCopy(text, button) {
+            const textArea = document.createElement('textarea');
+            textArea.value = text;
+            textArea.style.position = 'fixed';
+            textArea.style.top = '-1000px';
+            document.body.appendChild(textArea);
+            textArea.select();
+            try {
                 document.execCommand('copy');
-                document.body.removeChild(textArea);
-                const originalText = event.target.textContent;
-                event.target.textContent = 'Copied!';
+                // 显示成功提示
+                const originalText = button.textContent;
+                button.textContent = 'Copied!';
+                button.style.background = 'rgba(34, 197, 94, 0.8)';
                 setTimeout(() => {
-                    event.target.textContent = originalText;
+                    button.textContent = originalText;
+                    button.style.background = '';
                 }, 1000);
-            });
+            } catch (err) {
+                console.error('Fallback copy failed: ', err);
+                button.textContent = 'Failed';
+                setTimeout(() => {
+                    button.textContent = 'Copy';
+                }, 1000);
+            }
+            document.body.removeChild(textArea);
         }
         
         // 滚动到顶部
