@@ -62,7 +62,8 @@ Parameter explanation:
 - `--fast`: Use fastfaddr2line.py to process vmlinux
 - `--use-external`: Force use of external faddr2line
 - `--highlight-code`: Enable C source code syntax highlighting (requires Pygments)
-- `--path-prefix [PATH_PREFIX ...]`: Alternative path prefixes (can specify multiple paths)
+- `--path-prefix [PATH_PREFIX ...]`: Remove path prefixes from addr2line output to get relative paths (can specify multiple paths)
+- `--filter`: Enable filter window in HTML (automatically enables --fast mode)
 
 ### Usage Examples
 
@@ -158,6 +159,58 @@ export LLVM=-10
   - `LLVM=-10`: Uses `llvm-` prefix + `-10` suffix
 - **Note**: faddr2line only exists in the kernel source's `scripts/` directory and is not affected by LLVM/CROSS_COMPILE
 - Toolchain information is displayed in verbose mode for future extensions
+
+#### Using path-prefix to Remove Path Prefixes
+
+When the source code paths returned by addr2line are inconsistent with the kernel source paths, use `--path-prefix` to remove prefixes:
+
+```bash
+# addr2line returns: /home/user/build/kernel/fs/open.c
+# Kernel source path: /home/user/linux/fs/open.c
+# Use path-prefix to remove the difference
+
+./funcgraph.py --fast --vmlinux vmlinux \
+    --kernel-src /path/to/kernel \
+    --path-prefix /home/user/build/kernel \
+    --output output.html ftrace.txt
+```
+
+**path-prefix explanation:**
+- **Main purpose**: Remove path prefixes from addr2line output to get relative paths
+- **Use case**: When compilation paths differ from source code paths
+- **Multiple paths**: Can specify multiple alternative prefixes, script will try to match
+- **Result**: Source code links in HTML use relative paths, more concise
+
+#### Using Filter Function
+
+Enable the `--filter` option to add a filter window in the HTML page, supporting filtering trace lines by CPU, PID, and process name:
+
+```bash
+# Enable filter function (automatically enables --fast mode)
+./funcgraph.py --filter --fast --vmlinux vmlinux \
+    --kernel-src /path/to/kernel \
+    --output output.html ftrace.txt
+```
+
+**Filter function explanation:**
+- **Auto-enables fast mode**: `--filter` automatically enables `--fast` mode
+- **Real-time filtering**: Enter CPU, PID, or process name in the HTML page to filter displayed lines in real-time
+- **Summary Bar update**: Shows "Filtered: X" statistics after filtering
+- **Expand/Collapse optimization**: Only expands/collapses currently visible lines
+- **Multiple conditions**: Supports filtering with multiple conditions combined
+
+**Usage scenario:**
+```bash
+# 1. Generate HTML with filter function
+./funcgraph.py --filter --vmlinux vmlinux --kernel-src /path/to/kernel --output result.html trace.txt
+
+# 2. Open result.html in browser
+# 3. Enter filter conditions:
+#    - CPU: 0,1,2
+#    - PID: 1234,5678
+#    - Comm: "nginx"
+# 4. Click Expand All to only expand filtered lines
+```
 
 ## Method to Capture Traces
 

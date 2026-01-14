@@ -64,7 +64,8 @@ chmod +x *.py
 - `--fast`：使用 fastfaddr2line.py 处理 vmlinux
 - `--use-external`：强制使用外部 faddr2line
 - `--highlight-code`：启用 C 源代码语法高亮（需要 Pygments）
-- `--path-prefix [PATH_PREFIX ...]`：备选的路径前缀（可指定多个路径）
+- `--path-prefix [PATH_PREFIX ...]`：剔除 addr2line 返回的源码路径中的前缀，得到相对路径（可指定多个路径）
+- `--filter`：在 HTML 中启用过滤窗口（自动启用 --fast 模式）
 
 ### 用法示例
 
@@ -160,6 +161,58 @@ export LLVM=-10
   - `LLVM=-10`：使用 `llvm-` 前缀 + `-10` 后缀
 - **注意**：faddr2line 只存在于内核源码的 `scripts/` 目录下，不受 LLVM/CROSS_COMPILE 影响
 - 工具链信息会在 verbose 模式下显示，为未来扩展做准备
+
+#### 使用 path-prefix 剔除路径前缀
+
+当 addr2line 返回的源码路径与内核源码路径不一致时，使用 `--path-prefix` 剔除前缀：
+
+```bash
+# addr2line 返回：/home/user/build/kernel/fs/open.c
+# 内核源码路径：/home/user/linux/fs/open.c
+# 使用 path-prefix 剔除差异部分
+
+./funcgraph.py --fast --vmlinux vmlinux \
+    --kernel-src /path/to/kernel \
+    --path-prefix /home/user/build/kernel \
+    --output output.html ftrace.txt
+```
+
+**path-prefix 说明：**
+- **主要作用**：剔除 addr2line 返回的源码路径中的前缀，得到相对路径
+- **使用场景**：编译路径与源码路径不一致时
+- **多个路径**：可以指定多个备选前缀，脚本会尝试匹配
+- **结果**：生成的 HTML 中源码链接使用相对路径，更简洁
+
+#### 使用过滤功能
+
+启用 `--filter` 选项可以在 HTML 页面中添加过滤窗口，支持按 CPU、PID 和进程名过滤 trace 行：
+
+```bash
+# 启用过滤功能（自动启用 --fast 模式）
+./funcgraph.py --filter --fast --vmlinux vmlinux \
+    --kernel-src /path/to/kernel \
+    --output output.html ftrace.txt
+```
+
+**过滤功能说明：**
+- **自动启用 fast 模式**：`--filter` 会自动启用 `--fast` 模式
+- **实时过滤**：在 HTML 页面中输入 CPU、PID 或进程名，实时过滤显示的行
+- **Summary Bar 更新**：过滤后显示 "Filtered: X" 统计
+- **Expand/Collapse 优化**：只对当前可见的行进行展开/折叠操作
+- **过滤条件**：支持多个条件组合过滤
+
+**使用场景：**
+```bash
+# 1. 生成带过滤功能的 HTML
+./funcgraph.py --filter --vmlinux vmlinux --kernel-src /path/to/kernel --output result.html trace.txt
+
+# 2. 在浏览器中打开 result.html
+# 3. 在过滤窗口中输入：
+#    - CPU: 0,1,2
+#    - PID: 1234,5678
+#    - Comm: "nginx"
+# 4. 点击 Expand All 只会展开过滤后的行
+```
 
 ## 抓取 trace 的方法
 
