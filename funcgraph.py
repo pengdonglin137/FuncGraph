@@ -391,35 +391,106 @@ def get_relative_path(full_path, base_path):
     return full_path
 
 def parse_ftrace_file(file_path, verbose=False):
-    """解析ftrace文件，提取可展开的行及其函数信息"""
+    """解析ftrace文件，提取可展开的行及其函数信息
+
+    参数:
+        file_path: ftrace输出文件路径
+        verbose: 是否输出详细信息
+
+    返回:
+        parsed_lines: 包含所有行信息的列表
+    """
     verbose_print(f"Parsing ftrace file: {file_path}", verbose)
     parsed_lines = []
     expandable_count = 0
-    
+
     try:
         with open(file_path, 'r') as f:
             for line_num, line in enumerate(f, 1):
                 try:
                     line = line.rstrip('\n')
+
+                    # 首先检查是否是注释行或空行（跳过）
+                    if line.startswith('#') or not line.strip():
+                        parsed_lines.append({
+                            'raw_line': line,
+                            'expandable': False,
+                            'func_info': None,
+                            'module_name': None,
+                            'cpu': None,
+                            'pid': None,
+                            'comm': None
+                        })
+                        continue
+
+                    # 解析CPU、PID、进程名
+                    cpu = None
+                    pid = None
+                    comm = None
+
+                    # 方法1: 匹配CPU编号: " 3)" 或 " 0)" 等
+                    cpu_match = re.match(r'^\s*(\d+)\)', line)
+                    if cpu_match:
+                        cpu = int(cpu_match.group(1))
+
+                    # 方法2: 查找 "PID/PID" 或 "comm/PID" 或 "comm-PID" 格式
+                    # 优先匹配带斜杠的格式
+                    pid_comm_match = re.search(r'\s+(\d+)/(\d+)', line)
+                    if pid_comm_match:
+                        pid = int(pid_comm_match.group(1))
+                    else:
+                        # 尝试匹配 "comm/PID" 格式
+                        comm_pid_match = re.search(r'\s+([a-zA-Z_][a-zA-Z0-9_-]*)/(\d+)', line)
+                        if comm_pid_match:
+                            comm = comm_pid_match.group(1)
+                            pid = int(comm_pid_match.group(2))
+                        else:
+                            # 尝试匹配 "comm-PID" 格式（用连字符分隔）
+                            # 支持特殊字符如 <idle>，也支持行首格式如 bash-430
+                            comm_pid_dash_match = re.search(r'([^\s]+)-(\d+)', line)
+                            if comm_pid_dash_match:
+                                comm = comm_pid_dash_match.group(1)
+                                pid = int(comm_pid_dash_match.group(2))
+
+                    # 方法3: 在函数参数中查找 pid= 或 tid= 或 comm=
+                    if pid is None:
+                        pid_param_match = re.search(r'(?:pid|tid)=0x[0-9a-fA-F]+(?:\s*,\s*pid=)?\s*(\d+)', line)
+                        if pid_param_match:
+                            pid = int(pid_param_match.group(1))
+
+                    if comm is None:
+                        comm_param_match = re.search(r'comm=([a-zA-Z_][a-zA-Z0-9_-]*)', line)
+                        if comm_param_match:
+                            comm = comm_param_match.group(1)
+
+                    # 方法4: 查找 prev= 或 next= 参数中的进程信息
+                    if comm is None:
+                        prev_next_match = re.search(r'(?:prev|next)=0x[0-9a-fA-F]+(?:\s*,\s*prev=)?\s*0x[0-9a-fA-F]+(?:\s*,\s*comm=)?\s*([a-zA-Z_][a-zA-Z0-9_-]*)', line)
+                        if prev_next_match:
+                            comm = prev_next_match.group(1)
+
                     if '/*' in line and '<-' in line:
                         func_match = re.search(r'/\*\s*<-(.*?)\s*\*/', line)
                         if func_match:
                             full_func_info = func_match.group(1).strip()
-                            
+
                             # 提取函数地址和模块名
                             func_addr = full_func_info.split()[0] if full_func_info else ''
                             module_name = None
-                            
+
                             # 检查是否有模块名（在方括号中）
                             module_match = re.search(r'\[(.*?)\]', full_func_info)
                             if module_match:
                                 module_name = module_match.group(1)
-                            
+
                             parsed_lines.append({
                                 'raw_line': line,
                                 'expandable': True,
                                 'func_info': func_addr,
-                                'module_name': module_name
+                                'module_name': module_name,
+                                'cpu': cpu,
+                                'pid': pid,
+                                'comm': comm
                             })
                             expandable_count += 1
                             continue
@@ -427,7 +498,10 @@ def parse_ftrace_file(file_path, verbose=False):
                         'raw_line': line,
                         'expandable': False,
                         'func_info': None,
-                        'module_name': None
+                        'module_name': None,
+                        'cpu': cpu,
+                        'pid': pid,
+                        'comm': comm
                     })
                 except Exception as e:
                     verbose_print(f"Error parsing line {line_num}: {str(e)}", verbose)
@@ -436,12 +510,15 @@ def parse_ftrace_file(file_path, verbose=False):
                         'raw_line': line.rstrip('\n'),
                         'expandable': False,
                         'func_info': None,
-                        'module_name': None
+                        'module_name': None,
+                        'cpu': None,
+                        'pid': None,
+                        'comm': None
                     })
     except Exception as e:
         print(f"Error reading file {file_path}: {str(e)}", file=sys.stderr)
         sys.exit(1)
-    
+
     verbose_print(f"Parsed {len(parsed_lines)} lines, found {expandable_count} expandable entries", verbose)
     return parsed_lines
 
@@ -1143,10 +1220,77 @@ def parse_module_url_old_format(module_url_str, base_url):
     return module_url_map, default_url
 
 
-def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None, base_url=None, module_url=None, kernel_src=None, use_list=False, verbose=False, fast_mode=False, highlight_code=False, path_prefix=None, module_src=None, module_srcs=None, script_args=None):
+def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None, base_url=None, module_url=None, kernel_src=None, use_list=False, verbose=False, fast_mode=False, highlight_code=False, path_prefix=None, module_src=None, module_srcs=None, script_args=None, enable_filter=False):
     """生成交互式HTML页面，保留原始空格和格式"""
     if module_dirs is None:
         module_dirs = []
+
+    # 根据enable_filter参数生成过滤框HTML
+    filter_html = ""
+    if enable_filter:
+        # 收集所有唯一的CPU、PID和进程名用于自动补全
+        unique_cpus = set()
+        unique_pids = set()
+        unique_comms = set()
+
+        for line_data in parsed_lines:
+            cpu = line_data.get('cpu')
+            pid = line_data.get('pid')
+            comm = line_data.get('comm')
+
+            # 只收集合法的值
+            if cpu is not None:
+                cpu_str = str(cpu)
+                # 确保是有效的数字（过滤掉空字符串、None等）
+                if cpu_str.strip() and cpu_str.isdigit():
+                    unique_cpus.add(cpu_str)
+
+            if pid is not None:
+                pid_str = str(pid)
+                # 确保是有效的数字（过滤掉空字符串、None等）
+                if pid_str.strip() and pid_str.isdigit():
+                    unique_pids.add(pid_str)
+
+            if comm:
+                comm_str = str(comm).strip()
+                # 确保进程名不是空字符串或特殊字符
+                if comm_str and len(comm_str) > 0 and not comm_str.startswith('('):
+                    unique_comms.add(comm_str)
+
+        # 只生成有数据的输入框
+        filter_inputs = []
+
+        if unique_cpus:
+            cpus_json = ','.join(sorted(unique_cpus))
+            filter_inputs.append(f'''
+            <div class="filter-input-group">
+                <input type="text" id="filterCpu" placeholder="CPU regex (e.g., 0|1|2 or [0-2])" style="width: 140px;" data-suggestions="{cpus_json}">
+                <div class="suggestions" id="cpuSuggestions"></div>
+            </div>''')
+
+        if unique_pids:
+            pids_json = ','.join(sorted(unique_pids))
+            filter_inputs.append(f'''
+            <div class="filter-input-group">
+                <input type="text" id="filterPid" placeholder="PID regex (e.g., 1234|5678 or 0-100)" style="width: 140px;" data-suggestions="{pids_json}">
+                <div class="suggestions" id="pidSuggestions"></div>
+            </div>''')
+
+        if unique_comms:
+            comms_json = ','.join(sorted(unique_comms))
+            filter_inputs.append(f'''
+            <div class="filter-input-group">
+                <input type="text" id="filterComm" placeholder="Comm regex (e.g., bash|python or ^idle)" style="width: 140px;" data-suggestions="{comms_json}">
+                <div class="suggestions" id="commSuggestions"></div>
+            </div>''')
+
+        # 只有当有至少一个输入框时才生成过滤框
+        if filter_inputs:
+            filter_html = f'''
+            <div class="filter-box">
+                {''.join(filter_inputs)}
+                <button class="control-btn clear-btn" onclick="clearFilter()">Clear</button>
+            </div>'''
 
     # 解析module_url参数（支持多个--module-url参数）
     if module_url is None:
@@ -1429,7 +1573,16 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
         info_content_html += '                <div style="font-weight: 600; color: var(--text-color); margin-bottom: 8px; font-size: 11px;">Parameters</div>\n'
         for label, value in info_items:
             info_content_html += f'                <div class="info-item"><div class="info-label">{label}:</div><div class="info-value">{html.escape(str(value))}</div></div>\n'
-    
+
+    # 添加行数统计信息（初始显示总行数）
+    total_lines = len(parsed_lines)
+    expandable_lines = sum(1 for l in parsed_lines if l['expandable'])
+    info_content_html += '                <div style="border-top: 1px solid var(--border-color); margin: 8px 0;"></div>\n'
+    info_content_html += '                <div style="font-weight: 600; color: var(--text-color); margin-bottom: 8px; font-size: 11px;">Trace Statistics</div>\n'
+    info_content_html += f'                <div class="info-item"><div class="info-label">Total Lines:</div><div class="info-value" id="totalLines">{total_lines}</div></div>\n'
+    info_content_html += f'                <div class="info-item"><div class="info-label">Expandable Lines:</div><div class="info-value" id="expandableLines">{expandable_lines}</div></div>\n'
+    info_content_html += f'                <div class="info-item"><div class="info-label">Visible Lines:</div><div class="info-value" id="visibleLines">{total_lines}</div></div>\n'
+
     if not env_items and not info_items:
         info_content_html = '                <div style="color: var(--summary-text); font-size: 12px;">No information available</div>'
     
@@ -1834,60 +1987,215 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
             right: 20px;
             z-index: 1000;
             display: flex;
-            gap: 5px;
+            gap: 8px;
+            align-items: flex-end; /* Align to bottom */
         }}
+
+        /* Right buttons - vertical stack */
+        .right-buttons {{
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            align-items: flex-end; /* Align to right */
+        }}
+
+        /* Base button style */
         .control-btn {{
             padding: 8px 12px;
-            background-color: var(--btn-primary);
-            color: white;
             border: none;
             border-radius: 4px;
             cursor: pointer;
             font-size: 12px;
-            transition: background-color 0.2s;
+            transition: all 0.2s;
+            white-space: nowrap;
+            /* Auto width based on content */
+            width: auto;
+            min-width: auto;
+            /* Semi-transparent backgrounds */
+            backdrop-filter: blur(2px);
         }}
         .control-btn:hover {{
-            background-color: var(--btn-primary-hover);
+            opacity: 0.85;
+            transform: translateY(-1px);
         }}
+
+        /* Top button - blue */
+        .control-btn:nth-child(1) {{
+            background-color: rgba(59, 130, 246, 0.7); /* Blue */
+            color: white;
+        }}
+        .control-btn:nth-child(1):hover {{
+            background-color: rgba(37, 99, 235, 0.8);
+        }}
+
+        /* Copy button - green */
+        .control-btn:nth-child(2) {{
+            background-color: rgba(34, 197, 94, 0.7); /* Green */
+            color: white;
+        }}
+        .control-btn:nth-child(2):hover {{
+            background-color: rgba(22, 163, 74, 0.8);
+        }}
+
+        /* Expand All button - orange */
+        .control-btn:nth-child(3) {{
+            background-color: rgba(249, 115, 22, 0.7); /* Orange */
+            color: white;
+        }}
+        .control-btn:nth-child(3):hover {{
+            background-color: rgba(234, 88, 12, 0.8);
+        }}
+
+        /* Collapse All button - red */
         .control-btn.collapse {{
-            background-color: var(--btn-danger);
+            background-color: rgba(239, 68, 68, 0.7); /* Red */
+            color: white;
         }}
         .control-btn.collapse:hover {{
-            background-color: var(--btn-danger-hover);
+            background-color: rgba(220, 38, 38, 0.8);
         }}
-        .copy-btn {{
-            position: fixed;
-            bottom: 60px;
-            right: 20px;
+
+        /* Clear button - gray with trash icon */
+        .clear-btn {{
+            background-color: rgba(107, 114, 128, 0.7); /* Gray */
+            color: white;
+            padding: 8px 10px;
+            font-size: 14px;
+        }}
+        .clear-btn:hover {{
+            background-color: rgba(75, 85, 99, 0.8);
+        }}
+
+        /* Control bar styles */
+        .controls {{
+            display: flex;
+            gap: 15px;
+            align-items: flex-end; /* Align to bottom */
+            margin-bottom: 15px;
+            flex-wrap: wrap;
+        }}
+
+        /* Right buttons - vertical stack */
+        .right-buttons {{
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            margin-left: auto; /* Push to right side */
+            align-items: flex-end; /* Align to right */
+        }}
+
+        /* Filter box styles */
+        .filter-box {{
+            display: flex;
+            gap: 8px;
+            align-items: flex-end; /* Align to bottom */
+            padding: 8px;
+            background: var(--bg-secondary);
+            border-radius: 4px;
+            flex-wrap: wrap;
+            margin-bottom: 0;
+            /* Position to align with Collapse All button */
+            margin-top: 24px; /* Offset to align with bottom of right buttons */
+        }}
+        .filter-box .clear-btn {{
+            margin-top: 0; /* Reset margin for clear button */
+        }}
+        .filter-input-group {{
+            position: relative;
+            display: flex;
+            flex-direction: column;
+        }}
+        .filter-box input {{
+            padding: 6px 8px;
+            border: 1px solid var(--border-color);
+            border-radius: 3px;
+            background: rgba(200, 200, 200, 0.3); /* Semi-transparent light gray */
+            color: var(--text-primary);
+            font-size: 12px;
+            width: 140px;
+        }}
+        [data-theme="dark"] .filter-box input {{
+            background: rgba(100, 100, 100, 0.3); /* Darker semi-transparent for dark mode */
+        }}
+        .filter-box input:focus {{
+            outline: none;
+            border-color: var(--btn-primary);
+        }}
+        .filter-box input::placeholder {{
+            color: var(--text-secondary);
+        }}
+
+        /* Suggestions dropdown - pull-up menu */
+        .suggestions {{
+            position: absolute;
+            bottom: 100%; /* Pull up above the input */
+            left: 0;
+            right: 0;
+            background: rgba(220, 220, 220, 0.95); /* Semi-transparent light gray */
+            border: 1px solid var(--border-color);
+            border-radius: 3px;
+            max-height: 150px;
+            overflow-y: auto;
+            z-index: 1000;
+            display: none;
+            box-shadow: 0 -2px 8px rgba(0,0,0,0.2); /* Shadow upward */
+            margin-bottom: 4px; /* Space between input and menu */
+        }}
+        [data-theme="dark"] .suggestions {{
+            background: rgba(80, 80, 80, 0.95); /* Darker semi-transparent for dark mode */
+        }}
+        .suggestions.active {{
+            display: block;
+        }}
+        .suggestion-item {{
+            padding: 4px 8px;
+            cursor: pointer;
+            font-size: 11px;
+            border-bottom: 1px solid var(--border-color);
+            color: #333; /* Dark text for light background */
+        }}
+        [data-theme="dark"] .suggestion-item {{
+            color: #eee; /* Light text for dark background */
+        }}
+        .suggestion-item:last-child {{
+            border-bottom: none;
+        }}
+        .suggestion-item:hover {{
+            background: rgba(180, 180, 180, 0.8);
+        }}
+        .suggestion-item.selected {{
+            background: var(--btn-primary);
+            color: white;
+        }}
+
+        /* Control buttons - uniform size */
+        .control-btn {{
             padding: 8px 12px;
-            background-color: #2196F3;
+            background: var(--btn-primary);
             color: white;
             border: none;
             border-radius: 4px;
             cursor: pointer;
             font-size: 12px;
+            font-weight: 500;
             transition: background-color 0.2s;
-            z-index: 1000;
+            white-space: nowrap;
+            min-width: 80px;
+            text-align: center;
         }}
-        .copy-btn:hover {{
-            background-color: #1976D2;
+        .control-btn:hover {{
+            background: var(--btn-primary-hover);
         }}
-        .jump-to-top {{
-            position: fixed;
-            bottom: 100px;
-            right: 20px;
-            padding: 8px 12px;
-            background-color: #9C27B0;
-            color: white;
-            border: none;
-            border-radius: 4px;
-            cursor: pointer;
-            font-size: 12px;
-            transition: background-color 0.2s;
-            z-index: 1000;
+        .control-btn.collapse {{
+            background: var(--btn-danger);
         }}
-        .jump-to-top:hover {{
-            background-color: #7B1FA2;
+        .control-btn.collapse:hover {{
+            background: var(--btn-danger-hover);
+        }}
+
+        /* 移除旧的固定定位按钮样式 */
+        .copy-btn, .jump-to-top, .floating-buttons {{
+            display: none;
         }}
         .progress-bar {{
             position: fixed;
@@ -2155,6 +2463,10 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
         <div class="summary">
             <div>
                 <span>Lines: {total_lines}</span>
+                <span id="visibleLinesContainer" style="display: none;">
+                    <span>•</span>
+                    <span>Visible: <span id="summaryVisibleLines">{total_lines}</span></span>
+                </span>
                 <span>•</span>
                 <span>Expandable: {expandable_entries}</span>
                 <span>•</span>
@@ -2180,24 +2492,32 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
         line_number = idx + 1  # 行号从1开始
         line_anchor_id = f"L{line_number}"  # 使用L{行号}格式作为锚点
         line_id = f"line_{idx}"  # 保留用于JavaScript引用
-        
+
         # 先应用语法高亮，保持原始空格和对齐
         escaped_line = highlight_ftrace_line(line_data["raw_line"])
-        
+
         # 检查是否可展开
         is_expandable = line_data['expandable'] and line_data['func_info']
         expandable_class = "expandable" if is_expandable else ""
-        
-        html_str += f'<div class="line-container {expandable_class}" id="{line_anchor_id}" data-line-number="{line_number}" data-line-id="{line_id}"'
+
+        # 获取CPU、PID、进程名信息，用于过滤
+        cpu = line_data.get('cpu')
+        pid = line_data.get('pid')
+        comm = line_data.get('comm')
+
+        # 构建数据属性用于过滤
+        data_attrs = f' data-cpu="{cpu if cpu is not None else ""}" data-pid="{pid if pid is not None else ""}" data-comm="{comm if comm else ""}"'
+
+        html_str += f'<div class="line-container {expandable_class}" id="{line_anchor_id}" data-line-number="{line_number}" data-line-id="{line_id}"{data_attrs}'
         if is_expandable:
             html_str += f' onclick="handleLineClick(event, \'{line_id}\')" ondblclick="handleDoubleClick(event, \'{line_id}\')"'
         html_str += '>'
         html_str += f'<span class="line-number" onclick="updateAnchor(\'{line_anchor_id}\', event)" title="Click to copy anchor link">{line_number}</span>'
         html_str += f'<span class="line-content">{escaped_line}</span>'
-        
+
         if is_expandable:
             html_str += f'<span class="expand-btn">+</span>'
-        
+
         html_str += '</div>'
         
         if is_expandable:
@@ -2318,10 +2638,13 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
     </div>
     
     <div class="controls">
-        <button class="jump-to-top" onclick="scrollToTop()">Top</button>
-        <button class="copy-btn" onclick="copyVisibleContent()">Copy</button>
-        <button class="control-btn" onclick="expandAll()">Expand All</button>
-        <button class="control-btn collapse" onclick="collapseAll()">Collapse All</button>
+        {filter_html}
+        <div class="right-buttons">
+            <button class="control-btn" onclick="scrollToTop()">Top</button>
+            <button class="control-btn" onclick="copyVisibleContent()">Copy</button>
+            <button class="control-btn" onclick="expandAll()">Expand All</button>
+            <button class="control-btn collapse" onclick="collapseAll()">Collapse All</button>
+        </div>
     </div>
     
     <script>
@@ -2352,7 +2675,10 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
         let scrollPositionBeforeClick = { x: 0, y: 0 };
         // 是否显示过键盘提示
         let keyboardHintShown = localStorage.getItem('keyboardHintShown') === 'true';
-        
+
+        // 过滤功能相关变量
+        let currentFilter = { cpu: [], pid: [], comm: [] };
+
         // 初始化主题
         document.documentElement.setAttribute('data-theme', currentTheme);
         
@@ -2381,16 +2707,8 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
         
         // 初始化键盘导航
         function initKeyboardNavigation() {
-            allLines = Array.from(document.querySelectorAll('.line-container'));
-            expandableLines = Array.from(document.querySelectorAll('.line-container.expandable'));
-            
-            // 收集所有可展开行的索引
-            expandableLineIndices = [];
-            allLines.forEach((line, index) => {
-                if (line.classList.contains('expandable')) {
-                    expandableLineIndices.push(index);
-                }
-            });
+            // 使用updateExpandableLines来初始化所有变量
+            updateExpandableLines();
             
             // 如果有可展开行，设置默认选中第一个可展开行
             if (expandableLineIndices.length > 0) {
@@ -2431,7 +2749,384 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
                 keyboardHintTimer = null;
             }
         }
-        
+
+        // 应用过滤器（支持正则表达式）
+        function applyFilter() {
+            const cpuInput = document.getElementById('filterCpu')?.value.trim() || '';
+            const pidInput = document.getElementById('filterPid')?.value.trim() || '';
+            const commInput = document.getElementById('filterComm')?.value.trim() || '';
+
+            // 编译正则表达式
+            let cpuRegex = null, pidRegex = null, commRegex = null;
+
+            try {
+                if (cpuInput) cpuRegex = new RegExp(cpuInput);
+            } catch (e) {
+                console.warn('Invalid CPU regex:', cpuInput);
+            }
+
+            try {
+                if (pidInput) pidRegex = new RegExp(pidInput);
+            } catch (e) {
+                console.warn('Invalid PID regex:', pidInput);
+            }
+
+            try {
+                if (commInput) commRegex = new RegExp(commInput);
+            } catch (e) {
+                console.warn('Invalid Comm regex:', commInput);
+            }
+
+            // 检查是否有任何过滤条件
+            const hasFilter = cpuRegex || pidRegex || commRegex;
+
+            // 获取所有行
+            const allLines = document.querySelectorAll('.line-container');
+            let visibleCount = 0;
+
+            allLines.forEach(line => {
+                const cpu = line.getAttribute('data-cpu');
+                const pid = line.getAttribute('data-pid');
+                const comm = line.getAttribute('data-comm');
+                const rawLine = line.querySelector('.line-content')?.textContent || '';
+
+                let show = true;
+
+                // 如果有过滤条件，隐藏无效行（空行、分隔线等）
+                if (hasFilter) {
+                    // 检查是否是空行或分隔线
+                    const trimmed = rawLine.trim();
+                    if (trimmed === '' || trimmed.match(/^[-]+$/)) {
+                        show = false;
+                    }
+                }
+
+                // 检查CPU过滤（正则表达式）
+                if (show && cpuRegex && cpu !== null && cpu !== '') {
+                    if (!cpuRegex.test(cpu)) {
+                        show = false;
+                    }
+                }
+
+                // 检查PID过滤（正则表达式）
+                if (show && pidRegex && pid !== null && pid !== '') {
+                    if (!pidRegex.test(pid)) {
+                        show = false;
+                    }
+                }
+
+                // 检查Comm过滤（正则表达式）
+                if (show && commRegex && comm) {
+                    if (!commRegex.test(comm)) {
+                        show = false;
+                    }
+                }
+
+                line.style.display = show ? '' : 'none';
+                if (show) visibleCount++;
+            });
+
+            // 更新展开行列表（只包含可见的）
+            updateExpandableLines();
+
+            // 应用过滤后，确保所有隐藏行的展开内容都被折叠
+            // 方法1：直接处理所有展开的内容
+            const allExpandedContents = document.querySelectorAll('.expanded-content');
+            allExpandedContents.forEach(content => {
+                // .expanded-content 是 .line-container 的兄弟元素，不是子元素
+                // 需要找到前一个兄弟元素
+                const prevSibling = content.previousElementSibling;
+                const isLineContainer = prevSibling && prevSibling.classList.contains('line-container');
+                const isParentHidden = isLineContainer && prevSibling.style.display === 'none';
+                const isContentVisible = content.style.display === 'block';
+
+                if (isParentHidden && isContentVisible) {
+                    content.style.display = 'none';
+                    const btn = prevSibling.querySelector('.expand-btn');
+                    if (btn) btn.textContent = '+';
+                    prevSibling.classList.remove('selected');
+                }
+            });
+
+            // 方法2：同时折叠所有展开的行（双重保险）
+            const expandableLines = document.querySelectorAll('.line-container.expandable');
+            expandableLines.forEach(line => {
+                // 找到下一个兄弟元素作为展开内容
+                const nextSibling = line.nextElementSibling;
+                const content = nextSibling && nextSibling.classList.contains('expanded-content') ? nextSibling : null;
+                const btn = line.querySelector('.expand-btn');
+                const isExpanded = content && content.style.display === 'block';
+
+                if (isExpanded) {
+                    content.style.display = 'none';
+                    btn.textContent = '+';
+                    line.classList.remove('selected');
+                }
+            });
+
+            // 更新信息面板中的可见行数
+            const visibleLinesElement = document.getElementById('visibleLines');
+            if (visibleLinesElement) {
+                visibleLinesElement.textContent = visibleCount;
+            }
+
+            // 更新顶部摘要中的可见行数显示
+            const visibleLinesContainer = document.getElementById('visibleLinesContainer');
+            const summaryVisibleLines = document.getElementById('summaryVisibleLines');
+            const totalLines = document.getElementById('totalLines');
+
+            if (visibleLinesContainer && summaryVisibleLines && totalLines) {
+                const total = parseInt(totalLines.textContent);
+                if (visibleCount < total) {
+                    // 显示可见行数
+                    visibleLinesContainer.style.display = 'inline';
+                    summaryVisibleLines.textContent = visibleCount;
+                } else {
+                    // 隐藏可见行数（因为没有过滤）
+                    visibleLinesContainer.style.display = 'none';
+                }
+            }
+
+            console.log(`Filter applied: ${visibleCount} lines visible`);
+        }
+
+        // 清除过滤器
+        function clearFilter() {
+            const cpuInput = document.getElementById('filterCpu');
+            const pidInput = document.getElementById('filterPid');
+            const commInput = document.getElementById('filterComm');
+
+            if (cpuInput) cpuInput.value = '';
+            if (pidInput) pidInput.value = '';
+            if (commInput) commInput.value = '';
+
+            currentFilter = { cpu: [], pid: [], comm: [] };
+
+            const allLines = document.querySelectorAll('.line-container');
+            allLines.forEach(line => {
+                line.style.display = ''; // 恢复所有行，包括无效行
+
+                // 恢复展开状态
+                const lineId = line.getAttribute('data-line-id');
+                if (lineId) {
+                    const content = document.getElementById(lineId + '_content');
+                    const btn = line.querySelector('.expand-btn');
+                    if (content && btn) {
+                        // 检查是否应该展开
+                        const isExpanded = localStorage.getItem(`expanded_${lineId}`) === 'true';
+                        if (isExpanded) {
+                            content.style.display = 'block';
+                            btn.textContent = '-';
+                            line.classList.add('selected');
+                        } else {
+                            content.style.display = 'none';
+                            btn.textContent = '+';
+                            line.classList.remove('selected');
+                        }
+                    }
+                }
+            });
+
+            // 更新展开行列表
+            updateExpandableLines();
+
+            // 恢复可见行数为总行数
+            const visibleLinesElement = document.getElementById('visibleLines');
+            const totalLinesElement = document.getElementById('totalLines');
+            const visibleLinesContainer = document.getElementById('visibleLinesContainer');
+
+            if (visibleLinesElement && totalLinesElement) {
+                visibleLinesElement.textContent = totalLinesElement.textContent;
+            }
+            // 隐藏可见行数显示
+            if (visibleLinesContainer) {
+                visibleLinesContainer.style.display = 'none';
+            }
+
+            console.log('Filter cleared');
+        }
+
+        // 更新展开行列表（只包含可见的）
+        function updateExpandableLines() {
+            // 重新获取所有行（包括隐藏的）
+            allLines = Array.from(document.querySelectorAll('.line-container'));
+            expandableLines = Array.from(document.querySelectorAll('.line-container.expandable'))
+                .filter(line => line.style.display !== 'none');
+            expandableLineIndices = [];
+            allLines.forEach((line, index) => {
+                if (line.classList.contains('expandable') && line.style.display !== 'none') {
+                    expandableLineIndices.push(index);
+                }
+            });
+        }
+
+        // 自动补全功能
+        function initAutocomplete() {
+            const inputs = [
+                { id: 'filterCpu', suggestionsId: 'cpuSuggestions' },
+                { id: 'filterPid', suggestionsId: 'pidSuggestions' },
+                { id: 'filterComm', suggestionsId: 'commSuggestions' }
+            ];
+
+            inputs.forEach(({ id, suggestionsId }) => {
+                const input = document.getElementById(id);
+                const suggestionsDiv = document.getElementById(suggestionsId);
+
+                // 如果输入框不存在，跳过
+                if (!input || !suggestionsDiv) return;
+
+                // 获取建议列表
+                const suggestions = input.getAttribute('data-suggestions') || '';
+                const suggestionList = suggestions ? suggestions.split(',') : [];
+
+                // 点击输入框时显示所有建议
+                input.addEventListener('focus', function() {
+                    if (suggestionList.length > 0) {
+                        suggestionsDiv.innerHTML = suggestionList.slice(0, 10).map(item =>
+                            `<div class="suggestion-item" data-value="${item}">${item}</div>`
+                        ).join('');
+                        suggestionsDiv.classList.add('active');
+                    }
+                });
+
+                // 输入时过滤建议
+                input.addEventListener('input', function() {
+                    const value = this.value.toLowerCase().trim();
+
+                    // 如果输入框为空，显示所有建议
+                    if (value.length === 0) {
+                        if (suggestionList.length > 0) {
+                            suggestionsDiv.innerHTML = suggestionList.slice(0, 10).map(item =>
+                                `<div class="suggestion-item" data-value="${item}">${item}</div>`
+                            ).join('');
+                            suggestionsDiv.classList.add('active');
+                        } else {
+                            suggestionsDiv.classList.remove('active');
+                            suggestionsDiv.innerHTML = '';
+                        }
+                        return;
+                    }
+
+                    // 过滤建议
+                    const filtered = suggestionList.filter(item =>
+                        item.toLowerCase().includes(value)
+                    );
+
+                    if (filtered.length > 0) {
+                        suggestionsDiv.innerHTML = filtered.slice(0, 10).map(item =>
+                            `<div class="suggestion-item" data-value="${item}">${item}</div>`
+                        ).join('');
+                        suggestionsDiv.classList.add('active');
+                    } else {
+                        suggestionsDiv.classList.remove('active');
+                        suggestionsDiv.innerHTML = '';
+                    }
+                });
+
+                // 点击建议项 - 智能添加到正则表达式
+                suggestionsDiv.addEventListener('click', function(e) {
+                    if (e.target.classList.contains('suggestion-item')) {
+                        const value = e.target.getAttribute('data-value');
+                        const current = input.value.trim();
+
+                        if (current) {
+                            // 如果当前内容已经是正则表达式，智能添加
+                            if (current.includes('|') || current.includes('[') || current.includes('(')) {
+                                // 已经是复杂正则，添加为备选
+                                input.value = current + '|' + value;
+                            } else if (current.includes(',')) {
+                                // 已经是逗号分隔，继续用逗号
+                                input.value = current + ',' + value;
+                            } else {
+                                // 简单值，转换为"或"关系
+                                input.value = current + '|' + value;
+                            }
+                        } else {
+                            input.value = value;
+                        }
+                        suggestionsDiv.classList.remove('active');
+                        suggestionsDiv.innerHTML = '';
+                        input.focus();
+                    }
+                });
+
+                // 失去焦点时隐藏建议（延迟以允许点击）
+                input.addEventListener('blur', function() {
+                    setTimeout(() => {
+                        suggestionsDiv.classList.remove('active');
+                    }, 200);
+                });
+
+                // 键盘导航
+                input.addEventListener('keydown', function(e) {
+                    // 回车键触发过滤
+                    if (e.key === 'Enter') {
+                        e.preventDefault();
+                        // 如果有选中的建议项，先选择它
+                        if (suggestionsDiv.classList.contains('active')) {
+                            const current = suggestionsDiv.querySelector('.suggestion-item.selected');
+                            if (current) {
+                                const value = current.getAttribute('data-value');
+                                const currentVal = this.value.trim();
+                                if (currentVal) {
+                                    // 智能添加：如果已经是正则表达式，用|，否则用逗号
+                                    if (currentVal.includes('|') || currentVal.includes('[') || currentVal.includes('(')) {
+                                        this.value = currentVal + '|' + value;
+                                    } else if (currentVal.includes(',')) {
+                                        this.value = currentVal + ',' + value;
+                                    } else {
+                                        this.value = currentVal + '|' + value;
+                                    }
+                                } else {
+                                    this.value = value;
+                                }
+                                suggestionsDiv.classList.remove('active');
+                                suggestionsDiv.innerHTML = '';
+                                return;
+                            }
+                        }
+                        // 没有选中的建议项，触发过滤
+                        applyFilter();
+                        return;
+                    }
+
+                    if (!suggestionsDiv.classList.contains('active')) return;
+
+                    const items = suggestionsDiv.querySelectorAll('.suggestion-item');
+                    if (items.length === 0) return;
+
+                    if (e.key === 'ArrowDown') {
+                        e.preventDefault();
+                        const current = suggestionsDiv.querySelector('.suggestion-item.selected');
+                        if (current) {
+                            current.classList.remove('selected');
+                            const next = current.nextElementSibling;
+                            if (next) {
+                                next.classList.add('selected');
+                                next.scrollIntoView({ block: 'nearest' });
+                            }
+                        } else {
+                            items[0].classList.add('selected');
+                        }
+                    } else if (e.key === 'ArrowUp') {
+                        e.preventDefault();
+                        const current = suggestionsDiv.querySelector('.suggestion-item.selected');
+                        if (current) {
+                            current.classList.remove('selected');
+                            const prev = current.previousElementSibling;
+                            if (prev) {
+                                prev.classList.add('selected');
+                                prev.scrollIntoView({ block: 'nearest' });
+                            }
+                        }
+                    } else if (e.key === 'Escape') {
+                        suggestionsDiv.classList.remove('active');
+                        suggestionsDiv.innerHTML = '';
+                    }
+                });
+            });
+        }
+
         // 设置键盘选中的行
         function setKeyboardSelectedLine(index, scrollIntoView = true) {
             // 清除之前的选择
@@ -2906,7 +3601,9 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
                 }
                 
                 // 如果当前没有焦点在链接上，使用键盘选中的行
-                if (!handled && keyboardSelectedLine && keyboardSelectedLine.classList.contains('expandable')) {
+                // 但只有在有可见的可展开行时才处理
+                if (!handled && keyboardSelectedLine && keyboardSelectedLine.classList.contains('expandable') &&
+                    keyboardSelectedLine.style.display !== 'none') {
                     event.preventDefault();
                     const lineId = keyboardSelectedLine.getAttribute('data-line-id');
                     if (lineId) {
@@ -2916,7 +3613,8 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
                 }
                 
                 // 如果没有可展开行被处理，但 keyboardSelectedLine 不可展开，尝试展开当前行
-                if (!handled && keyboardSelectedLine) {
+                // 但只有在该行可见时才处理
+                if (!handled && keyboardSelectedLine && keyboardSelectedLine.style.display !== 'none') {
                     event.preventDefault();
                     const lineId = keyboardSelectedLine.getAttribute('data-line-id');
                     if (lineId) {
@@ -2945,16 +3643,17 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
             const keyLower = event.key.toLowerCase();
             
             // 处理垂直移动（j/k 和上下箭头键）- 只导航到可展开行
+            // 只有在有可见的可展开行时才处理
             if (keyLower === 'j' || event.key === 'ArrowDown') {
                 event.preventDefault();
                 handled = true;
-                if (expandableLineIndices.length > 0) {
+                if (expandableLineIndices.length > 0 && expandableLines.length > 0) {
                     navigateToExpandableLine(1); // 向下导航
                 }
             } else if (keyLower === 'k' || event.key === 'ArrowUp') {
                 event.preventDefault();
                 handled = true;
-                if (expandableLineIndices.length > 0) {
+                if (expandableLineIndices.length > 0 && expandableLines.length > 0) {
                     navigateToExpandableLine(-1); // 向上导航
                 }
             }
@@ -3202,22 +3901,27 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
         window.addEventListener('load', function() {
             // 恢复主题
             document.documentElement.setAttribute('data-theme', currentTheme);
-            
+
             // 恢复展开状态
             restoreExpandedState();
-            
-            // 恢复视图状态
-            restoreViewState();
-            
+
+            // 移除自动滚动，保持当前视图位置
+            // restoreViewState(); // 注释掉，避免自动滚动
+
             // 初始化信息面板
             initInfoPanel();
-            
+
             // 监听滚动事件
             window.addEventListener('scroll', updateProgressBar);
             
             // 初始化键盘导航
             initKeyboardNavigation();
-            
+
+            // 初始化自动补全（如果过滤框存在）
+            if (document.getElementById('filterCpu')) {
+                initAutocomplete();
+            }
+
             // 处理锚点导航
             handleAnchorNavigation();
         });
@@ -3233,10 +3937,13 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
     
     elapsed = time.time() - start_time
     verbose_print(f"HTML generation completed in {elapsed:.2f} seconds", verbose)
-    
+
     # 替换信息面板占位符
     html_str = html_str.replace('{INFO_CONTENT_PLACEHOLDER}', info_content_html)
-    
+
+    # 替换过滤框占位符
+    html_str = html_str.replace('{filter_html}', filter_html)
+
     return html_str
 
 def main():
@@ -3264,6 +3971,8 @@ def main():
                         help='Enable syntax highlighting for C source code (requires Pygments)')
     parser.add_argument('--path-prefix', nargs='*', default=[],
                         help='Alternative path prefixes to strip from file paths (can specify multiple paths)')
+    parser.add_argument('--filter', action='store_true',
+                        help='Enable filter box in HTML for CPU/PID/Comm filtering')
     args = parser.parse_args()
 
     # 参数健壮性检查
@@ -3458,7 +4167,8 @@ def main():
         path_prefix=path_prefix,  # 传递原始路径列表
         module_src=module_srcs_abs,  # 传递处理后的绝对路径列表（用于路径清理）
         module_srcs=module_srcs_abs,  # 传递处理后的绝对路径列表（用于fastfaddr2line查找源码）
-        script_args=args  # 传递命令行参数用于显示
+        script_args=args,  # 传递命令行参数用于显示
+        enable_filter=args.filter  # 传递过滤器开关
     )
     
     # 写入输出文件
