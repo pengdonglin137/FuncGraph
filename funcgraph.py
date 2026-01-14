@@ -1220,10 +1220,14 @@ def parse_module_url_old_format(module_url_str, base_url):
     return module_url_map, default_url
 
 
-def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None, base_url=None, module_url=None, kernel_src=None, use_list=False, verbose=False, fast_mode=False, highlight_code=False, path_prefix=None, module_src=None, module_srcs=None, script_args=None, enable_filter=False):
+def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None, base_url=None, module_url=None, kernel_src=None, use_list=False, verbose=False, fast_mode=False, highlight_code=False, path_prefix=None, module_src=None, module_srcs=None, script_args=None, enable_filter=False, parse_time=0, total_time=0):
     """生成交互式HTML页面，保留原始空格和格式"""
     if module_dirs is None:
         module_dirs = []
+
+    # 初始化时间统计
+    vmlinux_time = 0
+    module_time = 0
 
     # 根据enable_filter参数生成过滤框HTML
     filter_html = ""
@@ -1434,7 +1438,10 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
         
         vmlinux_funcs_list = list(adjusted_vmlinux_funcs)
         verbose_print(f"Processing {len(vmlinux_funcs_list)} adjusted kernel functions", verbose)
-        
+
+        # 记录vmlinux解析开始时间
+        vmlinux_start = time.time()
+
         # 如果是fast模式且处理的是vmlinux，使用fastfaddr2line.py
         if fast_mode and os.path.basename(abs_faddr2line_path) == 'fastfaddr2line.py':
             batch_results = call_faddr2line_batch(
@@ -1460,22 +1467,24 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
                 module_src,
                 None   # 原生faddr2line不支持module_srcs
             )
-            
+
+        vmlinux_time = time.time() - vmlinux_start
         func_locations_map.update(batch_results)
-        verbose_print(f"Resolved {len(batch_results)} kernel function locations", verbose)
+        verbose_print(f"Resolved {len(batch_results)} kernel function locations in {vmlinux_time:.2f}s", verbose)
     
     # 2. 处理模块函数（去重后）
+    module_start = time.time()
     for module_name, funcs in module_funcs.items():
         verbose_print(f"Processing module {module_name} with {len(funcs)} functions", verbose)
         # 查找模块文件
         module_path = find_module_path(module_name, module_dirs, verbose)
-            
+
         if not module_path or not os.path.isfile(module_path):
             verbose_print(f"Module file not found for {module_name}", verbose)
             continue
-                
+
         verbose_print(f"Using module file: {module_path}", verbose)
-        
+
         # 调整函数偏移量
         adjusted_funcs = set()
         for func in funcs:
@@ -1498,7 +1507,11 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
         )
         func_locations_map.update(batch_results)
         verbose_print(f"Resolved {len(batch_results)} function locations for module {module_name}", verbose)
-    
+
+    module_time = time.time() - module_start
+    if module_funcs:
+        verbose_print(f"Resolved all modules in {module_time:.2f}s", verbose)
+
     # 计算统计数据
     total_lines = len(parsed_lines)
     expandable_entries = sum(1 for l in parsed_lines if l['expandable'])
@@ -1568,13 +1581,27 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
             info_content_html += f'                <div class="info-item"><div class="info-label">{label}:</div><div class="info-value">{html.escape(str(value))}</div></div>\n'
         info_content_html += '                <div style="border-top: 1px solid var(--border-color); margin: 8px 0;"></div>\n'
     
+    # 添加处理统计信息
+    if parse_time > 0 or total_time > 0 or vmlinux_time > 0 or module_time > 0:
+        info_content_html += '                <div style="font-weight: 600; color: var(--text-color); margin-bottom: 8px; font-size: 11px;">Processing Stats</div>\n'
+        if parse_time > 0:
+            info_content_html += f'                <div class="info-item"><div class="info-label">Parse Time:</div><div class="info-value">{parse_time:.2f}s</div></div>\n'
+        if vmlinux_time > 0:
+            info_content_html += f'                <div class="info-item"><div class="info-label">Vmlinux Time:</div><div class="info-value">{vmlinux_time:.2f}s</div></div>\n'
+        if module_time > 0:
+            info_content_html += f'                <div class="info-item"><div class="info-label">Modules Time:</div><div class="info-value">{module_time:.2f}s</div></div>\n'
+        if total_time > 0:
+            info_content_html += f'                <div class="info-item"><div class="info-label">Total Time:</div><div class="info-value">{total_time:.2f}s</div></div>\n'
+        info_content_html += f'                <div class="info-item"><div class="info-label">Total Lines:</div><div class="info-value">{len(parsed_lines)}</div></div>\n'
+        info_content_html += f'                <div class="info-item"><div class="info-label">Expandable:</div><div class="info-value">{sum(1 for l in parsed_lines if l["expandable"])}</div></div>\n'
+
     # 添加脚本参数部分
     if info_items:
         info_content_html += '                <div style="font-weight: 600; color: var(--text-color); margin-bottom: 8px; font-size: 11px;">Parameters</div>\n'
         for label, value in info_items:
             info_content_html += f'                <div class="info-item"><div class="info-label">{label}:</div><div class="info-value">{html.escape(str(value))}</div></div>\n'
 
-    if not env_items and not info_items:
+    if not env_items and not info_items and parse_time == 0:
         info_content_html = '                <div style="color: var(--summary-text); font-size: 12px;">No information available</div>'
     
     # 构建HTML字符串
@@ -4175,7 +4202,7 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
     if filter_html:
         html_str = html_str.replace('<div id="filterPlaceholder"></div>', filter_html)
 
-    return html_str
+    return html_str, vmlinux_time, module_time
 
 def main():
     parser = argparse.ArgumentParser(description='Convert ftrace output to interactive HTML')
@@ -4376,14 +4403,14 @@ def main():
     parsed_lines = parse_ftrace_file(args.ftrace_file, args.verbose)
     parse_time = time.time() - start_time
     verbose_print(f"File parsing completed in {parse_time:.2f} seconds", args.verbose)
-    
+
     # 计算统计信息
     expandable_count = sum(1 for l in parsed_lines if l['expandable'])
     module_count = sum(1 for l in parsed_lines if l['expandable'] and l['module_name'])
     kernel_count = expandable_count - module_count
-    
+
     # 生成HTML
-    html_content = generate_html(
+    html_content, vmlinux_time, module_time = generate_html(
         parsed_lines,
         vmlinux_path,
         faddr2line_path,
@@ -4399,8 +4426,25 @@ def main():
         module_src=module_srcs_abs,  # 传递处理后的绝对路径列表（用于路径清理）
         module_srcs=module_srcs_abs,  # 传递处理后的绝对路径列表（用于fastfaddr2line查找源码）
         script_args=args,  # 传递命令行参数用于显示
-        enable_filter=args.filter  # 传递过滤器开关
+        enable_filter=args.filter,  # 传递过滤器开关
+        parse_time=parse_time,  # 传递解析时间
+        total_time=0  # 占位符，稍后计算
     )
+
+    # 计算总时间
+    total_time = parse_time + vmlinux_time + module_time
+
+    # 输出详细的统计信息到日志
+    print(f"\n=== Processing Statistics ===")
+    print(f"Trace file parsing: {parse_time:.2f}s")
+    if vmlinux_time > 0:
+        print(f"Vmlinux resolution: {vmlinux_time:.2f}s")
+    if module_time > 0:
+        print(f"Modules resolution: {module_time:.2f}s")
+    print(f"Total processing time: {parse_time + vmlinux_time + module_time:.2f}s")
+    print(f"Total lines: {len(parsed_lines)}")
+    print(f"Expandable entries: {sum(1 for l in parsed_lines if l['expandable'])}")
+    print(f"=============================\n")
     
     # 写入输出文件
     try:
