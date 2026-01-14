@@ -1574,15 +1574,6 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
         for label, value in info_items:
             info_content_html += f'                <div class="info-item"><div class="info-label">{label}:</div><div class="info-value">{html.escape(str(value))}</div></div>\n'
 
-    # 添加行数统计信息（初始显示总行数）
-    total_lines = len(parsed_lines)
-    expandable_lines = sum(1 for l in parsed_lines if l['expandable'])
-    info_content_html += '                <div style="border-top: 1px solid var(--border-color); margin: 8px 0;"></div>\n'
-    info_content_html += '                <div style="font-weight: 600; color: var(--text-color); margin-bottom: 8px; font-size: 11px;">Trace Statistics</div>\n'
-    info_content_html += f'                <div class="info-item"><div class="info-label">Total Lines:</div><div class="info-value" id="totalLines">{total_lines}</div></div>\n'
-    info_content_html += f'                <div class="info-item"><div class="info-label">Expandable Lines:</div><div class="info-value" id="expandableLines">{expandable_lines}</div></div>\n'
-    info_content_html += f'                <div class="info-item"><div class="info-label">Visible Lines:</div><div class="info-value" id="visibleLines">{total_lines}</div></div>\n'
-
     if not env_items and not info_items:
         info_content_html = '                <div style="color: var(--summary-text); font-size: 12px;">No information available</div>'
     
@@ -2463,16 +2454,16 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
         <div class="summary">
             <div>
                 <span>Lines: {total_lines}</span>
-                <span id="visibleLinesContainer" style="display: none;">
-                    <span>•</span>
-                    <span>Visible: <span id="summaryVisibleLines">{total_lines}</span></span>
-                </span>
                 <span>•</span>
                 <span>Expandable: {expandable_entries}</span>
                 <span>•</span>
                 <span>Kernel Functions: {len(vmlinux_funcs)}</span>
                 <span>•</span>
                 <span>Modules: {len(module_funcs)}</span>
+                <span id="visibleLinesContainer" style="display: none;">
+                    <span>•</span>
+                    <span>Filtered: <span id="summaryVisibleLines">{total_lines}</span></span>
+                </span>
             </div>
             <div class="info-toggle-btn" onclick="toggleInfoPanel()">
                 <span class="info-toggle-icon">▶</span>
@@ -2677,6 +2668,8 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
         let scrollPositionBeforeClick = { x: 0, y: 0 };
         // 是否显示过键盘提示
         let keyboardHintShown = localStorage.getItem('keyboardHintShown') === 'true';
+        // 总行数（从summary中获取）
+        let total_lines = 0;
 
         // 过滤功能相关变量
         let currentFilter = { cpu: [], pid: [], comm: [] };
@@ -2867,24 +2860,17 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
             });
 
             // 更新信息面板中的可见行数
-            const visibleLinesElement = document.getElementById('visibleLines');
-            if (visibleLinesElement) {
-                visibleLinesElement.textContent = visibleCount;
-            }
-
-            // 更新顶部摘要中的可见行数显示
+            // 更新摘要中的过滤行数显示（放在 Modules 后面）
             const visibleLinesContainer = document.getElementById('visibleLinesContainer');
             const summaryVisibleLines = document.getElementById('summaryVisibleLines');
-            const totalLines = document.getElementById('totalLines');
 
-            if (visibleLinesContainer && summaryVisibleLines && totalLines) {
-                const total = parseInt(totalLines.textContent);
-                if (visibleCount < total) {
-                    // 显示可见行数
+            if (visibleLinesContainer && summaryVisibleLines) {
+                if (visibleCount < total_lines) {
+                    // 显示过滤后的行数
                     visibleLinesContainer.style.display = 'inline';
                     summaryVisibleLines.textContent = visibleCount;
                 } else {
-                    // 隐藏可见行数（因为没有过滤）
+                    // 隐藏过滤行数（因为没有过滤）
                     visibleLinesContainer.style.display = 'none';
                 }
             }
@@ -2932,15 +2918,8 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
             // 更新展开行列表
             updateExpandableLines();
 
-            // 恢复可见行数为总行数
-            const visibleLinesElement = document.getElementById('visibleLines');
-            const totalLinesElement = document.getElementById('totalLines');
-            const visibleLinesContainer = document.getElementById('visibleLinesContainer');
-
-            if (visibleLinesElement && totalLinesElement) {
-                visibleLinesElement.textContent = totalLinesElement.textContent;
-            }
             // 隐藏可见行数显示
+            const visibleLinesContainer = document.getElementById('visibleLinesContainer');
             if (visibleLinesContainer) {
                 visibleLinesContainer.style.display = 'none';
             }
@@ -4143,6 +4122,16 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
             // 恢复主题
             document.documentElement.setAttribute('data-theme', currentTheme);
 
+            // 初始化总行数
+            const linesSpan = document.querySelector('.summary span');
+            if (linesSpan) {
+                const linesText = linesSpan.textContent;
+                const match = linesText.match(/Lines: (\d+)/);
+                if (match) {
+                    total_lines = parseInt(match[1]);
+                }
+            }
+
             // 恢复展开状态
             restoreExpandedState();
 
@@ -4154,7 +4143,7 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
 
             // 监听滚动事件
             window.addEventListener('scroll', updateProgressBar);
-            
+
             // 初始化键盘导航
             initKeyboardNavigation();
 
