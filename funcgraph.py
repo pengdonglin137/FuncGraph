@@ -3896,8 +3896,9 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
                 return;
             }
 
-            // 没有任务在运行，开始新的 Expand 任务
-            const expandableLines = Array.from(document.querySelectorAll('.line-container.expandable'));
+            // 没有任务在运行，开始新的 Expand 任务 - 只对可见的行操作
+            const expandableLines = Array.from(document.querySelectorAll('.line-container.expandable'))
+                .filter(container => container.style.display !== 'none');
             const total = expandableLines.length;
 
             if (total === 0) return;
@@ -4003,8 +4004,9 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
                 return;
             }
 
-            // 没有任务在运行，开始新的 Collapse 任务
-            const expandableLines = Array.from(document.querySelectorAll('.line-container.expandable'));
+            // 没有任务在运行，开始新的 Collapse 任务 - 只对可见的行操作
+            const expandableLines = Array.from(document.querySelectorAll('.line-container.expandable'))
+                .filter(container => container.style.display !== 'none');
             const total = expandableLines.length;
 
             if (total === 0) {
