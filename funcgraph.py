@@ -2641,7 +2641,7 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
         {filter_html}
         <div class="right-buttons">
             <button class="control-btn" onclick="scrollToTop()">Top</button>
-            <button class="control-btn" onclick="copyVisibleContent()">Copy</button>
+            <button class="control-btn" onclick="copyVisibleContent(event)">Copy</button>
             <button class="control-btn" onclick="expandAll()">Expand All</button>
             <button class="control-btn collapse" onclick="collapseAll()">Collapse All</button>
         </div>
@@ -3485,18 +3485,18 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
         }
         
         // 复制可见内容
-        function copyVisibleContent() {
+        function copyVisibleContent(event) {
             const visibleLines = [];
             const lines = document.querySelectorAll('.line-container');
-            
+
             lines.forEach(line => {
                 const lineNumber = line.querySelector('.line-number').textContent;
                 const lineContent = line.querySelector('.line-content').textContent;
                 visibleLines.push(`${lineNumber} ${lineContent}`);
             });
-            
+
             const textToCopy = visibleLines.join('\\n');
-            
+
             navigator.clipboard.writeText(textToCopy).then(() => {
                 // 显示简单的复制成功提示
                 const originalText = event.target.textContent;
@@ -3812,11 +3812,13 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
         function expandAll() {
             const expandableLines = document.querySelectorAll('.line-container.expandable');
             expandableLines.forEach(container => {
-                const lineId = container.id.replace('_container', '');
+                // 从 data-line-id 获取正确的 line_id (如 line_4)
+                const lineId = container.getAttribute('data-line-id');
                 const content = document.getElementById(lineId + '_content');
                 const btn = container.querySelector('.expand-btn');
-                
-                if (content) {
+                const isVisible = container.style.display !== 'none';
+
+                if (content && isVisible) {
                     content.style.display = 'block';
                     if (btn) btn.textContent = '-';
                     container.classList.add('selected');
@@ -3824,23 +3826,25 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
                 }
             });
         }
-        
+
         // 收起所有可展开行
         function collapseAll() {
             const expandableLines = document.querySelectorAll('.line-container.expandable');
             expandableLines.forEach(container => {
-                const lineId = container.id.replace('_container', '');
+                // 从 data-line-id 获取正确的 line_id (如 line_4)
+                const lineId = container.getAttribute('data-line-id');
                 const content = document.getElementById(lineId + '_content');
                 const btn = container.querySelector('.expand-btn');
-                
-                if (content) {
+                const isVisible = container.style.display !== 'none';
+
+                if (content && isVisible) {
                     content.style.display = 'none';
                     if (btn) btn.textContent = '+';
                     container.classList.remove('selected');
                     saveExpandedState(lineId, false);
                 }
             });
-            
+
             // 清除高亮
             if (highlightedLine) {
                 highlightedLine.classList.remove('highlighted');
