@@ -193,11 +193,32 @@ def find_matching_symbol(func_name, offset, length, symbol_by_name, sections, ve
 
     start_time = time.time()
 
-    if func_name not in symbol_by_name:
-        log(f"Symbol '{func_name}' not found in symbol table", verbose)
-        return None
+    # 首先尝试精确匹配
+    if func_name in symbol_by_name:
+        candidates = symbol_by_name[func_name]
+        log(f"Found {len(candidates)} exact match candidates for '{func_name}'", verbose)
+    else:
+        # 如果精确匹配失败，尝试模糊匹配（忽略编译器后缀）
+        log(f"Symbol '{func_name}' not found exactly, trying fuzzy match...", verbose)
 
-    candidates = symbol_by_name[func_name]
+        # 尝试匹配模式：func_name + 任意后缀
+        # 例如：task_tick_fair.llvm.7193371421561186440 -> task_tick_fair
+        candidates = []
+        for symbol_name in symbol_by_name:
+            # 检查是否以目标函数名开头，且后面跟着点或其他分隔符
+            if symbol_name.startswith(func_name + '.') or symbol_name == func_name:
+                # 额外验证：确保是编译器生成的后缀
+                # 常见后缀：.llvm.*, .constprop.*, .isra.*, .part.*, 等
+                suffix = symbol_name[len(func_name):]
+                if suffix.startswith('.') or suffix == '':
+                    candidates.extend(symbol_by_name[symbol_name])
+                    log(f"  Found fuzzy match: {symbol_name}", verbose)
+
+        if not candidates:
+            log(f"No fuzzy match found for '{func_name}'", verbose)
+            return None
+
+        log(f"Found {len(candidates)} fuzzy match candidates for '{func_name}'", verbose)
     log(f"Found {len(candidates)} candidate symbols for '{func_name}'", verbose)
 
     # 如果指定了长度（length > 0），首先尝试匹配精确长度
