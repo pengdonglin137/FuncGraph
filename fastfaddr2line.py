@@ -675,20 +675,26 @@ def print_source_code(lines, kernel_src_root, options):
                     if kernel_src_root:
                         search_paths.append(os.path.join(kernel_src_root, basename))
 
-                    # 如果提供了module_srcs，尝试在模块源码目录中查找
+                    # 如果提供了module_srcs，优先在模块源码目录中查找
+                    # 模块源码应该优先于内核源码
                     if options.module_srcs:
                         if not isinstance(options.module_srcs, list):
                             module_srcs_list = [options.module_srcs]
                         else:
                             module_srcs_list = options.module_srcs
 
+                        # 创建模块源码搜索路径（放在最前面）
+                        module_search_paths = []
                         for search_path in search_paths[:]:
                             for module_src in module_srcs_list:
                                 if not module_src:
                                     continue
                                 full_path_test = os.path.join(module_src, search_path)
-                                if full_path_test not in search_paths:
-                                    search_paths.append(full_path_test)
+                                if full_path_test not in module_search_paths:
+                                    module_search_paths.append(full_path_test)
+
+                        # 将模块源码路径插入到搜索路径的最前面
+                        search_paths = module_search_paths + search_paths
 
                     # 尝试处理模块名中下划线和中划线的转换
                     # 内核模块加载时会将中划线(-)替换为下划线(_)
@@ -808,20 +814,26 @@ def print_source_code(lines, kernel_src_root, options):
                     if kernel_src_root:
                         search_paths.append(os.path.join(kernel_src_root, basename))
 
-                    # 如果提供了module_srcs，尝试在模块源码目录中查找
+                    # 如果提供了module_srcs，优先在模块源码目录中查找
+                    # 模块源码应该优先于内核源码
                     if options.module_srcs:
                         if not isinstance(options.module_srcs, list):
                             module_srcs_list = [options.module_srcs]
                         else:
                             module_srcs_list = options.module_srcs
 
+                        # 创建模块源码搜索路径（放在最前面）
+                        module_search_paths = []
                         for search_path in search_paths[:]:
                             for module_src in module_srcs_list:
                                 if not module_src:
                                     continue
                                 full_path_test = os.path.join(module_src, search_path)
-                                if full_path_test not in search_paths:
-                                    search_paths.append(full_path_test)
+                                if full_path_test not in module_search_paths:
+                                    module_search_paths.append(full_path_test)
+
+                        # 将模块源码路径插入到搜索路径的最前面
+                        search_paths = module_search_paths + search_paths
 
                     # 尝试处理模块名中下划线和中划线的转换
                     # 内核模块加载时会将中划线(-)替换为下划线(_)
