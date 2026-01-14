@@ -4351,29 +4351,52 @@ def main():
         ]
         module_dirs.extend(common_dirs)
         verbose_print(f"Added {len(common_dirs)} common module directories", args.verbose)
-    
-    # 确定faddr2line工具路径
+
+    # 处理工具链前缀（CROSS_COMPILE 和 LLVM）
+    # 借鉴内核 faddr2line 的逻辑
+    # 注意：faddr2line 只存在于内核源码的 scripts 目录下，LLVM 没有这个工具
     faddr2line_path = None
+    util_suffix = ""
+    util_prefix = ""
+
+    # 从环境变量读取
+    cross_compile = os.environ.get('CROSS_COMPILE', '')
+    llvm = os.environ.get('LLVM', '')
+
+    if llvm == "":
+        util_prefix = cross_compile
+    else:
+        util_prefix = "llvm-"
+
+        if llvm.endswith("/"):
+            util_prefix = llvm + util_prefix
+        elif llvm.startswith("-"):
+            util_suffix = llvm
+
+    # faddr2line 只存在于内核源码中，不使用工具链前缀
+    # 但我们需要记录这些信息，因为后续可能需要调用其他工具（如 readelf、addr2line）
+
+    # 1. 尝试在 kernel source 中查找原生 faddr2line
     if args.kernel_src:
         potential_path = os.path.join(args.kernel_src, 'scripts', 'faddr2line')
         if os.path.isfile(potential_path):
             faddr2line_path = potential_path
             verbose_print(f"Found faddr2line in kernel source: {potential_path}", args.verbose)
-    
-    if not faddr2line_path or args.use_external:
+
+    # 2. 尝试在 PATH 中查找原生 faddr2line
+    if not faddr2line_path:
         try:
             result = subprocess.run(['which', 'faddr2line'], capture_output=True, text=True, check=True)
             faddr2line_path = result.stdout.strip()
             verbose_print(f"Found faddr2line in PATH: {faddr2line_path}", args.verbose)
-        except Exception as e:
-            verbose_print(f"faddr2line not in PATH: {str(e)}", args.verbose)
-            faddr2line_path = './scripts/faddr2line'
-            if os.path.isfile(faddr2line_path):
-                verbose_print(f"Using local faddr2line: {faddr2line_path}", args.verbose)
-            else:
-                print(f"Error: Cannot locate faddr2line tool", file=sys.stderr)
-                sys.exit(1)
-    
+        except Exception:
+            pass
+
+    # 3. 如果还是找不到，报错
+    if not faddr2line_path:
+        print(f"Error: Cannot locate faddr2line tool (only available in kernel source scripts/)", file=sys.stderr)
+        sys.exit(1)
+
     # 使用绝对路径
     faddr2line_path = os.path.abspath(faddr2line_path)
     vmlinux_path = os.path.abspath(args.vmlinux)
@@ -4390,14 +4413,23 @@ def main():
         for src in args.module_srcs:
             module_srcs_abs.append(os.path.abspath(src))
 
-    verbose_print(f"Using faddr2line: {faddr2line_path}", args.verbose)
-    verbose_print(f"Using vmlinux: {vmlinux_path}", args.verbose)
-    if kernel_src_abs:
-        verbose_print(f"Using kernel source: {kernel_src_abs}", args.verbose)
-    if path_prefix:
-        verbose_print(f"Using path prefix paths: {path_prefix}", args.verbose)
-    if module_srcs_abs:
-        verbose_print(f"Using module source paths: {module_srcs_abs}", args.verbose)
+    # 显示工具链信息
+    if args.verbose:
+        if cross_compile:
+            print(f"[INFO] CROSS_COMPILE: {cross_compile}", file=sys.stderr)
+        if llvm:
+            print(f"[INFO] LLVM: {llvm}", file=sys.stderr)
+        if util_prefix or util_suffix:
+            print(f"[INFO] Tool chain prefix/suffix: {util_prefix}*{util_suffix}", file=sys.stderr)
+            print(f"[INFO] Note: faddr2line only exists in kernel source, not affected by toolchain", file=sys.stderr)
+        print(f"[INFO] Using faddr2line: {faddr2line_path}", file=sys.stderr)
+        print(f"[INFO] Using vmlinux: {vmlinux_path}", file=sys.stderr)
+        if kernel_src_abs:
+            print(f"[INFO] Using kernel source: {kernel_src_abs}", file=sys.stderr)
+        if path_prefix:
+            print(f"[INFO] Using path prefix paths: {path_prefix}", file=sys.stderr)
+        if module_srcs_abs:
+            print(f"[INFO] Using module source paths: {module_srcs_abs}", file=sys.stderr)
     
     # 解析ftrace文件
     start_time = time.time()
