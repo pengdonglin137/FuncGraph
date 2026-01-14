@@ -3833,48 +3833,256 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
             }
         }
         
-        // 展开所有可展开行
-        function expandAll() {
-            const expandableLines = document.querySelectorAll('.line-container.expandable');
-            expandableLines.forEach(container => {
-                // 从 data-line-id 获取正确的 line_id (如 line_4)
-                const lineId = container.getAttribute('data-line-id');
-                const content = document.getElementById(lineId + '_content');
-                const btn = container.querySelector('.expand-btn');
-                const isVisible = container.style.display !== 'none';
+        // 全局变量跟踪异步任务
+        let expandCollapseTask = null;
+        let isTaskRunning = false;
+        let isWaitingForStop = false;
 
-                if (content && isVisible) {
-                    content.style.display = 'block';
-                    if (btn) btn.textContent = '-';
-                    container.classList.add('selected');
-                    saveExpandedState(lineId, true);
+        // 禁用/启用两个按钮
+        function setButtonsDisabled(disabled) {
+            const expandBtn = document.querySelector('button[onclick="expandAll()"]');
+            const collapseBtn = document.querySelector('button[onclick="collapseAll()"]');
+
+            if (expandBtn) expandBtn.disabled = disabled;
+            if (collapseBtn) collapseBtn.disabled = disabled;
+        }
+
+        // 等待任务完全停止
+        function waitForTaskStop() {
+            return new Promise((resolve) => {
+                if (!isTaskRunning && !expandCollapseTask) {
+                    resolve();
+                    return;
                 }
+
+                const checkInterval = setInterval(() => {
+                    if (!isTaskRunning && !expandCollapseTask) {
+                        clearInterval(checkInterval);
+                        resolve();
+                    }
+                }, 10);
             });
         }
 
-        // 收起所有可展开行
-        function collapseAll() {
-            const expandableLines = document.querySelectorAll('.line-container.expandable');
-            expandableLines.forEach(container => {
-                // 从 data-line-id 获取正确的 line_id (如 line_4)
-                const lineId = container.getAttribute('data-line-id');
-                const content = document.getElementById(lineId + '_content');
-                const btn = container.querySelector('.expand-btn');
-                const isVisible = container.style.display !== 'none';
+        // 展开所有可展开行（异步执行，支持取消）
+        async function expandAll() {
+            const btn = event.target;
 
-                if (content && isVisible) {
-                    content.style.display = 'none';
-                    if (btn) btn.textContent = '+';
-                    container.classList.remove('selected');
-                    saveExpandedState(lineId, false);
-                }
-            });
-
-            // 清除高亮
-            if (highlightedLine) {
-                highlightedLine.classList.remove('highlighted');
-                highlightedLine = null;
+            // 如果正在等待停止，忽略点击
+            if (isWaitingForStop) {
+                return;
             }
+
+            // 保存原始文本
+            let originalText = btn.getAttribute('data-original-text');
+            if (!originalText) {
+                originalText = btn.textContent;
+                btn.setAttribute('data-original-text', originalText);
+            }
+
+            // 如果有任务在运行，停止它并等待，然后返回（不发起新任务）
+            if (expandCollapseTask) {
+                isWaitingForStop = true;
+                setButtonsDisabled(true);
+                expandCollapseTask.cancel();
+                await waitForTaskStop();
+                isWaitingForStop = false;
+                setButtonsDisabled(false);
+
+                // 恢复按钮文本
+                btn.textContent = originalText;
+                return;
+            }
+
+            // 没有任务在运行，开始新的 Expand 任务
+            const expandableLines = Array.from(document.querySelectorAll('.line-container.expandable'));
+            const total = expandableLines.length;
+
+            if (total === 0) return;
+
+            // 显示进度
+            btn.textContent = `Expanding... 000%`;
+            isTaskRunning = true;
+
+            let processed = 0;
+            const batchSize = 50;
+            let cancelled = false;
+
+            // 创建任务对象
+            expandCollapseTask = {
+                type: 'expand',
+                cancel: function() {
+                    cancelled = true;
+                    btn.textContent = originalText;
+                    isTaskRunning = false;
+                    expandCollapseTask = null;
+                }
+            };
+
+            function processBatch() {
+                if (cancelled) {
+                    isTaskRunning = false;
+                    expandCollapseTask = null;
+                    return;
+                }
+
+                const batch = expandableLines.slice(processed, processed + batchSize);
+
+                batch.forEach(container => {
+                    if (cancelled) return;
+
+                    const lineId = container.getAttribute('data-line-id');
+                    const content = document.getElementById(lineId + '_content');
+                    const expandBtn = container.querySelector('.expand-btn');
+                    const isVisible = container.style.display !== 'none';
+
+                    if (content && isVisible) {
+                        content.style.display = 'block';
+                        if (expandBtn) expandBtn.textContent = '-';
+                        container.classList.add('selected');
+                        saveExpandedState(lineId, true);
+                    }
+                });
+
+                processed += batch.length;
+
+                // 更新进度（固定长度百分比）
+                const percent = Math.round((processed / total) * 100);
+                const percentStr = percent.toString().padStart(3, ' ');
+                btn.textContent = `Expanding... ${percentStr}%`;
+
+                if (processed < total && !cancelled) {
+                    requestAnimationFrame(processBatch);
+                } else {
+                    if (!cancelled) {
+                        btn.textContent = originalText;
+                        isTaskRunning = false;
+                        expandCollapseTask = null;
+                    }
+                }
+            }
+
+            requestAnimationFrame(processBatch);
+        }
+
+        // 收起所有可展开行（异步执行，支持取消）
+        async function collapseAll() {
+            const btn = event.target;
+
+            // 如果正在等待停止，忽略点击
+            if (isWaitingForStop) {
+                return;
+            }
+
+            // 保存原始文本
+            let originalText = btn.getAttribute('data-original-text');
+            if (!originalText) {
+                originalText = btn.textContent;
+                btn.setAttribute('data-original-text', originalText);
+            }
+
+            // 如果有任务在运行，停止它并等待，然后返回（不发起新任务）
+            if (expandCollapseTask) {
+                isWaitingForStop = true;
+                setButtonsDisabled(true);
+                expandCollapseTask.cancel();
+                await waitForTaskStop();
+                isWaitingForStop = false;
+                setButtonsDisabled(false);
+
+                // 恢复按钮文本
+                btn.textContent = originalText;
+
+                // 清除高亮
+                if (highlightedLine) {
+                    highlightedLine.classList.remove('highlighted');
+                    highlightedLine = null;
+                }
+                return;
+            }
+
+            // 没有任务在运行，开始新的 Collapse 任务
+            const expandableLines = Array.from(document.querySelectorAll('.line-container.expandable'));
+            const total = expandableLines.length;
+
+            if (total === 0) {
+                // 清除高亮
+                if (highlightedLine) {
+                    highlightedLine.classList.remove('highlighted');
+                    highlightedLine = null;
+                }
+                return;
+            }
+
+            // 显示进度
+            btn.textContent = `Collapsing... 000%`;
+            isTaskRunning = true;
+
+            let processed = 0;
+            const batchSize = 50;
+            let cancelled = false;
+
+            // 创建任务对象
+            expandCollapseTask = {
+                type: 'collapse',
+                cancel: function() {
+                    cancelled = true;
+                    btn.textContent = originalText;
+                    isTaskRunning = false;
+                    expandCollapseTask = null;
+                }
+            };
+
+            function processBatch() {
+                if (cancelled) {
+                    isTaskRunning = false;
+                    expandCollapseTask = null;
+                    return;
+                }
+
+                const batch = expandableLines.slice(processed, processed + batchSize);
+
+                batch.forEach(container => {
+                    if (cancelled) return;
+
+                    const lineId = container.getAttribute('data-line-id');
+                    const content = document.getElementById(lineId + '_content');
+                    const expandBtn = container.querySelector('.expand-btn');
+                    const isVisible = container.style.display !== 'none';
+
+                    if (content && isVisible) {
+                        content.style.display = 'none';
+                        if (expandBtn) expandBtn.textContent = '+';
+                        container.classList.remove('selected');
+                        saveExpandedState(lineId, false);
+                    }
+                });
+
+                processed += batch.length;
+
+                // 更新进度（固定长度百分比）
+                const percent = Math.round((processed / total) * 100);
+                const percentStr = percent.toString().padStart(3, ' ');
+                btn.textContent = `Collapsing... ${percentStr}%`;
+
+                if (processed < total && !cancelled) {
+                    requestAnimationFrame(processBatch);
+                } else {
+                    if (!cancelled) {
+                        btn.textContent = originalText;
+                        isTaskRunning = false;
+                        expandCollapseTask = null;
+
+                        // 清除高亮
+                        if (highlightedLine) {
+                            highlightedLine.classList.remove('highlighted');
+                            highlightedLine = null;
+                        }
+                    }
+                }
+            }
+
+            requestAnimationFrame(processBatch);
         }
         
         // 更新锚点并复制到剪贴板
