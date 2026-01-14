@@ -205,12 +205,19 @@ Enable the `--filter` option to add a filter window in the HTML page, supporting
 ./funcgraph.py --filter --vmlinux vmlinux --kernel-src /path/to/kernel --output result.html trace.txt
 
 # 2. Open result.html in browser
-# 3. Enter filter conditions:
-#    - CPU: 0,1,2
-#    - PID: 1234,5678
-#    - Comm: "nginx"
+# 3. Enter regular expressions in filter boxes:
+#    - CPU: 0|1|2 or [0-2]          # Matches CPU 0, 1, 2
+#    - PID: 1234|5678 or 0-100      # Matches PID 1234 or 5678
+#    - Comm: nginx|bash or ^nginx    # Matches process name nginx or bash
 # 4. Click Expand All to only expand filtered lines
 ```
+
+**Regular expression explanation:**
+- `|`: OR operation, e.g., `0|1|2` matches 0, 1, or 2
+- `[0-9]`: Character set, e.g., `[0-2]` matches 0, 1, or 2
+- `^`: Start anchor, e.g., `^nginx` matches process names starting with nginx
+- `$`: End anchor, e.g., `bash$` matches process names ending with bash
+- `*`: Zero or more, e.g., `.*` matches any character
 
 ## Method to Capture Traces
 

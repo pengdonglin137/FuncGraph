@@ -207,12 +207,19 @@ export LLVM=-10
 ./funcgraph.py --filter --vmlinux vmlinux --kernel-src /path/to/kernel --output result.html trace.txt
 
 # 2. 在浏览器中打开 result.html
-# 3. 在过滤窗口中输入：
-#    - CPU: 0,1,2
-#    - PID: 1234,5678
-#    - Comm: "nginx"
+# 3. 在过滤窗口中输入正则表达式：
+#    - CPU: 0|1|2 或 [0-2]          # 匹配 CPU 0, 1, 2
+#    - PID: 1234|5678 或 0-100      # 匹配 PID 1234 或 5678
+#    - Comm: nginx|bash 或 ^nginx    # 匹配进程名 nginx 或 bash
 # 4. 点击 Expand All 只会展开过滤后的行
 ```
+
+**正则表达式说明：**
+- `|`：或操作，如 `0|1|2` 匹配 0、1 或 2
+- `[0-9]`：字符集，如 `[0-2]` 匹配 0、1 或 2
+- `^`：开头匹配，如 `^nginx` 匹配以 nginx 开头的进程名
+- `$`：结尾匹配，如 `bash$` 匹配以 bash 结尾的进程名
+- `*`：零次或多次，如 `.*` 匹配任意字符
 
 ## 抓取 trace 的方法
 
