@@ -172,12 +172,11 @@ cd /sys/kernel/tracing
 # 停止当前追踪
 echo 0 > tracing_on
 
-# 启动函数返回地址跟踪 （**必选**）
-echo 1 > options/funcgraph-retaddr
-# 启动函数返回值跟踪（可选）
-echo 1 > options/funcgraph-retval
-# 启动函数参数跟踪（可选）
-echo 1 > options/funcgraph-args
+# 推荐配置：启用所有有用的 trace 选项
+echo 1 > options/funcgraph-retaddr    # 函数返回地址（**必选**）
+echo 1 > options/funcgraph-proc       # 显示进程名和 PID（**推荐**）
+echo 1 > options/funcgraph-retval     # 函数返回值（**推荐**）
+echo 1 > options/funcgraph-args       # 函数参数（**推荐**）
 
 # 设置 function_graph tracer
 echo function_graph > current_tracer
@@ -188,6 +187,14 @@ echo 1 > tracing_on; sleep 1; echo 0 > tracing_on
 # 保存 trace 结果
 cat trace > ~/ftrace.txt
 ```
+
+**推荐选项说明：**
+- `funcgraph-retaddr`：**必选** - 提供函数返回地址，用于定位源代码行
+- `funcgraph-proc`：**推荐** - 显示进程名和 PID，便于过滤和分析
+- `funcgraph-retval`：**推荐** - 显示函数返回值，便于调试
+- `funcgraph-args`：**推荐** - 显示函数参数，便于分析调用关系
+
+**注意：** 启用更多选项会增加 trace 文件大小，但提供更丰富的调试信息。FuncGraph 支持按 CPU、PID、进程名过滤，因此推荐启用这些选项。
 
 ## 项目结构
 

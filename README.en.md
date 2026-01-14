@@ -170,12 +170,11 @@ cd /sys/kernel/tracing
 # Stop current tracing
 echo 0 > tracing_on
 
-# Enable function return address tracing (**required**)
-echo 1 > options/funcgraph-retaddr
-# Enable function return value tracing (optional)
-echo 1 > options/funcgraph-retval
-# Enable function argument tracing (optional)
-echo 1 > options/funcgraph-args
+# Recommended configuration: Enable all useful trace options
+echo 1 > options/funcgraph-retaddr    # Function return address (**required**)
+echo 1 > options/funcgraph-proc       # Show process name and PID (**recommended**)
+echo 1 > options/funcgraph-retval     # Function return value (**recommended**)
+echo 1 > options/funcgraph-args       # Function arguments (**recommended**)
 
 # Set the function_graph tracer
 echo function_graph > current_tracer
@@ -186,6 +185,14 @@ echo 1 > tracing_on; sleep 1; echo 0 > tracing_on
 # Save the trace results
 cat trace > ~/ftrace.txt
 ```
+
+**Recommended Options:**
+- `funcgraph-retaddr`: **Required** - Provides function return address for source code location
+- `funcgraph-proc`: **Recommended** - Shows process name and PID for filtering and analysis
+- `funcgraph-retval`: **Recommended** - Shows function return value for debugging
+- `funcgraph-args`: **Recommended** - Shows function arguments for call relationship analysis
+
+**Note:** Enabling more options will increase trace file size but provide richer debugging information. FuncGraph supports filtering by CPU, PID, and process name, so these options are recommended.
 
 ## Project Structure
 
