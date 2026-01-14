@@ -17,6 +17,10 @@ FuncGraph is a powerful ftrace visualization tool developed with **AI assistance
 - **Multiple module URL support**: Supports setting different source code URLs for different modules
 - **High-performance processing**: fastfaddr2line.py is several orders of magnitude faster than the traditional addr2line approach
 - **Flexible parameter configuration**: Supports specifying vmlinux, kernel source code, module directories, etc.
+- **Cross-compilation and LLVM support**: Supports CROSS_COMPILE and LLVM environment variables for various toolchains
+- **Processing statistics**: Displays parsing time, total duration, and other performance metrics
+- **Filtering functionality**: Supports filtering trace lines by CPU, PID, and process name
+- **Real-time progress display**: Expand/Collapse operations show progress percentage
 
 ## Environment Requirements
 
@@ -112,28 +116,48 @@ Explanation:
 ./fastfaddr2line.py vmlinux arch_stack_walk+0x150/0x4a8
 ```
 
-#### Using Cross-Compilation Toolchain
+#### Using Cross-Compilation and LLVM Toolchains
 
-For cross-compiled kernels, you can use the `CROSS_COMPILE` environment variable to specify the toolchain prefix:
+For cross-compiled kernels or those using LLVM toolchains, you can configure through environment variables:
 
+**Cross-compilation:**
 ```bash
 # Set cross-compilation prefix
 export CROSS_COMPILE=aarch64-linux-gnu-
 
-# Use fastfaddr2line to parse addresses
-./fastfaddr2line.py vmlinux arch_stack_walk+0x150/0x4a8
-
-# Or use funcgraph.py to generate HTML
+# Use funcgraph.py to generate HTML
 ./funcgraph.py --fast --vmlinux vmlinux \
     --kernel-src /path/to/kernel \
     --base-url https://elixir.bootlin.com/linux/v6.18/source \
     --output output.html ftrace.txt
 ```
 
-Note:
-- The `CROSS_COMPILE` environment variable is automatically passed to the underlying `addr2line` tool
-- Ensure the cross-compilation toolchain is installed and available in PATH
-- The toolchain prefix does not need to include the trailing `-`, the script will add it automatically
+**LLVM toolchain:**
+```bash
+# Use LLVM toolchain (automatically uses llvm- prefix)
+export LLVM=1
+
+# Or specify LLVM path prefix
+export LLVM=/usr/bin/
+
+# Or use LLVM version suffix
+export LLVM=-10
+
+# Use funcgraph.py to generate HTML
+./funcgraph.py --fast --vmlinux vmlinux \
+    --kernel-src /path/to/kernel \
+    --base-url https://elixir.bootlin.com/linux/v6.18/source \
+    --output output.html ftrace.txt
+```
+
+**Toolchain explanation:**
+- `CROSS_COMPILE`: Cross-compilation prefix (e.g., `arm-linux-gnueabi-`)
+- `LLVM`: LLVM toolchain configuration
+  - `LLVM=1`: Uses `llvm-` prefix
+  - `LLVM=/usr/bin/`: Uses `/usr/bin/llvm-` prefix
+  - `LLVM=-10`: Uses `llvm-` prefix + `-10` suffix
+- **Note**: faddr2line only exists in the kernel source's `scripts/` directory and is not affected by LLVM/CROSS_COMPILE
+- Toolchain information is displayed in verbose mode for future extensions
 
 ## Method to Capture Traces
 

@@ -19,6 +19,10 @@ FuncGraph是一个用 **AI** 开发的 ftrace 可视化工具，主要用于：
 - **多模块 URL 支持**：支持为不同模块设置不同的源代码 URL
 - **高性能处理**：fastfaddr2line.py 比传统 addr2line 方式快几个数量级
 - **灵活的参数配置**：支持指定 vmlinux、内核源码、模块目录等
+- **交叉编译和 LLVM 支持**：支持 CROSS_COMPILE 和 LLVM 环境变量，适配各种工具链
+- **处理统计**：显示解析时间、总耗时等性能统计信息
+- **过滤功能**：支持按 CPU、PID、进程名过滤 trace 行
+- **实时进度显示**：Expand/Collapse 操作显示进度百分比
 
 ## 环境要求
 
@@ -114,28 +118,48 @@ chmod +x *.py
 ./fastfaddr2line.py vmlinux arch_stack_walk+0x150/0x4a8
 ```
 
-#### 使用交叉编译工具链
+#### 使用交叉编译和 LLVM 工具链
 
-对于交叉编译的内核，可以使用 `CROSS_COMPILE` 环境变量指定工具链前缀：
+对于交叉编译或使用 LLVM 工具链的内核，可以通过环境变量配置：
 
+**交叉编译：**
 ```bash
 # 设置交叉编译前缀
 export CROSS_COMPILE=aarch64-linux-gnu-
 
-# 使用 fastfaddr2line 解析地址
-./fastfaddr2line.py vmlinux arch_stack_walk+0x150/0x4a8
-
-# 或者使用 funcgraph.py 生成 HTML
+# 使用 funcgraph.py 生成 HTML
 ./funcgraph.py --fast --vmlinux vmlinux \
     --kernel-src /path/to/kernel \
     --base-url https://elixir.bootlin.com/linux/v6.18/source \
     --output output.html ftrace.txt
 ```
 
-说明：
-- `CROSS_COMPILE` 环境变量会自动传递给底层的 `addr2line` 工具
-- 确保交叉编译工具链已安装并在 PATH 中
-- 工具链前缀不需要包含最后的 `-`，脚本会自动添加
+**LLVM 工具链：**
+```bash
+# 使用 LLVM 工具链（自动使用 llvm- 前缀）
+export LLVM=1
+
+# 或者指定 LLVM 路径前缀
+export LLVM=/usr/bin/
+
+# 或者使用 LLVM 版本后缀
+export LLVM=-10
+
+# 使用 funcgraph.py 生成 HTML
+./funcgraph.py --fast --vmlinux vmlinux \
+    --kernel-src /path/to/kernel \
+    --base-url https://elixir.bootlin.com/linux/v6.18/source \
+    --output output.html ftrace.txt
+```
+
+**工具链说明：**
+- `CROSS_COMPILE`：交叉编译前缀（如 `arm-linux-gnueabi-`）
+- `LLVM`：LLVM 工具链配置
+  - `LLVM=1`：使用 `llvm-` 前缀
+  - `LLVM=/usr/bin/`：使用 `/usr/bin/llvm-` 前缀
+  - `LLVM=-10`：使用 `llvm-` 前缀 + `-10` 后缀
+- **注意**：faddr2line 只存在于内核源码的 `scripts/` 目录下，不受 LLVM/CROSS_COMPILE 影响
+- 工具链信息会在 verbose 模式下显示，为未来扩展做准备
 
 ## 抓取 trace 的方法
 
