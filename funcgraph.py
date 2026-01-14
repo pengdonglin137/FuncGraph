@@ -1443,6 +1443,7 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
         vmlinux_start = time.time()
 
         # 如果是fast模式且处理的是vmlinux，使用fastfaddr2line.py
+        # 对于内核函数，不传递模块相关的路径参数
         if fast_mode and os.path.basename(abs_faddr2line_path) == 'fastfaddr2line.py':
             batch_results = call_faddr2line_batch(
                 abs_faddr2line_path,
@@ -1452,8 +1453,8 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
                 kernel_src,
                 verbose,
                 path_prefix,
-                module_src,
-                module_srcs
+                None,  # 内核函数不需要模块源码路径
+                None   # 内核函数不需要模块源码路径
             )
         else:
             batch_results = call_faddr2line_batch(
@@ -1464,7 +1465,7 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
                 kernel_src,
                 verbose,
                 None,  # 原生faddr2line不支持path_prefix
-                module_src,
+                None,  # 内核函数不需要模块源码路径
                 None   # 原生faddr2line不支持module_srcs
             )
 
