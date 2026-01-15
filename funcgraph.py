@@ -32,54 +32,66 @@ def escape_html_preserve_spaces(text):
 def highlight_ftrace_line(text):
     """
     为ftrace日志行添加语法高亮，保持原始对齐和格式
-    
+
     仅添加HTML span标签用于高亮，保留原始字符不转义
     特殊处理：<...> 形式的标识符中的 < 和 > 替换为空格
                 以避免浏览器误解为HTML标签，同时保持原始对齐和宽度
-    
+
     高亮的元素：
     - CPU编号: <span class="hl-cpu">3)</span>
     - 时间数值: <span class="hl-time">0.208</span>
     - 时间单位: <span class="hl-unit">us</span>
-    - 函数名: <span class="hl-func">mutex_unlock</span>
+    - 函数名: <span class="hl-func">func_name</span> (内核函数和模块函数使用相同颜色)
     - 十六进制地址: <span class="hl-addr">0xf4</span>
     - 注释: <span class="hl-comment">/* ... */</span>
     - 符号括号: <span class="hl-symbol">{}</span>
-    
+
     返回带有HTML span标签的高亮文本，空格、缩进和所有原始字符完全保持
     """
     if not text:
         return text
-    
+
     # 特殊处理：<...> 形式的标识符中的 < 和 > 替换为空格
     # 匹配模式：< 后跟一个或多个非 > 字符，然后是 >
     # 替换为：空格 + 内容 + 空格（保持原始宽度）
     text = re.sub(r'<([^<>]+)>', r' \1 ', text)
-    
+
     # 1. 高亮CPU编号 (格式: 空格+数字) 在行首
     text = re.sub(r'^(\s*\d+\))', r'<span class="hl-cpu">\1</span>', text)
-    
-    # 2. 高亮注释部分 (/* ... */)
-    text = re.sub(r'(/\*[^*]*(?:\*+[^/*][^*]*)*\*+/)', r'<span class="hl-comment">\1</span>', text)
-    
+
+    # 2. 提取并临时替换注释，防止后续高亮影响注释内容
+    # 使用唯一标记来标识注释位置
+    comment_placeholders = []
+    def save_comment(match):
+        comment = match.group(0)
+        placeholder = f"__COMMENT_{len(comment_placeholders)}__"
+        comment_placeholders.append((placeholder, comment))
+        return placeholder
+
+    text = re.sub(r'(/\*[^*]*(?:\*+[^/*][^*]*)*\*+/)', save_comment, text)
+
     # 3. 高亮十六进制地址 (0x...)
     text = re.sub(r'(0[xX][0-9a-fA-F]+)', r'<span class="hl-addr">\1</span>', text)
-    
+
     # 4. 高亮时间数值 (小数点格式)
     text = re.sub(r'(\d+\.\d+)', r'<span class="hl-time">\1</span>', text)
-    
+
     # 5. 高亮时间单位 (us, ms, ns, ks)
     text = re.sub(r'\b(us|ms|ns|ks)\b', r'<span class="hl-unit">\1</span>', text)
-    
-    # 6. 高亮函数名 (标识符后跟( { 或 ; 或空格+[)
-    # 支持普通函数: func_name(
-    # 支持模块函数: func_name [module]()
-    # 支持带参数的函数: func_name(arg1, arg2)
-    text = re.sub(r'([a-zA-Z_]\w*)(?=\s*(?:[\({;]|\s+\[))', r'<span class="hl-func">\1</span>', text)
-    
+
+    # 6. 高亮函数名 - 内核函数和模块函数使用相同颜色
+    # 匹配所有函数名：func_name() 或 func_name [module]()
+    text = re.sub(r'([a-zA-Z_]\w*)(?=\s*(?:\[.*\])?\s*\()', r'<span class="hl-func">\1</span>', text)
+
     # 7. 高亮括号和大括号
     text = re.sub(r'([{}()\[\];])', r'<span class="hl-symbol">\1</span>', text)
-    
+
+    # 8. 恢复注释，并高亮
+    for placeholder, comment in comment_placeholders:
+        # 高亮注释
+        highlighted_comment = f'<span class="hl-comment">{comment}</span>'
+        text = text.replace(placeholder, highlighted_comment)
+
     return text
 
 def escape_for_pre(text):
@@ -545,30 +557,23 @@ def parse_ftrace_file(file_path, verbose=False):
                         # 1. func() { - 函数调用开始
                         # 2. func(args); - 带参数的函数调用
                         # 3. func() - 函数调用
-                        func_name_match = re.search(r'([a-zA-Z_][a-zA-Z0-9_.]*)\s*\([^)]*\)\s*[;{]?', line)
+                        # 4. func [module](args) { - 模块函数调用
+                        func_name_match = re.search(r'([a-zA-Z_][a-zA-Z0-9_.]*)\s*(?:\[([^\]]+)\])?\s*\([^)]*\)\s*[;{]?', line)
                         if func_name_match:
                             raw_func_name = func_name_match.group(1)
+                            # 如果有模块名，提取它（这是当前函数的模块名）
+                            if func_name_match.group(2):
+                                module_name = func_name_match.group(2)
                             # 处理后的函数名用于显示（去除编译器后缀）
                             display_func_name = remove_compiler_suffix(raw_func_name)
 
-                        # 提取返回地址
+                        # 提取返回地址（注意：返回地址的模块名不影响当前函数的module_name）
                         func_match = re.search(r'/\*\s*<-(.*?)\s*\*/', line)
                         if func_match:
                             full_func_info = func_match.group(1).strip()
                             func_info = full_func_info.split()[0] if full_func_info else None
-                            module_match = re.search(r'\[(.*?)\]', full_func_info)
-                            if module_match:
-                                module_name = module_match.group(1)
-
-                    # 格式2: /* <- func+offset/length [module] */ (标准格式，没有函数调用)
-                    elif '/*' in line and '<-' in line:
-                        func_match = re.search(r'/\*\s*<-(.*?)\s*\*/', line)
-                        if func_match:
-                            full_func_info = func_match.group(1).strip()
-                            func_info = full_func_info.split()[0] if full_func_info else None
-                            module_match = re.search(r'\[(.*?)\]', full_func_info)
-                            if module_match:
-                                module_name = module_match.group(1)
+                            # 返回地址中的[module]是返回地址的模块，不覆盖当前函数的module_name
+                            # 所以这里不提取module_name
 
                     # 格式3: /* func+offset/length [module] */ (没有 <-)
                     elif '/*' in line and not '<-' in line:
@@ -1363,21 +1368,31 @@ def parse_module_url_old_format(module_url_str, base_url):
     return module_url_map, default_url
 
 
-def create_source_link(source_file, line_num, display_name, base_url, kernel_src, module_srcs):
+def create_source_link(source_file, line_num, display_name, base_url, kernel_src, module_srcs, module_name=None, module_url=None):
     """为函数名生成源码链接
 
     参数:
         source_file: 源码文件路径
         line_num: 行号
         display_name: 显示名称
-        base_url: 基础URL
+        base_url: 基础URL（内核函数使用）
         kernel_src: 内核源码根目录
         module_srcs: 模块源码路径列表
+        module_name: 模块名（如果是模块函数）
+        module_url: 模块特定的URL（如果提供）
 
     返回:
         HTML链接字符串
     """
-    if not base_url or not source_file or not line_num:
+    if not source_file or not line_num:
+        return escape_html_preserve_spaces(display_name)
+
+    # 确定使用哪个URL
+    # 如果提供了module_url，优先使用module_url
+    # 否则使用base_url
+    effective_url = module_url if module_url else base_url
+
+    if not effective_url:
         return escape_html_preserve_spaces(display_name)
 
     # 清理文件路径
@@ -1387,7 +1402,7 @@ def create_source_link(source_file, line_num, display_name, base_url, kernel_src
     relative_path = get_relative_path(clean_path, kernel_src)
 
     # 构建URL
-    url = build_source_url(base_url, relative_path, line_num)
+    url = build_source_url(effective_url, relative_path, line_num)
 
     # 生成链接
     escaped_display_name = escape_html_preserve_spaces(display_name)
@@ -1397,18 +1412,17 @@ def create_source_link(source_file, line_num, display_name, base_url, kernel_src
     return f'<a class="func-name-link" href="{escaped_url}" target="_blank" title="Click to open {relative_path}:{line_num}" onclick="event.stopPropagation()">{escaped_display_name}</a>'
 
 
-def call_faddr2line_for_func_names(vmlinux_path, faddr2line_path, func_names, use_list=False, verbose=False, fast_mode=False, path_prefix=None, module_srcs=None, entry_offset=0):
-    """为函数名列表调用 faddr2line，返回函数名到源码信息的映射
+def _call_faddr2line_for_functions(faddr2line_path, target_path, func_names, path_prefix, module_srcs, entry_offset, verbose):
+    """辅助函数：为指定目标文件的函数列表调用 faddr2line
 
     参数:
-        vmlinux_path: vmlinux路径
         faddr2line_path: faddr2line工具路径
+        target_path: 目标文件路径（vmlinux或模块.ko）
         func_names: 函数名列表
-        use_list: 是否使用--list模式
-        verbose: 是否输出详细信息
-        fast_mode: 是否使用fast模式
         path_prefix: 路径前缀
         module_srcs: 模块源码路径
+        entry_offset: 入口偏移
+        verbose: 是否输出详细信息
 
     返回:
         dict: {函数名: (源码文件, 行号)}
@@ -1416,47 +1430,32 @@ def call_faddr2line_for_func_names(vmlinux_path, faddr2line_path, func_names, us
     if not func_names:
         return {}
 
-    # 使用绝对路径
-    abs_vmlinux_path = os.path.abspath(vmlinux_path)
-    abs_faddr2line_path = os.path.abspath(faddr2line_path)
-
-    # 如果使用fast模式，优先使用fastfaddr2line.py
-    if fast_mode:
-        script_dir = os.path.dirname(os.path.abspath(__file__))
-        fast_faddr2line_path = os.path.join(script_dir, 'fastfaddr2line.py')
-        if os.path.exists(fast_faddr2line_path):
-            abs_faddr2line_path = fast_faddr2line_path
-
     # 为每个函数名添加 +0x0/0x1 格式
-    # fastfaddr2line 支持仅函数名格式，但为了兼容性，我们使用标准格式
     func_specs = []
     for func_name in func_names:
         func_specs.append(f"{func_name}+0x0/0x1")
 
-    # 调用 faddr2line
-    results = {}
+    # 构建命令
+    cmd = [faddr2line_path, target_path] + func_specs
+
+    # 如果是fastfaddr2line，添加额外参数
+    if os.path.basename(faddr2line_path) == 'fastfaddr2line.py':
+        if path_prefix:
+            if not isinstance(path_prefix, list):
+                path_prefix = [path_prefix]
+            for prefix in path_prefix:
+                cmd.extend(['--path-prefix', prefix])
+        if module_srcs:
+            if not isinstance(module_srcs, list):
+                module_srcs = [module_srcs]
+            for src in module_srcs:
+                cmd.extend(['--module-src', src])
+        # 总是传递entry-offset参数，即使为0
+        cmd.extend(['--entry-offset', str(entry_offset)])
+
+    verbose_print(f"调用 faddr2line 解析函数名: {' '.join(cmd)}", verbose)
 
     try:
-        # 构建命令
-        cmd = [abs_faddr2line_path, abs_vmlinux_path] + func_specs
-
-        # 如果是fastfaddr2line，添加额外参数
-        if os.path.basename(abs_faddr2line_path) == 'fastfaddr2line.py':
-            if path_prefix:
-                if not isinstance(path_prefix, list):
-                    path_prefix = [path_prefix]
-                for prefix in path_prefix:
-                    cmd.extend(['--path-prefix', prefix])
-            if module_srcs:
-                if not isinstance(module_srcs, list):
-                    module_srcs = [module_srcs]
-                for src in module_srcs:
-                    cmd.extend(['--module-src', src])
-            if entry_offset != 0:
-                cmd.extend(['--entry-offset', str(entry_offset)])
-
-        verbose_print(f"调用 faddr2line 解析函数名: {' '.join(cmd)}", verbose)
-
         # 执行命令
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
 
@@ -1466,6 +1465,7 @@ def call_faddr2line_for_func_names(vmlinux_path, faddr2line_path, func_names, us
 
         # 解析输出
         lines = result.stdout.strip().split('\n')
+        results = {}
 
         i = 0
         while i < len(lines):
@@ -1506,6 +1506,84 @@ def call_faddr2line_for_func_names(vmlinux_path, faddr2line_path, func_names, us
         return {}
 
 
+def call_faddr2line_for_func_names(vmlinux_path, faddr2line_path, func_names, use_list=False, verbose=False, fast_mode=False, path_prefix=None, module_srcs=None, entry_offset=0, func_module_map=None, module_paths=None):
+    """为函数名列表调用 faddr2line，返回函数名到源码信息的映射
+
+    参数:
+        vmlinux_path: vmlinux路径
+        faddr2line_path: faddr2line工具路径
+        func_names: 函数名列表
+        use_list: 是否使用--list模式
+        verbose: 是否输出详细信息
+        fast_mode: 是否使用fast模式
+        path_prefix: 路径前缀
+        module_srcs: 模块源码路径
+        entry_offset: 入口偏移
+        func_module_map: 函数名到模块名的映射，例如 {'get_mi_task_struct': 'mi_schedule'}
+        module_paths: 模块名到模块文件路径的映射，例如 {'mi_schedule': '/path/to/mi_schedule.ko'}
+
+    返回:
+        dict: {函数名: (源码文件, 行号)}
+    """
+    if not func_names:
+        return {}
+
+    # 使用绝对路径
+    abs_vmlinux_path = os.path.abspath(vmlinux_path)
+    abs_faddr2line_path = os.path.abspath(faddr2line_path)
+
+    # 如果使用fast模式，优先使用fastfaddr2line.py
+    if fast_mode:
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        fast_faddr2line_path = os.path.join(script_dir, 'fastfaddr2line.py')
+        if os.path.exists(fast_faddr2line_path):
+            abs_faddr2line_path = fast_faddr2line_path
+
+    # 调用 faddr2line
+    results = {}
+
+    # 分组函数：内核函数 vs 模块函数
+    kernel_funcs = []
+    module_funcs = {}  # 模块名 -> 函数列表
+
+    for func_name in func_names:
+        if func_module_map and func_name in func_module_map:
+            module_name = func_module_map[func_name]
+            if module_name not in module_funcs:
+                module_funcs[module_name] = []
+            module_funcs[module_name].append(func_name)
+        else:
+            kernel_funcs.append(func_name)
+
+    # 处理内核函数：不需要 module_srcs
+    if kernel_funcs:
+        kernel_results = _call_faddr2line_for_functions(
+            abs_faddr2line_path, abs_vmlinux_path, kernel_funcs,
+            path_prefix, None, entry_offset, verbose  # 内核函数不需要 module_srcs
+        )
+        results.update(kernel_results)
+
+    # 处理模块函数：需要 module_srcs 和模块文件路径
+    for module_name, module_func_list in module_funcs.items():
+        module_path = None
+        if module_paths:
+            module_path = module_paths.get(module_name)
+
+        # 如果没有找到模块路径，跳过这些函数
+        if not module_path or not os.path.exists(module_path):
+            verbose_print(f"警告: 无法找到模块 {module_name} 的文件路径，跳过函数: {module_func_list}", verbose)
+            continue
+
+        abs_module_path = os.path.abspath(module_path)
+        module_results = _call_faddr2line_for_functions(
+            abs_faddr2line_path, abs_module_path, module_func_list,
+            path_prefix, module_srcs, entry_offset, verbose  # 模块函数需要 module_srcs
+        )
+        results.update(module_results)
+
+    return results
+
+
 def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None, base_url=None, module_url=None, kernel_src=None, use_list=False, verbose=False, fast_mode=False, highlight_code=False, path_prefix=None, module_src=None, module_srcs=None, script_args=None, enable_filter=False, parse_time=0, total_time=0, func_links=False, entry_offset=0):
     """生成交互式HTML页面，保留原始空格和格式"""
     if module_dirs is None:
@@ -1518,22 +1596,89 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
     # 如果启用函数名超链接，收集需要解析的函数名
     func_name_results = {}
     if func_links:
-        # 收集所有唯一的原始函数名（去重）
+        # 收集所有唯一的原始函数名（去重）和模块信息
         unique_func_names = set()
+        func_module_map = {}  # 函数名 -> 模块名
+        module_paths = {}     # 模块名 -> 模块文件路径
+
         for line_data in parsed_lines:
             raw_func_name = line_data.get('raw_func_name')
+            module_name = line_data.get('module_name')
+
             if raw_func_name:
                 unique_func_names.add(raw_func_name)
+                # 如果有模块名，记录映射关系
+                if module_name:
+                    func_module_map[raw_func_name] = module_name
+
+        # 如果有模块函数，需要查找模块文件路径
+        if func_module_map and module_dirs:
+            for module_name in set(func_module_map.values()):
+                found = False
+                # 在 module_dirs 中查找模块文件
+                for module_dir in module_dirs:
+                    # 尝试多种可能的模块名格式
+                    # 内核加载模块时会将 - 替换为 _，所以需要双向查找
+                    module_name_variants = [module_name]
+
+                    # 如果模块名包含下划线，尝试替换为中划线
+                    if '_' in module_name:
+                        module_name_variants.append(module_name.replace('_', '-'))
+
+                    # 如果模块名包含中划线，尝试替换为下划线
+                    if '-' in module_name:
+                        module_name_variants.append(module_name.replace('-', '_'))
+
+                    # 去重
+                    module_name_variants = list(dict.fromkeys(module_name_variants))
+
+                    for variant in module_name_variants:
+                        # 方法1: 直接查找 .ko 文件
+                        module_path = os.path.join(module_dir, f"{variant}.ko")
+                        if os.path.exists(module_path):
+                            module_paths[module_name] = module_path
+                            found = True
+                            break
+
+                        # 方法2: 查找带版本号的模块
+                        import glob
+                        module_files = glob.glob(os.path.join(module_dir, f"{variant}*.ko"))
+                        if module_files:
+                            module_paths[module_name] = module_files[0]
+                            found = True
+                            break
+
+                        # 方法3: 递归查找子目录
+                        for root, dirs, files in os.walk(module_dir):
+                            for file in files:
+                                if file == f"{variant}.ko" or file.startswith(f"{variant}") and file.endswith(".ko"):
+                                    full_path = os.path.join(root, file)
+                                    module_paths[module_name] = full_path
+                                    found = True
+                                    break
+                            if found:
+                                break
+
+                        if found:
+                            break
+
+                    if found:
+                        break
 
         if unique_func_names and vmlinux_path and faddr2line_path:
             verbose_print(f"收集到 {len(unique_func_names)} 个唯一函数名用于解析", verbose)
+            if func_module_map:
+                verbose_print(f"其中 {len(func_module_map)} 个是模块函数", verbose)
+
             # 调用 faddr2line 解析函数名（使用原始函数名）
             func_name_list = list(unique_func_names)
             func_name_results = call_faddr2line_for_func_names(
                 vmlinux_path, faddr2line_path, func_name_list,
                 use_list=use_list, verbose=verbose, fast_mode=fast_mode,
                 path_prefix=path_prefix, module_srcs=module_srcs,
-                entry_offset=entry_offset
+                entry_offset=entry_offset,
+                func_module_map=func_module_map,
+                module_paths=module_paths
             )
             verbose_print(f"函数名解析完成，获取 {len(func_name_results)} 个结果", verbose)
 
@@ -2673,7 +2818,16 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
             color: #b392f0;
             font-weight: bold;
         }}
-        
+
+        .hl-module-func {{
+            color: #0369a1;
+            font-weight: bold;
+        }}
+        [data-theme="dark"] .hl-module-func {{
+            color: #79c0ff;
+            font-weight: bold;
+        }}
+
         .hl-addr {{
             color: #032f62;
             font-family: 'Courier New', monospace;
@@ -2890,8 +3044,17 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
             # 如果启用了函数名超链接且有解析结果且不在注释中
             if func_links and line_data.get('func_name_info') and not in_comment:
                 source_file, line_num = line_data['func_name_info']
+                # 获取模块信息（如果适用）
+                module_name = line_data.get('module_name')
+                # 确定使用哪个URL（模块特定URL或默认URL）
+                current_base_url = base_url
+                if module_name:
+                    if module_name in module_url_map:
+                        current_base_url = module_url_map[module_name]
+                    elif default_module_url and default_module_url != base_url:
+                        current_base_url = default_module_url
                 # 生成超链接（使用显示名）
-                link_html = create_source_link(source_file, line_num, display_name, base_url, kernel_src, module_srcs)
+                link_html = create_source_link(source_file, line_num, display_name, base_url, kernel_src, module_srcs, module_name, current_base_url)
                 # 替换原始行中的原始函数名为显示名
                 if raw_func_name != display_name:
                     raw_line = raw_line.replace(raw_func_name, display_name)
