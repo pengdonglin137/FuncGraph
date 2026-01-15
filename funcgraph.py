@@ -412,15 +412,16 @@ def parse_ftrace_file(file_path, verbose=False):
 
                     # 首先检查是否是注释行或空行（跳过）
                     if line.startswith('#') or not line.strip():
-                        parsed_lines.append({
+                        line_data = {
                             'raw_line': line,
                             'expandable': False,
                             'func_info': None,
                             'module_name': None,
                             'cpu': None,
                             'pid': None,
-                            'comm': None
-                        })
+                            'comm': None,
+                            }
+                        parsed_lines.append(line_data)
                         continue
 
                     # 解析CPU、PID、进程名
@@ -433,39 +434,63 @@ def parse_ftrace_file(file_path, verbose=False):
                     if cpu_match:
                         cpu = int(cpu_match.group(1))
 
-                    # 方法2: 查找 "PID/PID" 或 "comm/PID" 或 "comm-PID" 格式
-                    # 优先匹配带斜杠的格式
-                    pid_comm_match = re.search(r'\s+(\d+)/(\d+)', line)
+                    # 方法2: 查找 PID/Comm 格式（只在函数调用之前的部分查找）
+                    # 关键：只在函数调用之前的部分查找，避免匹配函数参数
+                    func_start = line.find('(')
+                    if func_start == -1:
+                        func_start = len(line)
+
+                    prefix = line[:func_start]
+
+                    # 关键：排除耗时信息和状态字符（latency 模式）
+                    # 普通格式：CPU)  [进程-PID]  |  [耗时]  |  函数
+                    # Latency 格式：CPU)  进程-PID  |  状态字符  |  [耗时]  |  函数
+
+                    # 找到第一个分隔符 | 的位置
+                    pipe_pos = prefix.find('|')
+                    if pipe_pos != -1:
+                        # 有分隔符，耗时信息在第一个分隔符之后
+                        # 但是 latency 模式有两个分隔符：状态字符和耗时
+                        # 格式：CPU)  进程-PID  |  状态  |  [耗时]  |  函数
+
+                        # 找到第二个分隔符 | 的位置（状态字符之后）
+                        second_pipe = prefix.find('|', pipe_pos + 1)
+                        if second_pipe != -1:
+                            # 有第二个分隔符，说明是 latency 模式
+                            # 在第一个分隔符之前查找 PID/Comm
+                            search_area = prefix[:pipe_pos]
+                        else:
+                            # 只有一个分隔符，可能是普通模式或耗时模式
+                            # 在分隔符之前查找 PID/Comm
+                            search_area = prefix[:pipe_pos]
+                    else:
+                        # 没有分隔符，耗时信息可能在 CPU 编号之后
+                        # 移除耗时格式：[ $@*#!+ ]数字.us
+                        timing_pattern = r'[ $@*#!+]*\d+\.us'
+                        search_area = re.sub(timing_pattern, '', prefix)
+
+                    # 在清理后的区域中查找 PID/Comm
+                    pid_comm_match = re.search(r'\s+(\d+)/(\d+)', search_area)
                     if pid_comm_match:
                         pid = int(pid_comm_match.group(1))
                     else:
                         # 尝试匹配 "comm/PID" 格式
-                        comm_pid_match = re.search(r'\s+([a-zA-Z_][a-zA-Z0-9_-]*)/(\d+)', line)
+                        comm_pid_match = re.search(r'\s+([a-zA-Z_][a-zA-Z0-9_-]*)/(\d+)', search_area)
                         if comm_pid_match:
                             comm = comm_pid_match.group(1)
                             pid = int(comm_pid_match.group(2))
                         else:
                             # 尝试匹配 "comm-PID" 格式（用连字符分隔）
                             # 支持特殊字符如 <idle>，也支持行首格式如 bash-430
-                            comm_pid_dash_match = re.search(r'([^\s]+)-(\d+)', line)
+                            # 支持连字符前后有空格的情况：idle -0
+                            comm_pid_dash_match = re.search(r'([^\s]+)\s*-\s*(\d+)', search_area)
                             if comm_pid_dash_match:
                                 comm = comm_pid_dash_match.group(1)
                                 pid = int(comm_pid_dash_match.group(2))
 
-                    # 方法3: 在函数参数中查找 pid= 或 tid= 或 comm=
-                    if pid is None:
-                        pid_param_match = re.search(r'(?:pid|tid)=0x[0-9a-fA-F]+(?:\s*,\s*pid=)?\s*(\d+)', line)
-                        if pid_param_match:
-                            pid = int(pid_param_match.group(1))
-
+                    # 方法3: 查找 prev= 或 next= 参数中的进程信息（只在搜索区域中查找）
                     if comm is None:
-                        comm_param_match = re.search(r'comm=([a-zA-Z_][a-zA-Z0-9_-]*)', line)
-                        if comm_param_match:
-                            comm = comm_param_match.group(1)
-
-                    # 方法4: 查找 prev= 或 next= 参数中的进程信息
-                    if comm is None:
-                        prev_next_match = re.search(r'(?:prev|next)=0x[0-9a-fA-F]+(?:\s*,\s*prev=)?\s*0x[0-9a-fA-F]+(?:\s*,\s*comm=)?\s*([a-zA-Z_][a-zA-Z0-9_-]*)', line)
+                        prev_next_match = re.search(r'(?:prev|next)=0x[0-9a-fA-F]+(?:\s*,\s*prev=)?\s*0x[0-9a-fA-F]+(?:\s*,\s*comm=)?\s*([a-zA-Z_][a-zA-Z0-9_-]*)', search_area)
                         if prev_next_match:
                             comm = prev_next_match.group(1)
 
@@ -517,7 +542,7 @@ def parse_ftrace_file(file_path, verbose=False):
 
                     # 如果找到函数信息，添加到解析结果
                     if func_info or func_name:
-                        parsed_lines.append({
+                        line_data = {
                             'raw_line': line,
                             'expandable': True,
                             'func_info': func_info,  # 返回地址，用于源码链接
@@ -525,9 +550,12 @@ def parse_ftrace_file(file_path, verbose=False):
                             'module_name': module_name,
                             'cpu': cpu,
                             'pid': pid,
-                            'comm': comm
-                        })
+                            'comm': comm,
+                            }
+                        parsed_lines.append(line_data)
                         expandable_count += 1
+
+
                         continue
 
                     # 检查不可展开的行中是否包含函数名（如 ret= 格式）
@@ -535,7 +563,7 @@ def parse_ftrace_file(file_path, verbose=False):
                     ret_func_match = re.search(r'/\*\s*([a-zA-Z_][a-zA-Z0-9_.]*)\s+ret=', line)
                     if ret_func_match:
                         func_name = ret_func_match.group(1)
-                        parsed_lines.append({
+                        line_data = {
                             'raw_line': line,
                             'expandable': False,
                             'func_info': None,
@@ -543,11 +571,14 @@ def parse_ftrace_file(file_path, verbose=False):
                             'module_name': None,
                             'cpu': cpu,
                             'pid': pid,
-                            'comm': comm
-                        })
+                            'comm': comm,
+                            }
+                        parsed_lines.append(line_data)
+
+
                         continue
 
-                    parsed_lines.append({
+                    line_data = {
                         'raw_line': line,
                         'expandable': False,
                         'func_info': None,
@@ -555,20 +586,24 @@ def parse_ftrace_file(file_path, verbose=False):
                         'module_name': None,
                         'cpu': cpu,
                         'pid': pid,
-                        'comm': comm
-                    })
+                        'comm': comm,
+                    }
+                    parsed_lines.append(line_data)
+
                 except Exception as e:
                     verbose_print(f"Error parsing line {line_num}: {str(e)}", verbose)
                     # 添加为普通行继续处理
-                    parsed_lines.append({
+                    line_data = {
                         'raw_line': line.rstrip('\n'),
                         'expandable': False,
                         'func_info': None,
                         'module_name': None,
                         'cpu': None,
                         'pid': None,
-                        'comm': None
-                    })
+                        'comm': None,
+                    }
+                    parsed_lines.append(line_data)
+
     except Exception as e:
         print(f"Error reading file {file_path}: {str(e)}", file=sys.stderr)
         sys.exit(1)
@@ -1274,6 +1309,7 @@ def parse_module_url_old_format(module_url_str, base_url):
     return module_url_map, default_url
 
 
+
 def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None, base_url=None, module_url=None, kernel_src=None, use_list=False, verbose=False, fast_mode=False, highlight_code=False, path_prefix=None, module_src=None, module_srcs=None, script_args=None, enable_filter=False, parse_time=0, total_time=0):
     """生成交互式HTML页面，保留原始空格和格式"""
     if module_dirs is None:
@@ -1306,14 +1342,28 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
             if pid is not None:
                 pid_str = str(pid)
                 # 确保是有效的数字（过滤掉空字符串、None等）
+                # 修改：保留 PID=0，但只在过滤器中显示，不用于过滤
                 if pid_str.strip() and pid_str.isdigit():
+                    # 对于过滤器备选关键字，包含 PID=0
                     unique_pids.add(pid_str)
 
             if comm:
                 comm_str = str(comm).strip()
-                # 确保进程名不是空字符串或特殊字符
-                if comm_str and len(comm_str) > 0 and not comm_str.startswith('('):
-                    unique_comms.add(comm_str)
+                # 确保进程名不是空字符串
+                # 修改：去除特殊字符后添加到备选关键字
+                if comm_str and len(comm_str) > 0:
+                    # 清理进程名：去除特殊字符
+                    cleaned_comm = comm_str
+                    if cleaned_comm.startswith('<') and cleaned_comm.endswith('>'):
+                        cleaned_comm = cleaned_comm[1:-1]  # 去除 < >
+                    if cleaned_comm.startswith('(') and cleaned_comm.endswith(')'):
+                        cleaned_comm = cleaned_comm[1:-1]  # 去除 ( )
+                    if '@' in cleaned_comm:
+                        cleaned_comm = cleaned_comm.split('@')[0]  # 去除 @ 后面的部分
+
+                    # 只添加清理后的进程名
+                    if cleaned_comm and len(cleaned_comm) > 0:
+                        unique_comms.add(cleaned_comm)
 
         # 只生成有数据的输入框
         filter_inputs = []
