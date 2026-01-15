@@ -41,6 +41,8 @@ def parse_arguments():
                         help="Alternative path prefix to strip from file paths (can specify multiple)")
     parser.add_argument("--module-srcs", type=str, action='append', default=[],
                         help="Module source code root directories (can specify multiple)")
+    parser.add_argument("--entry-offset", type=int, default=0,
+                        help="Offset to add to function entry addresses (for -fpatchable-function-entry)")
     return parser.parse_args()
 
 def log(message, verbose_flag):
@@ -184,7 +186,7 @@ def load_elf_data(executable, verbose=False):
         log(f"Loaded {func_count} functions across {len(sections)} sections in {elapsed:.2f}ms", verbose)
         return symbol_by_name, sections, elf
 
-def find_matching_symbol(func_name, offset, length, symbol_by_name, sections, verbose=False):
+def find_matching_symbol(func_name, offset, length, symbol_by_name, sections, verbose=False, entry_offset=0):
     # 根据length参数决定日志格式
     if length > 0:
         log(f"Searching for symbol: {func_name}+0x{offset:x}/0x{length:x}", verbose)
@@ -286,7 +288,8 @@ def find_matching_symbol(func_name, offset, length, symbol_by_name, sections, ve
 
             # Compare against requested length
             if actual_len == length:
-                target_addr = sym.addr + offset
+                # 只有在 offset=0 时（函数入口）才应用 entry_offset
+                target_addr = sym.addr + offset + (entry_offset if offset == 0 else 0)
                 elapsed = (time.time() - start_time) * 1000
                 log(f"Match found! Target address: 0x{target_addr:x} (search took {elapsed:.2f}ms)", verbose)
                 return sym.addr, sec_name, target_addr
@@ -324,7 +327,8 @@ def find_matching_symbol(func_name, offset, length, symbol_by_name, sections, ve
                 continue
 
         # Calculate target address without length validation
-        target_addr = sym.addr + offset
+        # 只有在 offset=0 时（函数入口）才应用 entry_offset
+        target_addr = sym.addr + offset + (entry_offset if offset == 0 else 0)
 
         # Verify the target address is within reasonable bounds
         # Check if offset is reasonable (within symbol bounds or close)
@@ -955,7 +959,7 @@ def main():
             offset = int(match.group(2), 16)
             length = int(match.group(3), 16)
 
-            result = find_matching_symbol(func_name, offset, length, symbol_by_name, sections, options.verbose)
+            result = find_matching_symbol(func_name, offset, length, symbol_by_name, sections, options.verbose, options.entry_offset)
             if not result:
                 print(f"Symbol not found: {addr_spec}", file=sys.stderr)
                 continue
@@ -967,7 +971,7 @@ def main():
                 offset = int(match.group(2), 16)
                 length = 0  # 使用0作为长度，表示不验证长度
 
-                result = find_matching_symbol(func_name, offset, length, symbol_by_name, sections, options.verbose)
+                result = find_matching_symbol(func_name, offset, length, symbol_by_name, sections, options.verbose, options.entry_offset)
                 if not result:
                     print(f"Symbol not found: {addr_spec}", file=sys.stderr)
                     continue
@@ -978,7 +982,7 @@ def main():
                     offset = 0  # 自动使用偏移0
                     length = 0  # 使用0作为长度，表示不验证长度
 
-                    result = find_matching_symbol(func_name, offset, length, symbol_by_name, sections, options.verbose)
+                    result = find_matching_symbol(func_name, offset, length, symbol_by_name, sections, options.verbose, options.entry_offset)
                     if not result:
                         print(f"Symbol not found: {addr_spec}", file=sys.stderr)
                         continue

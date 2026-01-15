@@ -1397,7 +1397,7 @@ def create_source_link(source_file, line_num, display_name, base_url, kernel_src
     return f'<a class="func-name-link" href="{escaped_url}" target="_blank" title="Click to open {relative_path}:{line_num}" onclick="event.stopPropagation()">{escaped_display_name}</a>'
 
 
-def call_faddr2line_for_func_names(vmlinux_path, faddr2line_path, func_names, use_list=False, verbose=False, fast_mode=False, path_prefix=None, module_srcs=None):
+def call_faddr2line_for_func_names(vmlinux_path, faddr2line_path, func_names, use_list=False, verbose=False, fast_mode=False, path_prefix=None, module_srcs=None, entry_offset=0):
     """为函数名列表调用 faddr2line，返回函数名到源码信息的映射
 
     参数:
@@ -1452,6 +1452,8 @@ def call_faddr2line_for_func_names(vmlinux_path, faddr2line_path, func_names, us
                     module_srcs = [module_srcs]
                 for src in module_srcs:
                     cmd.extend(['--module-src', src])
+            if entry_offset != 0:
+                cmd.extend(['--entry-offset', str(entry_offset)])
 
         verbose_print(f"调用 faddr2line 解析函数名: {' '.join(cmd)}", verbose)
 
@@ -1504,7 +1506,7 @@ def call_faddr2line_for_func_names(vmlinux_path, faddr2line_path, func_names, us
         return {}
 
 
-def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None, base_url=None, module_url=None, kernel_src=None, use_list=False, verbose=False, fast_mode=False, highlight_code=False, path_prefix=None, module_src=None, module_srcs=None, script_args=None, enable_filter=False, parse_time=0, total_time=0, func_links=False):
+def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None, base_url=None, module_url=None, kernel_src=None, use_list=False, verbose=False, fast_mode=False, highlight_code=False, path_prefix=None, module_src=None, module_srcs=None, script_args=None, enable_filter=False, parse_time=0, total_time=0, func_links=False, entry_offset=0):
     """生成交互式HTML页面，保留原始空格和格式"""
     if module_dirs is None:
         module_dirs = []
@@ -1530,7 +1532,8 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
             func_name_results = call_faddr2line_for_func_names(
                 vmlinux_path, faddr2line_path, func_name_list,
                 use_list=use_list, verbose=verbose, fast_mode=fast_mode,
-                path_prefix=path_prefix, module_srcs=module_srcs
+                path_prefix=path_prefix, module_srcs=module_srcs,
+                entry_offset=entry_offset
             )
             verbose_print(f"函数名解析完成，获取 {len(func_name_results)} 个结果", verbose)
 
@@ -4647,6 +4650,8 @@ def main():
                         help='Enable filter box in HTML for CPU/PID/Comm filtering')
     parser.add_argument('--func-links', action='store_true',
                         help='Enable source links for function names (adds some overhead)')
+    parser.add_argument('--entry-offset', type=int, default=0,
+                        help='Offset to add to function entry addresses (for -fpatchable-function-entry)')
     args = parser.parse_args()
 
     # 参数健壮性检查
@@ -4807,10 +4812,21 @@ def main():
         except Exception:
             pass
 
-    # 3. 如果还是找不到，报错
+    # 3. 如果还是找不到，检查是否使用 fast 模式
     if not faddr2line_path:
-        print(f"Error: Cannot locate faddr2line tool (only available in kernel source scripts/)", file=sys.stderr)
-        sys.exit(1)
+        if args.fast:
+            # fast 模式下，使用 fastfaddr2line.py
+            script_dir = os.path.dirname(os.path.abspath(__file__))
+            fast_faddr2line_path = os.path.join(script_dir, 'fastfaddr2line.py')
+            if os.path.exists(fast_faddr2line_path):
+                faddr2line_path = fast_faddr2line_path
+                verbose_print(f"Using fastfaddr2line.py at {fast_faddr2line_path}", args.verbose)
+            else:
+                print(f"Error: Cannot locate fastfaddr2line.py at {fast_faddr2line_path}", file=sys.stderr)
+                sys.exit(1)
+        else:
+            print(f"Error: Cannot locate faddr2line tool (only available in kernel source scripts/)", file=sys.stderr)
+            sys.exit(1)
 
     # 使用绝对路径
     faddr2line_path = os.path.abspath(faddr2line_path)
@@ -4877,7 +4893,8 @@ def main():
         enable_filter=args.filter,  # 传递过滤器开关
         parse_time=parse_time,  # 传递解析时间
         total_time=0,  # 占位符，稍后计算
-        func_links=args.func_links  # 传递函数名超链接开关
+        func_links=args.func_links,  # 传递函数名超链接开关
+        entry_offset=args.entry_offset  # 传递函数入口地址偏移量
     )
 
     # 计算总时间
