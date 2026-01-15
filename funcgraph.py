@@ -2220,6 +2220,7 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
             user-select: none;
             vertical-align: middle;
             flex-shrink: 0;
+            margin-top: 5px;  /* Center align with line content */
         }}
         .expand-btn:hover {{
             opacity: 1;
