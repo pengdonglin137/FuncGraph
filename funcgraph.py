@@ -3608,22 +3608,38 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
         
         // 复制可见内容（纯文本模式，只复制 trace 内容）
         function copyVisibleContent(event) {
-            const lines = document.querySelectorAll('.line-container');
+            // 获取所有可见的行（未被过滤器隐藏的）
+            const allLines = document.querySelectorAll('.line-container');
+            const visibleLines = Array.from(allLines).filter(line => {
+                return line.style.display !== 'none' && !line.classList.contains('hidden');
+            });
 
             // 构建文本，只复制 trace 内容（不包含行号）
             const textLines = [];
-            lines.forEach(line => {
+            visibleLines.forEach(line => {
                 const lineContent = line.querySelector('.line-content').textContent;
                 textLines.push(lineContent);
             });
             const textToCopy = textLines.join('\\n');
+
+            // 如果没有可见行，显示提示
+            if (textLines.length === 0) {
+                const originalText = event.target.textContent;
+                event.target.textContent = 'No visible lines';
+                event.target.style.background = 'rgba(239, 68, 68, 0.8)';
+                setTimeout(() => {
+                    event.target.textContent = originalText;
+                    event.target.style.background = '';
+                }, 1000);
+                return;
+            }
 
             // 复制到剪贴板
             if (navigator.clipboard) {
                 navigator.clipboard.writeText(textToCopy).then(() => {
                     // 显示成功提示
                     const originalText = event.target.textContent;
-                    event.target.textContent = 'Copied!';
+                    event.target.textContent = `Copied ${textLines.length} lines`;
                     event.target.style.background = 'rgba(34, 197, 94, 0.8)';
                     setTimeout(() => {
                         event.target.textContent = originalText;
@@ -3632,16 +3648,16 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
                 }).catch(err => {
                     console.error('Failed to copy: ', err);
                     // 降级方案
-                    fallbackCopy(textToCopy, event.target);
+                    fallbackCopy(textToCopy, event.target, textLines.length);
                 });
             } else {
                 // 老浏览器降级
-                fallbackCopy(textToCopy, event.target);
+                fallbackCopy(textToCopy, event.target, textLines.length);
             }
         }
 
         // 降级复制方案
-        function fallbackCopy(text, button) {
+        function fallbackCopy(text, button, lineCount) {
             const textArea = document.createElement('textarea');
             textArea.value = text;
             textArea.style.position = 'fixed';
@@ -3652,7 +3668,7 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
                 document.execCommand('copy');
                 // 显示成功提示
                 const originalText = button.textContent;
-                button.textContent = 'Copied!';
+                button.textContent = `Copied ${lineCount} lines`;
                 button.style.background = 'rgba(34, 197, 94, 0.8)';
                 setTimeout(() => {
                     button.textContent = originalText;
