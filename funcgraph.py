@@ -3552,12 +3552,20 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
                 const suggestions = input.getAttribute('data-suggestions') || '';
                 const suggestionList = suggestions ? suggestions.split(',') : [];
 
+                // HTML转义函数
+                function escapeHtml(text) {
+                    const div = document.createElement('div');
+                    div.textContent = text;
+                    return div.innerHTML;
+                }
+
                 // 点击输入框时显示所有建议
                 input.addEventListener('focus', function() {
                     if (suggestionList.length > 0) {
-                        suggestionsDiv.innerHTML = suggestionList.slice(0, 10).map(item =>
-                            `<div class="suggestion-item" data-value="${item}">${item}</div>`
-                        ).join('');
+                        suggestionsDiv.innerHTML = suggestionList.slice(0, 10).map(item => {
+                            const escaped = escapeHtml(item);
+                            return `<div class="suggestion-item" data-value="${escaped}">${escaped}</div>`;
+                        }).join('');
                         suggestionsDiv.classList.add('active');
                     }
                 });
@@ -3569,9 +3577,10 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
                     // 如果输入框为空，显示所有建议
                     if (value.length === 0) {
                         if (suggestionList.length > 0) {
-                            suggestionsDiv.innerHTML = suggestionList.slice(0, 10).map(item =>
-                                `<div class="suggestion-item" data-value="${item}">${item}</div>`
-                            ).join('');
+                            suggestionsDiv.innerHTML = suggestionList.slice(0, 10).map(item => {
+                                const escaped = escapeHtml(item);
+                                return `<div class="suggestion-item" data-value="${escaped}">${escaped}</div>`;
+                            }).join('');
                             suggestionsDiv.classList.add('active');
                         } else {
                             suggestionsDiv.classList.remove('active');
@@ -3586,9 +3595,10 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
                     );
 
                     if (filtered.length > 0) {
-                        suggestionsDiv.innerHTML = filtered.slice(0, 10).map(item =>
-                            `<div class="suggestion-item" data-value="${item}">${item}</div>`
-                        ).join('');
+                        suggestionsDiv.innerHTML = filtered.slice(0, 10).map(item => {
+                            const escaped = escapeHtml(item);
+                            return `<div class="suggestion-item" data-value="${escaped}">${escaped}</div>`;
+                        }).join('');
                         suggestionsDiv.classList.add('active');
                     } else {
                         suggestionsDiv.classList.remove('active');
@@ -3598,8 +3608,9 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
 
                 // 点击建议项 - 智能添加到正则表达式
                 suggestionsDiv.addEventListener('click', function(e) {
-                    if (e.target.classList.contains('suggestion-item')) {
-                        const value = e.target.getAttribute('data-value');
+                    const suggestionItem = e.target.closest('.suggestion-item');
+                    if (suggestionItem) {
+                        const value = suggestionItem.getAttribute('data-value');
                         const current = input.value.trim();
 
                         if (current) {
