@@ -942,9 +942,10 @@ def main():
     
     # 处理每个地址规范
     addr_specs_and_addrs = []
-    # 支持两种格式: func+offset/length 和 func+offset
+    # 支持三种格式: func+offset/length, func+offset, 和 func (仅函数名)
     addr_pattern_full = re.compile(r"([^+]+)\+0x([0-9a-fA-F]+)/0x([0-9a-fA-F]+)")
     addr_pattern_short = re.compile(r"([^+]+)\+0x([0-9a-fA-F]+)")
+    func_name_only = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_.]*$")  # 仅函数名，不包含+号
 
     for addr_spec in options.addresses:
         # 首先尝试匹配完整格式 func+offset/length
@@ -961,18 +962,29 @@ def main():
         else:
             # 尝试匹配简短格式 func+offset
             match = addr_pattern_short.match(addr_spec)
-            if not match:
-                print(f"无效的地址格式: {addr_spec}", file=sys.stderr)
-                continue
+            if match:
+                func_name = match.group(1)
+                offset = int(match.group(2), 16)
+                length = 0  # 使用0作为长度，表示不验证长度
 
-            func_name = match.group(1)
-            offset = int(match.group(2), 16)
-            length = 0  # 使用0作为长度，表示不验证长度
+                result = find_matching_symbol(func_name, offset, length, symbol_by_name, sections, options.verbose)
+                if not result:
+                    print(f"Symbol not found: {addr_spec}", file=sys.stderr)
+                    continue
+            else:
+                # 尝试匹配仅函数名格式
+                if func_name_only.match(addr_spec):
+                    func_name = addr_spec
+                    offset = 0  # 自动使用偏移0
+                    length = 0  # 使用0作为长度，表示不验证长度
 
-            result = find_matching_symbol(func_name, offset, length, symbol_by_name, sections, options.verbose)
-            if not result:
-                print(f"Symbol not found: {addr_spec}", file=sys.stderr)
-                continue
+                    result = find_matching_symbol(func_name, offset, length, symbol_by_name, sections, options.verbose)
+                    if not result:
+                        print(f"Symbol not found: {addr_spec}", file=sys.stderr)
+                        continue
+                else:
+                    print(f"无效的地址格式: {addr_spec}", file=sys.stderr)
+                    continue
 
         sym_addr, _, target_addr = result
         addr_specs_and_addrs.append((addr_spec, target_addr))

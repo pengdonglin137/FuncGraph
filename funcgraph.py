@@ -390,6 +390,40 @@ def get_relative_path(full_path, base_path):
     # 如果都不匹配，返回原始路径
     return full_path
 
+def remove_compiler_suffix(func_name):
+    """去除编译器优化后缀，支持 GCC 和 LLVM/Clang"""
+    # 提取函数名（去掉偏移和长度部分）
+    match = re.match(r'^(.*?)([+][0-9a-fA-FxX]+)(/[0-9a-fA-FxX]+)$', func_name)
+    if match:
+        base_func = match.group(1)
+        offset = match.group(2)
+        length = match.group(3)
+    else:
+        base_func = func_name
+        offset = ""
+        length = ""
+
+    # GCC 和 LLVM/Clang 常见的优化后缀
+    # 包括：.isra.N, .constprop.N, .lto.N, .part.N, .cold.N, .clone.N, .llvm.N, .unk.N
+    # 以及：.plt, .ifunc, .const, .pure, .cold (无数字)
+
+    # 第一步：去除带数字的后缀
+    cleaned = re.sub(r'\.(isra|constprop|lto|part|cold|clone|llvm|unk)\.\d+', '', base_func)
+
+    # 第二步：去除无数字的后缀
+    cleaned = re.sub(r'\.(plt|ifunc|const|pure|cold)\b', '', cleaned)
+
+    # 第三步：处理可能残留的多个后缀（如 .isra.0.constprop.1）
+    # 再次清理，确保完全去除
+    cleaned = re.sub(r'\.(isra|constprop|lto|part|cold|clone|llvm|unk)\.\d+', '', cleaned)
+    cleaned = re.sub(r'\.(plt|ifunc|const|pure|cold)\b', '', cleaned)
+
+    # 如果有偏移和长度，重新组合
+    if offset and length:
+        return f"{cleaned}{offset}{length}"
+    else:
+        return cleaned
+
 def parse_ftrace_file(file_path, verbose=False):
     """解析ftrace文件，提取可展开的行及其函数信息
 
@@ -420,6 +454,7 @@ def parse_ftrace_file(file_path, verbose=False):
                             'cpu': None,
                             'pid': None,
                             'comm': None,
+                            'func_name_info': None,
                             }
                         parsed_lines.append(line_data)
                         continue
@@ -496,16 +531,25 @@ def parse_ftrace_file(file_path, verbose=False):
 
                     # 检查是否包含函数信息（支持多种格式）
                     func_info = None
-                    func_name = None
+                    raw_func_name = None
+                    display_func_name = None
                     module_name = None
 
                     # 格式1: 函数调用 + 返回地址
-                    # 例如: rcu_rdp_cpu_online.isra.0() { /* <-rcu_lockdep_current_cpu_online+0x48/0x70 */
-                    if '/*' in line and '<-' in line and '()' in line:
-                        # 提取函数调用名称
-                        func_name_match = re.search(r'([a-zA-Z_][a-zA-Z0-9_.]*)\(\)', line)
+                    # 例如:
+                    # - rcu_rdp_cpu_online.isra.0() { /* <-rcu_lockdep_current_cpu_online+0x48/0x70 */
+                    # - preempt_count_add(val=65536); /* <-irq_enter_rcu+0x17/0x80 */
+                    # - tick_irq_enter() { /* <-irq_enter_rcu+0x6a/0x80 */
+                    if '/*' in line and '<-' in line:
+                        # 提取函数调用名称，支持多种格式：
+                        # 1. func() { - 函数调用开始
+                        # 2. func(args); - 带参数的函数调用
+                        # 3. func() - 函数调用
+                        func_name_match = re.search(r'([a-zA-Z_][a-zA-Z0-9_.]*)\s*\([^)]*\)\s*[;{]?', line)
                         if func_name_match:
-                            func_name = func_name_match.group(1)
+                            raw_func_name = func_name_match.group(1)
+                            # 处理后的函数名用于显示（去除编译器后缀）
+                            display_func_name = remove_compiler_suffix(raw_func_name)
 
                         # 提取返回地址
                         func_match = re.search(r'/\*\s*<-(.*?)\s*\*/', line)
@@ -516,7 +560,7 @@ def parse_ftrace_file(file_path, verbose=False):
                             if module_match:
                                 module_name = module_match.group(1)
 
-                    # 格式2: /* <- func+offset/length [module] */ (标准格式)
+                    # 格式2: /* <- func+offset/length [module] */ (标准格式，没有函数调用)
                     elif '/*' in line and '<-' in line:
                         func_match = re.search(r'/\*\s*<-(.*?)\s*\*/', line)
                         if func_match:
@@ -541,16 +585,18 @@ def parse_ftrace_file(file_path, verbose=False):
                             func_info = direct_match.group(1)
 
                     # 如果找到函数信息，添加到解析结果
-                    if func_info or func_name:
+                    if func_info or raw_func_name:
                         line_data = {
                             'raw_line': line,
                             'expandable': True,
                             'func_info': func_info,  # 返回地址，用于源码链接
-                            'func_name': func_name,  # 函数调用名，用于显示
+                            'raw_func_name': raw_func_name,  # 原始函数名，用于传给 faddr2line
+                            'display_func_name': display_func_name,  # 处理后的函数名，用于显示
                             'module_name': module_name,
                             'cpu': cpu,
                             'pid': pid,
                             'comm': comm,
+                            'func_name_info': None,  # 用于存储函数名的源码信息
                             }
                         parsed_lines.append(line_data)
                         expandable_count += 1
@@ -562,16 +608,19 @@ def parse_ftrace_file(file_path, verbose=False):
                     # 格式: 3)   1.175 us    |  } /* finish_task_switch.isra.0 ret=0xffffffff81381f60 */
                     ret_func_match = re.search(r'/\*\s*([a-zA-Z_][a-zA-Z0-9_.]*)\s+ret=', line)
                     if ret_func_match:
-                        func_name = ret_func_match.group(1)
+                        raw_func_name = ret_func_match.group(1)
+                        display_func_name = remove_compiler_suffix(raw_func_name)
                         line_data = {
                             'raw_line': line,
                             'expandable': False,
                             'func_info': None,
-                            'func_name': func_name,  # 函数名用于显示
+                            'raw_func_name': raw_func_name,  # 原始函数名，用于传给 faddr2line
+                            'display_func_name': display_func_name,  # 处理后的函数名，用于显示
                             'module_name': None,
                             'cpu': cpu,
                             'pid': pid,
                             'comm': comm,
+                            'func_name_info': None,  # 用于存储函数名的源码信息
                             }
                         parsed_lines.append(line_data)
 
@@ -582,11 +631,13 @@ def parse_ftrace_file(file_path, verbose=False):
                         'raw_line': line,
                         'expandable': False,
                         'func_info': None,
-                        'func_name': None,
+                        'raw_func_name': None,
+                        'display_func_name': None,
                         'module_name': None,
                         'cpu': cpu,
                         'pid': pid,
                         'comm': comm,
+                        'func_name_info': None,
                     }
                     parsed_lines.append(line_data)
 
@@ -597,10 +648,13 @@ def parse_ftrace_file(file_path, verbose=False):
                         'raw_line': line.rstrip('\n'),
                         'expandable': False,
                         'func_info': None,
+                        'raw_func_name': None,
+                        'display_func_name': None,
                         'module_name': None,
                         'cpu': None,
                         'pid': None,
                         'comm': None,
+                        'func_name_info': None,
                     }
                     parsed_lines.append(line_data)
 
@@ -1309,8 +1363,148 @@ def parse_module_url_old_format(module_url_str, base_url):
     return module_url_map, default_url
 
 
+def create_source_link(source_file, line_num, display_name, base_url, kernel_src, module_srcs):
+    """为函数名生成源码链接
 
-def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None, base_url=None, module_url=None, kernel_src=None, use_list=False, verbose=False, fast_mode=False, highlight_code=False, path_prefix=None, module_src=None, module_srcs=None, script_args=None, enable_filter=False, parse_time=0, total_time=0):
+    参数:
+        source_file: 源码文件路径
+        line_num: 行号
+        display_name: 显示名称
+        base_url: 基础URL
+        kernel_src: 内核源码根目录
+        module_srcs: 模块源码路径列表
+
+    返回:
+        HTML链接字符串
+    """
+    if not base_url or not source_file or not line_num:
+        return escape_html_preserve_spaces(display_name)
+
+    # 清理文件路径
+    clean_path = clean_file_path(source_file, kernel_src, module_srcs)
+
+    # 获取相对于内核源码的路径
+    relative_path = get_relative_path(clean_path, kernel_src)
+
+    # 构建URL
+    url = build_source_url(base_url, relative_path, line_num)
+
+    # 生成链接
+    escaped_display_name = escape_html_preserve_spaces(display_name)
+    escaped_url = html.escape(url)
+
+    # 添加 onclick="event.stopPropagation()" 防止事件冒泡到父元素
+    return f'<a class="func-name-link" href="{escaped_url}" target="_blank" title="Click to open {relative_path}:{line_num}" onclick="event.stopPropagation()">{escaped_display_name}</a>'
+
+
+def call_faddr2line_for_func_names(vmlinux_path, faddr2line_path, func_names, use_list=False, verbose=False, fast_mode=False, path_prefix=None, module_srcs=None):
+    """为函数名列表调用 faddr2line，返回函数名到源码信息的映射
+
+    参数:
+        vmlinux_path: vmlinux路径
+        faddr2line_path: faddr2line工具路径
+        func_names: 函数名列表
+        use_list: 是否使用--list模式
+        verbose: 是否输出详细信息
+        fast_mode: 是否使用fast模式
+        path_prefix: 路径前缀
+        module_srcs: 模块源码路径
+
+    返回:
+        dict: {函数名: (源码文件, 行号)}
+    """
+    if not func_names:
+        return {}
+
+    # 使用绝对路径
+    abs_vmlinux_path = os.path.abspath(vmlinux_path)
+    abs_faddr2line_path = os.path.abspath(faddr2line_path)
+
+    # 如果使用fast模式，优先使用fastfaddr2line.py
+    if fast_mode:
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        fast_faddr2line_path = os.path.join(script_dir, 'fastfaddr2line.py')
+        if os.path.exists(fast_faddr2line_path):
+            abs_faddr2line_path = fast_faddr2line_path
+
+    # 为每个函数名添加 +0x0/0x1 格式
+    # fastfaddr2line 支持仅函数名格式，但为了兼容性，我们使用标准格式
+    func_specs = []
+    for func_name in func_names:
+        func_specs.append(f"{func_name}+0x0/0x1")
+
+    # 调用 faddr2line
+    results = {}
+
+    try:
+        # 构建命令
+        cmd = [abs_faddr2line_path, abs_vmlinux_path] + func_specs
+
+        # 如果是fastfaddr2line，添加额外参数
+        if os.path.basename(abs_faddr2line_path) == 'fastfaddr2line.py':
+            if path_prefix:
+                if not isinstance(path_prefix, list):
+                    path_prefix = [path_prefix]
+                for prefix in path_prefix:
+                    cmd.extend(['--path-prefix', prefix])
+            if module_srcs:
+                if not isinstance(module_srcs, list):
+                    module_srcs = [module_srcs]
+                for src in module_srcs:
+                    cmd.extend(['--module-src', src])
+
+        verbose_print(f"调用 faddr2line 解析函数名: {' '.join(cmd)}", verbose)
+
+        # 执行命令
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+
+        if result.returncode != 0:
+            verbose_print(f"faddr2line 错误: {result.stderr}", verbose)
+            return {}
+
+        # 解析输出
+        lines = result.stdout.strip().split('\n')
+
+        i = 0
+        while i < len(lines):
+            line = lines[i].strip()
+            if not line:
+                i += 1
+                continue
+
+            # 匹配函数名格式: func_name+0x0/0x1:
+            if '+0x0/0x1:' in line and i + 1 < len(lines):
+                # 提取函数名，去掉 +0x0/0x1: 部分
+                func_name = line.replace('+0x0/0x1:', '').strip()
+                source_line = lines[i + 1].strip()
+
+                # 匹配格式: func_name at source_file:line_num
+                if ' at ' in source_line and ':' in source_line:
+                    # 提取源码文件和行号
+                    # 格式: func_name at source_file:line_num
+                    at_pos = source_line.find(' at ')
+                    if at_pos != -1:
+                        rest = source_line[at_pos + 4:]  # 跳过 " at "
+                        if ':' in rest:
+                            source_file, line_num = rest.rsplit(':', 1)
+                            results[func_name] = (source_file, line_num)
+
+                i += 2
+            else:
+                i += 1
+
+        verbose_print(f"函数名解析结果: {len(results)} 个", verbose)
+        return results
+
+    except subprocess.TimeoutExpired:
+        verbose_print("faddr2line 超时", verbose)
+        return {}
+    except Exception as e:
+        verbose_print(f"调用 faddr2line 失败: {str(e)}", verbose)
+        return {}
+
+
+def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None, base_url=None, module_url=None, kernel_src=None, use_list=False, verbose=False, fast_mode=False, highlight_code=False, path_prefix=None, module_src=None, module_srcs=None, script_args=None, enable_filter=False, parse_time=0, total_time=0, func_links=False):
     """生成交互式HTML页面，保留原始空格和格式"""
     if module_dirs is None:
         module_dirs = []
@@ -1318,6 +1512,33 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
     # 初始化时间统计
     vmlinux_time = 0
     module_time = 0
+
+    # 如果启用函数名超链接，收集需要解析的函数名
+    func_name_results = {}
+    if func_links:
+        # 收集所有唯一的原始函数名（去重）
+        unique_func_names = set()
+        for line_data in parsed_lines:
+            raw_func_name = line_data.get('raw_func_name')
+            if raw_func_name:
+                unique_func_names.add(raw_func_name)
+
+        if unique_func_names and vmlinux_path and faddr2line_path:
+            verbose_print(f"收集到 {len(unique_func_names)} 个唯一函数名用于解析", verbose)
+            # 调用 faddr2line 解析函数名（使用原始函数名）
+            func_name_list = list(unique_func_names)
+            func_name_results = call_faddr2line_for_func_names(
+                vmlinux_path, faddr2line_path, func_name_list,
+                use_list=use_list, verbose=verbose, fast_mode=fast_mode,
+                path_prefix=path_prefix, module_srcs=module_srcs
+            )
+            verbose_print(f"函数名解析完成，获取 {len(func_name_results)} 个结果", verbose)
+
+            # 将解析结果存储到 parsed_lines 中
+            for line_data in parsed_lines:
+                raw_func_name = line_data.get('raw_func_name')
+                if raw_func_name and raw_func_name in func_name_results:
+                    line_data['func_name_info'] = func_name_results[raw_func_name]
 
     # 根据enable_filter参数生成过滤框HTML
     filter_html = ""
@@ -1505,41 +1726,6 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
     
     # 批量获取所有函数的位置信息
     func_locations_map = {}
-
-    # 定义函数名称去优化后缀函数
-    def remove_compiler_suffix(func_name):
-        """去除编译器优化后缀，支持 GCC 和 LLVM/Clang"""
-        # 提取函数名（去掉偏移和长度部分）
-        match = re.match(r'^(.*?)([+][0-9a-fA-FxX]+)(/[0-9a-fA-FxX]+)$', func_name)
-        if match:
-            base_func = match.group(1)
-            offset = match.group(2)
-            length = match.group(3)
-        else:
-            base_func = func_name
-            offset = ""
-            length = ""
-
-        # GCC 和 LLVM/Clang 常见的优化后缀
-        # 包括：.isra.N, .constprop.N, .lto.N, .part.N, .cold.N, .clone.N, .llvm.N, .unk.N
-        # 以及：.plt, .ifunc, .const, .pure, .cold (无数字)
-
-        # 第一步：去除带数字的后缀
-        cleaned = re.sub(r'\.(isra|constprop|lto|part|cold|clone|llvm|unk)\.\d+', '', base_func)
-
-        # 第二步：去除无数字的后缀
-        cleaned = re.sub(r'\.(plt|ifunc|const|pure|cold)\b', '', cleaned)
-
-        # 第三步：处理可能残留的多个后缀（如 .isra.0.constprop.1）
-        # 再次清理，确保完全去除
-        cleaned = re.sub(r'\.(isra|constprop|lto|part|cold|clone|llvm|unk)\.\d+', '', cleaned)
-        cleaned = re.sub(r'\.(plt|ifunc|const|pure|cold)\b', '', cleaned)
-
-        # 如果有偏移和长度，重新组合
-        if offset and length:
-            return f"{cleaned}{offset}{length}"
-        else:
-            return cleaned
 
     # 定义函数偏移量调整函数
     def adjust_func_info(func_info):
@@ -2002,6 +2188,14 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
             user-select: text;
             white-space: pre;
             font-family: 'Courier New', monospace;
+        }}
+        .func-name-link {{
+            color: var(--link-color);
+            text-decoration: none;
+            cursor: pointer;
+        }}
+        .func-name-link:hover {{
+            text-decoration: underline;
         }}
         .expand-btn {{
             display: inline-block;
@@ -2674,11 +2868,35 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
         raw_line = line_data["raw_line"]
 
         # 优先处理函数调用名称（func_name）- 适用于可展开和不可展开的行
-        if line_data.get('func_name'):
-            func_name = line_data['func_name']
-            display_name = remove_compiler_suffix(func_name)
-            if func_name != display_name:
-                raw_line = raw_line.replace(func_name, display_name)
+        if line_data.get('raw_func_name'):
+            raw_func_name = line_data['raw_func_name']
+            display_name = line_data.get('display_func_name', raw_func_name)
+
+            # 检查函数名是否在注释中（在 /**/ 之间）
+            # 如果是，则不添加超链接
+            in_comment = False
+            comment_start = raw_line.find('/*')
+            comment_end = raw_line.find('*/')
+            if comment_start != -1 and comment_end != -1:
+                # 检查函数名是否在注释范围内
+                func_pos = raw_line.find(raw_func_name)
+                if comment_start < func_pos < comment_end:
+                    in_comment = True
+
+            # 如果启用了函数名超链接且有解析结果且不在注释中
+            if func_links and line_data.get('func_name_info') and not in_comment:
+                source_file, line_num = line_data['func_name_info']
+                # 生成超链接（使用显示名）
+                link_html = create_source_link(source_file, line_num, display_name, base_url, kernel_src, module_srcs)
+                # 替换原始行中的原始函数名为显示名
+                if raw_func_name != display_name:
+                    raw_line = raw_line.replace(raw_func_name, display_name)
+                # 然后将显示名替换为超链接
+                raw_line = raw_line.replace(display_name, link_html)
+            else:
+                # 仅替换为显示名
+                if raw_func_name != display_name:
+                    raw_line = raw_line.replace(raw_func_name, display_name)
 
         # 然后处理返回地址（func_info）- 仅适用于可展开的行
         elif line_data['expandable'] and line_data.get('func_info'):
@@ -2688,7 +2906,23 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
                 raw_line = raw_line.replace(func_info, display_func)
 
         # 先应用语法高亮，保持原始空格和对齐
-        escaped_line = highlight_ftrace_line(raw_line)
+        # 但是我们需要保护已经生成的 HTML 链接不被转义
+        # 使用占位符临时保存 HTML 链接
+        html_links = []
+        def save_html_link(match):
+            idx = len(html_links)
+            html_links.append(match.group(0))
+            return f'___HTML_LINK_{idx}___'
+
+        # 临时替换 HTML 链接为占位符
+        raw_line_with_placeholders = re.sub(r'<a class="func-name-link"[^>]*>.*?</a>', save_html_link, raw_line)
+
+        # 应用语法高亮（会转义 HTML）
+        escaped_line = highlight_ftrace_line(raw_line_with_placeholders)
+
+        # 恢复 HTML 链接
+        for idx, link in enumerate(html_links):
+            escaped_line = escaped_line.replace(f'___HTML_LINK_{idx}___', link)
 
         # 检查是否可展开
         is_expandable = line_data['expandable'] and line_data['func_info']
@@ -4411,6 +4645,8 @@ def main():
                         help='Alternative path prefixes to strip from file paths (can specify multiple paths)')
     parser.add_argument('--filter', action='store_true',
                         help='Enable filter box in HTML for CPU/PID/Comm filtering')
+    parser.add_argument('--func-links', action='store_true',
+                        help='Enable source links for function names (adds some overhead)')
     args = parser.parse_args()
 
     # 参数健壮性检查
@@ -4640,7 +4876,8 @@ def main():
         script_args=args,  # 传递命令行参数用于显示
         enable_filter=args.filter,  # 传递过滤器开关
         parse_time=parse_time,  # 传递解析时间
-        total_time=0  # 占位符，稍后计算
+        total_time=0,  # 占位符，稍后计算
+        func_links=args.func_links  # 传递函数名超链接开关
     )
 
     # 计算总时间
