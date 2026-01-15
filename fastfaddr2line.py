@@ -204,15 +204,30 @@ def find_matching_symbol(func_name, offset, length, symbol_by_name, sections, ve
         # 尝试匹配模式：func_name + 任意后缀
         # 例如：task_tick_fair.llvm.7193371421561186440 -> task_tick_fair
         candidates = []
-        for symbol_name in symbol_by_name:
-            # 检查是否以目标函数名开头，且后面跟着点或其他分隔符
-            if symbol_name.startswith(func_name + '.') or symbol_name == func_name:
-                # 额外验证：确保是编译器生成的后缀
-                # 常见后缀：.llvm.*, .constprop.*, .isra.*, .part.*, 等
-                suffix = symbol_name[len(func_name):]
-                if suffix.startswith('.') or suffix == '':
-                    candidates.extend(symbol_by_name[symbol_name])
-                    log(f"  Found fuzzy match: {symbol_name}", verbose)
+
+        # 首先尝试去除常见的编译器后缀
+        # 支持 GCC 和 LLVM/Clang 的后缀
+        cleaned_func_name = re.sub(r'\.(isra|constprop|lto|part|cold|clone|llvm|unk)\.\d+', '', func_name)
+        cleaned_func_name = re.sub(r'\.(plt|ifunc|const|pure|cold)\b', '', cleaned_func_name)
+
+        # 如果清理后的名字与原名不同，尝试精确匹配清理后的名字
+        if cleaned_func_name != func_name:
+            log(f"Cleaned function name: {func_name} -> {cleaned_func_name}", verbose)
+            if cleaned_func_name in symbol_by_name:
+                candidates.extend(symbol_by_name[cleaned_func_name])
+                log(f"  Found match after cleaning: {cleaned_func_name}", verbose)
+
+        # 如果仍然没有找到，尝试更宽松的模糊匹配
+        if not candidates:
+            for symbol_name in symbol_by_name:
+                # 检查是否以目标函数名开头，且后面跟着点或其他分隔符
+                if symbol_name.startswith(func_name + '.') or symbol_name == func_name:
+                    # 额外验证：确保是编译器生成的后缀
+                    # 常见后缀：.llvm.*, .constprop.*, .isra.*, .part.*, 等
+                    suffix = symbol_name[len(func_name):]
+                    if suffix.startswith('.') or suffix == '':
+                        candidates.extend(symbol_by_name[symbol_name])
+                        log(f"  Found fuzzy match: {symbol_name}", verbose)
 
         if not candidates:
             log(f"No fuzzy match found for '{func_name}'", verbose)

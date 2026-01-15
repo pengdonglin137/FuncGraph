@@ -21,6 +21,7 @@ FuncGraph is a powerful ftrace visualization tool developed with **AI assistance
 - **Processing statistics**: Displays parsing time, total duration, and other performance metrics
 - **Filtering functionality**: Supports filtering trace lines by CPU, PID, and process name
 - **Real-time progress display**: Expand/Collapse operations show progress percentage
+- **Compiler suffix removal**: Automatically removes compiler optimization suffixes (e.g., `.isra.0`, `.constprop.0`) to display original function names
 
 ## Environment Requirements
 
@@ -180,6 +181,52 @@ When the source code paths returned by addr2line are inconsistent with the kerne
 - **Use case**: When compilation paths differ from source code paths
 - **Multiple paths**: Can specify multiple alternative prefixes, script will try to match
 - **Result**: Source code links in HTML use relative paths, more concise
+
+#### Compiler Suffix Removal
+
+FuncGraph automatically removes compiler optimization suffixes to display original function names, making trace analysis and syntax highlighting easier:
+
+**Supported compilers:**
+- ✅ GCC
+- ✅ LLVM/Clang
+
+**Supported suffix types:**
+
+Common to GCC and LLVM:
+- `.isra.0`, `.isra.1`, `.isra.N` - Function inlining optimization
+- `.constprop.0`, `.constprop.1`, `.constprop.N` - Constant propagation optimization
+- `.lto.0`, `.lto.1`, `.lto.N` - Link-time optimization
+- `.part.0`, `.part.1`, `.part.N` - Partial inlining
+- `.cold.0`, `.cold.1`, `.cold.N` - Cold path optimization
+- `.cold` - Cold path (without number)
+- `.plt` - PLT entry
+- `.ifunc` - Indirect function
+- `.const` - Constant function
+- `.pure` - Pure function
+
+LLVM/Clang specific:
+- `.llvm.0`, `.llvm.1`, `.llvm.N` - LLVM-specific optimization
+- `.clone.0`, `.clone.1`, `.clone.N` - Function cloning
+- `.unk.0`, `.unk.1`, `.unk.N` - Unknown optimization
+
+**Supports complex scenarios:**
+- Multiple suffixes: `func.isra.0.constprop.1` → `func`
+- With offset/length: `func.llvm.123+0x100/0x200` → `func+0x100/0x200`
+
+**Processing examples:**
+```
+Original trace:  3)   0.208 us |  } /* finish_task_switch.isra.0+0x150/0x4a8 */
+Display result:  3)   0.208 us |  } /* finish_task_switch+0x150/0x4a8 */
+
+Original trace:  1)   0.123 us |  unwind_find_stack.constprop.0+0x20/0x50
+Display result:  1)   0.123 us |  unwind_find_stack+0x20/0x50
+```
+
+**Benefits:**
+- ✅ Clearer function names for better readability
+- ✅ More accurate syntax highlighting
+- ✅ Easier grep and text searching
+- ✅ Preserves offset and length information
 
 #### Using Filter Function
 

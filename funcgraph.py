@@ -469,35 +469,89 @@ def parse_ftrace_file(file_path, verbose=False):
                         if prev_next_match:
                             comm = prev_next_match.group(1)
 
-                    if '/*' in line and '<-' in line:
+                    # 检查是否包含函数信息（支持多种格式）
+                    func_info = None
+                    func_name = None
+                    module_name = None
+
+                    # 格式1: 函数调用 + 返回地址
+                    # 例如: rcu_rdp_cpu_online.isra.0() { /* <-rcu_lockdep_current_cpu_online+0x48/0x70 */
+                    if '/*' in line and '<-' in line and '()' in line:
+                        # 提取函数调用名称
+                        func_name_match = re.search(r'([a-zA-Z_][a-zA-Z0-9_.]*)\(\)', line)
+                        if func_name_match:
+                            func_name = func_name_match.group(1)
+
+                        # 提取返回地址
                         func_match = re.search(r'/\*\s*<-(.*?)\s*\*/', line)
                         if func_match:
                             full_func_info = func_match.group(1).strip()
-
-                            # 提取函数地址和模块名
-                            func_addr = full_func_info.split()[0] if full_func_info else ''
-                            module_name = None
-
-                            # 检查是否有模块名（在方括号中）
+                            func_info = full_func_info.split()[0] if full_func_info else None
                             module_match = re.search(r'\[(.*?)\]', full_func_info)
                             if module_match:
                                 module_name = module_match.group(1)
 
-                            parsed_lines.append({
-                                'raw_line': line,
-                                'expandable': True,
-                                'func_info': func_addr,
-                                'module_name': module_name,
-                                'cpu': cpu,
-                                'pid': pid,
-                                'comm': comm
-                            })
-                            expandable_count += 1
-                            continue
+                    # 格式2: /* <- func+offset/length [module] */ (标准格式)
+                    elif '/*' in line and '<-' in line:
+                        func_match = re.search(r'/\*\s*<-(.*?)\s*\*/', line)
+                        if func_match:
+                            full_func_info = func_match.group(1).strip()
+                            func_info = full_func_info.split()[0] if full_func_info else None
+                            module_match = re.search(r'\[(.*?)\]', full_func_info)
+                            if module_match:
+                                module_name = module_match.group(1)
+
+                    # 格式3: /* func+offset/length [module] */ (没有 <-)
+                    elif '/*' in line and not '<-' in line:
+                        comment_match = re.search(r'/\*\s*([a-zA-Z_][a-zA-Z0-9_.]*\+[0-9a-fA-FxX]+/[0-9a-fA-FxX]+)(?:\s*\[(.*?)\])?\s*\*/', line)
+                        if comment_match:
+                            func_info = comment_match.group(1)
+                            if comment_match.group(2):
+                                module_name = comment_match.group(2)
+
+                    # 格式4: 直接在行中 func+offset/length (没有注释)
+                    if func_info is None:
+                        direct_match = re.search(r'([a-zA-Z_][a-zA-Z0-9_.]*\+[0-9a-fA-FxX]+/[0-9a-fA-FxX]+)', line)
+                        if direct_match:
+                            func_info = direct_match.group(1)
+
+                    # 如果找到函数信息，添加到解析结果
+                    if func_info or func_name:
+                        parsed_lines.append({
+                            'raw_line': line,
+                            'expandable': True,
+                            'func_info': func_info,  # 返回地址，用于源码链接
+                            'func_name': func_name,  # 函数调用名，用于显示
+                            'module_name': module_name,
+                            'cpu': cpu,
+                            'pid': pid,
+                            'comm': comm
+                        })
+                        expandable_count += 1
+                        continue
+
+                    # 检查不可展开的行中是否包含函数名（如 ret= 格式）
+                    # 格式: 3)   1.175 us    |  } /* finish_task_switch.isra.0 ret=0xffffffff81381f60 */
+                    ret_func_match = re.search(r'/\*\s*([a-zA-Z_][a-zA-Z0-9_.]*)\s+ret=', line)
+                    if ret_func_match:
+                        func_name = ret_func_match.group(1)
+                        parsed_lines.append({
+                            'raw_line': line,
+                            'expandable': False,
+                            'func_info': None,
+                            'func_name': func_name,  # 函数名用于显示
+                            'module_name': None,
+                            'cpu': cpu,
+                            'pid': pid,
+                            'comm': comm
+                        })
+                        continue
+
                     parsed_lines.append({
                         'raw_line': line,
                         'expandable': False,
                         'func_info': None,
+                        'func_name': None,
                         'module_name': None,
                         'cpu': cpu,
                         'pid': pid,
@@ -1401,7 +1455,42 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
     
     # 批量获取所有函数的位置信息
     func_locations_map = {}
-    
+
+    # 定义函数名称去优化后缀函数
+    def remove_compiler_suffix(func_name):
+        """去除编译器优化后缀，支持 GCC 和 LLVM/Clang"""
+        # 提取函数名（去掉偏移和长度部分）
+        match = re.match(r'^(.*?)([+][0-9a-fA-FxX]+)(/[0-9a-fA-FxX]+)$', func_name)
+        if match:
+            base_func = match.group(1)
+            offset = match.group(2)
+            length = match.group(3)
+        else:
+            base_func = func_name
+            offset = ""
+            length = ""
+
+        # GCC 和 LLVM/Clang 常见的优化后缀
+        # 包括：.isra.N, .constprop.N, .lto.N, .part.N, .cold.N, .clone.N, .llvm.N, .unk.N
+        # 以及：.plt, .ifunc, .const, .pure, .cold (无数字)
+
+        # 第一步：去除带数字的后缀
+        cleaned = re.sub(r'\.(isra|constprop|lto|part|cold|clone|llvm|unk)\.\d+', '', base_func)
+
+        # 第二步：去除无数字的后缀
+        cleaned = re.sub(r'\.(plt|ifunc|const|pure|cold)\b', '', cleaned)
+
+        # 第三步：处理可能残留的多个后缀（如 .isra.0.constprop.1）
+        # 再次清理，确保完全去除
+        cleaned = re.sub(r'\.(isra|constprop|lto|part|cold|clone|llvm|unk)\.\d+', '', cleaned)
+        cleaned = re.sub(r'\.(plt|ifunc|const|pure|cold)\b', '', cleaned)
+
+        # 如果有偏移和长度，重新组合
+        if offset and length:
+            return f"{cleaned}{offset}{length}"
+        else:
+            return cleaned
+
     # 定义函数偏移量调整函数
     def adjust_func_info(func_info):
         # 匹配函数名+偏移/长度格式
@@ -1416,15 +1505,22 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
         try:
             # 解析十六进制偏移量
             offset_val = int(offset_str, 16)
+
+            # 去除编译器后缀
+            cleaned_func = remove_compiler_suffix(func_name)
+
             if offset_val == 0:
+                # 偏移量为0，但可能仍需要去除后缀
+                if cleaned_func != func_name:
+                    return f"{cleaned_func}+{offset_str}{length_str}"
                 return func_info  # 偏移量为0，不需要调整
-            
+
             # 计算新偏移量（减1）
             new_offset_val = offset_val - 1
             new_offset_str = hex(new_offset_val)
-            
-            # 重构函数信息字符串
-            return f"{func_name}+{new_offset_str}{length_str}"
+
+            # 重构函数信息字符串（使用清理后的函数名）
+            return f"{cleaned_func}+{new_offset_str}{length_str}"
         except ValueError:
             return func_info  # 解析失败，返回原始字符串
     
@@ -2524,8 +2620,25 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
         line_anchor_id = f"L{line_number}"  # 使用L{行号}格式作为锚点
         line_id = f"line_{idx}"  # 保留用于JavaScript引用
 
+        # 处理原始行：去除编译器优化后缀，用于显示
+        raw_line = line_data["raw_line"]
+
+        # 优先处理函数调用名称（func_name）- 适用于可展开和不可展开的行
+        if line_data.get('func_name'):
+            func_name = line_data['func_name']
+            display_name = remove_compiler_suffix(func_name)
+            if func_name != display_name:
+                raw_line = raw_line.replace(func_name, display_name)
+
+        # 然后处理返回地址（func_info）- 仅适用于可展开的行
+        elif line_data['expandable'] and line_data.get('func_info'):
+            func_info = line_data['func_info']
+            display_func = remove_compiler_suffix(func_info)
+            if func_info != display_func:
+                raw_line = raw_line.replace(func_info, display_func)
+
         # 先应用语法高亮，保持原始空格和对齐
-        escaped_line = highlight_ftrace_line(line_data["raw_line"])
+        escaped_line = highlight_ftrace_line(raw_line)
 
         # 检查是否可展开
         is_expandable = line_data['expandable'] and line_data['func_info']

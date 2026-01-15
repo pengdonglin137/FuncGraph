@@ -23,6 +23,7 @@ FuncGraph是一个用 **AI** 开发的 ftrace 可视化工具，主要用于：
 - **处理统计**：显示解析时间、总耗时等性能统计信息
 - **过滤功能**：支持按 CPU、PID、进程名过滤 trace 行
 - **实时进度显示**：Expand/Collapse 操作显示进度百分比
+- **编译器优化后缀处理**：自动去除编译器优化后缀（如 `.isra.0`, `.constprop.0`），显示原始函数名
 
 ## 环境要求
 
@@ -182,6 +183,52 @@ export LLVM=-10
 - **使用场景**：编译路径与源码路径不一致时
 - **多个路径**：可以指定多个备选前缀，脚本会尝试匹配
 - **结果**：生成的 HTML 中源码链接使用相对路径，更简洁
+
+#### 编译器优化后缀处理
+
+FuncGraph 自动去除编译器优化后缀，显示原始函数名，便于 trace 文件分析和语法高亮：
+
+**支持的编译器：**
+- ✅ GCC
+- ✅ LLVM/Clang
+
+**支持的后缀类型：**
+
+GCC 和 LLVM 共有：
+- `.isra.0`, `.isra.1`, `.isra.N` - 函数内联优化
+- `.constprop.0`, `.constprop.1`, `.constprop.N` - 常量传播优化
+- `.lto.0`, `.lto.1`, `.lto.N` - 链接时优化
+- `.part.0`, `.part.1`, `.part.N` - 函数部分内联
+- `.cold.0`, `.cold.1`, `.cold.N` - 冷路径优化
+- `.cold` - 冷路径（无数字）
+- `.plt` - PLT 条目
+- `.ifunc` - 间接函数
+- `.const` - 常量函数
+- `.pure` - 纯函数
+
+LLVM/Clang 特有：
+- `.llvm.0`, `.llvm.1`, `.llvm.N` - LLVM 特定优化
+- `.clone.0`, `.clone.1`, `.clone.N` - 函数克隆
+- `.unk.0`, `.unk.1`, `.unk.N` - 未知优化
+
+**支持复杂场景：**
+- 多个后缀组合：`func.isra.0.constprop.1` → `func`
+- 带偏移/长度：`func.llvm.123+0x100/0x200` → `func+0x100/0x200`
+
+**处理示例：**
+```
+原始 trace:  3)   0.208 us |  } /* finish_task_switch.isra.0+0x150/0x4a8 */
+显示结果:    3)   0.208 us |  } /* finish_task_switch+0x150/0x4a8 */
+
+原始 trace:  1)   0.123 us |  unwind_find_stack.constprop.0+0x20/0x50
+显示结果:    1)   0.123 us |  unwind_find_stack+0x20/0x50
+```
+
+**优势：**
+- ✅ 函数名更清晰，便于阅读和理解
+- ✅ 语法高亮更准确
+- ✅ 便于 grep 和文本搜索
+- ✅ 保持偏移和长度信息不变
 
 #### 使用过滤功能
 
