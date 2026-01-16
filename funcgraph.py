@@ -3223,17 +3223,22 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
             
             if locations:
                 # 确定使用哪个URL
-                is_module = line_data.get('module_name') is not None
-                module_name = line_data.get('module_name')
+                # 从func_info_for_call中提取模块名，判断返回地址的函数类型
+                # func_info_for_call格式: func+offset/length [module]
+                return_addr_module_name = None
+                if '[' in func_info_for_call and ']' in func_info_for_call:
+                    module_match = re.search(r'\[(.*?)\]', func_info_for_call)
+                    if module_match:
+                        return_addr_module_name = module_match.group(1)
 
-                if is_module:
-                    # 模块函数：优先使用module_url_map，然后是default_module_url，最后是base_url
-                    if module_name and module_name in module_url_map:
-                        current_base_url = module_url_map[module_name]
+                if return_addr_module_name:
+                    # 返回地址是模块函数
+                    if return_addr_module_name in module_url_map:
+                        current_base_url = module_url_map[return_addr_module_name]
                     else:
                         current_base_url = default_module_url if default_module_url else base_url
                 else:
-                    # 内核函数：使用base_url
+                    # 返回地址是内核函数
                     current_base_url = base_url
 
                 # 检查是结构化数据还是原始输出
