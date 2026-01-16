@@ -571,7 +571,16 @@ def parse_ftrace_file(file_path, verbose=False):
                         func_match = re.search(r'/\*\s*<-(.*?)\s*\*/', line)
                         if func_match:
                             full_func_info = func_match.group(1).strip()
-                            func_info = full_func_info.split()[0] if full_func_info else None
+                            # 从返回地址中提取函数信息，去掉 ret=xxx 部分
+                            # 格式: func+offset/length [module] ret=xxx
+                            # 或者: func+offset/length [module]
+                            # 或者: func+offset/length ret=xxx
+                            # 或者: func+offset/length
+
+                            # 先去掉 ret=xxx 部分
+                            func_info = re.sub(r'\s+ret=.*$', '', full_func_info)
+                            # 保留func_info中的模块名信息，用于后续处理
+                            # 格式: func+offset/length [module]
                             # 返回地址中的[module]是返回地址的模块，不覆盖当前函数的module_name
                             # 所以这里不提取module_name
 
@@ -915,21 +924,30 @@ def call_faddr2line_batch(faddr2line_path, target, func_infos, use_list=False, k
                             cmd.extend(['--module-srcs', os.path.abspath(module_src)])
                             verbose_print(f"Adding --module-srcs parameter: {os.path.abspath(module_src)}", verbose)
 
-            cmd.extend([abs_target] + func_infos)
+            # 清理func_infos：移除[module]部分，因为fastfaddr2line不需要
+            # 但需要建立映射关系，以便返回时使用原始键
+            func_info_map = {}
+            cleaned_func_infos = []
+            for func in func_infos:
+                cleaned = re.sub(r'\s*\[.*?\]', '', func)
+                func_info_map[cleaned] = func  # 清理后 -> 原始
+                cleaned_func_infos.append(cleaned)
+
+            cmd.extend([abs_target] + cleaned_func_infos)
             verbose_print(f"Executing batch command: {' '.join(cmd)}", verbose)
             try:
                 result = subprocess.run(cmd, capture_output=True, text=True, check=True)
                 output = result.stdout
                 verbose_print(f"faddr2line --list completed successfully, output length: {len(output)} chars", verbose)
-                
+
                 # 解析批处理输出
                 results = {}
                 current_func = None
                 current_output = []
-                
+
                 # 正则表达式匹配函数块头
                 func_header_re = re.compile(r'^(.*?[^+]+[\+\w]+/[0-9a-fx]+):$')
-                
+
                 for line in output.splitlines():
                     line = line.rstrip()
                     # 检查是否是新的函数块头
@@ -937,8 +955,10 @@ def call_faddr2line_batch(faddr2line_path, target, func_infos, use_list=False, k
                     if header_match:
                         # 保存前一个函数的信息
                         if current_func:
-                            results[current_func] = '\n'.join(current_output)
-                        
+                            # 使用原始键存储
+                            original_func = func_info_map.get(current_func, current_func)
+                            results[original_func] = '\n'.join(current_output)
+
                         # 开始新的函数条目
                         current_func = header_match.group(1).strip()
                         current_output = [line]  # 包含头行
@@ -946,16 +966,20 @@ def call_faddr2line_batch(faddr2line_path, target, func_infos, use_list=False, k
                         # 添加到当前函数块
                         if current_func:
                             current_output.append(line)
-                
+
                 # 保存最后一个函数的信息
                 if current_func:
-                    results[current_func] = '\n'.join(current_output)
-                
+                    original_func = func_info_map.get(current_func, current_func)
+                    results[original_func] = '\n'.join(current_output)
+
                 # 检查是否有函数没有出现在输出中
                 for func in func_infos:
-                    if func not in results:
+                    cleaned_func = re.sub(r'\s*\[.*?\]', '', func)
+                    # 清理results的键进行比较
+                    cleaned_result_keys = [re.sub(r'\s*\[.*?\]', '', k) for k in results.keys()]
+                    if cleaned_func not in cleaned_result_keys:
                         results[func] = f"Error: No output for function {func}"
-                
+
                 elapsed = time.time() - start_time
                 verbose_print(f"Parsed {len(results)} function locations in {elapsed:.2f} seconds", verbose)
                 return results
@@ -993,7 +1017,9 @@ def call_faddr2line_batch(faddr2line_path, target, func_infos, use_list=False, k
                                 if module_src:
                                     cmd.extend(['--module-srcs', os.path.abspath(module_src)])
 
-                    cmd.append(func_info)
+                    # 清理func_info：移除[module]部分
+                    cleaned_func = re.sub(r'\s*\[.*?\]', '', func_info)
+                    cmd.append(cleaned_func)
                     try:
                         result = subprocess.run(cmd, capture_output=True, text=True, check=True)
                         results[func_info] = result.stdout
@@ -1028,13 +1054,22 @@ def call_faddr2line_batch(faddr2line_path, target, func_infos, use_list=False, k
                             cmd.extend(['--module-srcs', os.path.abspath(module_src)])
                             verbose_print(f"Adding --module-srcs parameter: {os.path.abspath(module_src)}", verbose)
 
-            cmd.extend(func_infos)
+            # 清理func_infos：移除[module]部分
+            # 但需要建立映射关系，以便返回时使用原始键
+            func_info_map = {}
+            cleaned_func_infos = []
+            for func in func_infos:
+                cleaned = re.sub(r'\s*\[.*?\]', '', func)
+                func_info_map[cleaned] = func  # 清理后 -> 原始
+                cleaned_func_infos.append(cleaned)
+
+            cmd.extend(cleaned_func_infos)
             verbose_print(f"Executing batch command: {' '.join(cmd)}", verbose)
             try:
                 result = subprocess.run(cmd, capture_output=True, text=True, check=True)
                 output = result.stdout
                 verbose_print(f"faddr2line completed successfully, output length: {len(output)} chars", verbose)
-                
+
                 # 解析批量输出
                 func_locations = {}
                 current_func = None
@@ -1044,24 +1079,26 @@ def call_faddr2line_batch(faddr2line_path, target, func_infos, use_list=False, k
                     line = line.rstrip()
                     if not line:
                         continue
-                        
+
                     # 检查是否是新的函数条目
                     if line.endswith(':'):
                         # 保存前一个函数的信息
                         if current_func:
-                            func_locations[current_func] = current_locations
-                        
+                            # 使用原始键存储
+                            original_func = func_info_map.get(current_func, current_func)
+                            func_locations[original_func] = current_locations
+
                         # 开始新的函数条目
                         current_func = line[:-1]  # 去掉末尾的冒号
                         current_locations = []
                         continue
-                        
+
                     # 处理内联函数标记
                     inlined = False
                     if line.startswith('(inlined by)'):
                         line = line[len('(inlined by)'):].strip()
                         inlined = True
-                    
+
                     # 解析位置和行号
                     loc_match = re.match(r'(.*)\s+at\s+(.*):(\d+)', line)
                     if loc_match:
@@ -1074,10 +1111,11 @@ def call_faddr2line_batch(faddr2line_path, target, func_infos, use_list=False, k
                             'line': line_no,
                             'inlined': inlined
                         })
-                
+
                 # 保存最后一个函数的信息
                 if current_func:
-                    func_locations[current_func] = current_locations
+                    original_func = func_info_map.get(current_func, current_func)
+                    func_locations[original_func] = current_locations
                     
                 elapsed = time.time() - start_time
                 verbose_print(f"Parsed {len(func_locations)} function locations in {elapsed:.2f} seconds", verbose)
@@ -1633,30 +1671,48 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
                     module_name_variants = list(dict.fromkeys(module_name_variants))
 
                     for variant in module_name_variants:
-                        # 方法1: 直接查找 .ko 文件
+                        # 方法1: 直接查找精确的 .ko 文件
                         module_path = os.path.join(module_dir, f"{variant}.ko")
                         if os.path.exists(module_path):
                             module_paths[module_name] = module_path
                             found = True
                             break
 
-                        # 方法2: 查找带版本号的模块
+                        # 方法2: 查找带版本号的模块（优先匹配精确名称）
                         import glob
+                        # 先查找精确匹配
+                        exact_files = glob.glob(os.path.join(module_dir, f"{variant}.ko"))
+                        if exact_files:
+                            module_paths[module_name] = exact_files[0]
+                            found = True
+                            break
+
+                        # 再查找带后缀的模块，但优先选择最短的（最接近精确匹配的）
                         module_files = glob.glob(os.path.join(module_dir, f"{variant}*.ko"))
                         if module_files:
+                            # 按文件名长度排序，优先选择最短的
+                            module_files.sort(key=lambda x: len(os.path.basename(x)))
                             module_paths[module_name] = module_files[0]
                             found = True
                             break
 
                         # 方法3: 递归查找子目录
                         for root, dirs, files in os.walk(module_dir):
-                            for file in files:
-                                if file == f"{variant}.ko" or file.startswith(f"{variant}") and file.endswith(".ko"):
-                                    full_path = os.path.join(root, file)
-                                    module_paths[module_name] = full_path
-                                    found = True
-                                    break
-                            if found:
+                            # 先查找精确匹配
+                            if f"{variant}.ko" in files:
+                                full_path = os.path.join(root, f"{variant}.ko")
+                                module_paths[module_name] = full_path
+                                found = True
+                                break
+
+                            # 再查找带后缀的模块
+                            matching_files = [f for f in files if f.startswith(f"{variant}") and f.endswith(".ko")]
+                            if matching_files:
+                                # 按文件名长度排序
+                                matching_files.sort(key=lambda x: len(x))
+                                full_path = os.path.join(root, matching_files[0])
+                                module_paths[module_name] = full_path
+                                found = True
                                 break
 
                         if found:
@@ -1852,18 +1908,30 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
     func_info_map = defaultdict(list)  # func_info -> [line_index]
     module_funcs = defaultdict(set)   # module_name -> set(func_info)
     vmlinux_funcs = set()              # set(func_info)
-    
+
     for idx, line_data in enumerate(parsed_lines):
         if line_data['expandable'] and line_data['func_info']:
             func_info = line_data['func_info']
-            module_name = line_data['module_name']
-            
+
             # 记录行索引
             func_info_map[func_info].append(idx)
-            
+
+            # 从func_info中提取模块名（如果存在）
+            # func_info格式: func+offset/length [module]
+            func_info_module_name = None
+            if '[' in func_info and ']' in func_info:
+                module_match = re.search(r'\[(.*?)\]', func_info)
+                if module_match:
+                    func_info_module_name = module_match.group(1)
+
+            # 优先使用func_info中的模块名
+            # 如果func_info没有模块名，则默认为内核函数（None）
+            # 不使用当前函数的模块名，因为返回地址可能属于不同的模块或内核
+            effective_module = func_info_module_name
+
             # 按目标分组
-            if module_name:
-                module_funcs[module_name].add(func_info)
+            if effective_module:
+                module_funcs[effective_module].add(func_info)
             else:
                 vmlinux_funcs.add(func_info)
     
@@ -1876,48 +1944,69 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
     func_locations_map = {}
 
     # 定义函数偏移量调整函数
-    def adjust_func_info(func_info):
+    def adjust_func_info(func_info, remove_suffix=True):
+        """
+        调整函数信息，用于显示或调用fastfaddr2line
+
+        参数:
+            func_info: 函数信息字符串，格式: func+offset/length [module]
+            remove_suffix: 是否移除编译器后缀（用于显示），默认True
+                          设为False时保留后缀（用于调用fastfaddr2line）
+        """
+        # 先提取模块名（如果存在）
+        module_part = ''
+        if '[' in func_info and ']' in func_info:
+            module_match = re.search(r'(\s*\[.*?\])', func_info)
+            if module_match:
+                module_part = module_match.group(1)
+                func_info = func_info.replace(module_part, '')
+
         # 匹配函数名+偏移/长度格式
         match = re.match(r'^(.*?)([+][0-9a-fA-FxX]+)(/[0-9a-fA-FxX]+)$', func_info)
         if not match:
-            return func_info  # 不符合格式，直接返回
-        
+            # 如果不匹配，恢复模块名并返回
+            return func_info + module_part
+
         func_name = match.group(1)
         offset_str = match.group(2)[1:]  # 去掉前面的+号
         length_str = match.group(3)
-        
+
         try:
             # 解析十六进制偏移量
             offset_val = int(offset_str, 16)
 
-            # 去除编译器后缀
-            cleaned_func = remove_compiler_suffix(func_name)
+            # 根据参数决定是否去除编译器后缀
+            if remove_suffix:
+                cleaned_func = remove_compiler_suffix(func_name)
+            else:
+                cleaned_func = func_name
 
             if offset_val == 0:
-                # 偏移量为0，但可能仍需要去除后缀
-                if cleaned_func != func_name:
-                    return f"{cleaned_func}+{offset_str}{length_str}"
-                return func_info  # 偏移量为0，不需要调整
+                # 偏移量为0，但可能仍需要去除后缀（如果remove_suffix=True）
+                if remove_suffix and cleaned_func != func_name:
+                    return f"{cleaned_func}+{offset_str}{length_str}{module_part}"
+                return func_info + module_part  # 偏移量为0，不需要调整
 
             # 计算新偏移量（减1）
             new_offset_val = offset_val - 1
             new_offset_str = hex(new_offset_val)
 
-            # 重构函数信息字符串（使用清理后的函数名）
-            return f"{cleaned_func}+{new_offset_str}{length_str}"
+            # 重构函数信息字符串
+            return f"{cleaned_func}+{new_offset_str}{length_str}{module_part}"
         except ValueError:
-            return func_info  # 解析失败，返回原始字符串
+            return func_info + module_part  # 解析失败，返回原始字符串
     
     # 1. 处理内核函数（去重后）
     if vmlinux_funcs:
-        # 调整函数偏移量
-        adjusted_vmlinux_funcs = set()
+        # 为调用fastfaddr2line准备函数列表（只调整偏移量，保留编译器后缀）
+        vmlinux_funcs_for_call = set()
         for func in vmlinux_funcs:
-            adjusted_func = adjust_func_info(func)
-            adjusted_vmlinux_funcs.add(adjusted_func)
-        
-        vmlinux_funcs_list = list(adjusted_vmlinux_funcs)
-        verbose_print(f"Processing {len(vmlinux_funcs_list)} adjusted kernel functions", verbose)
+            # 只调整偏移量，不移除编译器后缀
+            adjusted_func = adjust_func_info(func, remove_suffix=False)
+            vmlinux_funcs_for_call.add(adjusted_func)
+
+        vmlinux_funcs_list = list(vmlinux_funcs_for_call)
+        verbose_print(f"Processing {len(vmlinux_funcs_list)} kernel functions", verbose)
 
         # 记录vmlinux解析开始时间
         vmlinux_start = time.time()
@@ -1966,13 +2055,14 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
 
         verbose_print(f"Using module file: {module_path}", verbose)
 
-        # 调整函数偏移量
-        adjusted_funcs = set()
+        # 为调用fastfaddr2line准备函数列表（只调整偏移量，保留编译器后缀）
+        funcs_for_call = set()
         for func in funcs:
-            adjusted_func = adjust_func_info(func)
-            adjusted_funcs.add(adjusted_func)
+            # 只调整偏移量，不移除编译器后缀
+            adjusted_func = adjust_func_info(func, remove_suffix=False)
+            funcs_for_call.add(adjusted_func)
 
-        funcs_list = list(adjusted_funcs)
+        funcs_list = list(funcs_for_call)
         # 如果使用fastfaddr2line.py，传递path_prefix和module_srcs；否则传递None
         should_pass_fast_args = fast_mode and os.path.basename(abs_faddr2line_path) == 'fastfaddr2line.py'
         batch_results = call_faddr2line_batch(
@@ -3116,12 +3206,17 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
         html_str += '</div>'
         
         if is_expandable:
-            # 获取调整后的函数信息
+            # 获取函数信息
             func_info = line_data['func_info']
-            adjusted_func_info = adjust_func_info(func_info)
-            
-            # 从预取的数据中获取位置信息
-            locations = func_locations_map.get(adjusted_func_info, {})
+
+            # 为调用fastfaddr2line准备的键（保留后缀，调整偏移）
+            func_info_for_call = adjust_func_info(func_info, remove_suffix=False)
+
+            # 为显示准备的键（移除后缀，调整偏移）
+            func_info_for_display = adjust_func_info(func_info, remove_suffix=True)
+
+            # 从预取的数据中获取位置信息（使用调用时的键）
+            locations = func_locations_map.get(func_info_for_call, {})
             
             # 为expanded-content添加内联样式style="display: none;"，确保初始状态
             html_str += f'<div class="expanded-content" id="{line_id}_content" style="display: none;">' 
@@ -3143,8 +3238,8 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
 
                 # 检查是结构化数据还是原始输出
                 if isinstance(locations, dict) and 'func' in str(next(iter(locations.values()), {})):
-                    # 结构化数据（标准模式）
-                    loc_list = locations.get(adjusted_func_info, [])
+                    # 结构化数据（标准模式）- 这部分可能不会执行，保留以兼容性
+                    loc_list = locations.get(func_info_for_call, [])
                     for loc in loc_list:
                         if current_base_url:
                             file_path = loc['file']
@@ -3185,11 +3280,9 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
                             file_path = loc['file']
                             # 清理文件路径
                             file_path = clean_file_path(file_path, kernel_src, path_prefix)
-                            print("file_path: " + file_path)
 
                             # 提取文件路径
                             clean_path = extract_file_path(file_path, kernel_src, path_prefix)
-                            print("clean_path: " + clean_path)
                             line_num = loc.get('line')
 
                             # 如果行号不在loc中，尝试从file_path中提取
@@ -3210,9 +3303,9 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
                     html_str += parse_list_output(locations, current_base_url, kernel_src, highlight_code, path_prefix, module_src)
                 else:
                     # 未知格式
-                    html_str += f'<div class="location-link">Source information unavailable for: {escape_html_preserve_spaces(adjusted_func_info)}</div>'
+                    html_str += f'<div class="location-link">Source information unavailable for: {escape_html_preserve_spaces(func_info_for_display)}</div>'
             else:
-                html_str += f'<div class="location-link">Source information unavailable for: {escape_html_preserve_spaces(adjusted_func_info)}</div>'
+                html_str += f'<div class="location-link">Source information unavailable for: {escape_html_preserve_spaces(func_info_for_display)}</div>'
             
             html_str += '</div>'
 
