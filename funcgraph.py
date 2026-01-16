@@ -17,6 +17,149 @@ APP_AUTHOR = "@dolinux"  # 作者信息
 APP_TITLE = "FuncGraph"  # 应用标题
 # ================================================
 
+# ==================== 错误码映射 ====================
+# Linux内核常见错误码映射（负值表示错误）
+# 注意：0不包含在内，因为0是成功返回值，不是错误码
+ERROR_CODE_MAP = {
+    # 负值（错误码）
+    -1: "EPERM",
+    -2: "ENOENT",
+    -3: "ESRCH",
+    -4: "EINTR",
+    -5: "EIO",
+    -6: "ENXIO",
+    -7: "E2BIG",
+    -8: "ENOEXEC",
+    -9: "EBADF",
+    -10: "ECHILD",
+    -11: "EAGAIN",
+    -12: "ENOMEM",
+    -13: "EACCES",
+    -14: "EFAULT",
+    -15: "ENOTBLK",
+    -16: "EBUSY",
+    -17: "EEXIST",
+    -18: "EXDEV",
+    -19: "ENODEV",
+    -20: "ENOTDIR",
+    -21: "EISDIR",
+    -22: "EINVAL",
+    -23: "ENFILE",
+    -24: "EMFILE",
+    -25: "ENOTTY",
+    -26: "ETXTBSY",
+    -27: "EFBIG",
+    -28: "ENOSPC",
+    -29: "ESPIPE",
+    -30: "EROFS",
+    -31: "EMLINK",
+    -32: "EPIPE",
+    -33: "EDOM",
+    -34: "ERANGE",
+    -35: "EDEADLK",
+    -36: "ENAMETOOLONG",
+    -37: "ENOLCK",
+    -38: "ENOSYS",
+    -39: "ENOTEMPTY",
+    -40: "ELOOP",
+    -42: "ENOMSG",
+    -43: "EIDRM",
+    -44: "ECHRNG",
+    -45: "EL2NSYNC",
+    -46: "EL3HLT",
+    -47: "EL3RST",
+    -48: "ELNRNG",
+    -49: "EUNATCH",
+    -50: "ENOCSI",
+    -51: "EL2HLT",
+    -52: "EBADE",
+    -53: "EBADR",
+    -54: "EXFULL",
+    -55: "ENOANO",
+    -56: "EBADRQC",
+    -57: "EBADSLT",
+    -59: "EBFONT",
+    -60: "ENOSTR",
+    -61: "ENODATA",
+    -62: "ETIME",
+    -63: "ENOSR",
+    -64: "ENONET",
+    -65: "ENOPKG",
+    -66: "EREMOTE",
+    -67: "ENOLINK",
+    -68: "EADV",
+    -69: "ESRMNT",
+    -70: "ECOMM",
+    -71: "EPROTO",
+    -72: "EMULTIHOP",
+    -73: "EDOTDOT",
+    -74: "EBADMSG",
+    -75: "EOVERFLOW",
+    -76: "ENOTUNIQ",
+    -77: "EBADFD",
+    -78: "EREMCHG",
+    -79: "ELIBACC",
+    -80: "ELIBBAD",
+    -81: "ELIBSCN",
+    -82: "ELIBMAX",
+    -83: "ELIBEXEC",
+    -84: "EILSEQ",
+    -85: "ERESTART",
+    -86: "ESTRPIPE",
+    -87: "EUSERS",
+    -88: "ENOTSOCK",
+    -89: "EDESTADDRREQ",
+    -90: "EMSGSIZE",
+    -91: "EPROTOTYPE",
+    -92: "ENOPROTOOPT",
+    -93: "EPROTONOSUPPORT",
+    -94: "ESOCKTNOSUPPORT",
+    -95: "EOPNOTSUPP",
+    -96: "EPFNOSUPPORT",
+    -97: "EAFNOSUPPORT",
+    -98: "EADDRINUSE",
+    -99: "EADDRNOTAVAIL",
+    -100: "ENETDOWN",
+    -101: "ENETUNREACH",
+    -102: "ENETRESET",
+    -103: "ECONNABORTED",
+    -104: "ECONNRESET",
+    -105: "ENOBUFS",
+    -106: "EISCONN",
+    -107: "ENOTCONN",
+    -108: "ESHUTDOWN",
+    -109: "ETOOMANYREFS",
+    -110: "ETIMEDOUT",
+    -111: "ECONNREFUSED",
+    -112: "EHOSTDOWN",
+    -113: "EHOSTUNREACH",
+    -114: "EALREADY",
+    -115: "EINPROGRESS",
+    -116: "ESTALE",
+    -117: "EUCLEAN",
+    -118: "ENOTNAM",
+    -119: "ENAVAIL",
+    -120: "EISNAM",
+    -121: "EREMOTEIO",
+    -122: "EDQUOT",
+    -123: "ENOMEDIUM",
+    -124: "EMEDIUMTYPE",
+    -125: "ECANCELED",
+    -126: "ENOKEY",
+    -127: "EKEYEXPIRED",
+    -128: "EKEYREVOKED",
+    -129: "EKEYREJECTED",
+    -130: "EOWNERDEAD",
+    -131: "ENOTRECOVERABLE",
+    -132: "ERFKILL",
+    -133: "EHWPOISON",
+}
+
+# 反向映射：从宏名到数字
+ERROR_CODE_NAME_MAP = {v: k for k, v in ERROR_CODE_MAP.items()}
+
+# ================================================
+
 def verbose_print(message, verbose_flag, end='\n'):
     """根据verbose标志输出调试信息"""
     if verbose_flag:
@@ -45,6 +188,7 @@ def highlight_ftrace_line(text):
     - 十六进制地址: <span class="hl-addr">0xf4</span>
     - 注释: <span class="hl-comment">/* ... */</span>
     - 符号括号: <span class="hl-symbol">{}</span>
+    - 返回值: <span class="hl-ret-error">ret=-22</span> (错误码) 或 <span class="hl-ret-success">ret=0</span> (成功)
 
     返回带有HTML span标签的高亮文本，空格、缩进和所有原始字符完全保持
     """
@@ -79,14 +223,61 @@ def highlight_ftrace_line(text):
     # 5. 高亮时间单位 (us, ms, ns, ks)
     text = re.sub(r'\b(us|ms|ns|ks)\b', r'<span class="hl-unit">\1</span>', text)
 
-    # 6. 高亮函数名 - 内核函数和模块函数使用相同颜色
+    # 6. 高亮返回值 (ret=xxx)
+    def highlight_ret_value(match):
+        ret_str = match.group(0)  # 完整的 ret=xxx
+        ret_val_str = match.group(1)  # 只有 xxx 部分
+
+        # 尝试解析为整数（支持10进制和16进制）
+        ret_val = None
+        try:
+            if ret_val_str.startswith('0x') or ret_val_str.startswith('0X'):
+                ret_val = int(ret_val_str, 16)
+                # 处理64位无符号整数转换为有符号整数
+                # 但只对明显是负数的值进行转换
+                if ret_val >= 0x8000000000000000:
+                    converted = ret_val - 0x10000000000000000
+                    if converted < 0:
+                        ret_val = converted
+            else:
+                ret_val = int(ret_val_str)
+        except ValueError:
+            # 无法解析，返回原始格式
+            return f'<span class="hl-ret-normal">{ret_str}</span>'
+
+        # 只对合理的错误码范围进行高亮
+        if ret_val < -1000000 or ret_val > 1000000:
+            # 值太大，可能是误判，只做普通高亮
+            return f'<span class="hl-ret-normal">{ret_str}</span>'
+
+        # 查找错误码映射
+        error_name = ERROR_CODE_MAP.get(ret_val)
+
+        if error_name:
+            # 是已知错误码（只能是负数）
+            return f'<span class="hl-ret-error">{ret_str} /* {error_name} */</span>'
+        else:
+            # 不是已知错误码
+            if ret_val == 0:
+                # 0，普通显示（不特殊高亮）
+                return f'<span class="hl-ret-normal">{ret_str}</span>'
+            elif ret_val < 0:
+                # 负数但不在映射中（如-515），只做普通高亮
+                return f'<span class="hl-ret-normal">{ret_str}</span>'
+            else:
+                # 正数，普通返回值
+                return f'<span class="hl-ret-normal">{ret_str}</span>'
+
+    text = re.sub(r'\bret\s*=\s*([0-9a-fA-FxX-]+)', highlight_ret_value, text)
+
+    # 7. 高亮函数名 - 内核函数和模块函数使用相同颜色
     # 匹配所有函数名：func_name() 或 func_name [module]()
     text = re.sub(r'([a-zA-Z_]\w*)(?=\s*(?:\[.*\])?\s*\()', r'<span class="hl-func">\1</span>', text)
 
-    # 7. 高亮括号和大括号
+    # 8. 高亮括号和大括号
     text = re.sub(r'([{}()\[\];])', r'<span class="hl-symbol">\1</span>', text)
 
-    # 8. 恢复注释，并高亮
+    # 9. 恢复注释，并高亮
     for placeholder, comment in comment_placeholders:
         # 高亮注释
         highlighted_comment = f'<span class="hl-comment">{comment}</span>'
@@ -552,6 +743,7 @@ def parse_ftrace_file(file_path, verbose=False):
                     # - rcu_rdp_cpu_online.isra.0() { /* <-rcu_lockdep_current_cpu_online+0x48/0x70 */
                     # - preempt_count_add(val=65536); /* <-irq_enter_rcu+0x17/0x80 */
                     # - tick_irq_enter() { /* <-irq_enter_rcu+0x6a/0x80 */
+                    # - mi_after_dequeue_task_hook [metis]() { /* <-__traceiter_android_rvh_after_dequeue_task+0x60/0x8c */
                     if '/*' in line and '<-' in line:
                         # 提取函数调用名称，支持多种格式：
                         # 1. func() { - 函数调用开始
@@ -584,6 +776,13 @@ def parse_ftrace_file(file_path, verbose=False):
                             # 返回地址中的[module]是返回地址的模块，不覆盖当前函数的module_name
                             # 所以这里不提取module_name
 
+                        # 提取当前函数的返回值（如果存在）
+                        # 格式: func() { /* <-... ret=xxx */
+                        ret_value = None
+                        ret_match = re.search(r'ret=([0-9a-fA-FxX-]+)', line)
+                        if ret_match:
+                            ret_value = ret_match.group(1)
+
                     # 格式3: /* func+offset/length [module] */ (没有 <-)
                     elif '/*' in line and not '<-' in line:
                         comment_match = re.search(r'/\*\s*([a-zA-Z_][a-zA-Z0-9_.]*\+[0-9a-fA-FxX]+/[0-9a-fA-FxX]+)(?:\s*\[(.*?)\])?\s*\*/', line)
@@ -591,12 +790,22 @@ def parse_ftrace_file(file_path, verbose=False):
                             func_info = comment_match.group(1)
                             if comment_match.group(2):
                                 module_name = comment_match.group(2)
+                        # 提取返回值
+                        ret_value = None
+                        ret_match = re.search(r'ret\s*=\s*([0-9a-fA-FxX-]+)', line)
+                        if ret_match:
+                            ret_value = ret_match.group(1)
 
                     # 格式4: 直接在行中 func+offset/length (没有注释)
                     if func_info is None:
                         direct_match = re.search(r'([a-zA-Z_][a-zA-Z0-9_.]*\+[0-9a-fA-FxX]+/[0-9a-fA-FxX]+)', line)
                         if direct_match:
                             func_info = direct_match.group(1)
+                        # 提取返回值
+                        ret_value = None
+                        ret_match = re.search(r'ret\s*=\s*([0-9a-fA-FxX-]+)', line)
+                        if ret_match:
+                            ret_value = ret_match.group(1)
 
                     # 如果找到函数信息，添加到解析结果
                     if func_info or raw_func_name:
@@ -611,6 +820,7 @@ def parse_ftrace_file(file_path, verbose=False):
                             'pid': pid,
                             'comm': comm,
                             'func_name_info': None,  # 用于存储函数名的源码信息
+                            'ret_value': ret_value if 'ret_value' in locals() else None,  # 返回值
                             }
                         parsed_lines.append(line_data)
                         expandable_count += 1
@@ -624,6 +834,13 @@ def parse_ftrace_file(file_path, verbose=False):
                     if ret_func_match:
                         raw_func_name = ret_func_match.group(1)
                         display_func_name = remove_compiler_suffix(raw_func_name)
+
+                        # 提取返回值（支持 ret=xxx 或 ret = xxx）
+                        ret_value = None
+                        ret_match = re.search(r'ret\s*=\s*([0-9a-fA-FxX-]+)', line)
+                        if ret_match:
+                            ret_value = ret_match.group(1)
+
                         line_data = {
                             'raw_line': line,
                             'expandable': False,
@@ -635,10 +852,32 @@ def parse_ftrace_file(file_path, verbose=False):
                             'pid': pid,
                             'comm': comm,
                             'func_name_info': None,  # 用于存储函数名的源码信息
+                            'ret_value': ret_value,  # 返回值
                             }
                         parsed_lines.append(line_data)
 
 
+                        continue
+
+                    # 检查不可展开的行中是否只包含返回值（没有函数名）
+                    # 格式: 2)    bash-509    |               |                            } /* ret=0 */
+                    ret_only_match = re.search(r'/\*\s*ret=([0-9a-fA-FxX-]+)\s*\*/', line)
+                    if ret_only_match:
+                        ret_value = ret_only_match.group(1)
+                        line_data = {
+                            'raw_line': line,
+                            'expandable': False,
+                            'func_info': None,
+                            'raw_func_name': None,
+                            'display_func_name': None,
+                            'module_name': None,
+                            'cpu': cpu,
+                            'pid': pid,
+                            'comm': comm,
+                            'func_name_info': None,
+                            'ret_value': ret_value,  # 返回值
+                        }
+                        parsed_lines.append(line_data)
                         continue
 
                     line_data = {
@@ -652,6 +891,7 @@ def parse_ftrace_file(file_path, verbose=False):
                         'pid': pid,
                         'comm': comm,
                         'func_name_info': None,
+                        'ret_value': None,  # 没有返回值
                     }
                     parsed_lines.append(line_data)
 
@@ -669,6 +909,7 @@ def parse_ftrace_file(file_path, verbose=False):
                         'pid': None,
                         'comm': None,
                         'func_name_info': None,
+                        'ret_value': None,
                     }
                     parsed_lines.append(line_data)
 
@@ -1747,15 +1988,17 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
     # 根据enable_filter参数生成过滤框HTML
     filter_html = ""
     if enable_filter:
-        # 收集所有唯一的CPU、PID和进程名用于自动补全
+        # 收集所有唯一的CPU、PID、进程名和错误码用于自动补全
         unique_cpus = set()
         unique_pids = set()
         unique_comms = set()
+        unique_error_codes = set()  # 存储错误码的数字值
 
         for line_data in parsed_lines:
             cpu = line_data.get('cpu')
             pid = line_data.get('pid')
             comm = line_data.get('comm')
+            ret_value = line_data.get('ret_value')
 
             # 只收集合法的值
             if cpu is not None:
@@ -1790,6 +2033,30 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
                     if cleaned_comm and len(cleaned_comm) > 0:
                         unique_comms.add(cleaned_comm)
 
+            # 收集错误码
+            if ret_value:
+                try:
+                    # 解析为整数（支持10进制和16进制）
+                    if ret_value.startswith('0x') or ret_value.startswith('0X'):
+                        ret_int = int(ret_value, 16)
+                        # 处理64位无符号整数转换为有符号整数
+                        # 但只对明显是负数的值进行转换（避免误判大正数）
+                        if ret_int >= 0x8000000000000000:
+                            # 检查是否可能是负数的补码
+                            # 如果转换后是负数，才使用转换后的值
+                            converted = ret_int - 0x10000000000000000
+                            if converted < 0:
+                                ret_int = converted
+                    else:
+                        ret_int = int(ret_value)
+
+                    # 只收集已知的错误码（在ERROR_CODE_MAP中）
+                    # 0不收集，未知负数也不收集
+                    if ret_int in ERROR_CODE_MAP:
+                        unique_error_codes.add(ret_int)
+                except ValueError:
+                    pass
+
         # 只生成有数据的输入框
         filter_inputs = []
 
@@ -1815,6 +2082,38 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
             <div class="filter-input-group">
                 <input type="text" id="filterComm" placeholder="Comm regex (e.g., bash|python or ^idle)" style="width: 140px;" data-suggestions="{comms_json}">
                 <div class="suggestions" id="commSuggestions"></div>
+            </div>''')
+
+        # 生成错误码过滤框
+        if unique_error_codes:
+            # 转换为显示格式：错误码宏（数字）
+            # 例如：-22 -> EINVAL（-22），-1 -> EPERM（-1）
+            error_display_list = []
+            error_values_list = []  # 用于all过滤的原始值列表
+
+            for ret_int in sorted(unique_error_codes):
+                # 查找错误码宏
+                error_name = ERROR_CODE_MAP.get(ret_int)
+                if error_name:
+                    # 有宏名，保留负号
+                    display_str = f"{error_name}（{ret_int}）"
+                    error_values_list.append(str(ret_int))
+                else:
+                    # 没有宏名，只显示数字
+                    display_str = f"ret={ret_int}"
+                error_display_list.append(display_str)
+
+            # 添加特殊选项：all
+            error_display_list.insert(0, "all")
+
+            # 将错误码列表转换为JSON数组，用于JS中的all过滤
+            error_values_json = '[' + ','.join(error_values_list) + ']'
+
+            error_codes_json = ','.join(error_display_list)
+            filter_inputs.append(f'''
+            <div class="filter-input-group">
+                <input type="text" id="filterRet" placeholder="Return value (e.g., -22 or EINVAL)" style="width: 160px;" data-suggestions="{error_codes_json}" data-error-values="{error_values_json}">
+                <div class="suggestions" id="retSuggestions"></div>
             </div>''')
 
         # 只有当有至少一个输入框时才生成过滤框
@@ -2944,7 +3243,39 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
             color: #c9d1d9;
             font-weight: bold;
         }}
-        
+
+        .hl-ret-error {{
+            color: #d73a49;
+            font-weight: bold;
+            background-color: rgba(215, 58, 73, 0.1);
+            padding: 1px 3px;
+            border-radius: 2px;
+        }}
+        [data-theme="dark"] .hl-ret-error {{
+            color: #f97583;
+            background-color: rgba(249, 117, 131, 0.15);
+        }}
+
+        .hl-ret-success {{
+            color: #28a745;
+            font-weight: bold;
+            background-color: rgba(40, 167, 69, 0.1);
+            padding: 1px 3px;
+            border-radius: 2px;
+        }}
+        [data-theme="dark"] .hl-ret-success {{
+            color: #3fb950;
+            background-color: rgba(63, 185, 80, 0.15);
+        }}
+
+        .hl-ret-normal {{
+            color: #586069;
+            font-weight: bold;
+        }}
+        [data-theme="dark"] .hl-ret-normal {{
+            color: #8b949e;
+        }}
+
         /* C代码简洁语法高亮 */
         .c-keyword {{
             color: #d73a49;  /* 红色用于关键字 */
@@ -3189,9 +3520,31 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
         cpu = line_data.get('cpu')
         pid = line_data.get('pid')
         comm = line_data.get('comm')
+        ret_value = line_data.get('ret_value')
 
         # 构建数据属性用于过滤
         data_attrs = f' data-cpu="{cpu if cpu is not None else ""}" data-pid="{pid if pid is not None else ""}" data-comm="{comm if comm else ""}"'
+
+        # 添加返回值属性（用于错误码过滤）
+        if ret_value:
+            # 解析为整数，用于过滤
+            try:
+                if ret_value.startswith('0x') or ret_value.startswith('0X'):
+                    ret_int = int(ret_value, 16)
+                    # 处理64位无符号整数转换为有符号整数
+                    # 但只对明显是负数的值进行转换
+                    if ret_int >= 0x8000000000000000:
+                        converted = ret_int - 0x10000000000000000
+                        if converted < 0:
+                            ret_int = converted
+                else:
+                    ret_int = int(ret_value)
+                # 只对已知错误码添加属性（用于过滤）
+                # 0不添加，未知负数也不添加
+                if ret_int in ERROR_CODE_MAP:
+                    data_attrs += f' data-ret="{ret_int}"'
+            except ValueError:
+                pass
 
         html_str += f'<div class="line-container {expandable_class}" id="{line_anchor_id}" data-line-number="{line_number}" data-line-id="{line_id}"{data_attrs}'
         if is_expandable:
@@ -3440,9 +3793,10 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
             const cpuInput = document.getElementById('filterCpu')?.value.trim() || '';
             const pidInput = document.getElementById('filterPid')?.value.trim() || '';
             const commInput = document.getElementById('filterComm')?.value.trim() || '';
+            const retInput = document.getElementById('filterRet')?.value.trim() || '';
 
             // 编译正则表达式
-            let cpuRegex = null, pidRegex = null, commRegex = null;
+            let cpuRegex = null, pidRegex = null, commRegex = null, retRegex = null;
 
             try {
                 if (cpuInput) cpuRegex = new RegExp(cpuInput);
@@ -3462,8 +3816,52 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
                 console.warn('Invalid Comm regex:', commInput);
             }
 
+            // 处理返回值过滤
+            let retFilterValues = null;
+            let filterAllErrors = false;
+            let retFilterRaw = null;  // 用于匹配原始格式
+            let allErrorValues = null;  // 用于all过滤的错误码列表
+
+            if (retInput) {
+                // 检查是否是 "all"（过滤所有错误码）
+                if (retInput.toLowerCase() === 'all') {
+                    filterAllErrors = true;
+                    // 从data-error-values属性获取错误码列表
+                    const filterRetInput = document.getElementById('filterRet');
+                    if (filterRetInput && filterRetInput.dataset.errorValues) {
+                        try {
+                            allErrorValues = JSON.parse(filterRetInput.dataset.errorValues);
+                        } catch (e) {
+                            console.warn('Failed to parse error values:', e);
+                            allErrorValues = [];
+                        }
+                    }
+                } else {
+                    // 尝试解析为数字
+                    const retNum = parseInt(retInput);
+                    if (!isNaN(retNum)) {
+                        // 直接匹配数字（存储在 data-ret 属性中）
+                        retFilterValues = [retNum];
+                        // 同时保存原始输入，用于匹配原始行中的 ret=xxx
+                        retFilterRaw = retInput;
+                    } else {
+                        // 尝试匹配错误码宏名（如 EINVAL）
+                        // 查找对应的数字值
+                        const errorName = retInput.toUpperCase();
+                        // 从预定义的错误码映射中查找
+                        // 这里需要一个反向查找，但JS中没有ERROR_CODE_NAME_MAP
+                        // 所以我们使用正则表达式匹配
+                        try {
+                            retRegex = new RegExp(retInput, 'i');
+                        } catch (e) {
+                            console.warn('Invalid return value regex:', retInput);
+                        }
+                    }
+                }
+            }
+
             // 检查是否有任何过滤条件
-            const hasFilter = cpuRegex || pidRegex || commRegex;
+            const hasFilter = cpuRegex || pidRegex || commRegex || retInput;
 
             // 获取所有行
             const allLines = document.querySelectorAll('.line-container');
@@ -3473,6 +3871,7 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
                 const cpu = line.getAttribute('data-cpu');
                 const pid = line.getAttribute('data-pid');
                 const comm = line.getAttribute('data-comm');
+                const retAttr = line.getAttribute('data-ret');
                 const rawLine = line.querySelector('.line-content')?.textContent || '';
 
                 let show = true;
@@ -3504,6 +3903,67 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
                 if (show && commRegex && comm) {
                     if (!commRegex.test(comm)) {
                         show = false;
+                    }
+                }
+
+                // 检查返回值过滤
+                if (show && retInput) {
+                    if (filterAllErrors) {
+                        // 过滤所有已知错误码：显示所有在allErrorValues中的行
+                        // 需要解析原始行中的 ret=xxx 或 ret = xxx
+                        const retMatch = rawLine.match(/ret\s*=\s*([0-9a-fA-FxX-]+)/);
+                        if (!retMatch) {
+                            show = false;
+                        } else {
+                            // 解析返回值
+                            let retVal = 0;
+                            try {
+                                const retStr = retMatch[1];
+                                if (retStr.startsWith('0x') || retStr.startsWith('0X')) {
+                                    retVal = parseInt(retStr, 16);
+                                    if (retVal >= 0x8000000000000000) {
+                                        const converted = retVal - 0x10000000000000000;
+                                        if (converted < 0) retVal = converted;
+                                    }
+                                } else {
+                                    retVal = parseInt(retStr);
+                                }
+                            } catch (e) {
+                                show = false;
+                            }
+
+                            // 检查是否在allErrorValues列表中
+                            if (allErrorValues && allErrorValues.includes(retVal)) {
+                                // 显示
+                            } else {
+                                show = false;
+                            }
+                        }
+                    } else if (retFilterValues) {
+                        // 精确匹配数字（匹配 data-ret 属性）
+                        // 同时也匹配原始行中的 ret=xxx 或 ret = xxx 格式
+                        const retMatch = rawLine.match(/ret\s*=\s*([0-9a-fA-FxX-]+)/);
+                        let matched = false;
+
+                        if (retAttr && retFilterValues.includes(parseFloat(retAttr))) {
+                            matched = true;
+                        } else if (retMatch && retFilterRaw) {
+                            // 匹配原始格式（如 0x1）
+                            if (retMatch[1] === retFilterRaw) {
+                                matched = true;
+                            }
+                        }
+
+                        if (!matched) {
+                            show = false;
+                        }
+                    } else if (retRegex) {
+                        // 正则表达式匹配（用于宏名）
+                        // 需要匹配原始行中的 ret=xxx 或 ret = xxx
+                        const retMatch = rawLine.match(/ret\s*=\s*([0-9a-fA-FxX-]+)/);
+                        if (!retMatch || !retRegex.test(retMatch[1])) {
+                            show = false;
+                        }
                     }
                 }
 
@@ -3573,12 +4033,14 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
             const cpuInput = document.getElementById('filterCpu');
             const pidInput = document.getElementById('filterPid');
             const commInput = document.getElementById('filterComm');
+            const retInput = document.getElementById('filterRet');
 
             if (cpuInput) cpuInput.value = '';
             if (pidInput) pidInput.value = '';
             if (commInput) commInput.value = '';
+            if (retInput) retInput.value = '';
 
-            currentFilter = { cpu: [], pid: [], comm: [] };
+            currentFilter = { cpu: [], pid: [], comm: [], ret: [] };
 
             const allLines = document.querySelectorAll('.line-container');
             allLines.forEach(line => {
@@ -3634,12 +4096,13 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
         // 自动补全功能
         function initAutocomplete() {
             const inputs = [
-                { id: 'filterCpu', suggestionsId: 'cpuSuggestions' },
-                { id: 'filterPid', suggestionsId: 'pidSuggestions' },
-                { id: 'filterComm', suggestionsId: 'commSuggestions' }
+                { id: 'filterCpu', suggestionsId: 'cpuSuggestions', type: 'cpu' },
+                { id: 'filterPid', suggestionsId: 'pidSuggestions', type: 'pid' },
+                { id: 'filterComm', suggestionsId: 'commSuggestions', type: 'comm' },
+                { id: 'filterRet', suggestionsId: 'retSuggestions', type: 'ret' }
             ];
 
-            inputs.forEach(({ id, suggestionsId }) => {
+            inputs.forEach(({ id, suggestionsId, type }) => {
                 const input = document.getElementById(id);
                 const suggestionsDiv = document.getElementById(suggestionsId);
 
@@ -3711,20 +4174,44 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
                         const value = suggestionItem.getAttribute('data-value');
                         const current = input.value.trim();
 
-                        if (current) {
-                            // 如果当前内容已经是正则表达式，智能添加
-                            if (current.includes('|') || current.includes('[') || current.includes('(')) {
-                                // 已经是复杂正则，添加为备选
-                                input.value = current + '|' + value;
-                            } else if (current.includes(',')) {
-                                // 已经是逗号分隔，继续用逗号
-                                input.value = current + ',' + value;
+                        // 特殊处理错误码过滤框
+                        if (id === 'filterRet') {
+                            // 错误码过滤框：直接替换，不拼接
+                            // 如果点击的是 "all"，直接设置为 "all"
+                            // 如果点击的是 "EINVAL（22）"，需要转换为 "-22"
+                            // 如果点击的是 "SUCCESS（0）"，需要转换为 "0"
+
+                            if (value === 'all') {
+                                input.value = 'all';
                             } else {
-                                // 简单值，转换为"或"关系
-                                input.value = current + '|' + value;
+                                // 尝试从格式 "MACRO（num）" 中提取数字
+                                // 匹配：MACRO（22）或 MACRO（-22）
+                                const match = value.match(/（(-?\d+)）/);
+                                if (match) {
+                                    // 直接使用括号内的数字（可能带负号）
+                                    input.value = match[1];
+                                } else {
+                                    // 直接使用值
+                                    input.value = value;
+                                }
                             }
                         } else {
-                            input.value = value;
+                            // 其他过滤框：智能拼接
+                            if (current) {
+                                // 如果当前内容已经是正则表达式，智能添加
+                                if (current.includes('|') || current.includes('[') || current.includes('(')) {
+                                    // 已经是复杂正则，添加为备选
+                                    input.value = current + '|' + value;
+                                } else if (current.includes(',')) {
+                                    // 已经是逗号分隔，继续用逗号
+                                    input.value = current + ',' + value;
+                                } else {
+                                    // 简单值，转换为"或"关系
+                                    input.value = current + '|' + value;
+                                }
+                            } else {
+                                input.value = value;
+                            }
                         }
                         suggestionsDiv.classList.remove('active');
                         suggestionsDiv.innerHTML = '';
@@ -3750,17 +4237,34 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
                             if (current) {
                                 const value = current.getAttribute('data-value');
                                 const currentVal = this.value.trim();
-                                if (currentVal) {
-                                    // 智能添加：如果已经是正则表达式，用|，否则用逗号
-                                    if (currentVal.includes('|') || currentVal.includes('[') || currentVal.includes('(')) {
-                                        this.value = currentVal + '|' + value;
-                                    } else if (currentVal.includes(',')) {
-                                        this.value = currentVal + ',' + value;
+
+                                // 特殊处理错误码过滤框
+                                if (id === 'filterRet') {
+                                    // 错误码过滤框：直接替换
+                                    if (value === 'all') {
+                                        this.value = 'all';
                                     } else {
-                                        this.value = currentVal + '|' + value;
+                                        const match = value.match(/（(-?\d+)）/);
+                                        if (match) {
+                                            this.value = match[1];
+                                        } else {
+                                            this.value = value;
+                                        }
                                     }
                                 } else {
-                                    this.value = value;
+                                    // 其他过滤框：智能拼接
+                                    if (currentVal) {
+                                        // 智能添加：如果已经是正则表达式，用|，否则用逗号
+                                        if (currentVal.includes('|') || currentVal.includes('[') || currentVal.includes('(')) {
+                                            this.value = currentVal + '|' + value;
+                                        } else if (currentVal.includes(',')) {
+                                            this.value = currentVal + ',' + value;
+                                        } else {
+                                            this.value = currentVal + '|' + value;
+                                        }
+                                    } else {
+                                        this.value = value;
+                                    }
                                 }
                                 suggestionsDiv.classList.remove('active');
                                 suggestionsDiv.innerHTML = '';
@@ -4865,7 +5369,7 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
             initKeyboardNavigation();
 
             // 初始化自动补全（如果过滤框存在）
-            if (document.getElementById('filterCpu')) {
+            if (document.getElementById('filterCpu') || document.getElementById('filterRet')) {
                 initAutocomplete();
             }
 
