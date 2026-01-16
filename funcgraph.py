@@ -759,6 +759,13 @@ def parse_ftrace_file(file_path, verbose=False):
                             # 处理后的函数名用于显示（去除编译器后缀）
                             display_func_name = remove_compiler_suffix(raw_func_name)
 
+                            # 提取参数（如果存在）
+                            # 格式: func(arg1=val1, arg2=val2, ...)
+                            params = None
+                            params_match = re.search(r'\(([^)]*)\)', line)
+                            if params_match and params_match.group(1).strip():
+                                params = params_match.group(1).strip()
+
                         # 提取返回地址（注意：返回地址的模块名不影响当前函数的module_name）
                         func_match = re.search(r'/\*\s*<-(.*?)\s*\*/', line)
                         if func_match:
@@ -821,6 +828,7 @@ def parse_ftrace_file(file_path, verbose=False):
                             'comm': comm,
                             'func_name_info': None,  # 用于存储函数名的源码信息
                             'ret_value': ret_value if 'ret_value' in locals() else None,  # 返回值
+                            'params': params if 'params' in locals() else None,  # 函数参数
                             }
                         parsed_lines.append(line_data)
                         expandable_count += 1
@@ -853,6 +861,7 @@ def parse_ftrace_file(file_path, verbose=False):
                             'comm': comm,
                             'func_name_info': None,  # 用于存储函数名的源码信息
                             'ret_value': ret_value,  # 返回值
+                            'params': None,  # 这类行通常没有参数
                             }
                         parsed_lines.append(line_data)
 
@@ -2115,6 +2124,12 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
                 <input type="text" id="filterRet" placeholder="Return value (e.g., -22 or EINVAL)" style="width: 160px;" data-suggestions="{error_codes_json}" data-error-values="{error_values_json}">
                 <div class="suggestions" id="retSuggestions"></div>
             </div>''')
+
+        # 添加参数过滤窗口（不需要候选词）
+        filter_inputs.append(f'''
+        <div class="filter-input-group">
+            <input type="text" id="filterParams" placeholder="Function params (e.g., folio=0x... or address=...)" style="width: 200px;" oninput="applyFilter()">
+        </div>''')
 
         # 只有当有至少一个输入框时才生成过滤框
         if filter_inputs:
@@ -3521,9 +3536,17 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
         pid = line_data.get('pid')
         comm = line_data.get('comm')
         ret_value = line_data.get('ret_value')
+        params = line_data.get('params')
 
         # 构建数据属性用于过滤
         data_attrs = f' data-cpu="{cpu if cpu is not None else ""}" data-pid="{pid if pid is not None else ""}" data-comm="{comm if comm else ""}"'
+
+        # 添加参数属性（用于参数过滤）
+        if params:
+            # 转义特殊字符，避免HTML属性问题
+            # 使用html.escape，但只转义引号、尖括号
+            escaped_params = params.replace('"', '"').replace('<', '<').replace('>', '>')
+            data_attrs += f' data-params="{escaped_params}"'
 
         # 添加返回值属性（用于错误码过滤）
         if ret_value:
@@ -3794,9 +3817,10 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
             const pidInput = document.getElementById('filterPid')?.value.trim() || '';
             const commInput = document.getElementById('filterComm')?.value.trim() || '';
             const retInput = document.getElementById('filterRet')?.value.trim() || '';
+            const paramsInput = document.getElementById('filterParams')?.value.trim() || '';
 
             // 编译正则表达式
-            let cpuRegex = null, pidRegex = null, commRegex = null, retRegex = null;
+            let cpuRegex = null, pidRegex = null, commRegex = null, retRegex = null, paramsRegex = null;
 
             try {
                 if (cpuInput) cpuRegex = new RegExp(cpuInput);
@@ -3814,6 +3838,13 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
                 if (commInput) commRegex = new RegExp(commInput);
             } catch (e) {
                 console.warn('Invalid Comm regex:', commInput);
+            }
+
+            // 处理参数过滤
+            try {
+                if (paramsInput) paramsRegex = new RegExp(paramsInput, 'i');
+            } catch (e) {
+                console.warn('Invalid params regex:', paramsInput);
             }
 
             // 处理返回值过滤
@@ -3846,7 +3877,7 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
             }
 
             // 检查是否有任何过滤条件
-            const hasFilter = cpuRegex || pidRegex || commRegex || retInput;
+            const hasFilter = cpuRegex || pidRegex || commRegex || retInput || paramsInput;
 
             // 获取所有行
             const allLines = document.querySelectorAll('.line-container');
@@ -3857,6 +3888,7 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
                 const pid = line.getAttribute('data-pid');
                 const comm = line.getAttribute('data-comm');
                 const retAttr = line.getAttribute('data-ret');
+                const paramsAttr = line.getAttribute('data-params');
                 const rawLine = line.querySelector('.line-content')?.textContent || '';
 
                 let show = true;
@@ -3929,6 +3961,25 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
                         // 匹配原始行中的 ret=xxx 或 ret = xxx
                         const retMatch = rawLine.match(/ret\s*=\s*([0-9a-fA-FxX-]+)/);
                         if (!retMatch || !retFilterRegex.test(retMatch[1])) {
+                            show = false;
+                        }
+                    }
+                }
+
+                // 检查参数过滤
+                if (show && paramsRegex) {
+                    // 使用data-params属性或原始行
+                    if (paramsAttr) {
+                        // 有data-params属性，直接匹配
+                        if (!paramsRegex.test(paramsAttr)) {
+                            show = false;
+                        }
+                    } else {
+                        // 没有data-params属性，检查原始行是否包含参数
+                        // 参数格式: func(arg1=val1, arg2=val2, ...)
+                        // 我们需要匹配括号内的内容
+                        const paramsMatch = rawLine.match(/\(([^)]*)\)/);
+                        if (!paramsMatch || !paramsRegex.test(paramsMatch[1])) {
                             show = false;
                         }
                     }
