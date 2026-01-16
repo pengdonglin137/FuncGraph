@@ -3817,9 +3817,8 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
             }
 
             // 处理返回值过滤
-            let retFilterValues = null;
+            let retFilterRegex = null;  // 用于正则匹配
             let filterAllErrors = false;
-            let retFilterRaw = null;  // 用于匹配原始格式
             let allErrorValues = null;  // 用于all过滤的错误码列表
 
             if (retInput) {
@@ -3837,25 +3836,11 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
                         }
                     }
                 } else {
-                    // 尝试解析为数字
-                    const retNum = parseInt(retInput);
-                    if (!isNaN(retNum)) {
-                        // 直接匹配数字（存储在 data-ret 属性中）
-                        retFilterValues = [retNum];
-                        // 同时保存原始输入，用于匹配原始行中的 ret=xxx
-                        retFilterRaw = retInput;
-                    } else {
-                        // 尝试匹配错误码宏名（如 EINVAL）
-                        // 查找对应的数字值
-                        const errorName = retInput.toUpperCase();
-                        // 从预定义的错误码映射中查找
-                        // 这里需要一个反向查找，但JS中没有ERROR_CODE_NAME_MAP
-                        // 所以我们使用正则表达式匹配
-                        try {
-                            retRegex = new RegExp(retInput, 'i');
-                        } catch (e) {
-                            console.warn('Invalid return value regex:', retInput);
-                        }
+                    // 尝试编译为正则表达式
+                    try {
+                        retFilterRegex = new RegExp(retInput, 'i');
+                    } catch (e) {
+                        console.warn('Invalid return value regex:', retInput);
                     }
                 }
             }
@@ -3939,29 +3924,11 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
                                 show = false;
                             }
                         }
-                    } else if (retFilterValues) {
-                        // 精确匹配数字（匹配 data-ret 属性）
-                        // 同时也匹配原始行中的 ret=xxx 或 ret = xxx 格式
+                    } else if (retFilterRegex) {
+                        // 正则表达式匹配
+                        // 匹配原始行中的 ret=xxx 或 ret = xxx
                         const retMatch = rawLine.match(/ret\s*=\s*([0-9a-fA-FxX-]+)/);
-                        let matched = false;
-
-                        if (retAttr && retFilterValues.includes(parseFloat(retAttr))) {
-                            matched = true;
-                        } else if (retMatch && retFilterRaw) {
-                            // 匹配原始格式（如 0x1）
-                            if (retMatch[1] === retFilterRaw) {
-                                matched = true;
-                            }
-                        }
-
-                        if (!matched) {
-                            show = false;
-                        }
-                    } else if (retRegex) {
-                        // 正则表达式匹配（用于宏名）
-                        // 需要匹配原始行中的 ret=xxx 或 ret = xxx
-                        const retMatch = rawLine.match(/ret\s*=\s*([0-9a-fA-FxX-]+)/);
-                        if (!retMatch || !retRegex.test(retMatch[1])) {
+                        if (!retMatch || !retFilterRegex.test(retMatch[1])) {
                             show = false;
                         }
                     }
@@ -4131,6 +4098,19 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
                     }
                 });
 
+                // 点击输入框时也显示建议（即使已经有焦点）
+                input.addEventListener('click', function(e) {
+                    // 阻止事件冒泡，避免触发其他点击事件
+                    e.stopPropagation();
+                    if (suggestionList.length > 0) {
+                        suggestionsDiv.innerHTML = suggestionList.slice(0, 10).map(item => {
+                            const escaped = escapeHtml(item);
+                            return `<div class="suggestion-item" data-value="${escaped}">${escaped}</div>`;
+                        }).join('');
+                        suggestionsDiv.classList.add('active');
+                    }
+                });
+
                 // 输入时过滤建议
                 input.addEventListener('input', function() {
                     const value = this.value.toLowerCase().trim();
@@ -4176,23 +4156,35 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
 
                         // 特殊处理错误码过滤框
                         if (id === 'filterRet') {
-                            // 错误码过滤框：直接替换，不拼接
+                            // 错误码过滤框：使用"或"关系拼接
                             // 如果点击的是 "all"，直接设置为 "all"
-                            // 如果点击的是 "EINVAL（22）"，需要转换为 "-22"
-                            // 如果点击的是 "SUCCESS（0）"，需要转换为 "0"
+                            // 如果点击的是 "EINVAL（-22）"，需要转换为 "-22"
 
                             if (value === 'all') {
-                                input.value = 'all';
+                                if (current) {
+                                    // 如果已有内容，用 | 连接
+                                    input.value = current + '|' + 'all';
+                                } else {
+                                    input.value = 'all';
+                                }
                             } else {
                                 // 尝试从格式 "MACRO（num）" 中提取数字
-                                // 匹配：MACRO（22）或 MACRO（-22）
                                 const match = value.match(/（(-?\d+)）/);
+                                let numericValue = value;
                                 if (match) {
-                                    // 直接使用括号内的数字（可能带负号）
-                                    input.value = match[1];
+                                    numericValue = match[1];
+                                }
+
+                                if (current) {
+                                    // 如果已有内容，用 | 连接
+                                    // 检查是否已经是正则表达式
+                                    if (current.includes('|') || current.includes('(')) {
+                                        input.value = current + '|' + numericValue;
+                                    } else {
+                                        input.value = current + '|' + numericValue;
+                                    }
                                 } else {
-                                    // 直接使用值
-                                    input.value = value;
+                                    input.value = numericValue;
                                 }
                             }
                         } else {
@@ -4240,15 +4232,24 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
 
                                 // 特殊处理错误码过滤框
                                 if (id === 'filterRet') {
-                                    // 错误码过滤框：直接替换
+                                    // 错误码过滤框：使用"或"关系拼接
                                     if (value === 'all') {
-                                        this.value = 'all';
+                                        if (currentVal) {
+                                            this.value = currentVal + '|' + 'all';
+                                        } else {
+                                            this.value = 'all';
+                                        }
                                     } else {
                                         const match = value.match(/（(-?\d+)）/);
+                                        let numericValue = value;
                                         if (match) {
-                                            this.value = match[1];
+                                            numericValue = match[1];
+                                        }
+
+                                        if (currentVal) {
+                                            this.value = currentVal + '|' + numericValue;
                                         } else {
-                                            this.value = value;
+                                            this.value = numericValue;
                                         }
                                     }
                                 } else {
@@ -4310,6 +4311,21 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
                         suggestionsDiv.innerHTML = '';
                     }
                 });
+            });
+
+            // 全局点击事件：点击其他地方时隐藏所有下拉菜单
+            document.addEventListener('click', function(e) {
+                // 检查点击的是否是输入框或建议项
+                const isInput = e.target.closest('input[type="text"]');
+                const isSuggestion = e.target.closest('.suggestions');
+
+                if (!isInput && !isSuggestion) {
+                    // 隐藏所有下拉菜单
+                    document.querySelectorAll('.suggestions').forEach(div => {
+                        div.classList.remove('active');
+                        div.innerHTML = '';
+                    });
+                }
             });
         }
 
