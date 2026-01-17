@@ -658,7 +658,9 @@ def parse_ftrace_file(file_path, verbose=False):
                             'pid': None,
                             'comm': None,
                             'func_name_info': None,
-                            }
+                            'duration': None,
+                            'duration_raw': None,
+                        }
                         parsed_lines.append(line_data)
                         continue
 
@@ -666,6 +668,8 @@ def parse_ftrace_file(file_path, verbose=False):
                     cpu = None
                     pid = None
                     comm = None
+                    duration = None  # 耗时（微秒）
+                    duration_raw = None  # 原始耗时字符串（包含单位）
 
                     # 方法1: 匹配CPU编号: " 3)" 或 " 0)" 等
                     cpu_match = re.match(r'^\s*(\d+)\)', line)
@@ -706,6 +710,37 @@ def parse_ftrace_file(file_path, verbose=False):
                         # 移除耗时格式：[ $@*#!+ ]数字.us
                         timing_pattern = r'[ $@*#!+]*\d+\.us'
                         search_area = re.sub(timing_pattern, '', prefix)
+
+                    # 提取耗时信息（在搜索区域之前）
+                    # 格式: " 3)   0.157 us    |" 或 " 3)  $1.234 us    |"
+                    # 耗时格式: [ $@*#!+ ]数字[.数字] us
+                    duration_match = re.search(r'([ $@*#!+]*)(\d+(?:\.\d+)?)\s*us', prefix)
+                    if duration_match:
+                        duration_raw = duration_match.group(0).strip()
+                        duration_str = duration_match.group(2)
+                        try:
+                            # 存储原始显示值，不加前缀
+                            # 这样用户输入 >100 && <200 时能正确过滤 !145.859 us
+                            duration = float(duration_str)
+
+                            # 但为了排序，需要计算实际值
+                            # 存储一个额外的排序值
+                            prefix_char = duration_match.group(1).strip()
+                            sort_duration = duration
+                            if prefix_char == '$':
+                                sort_duration += 1000000  # 1秒 = 1000000微秒
+                            elif prefix_char == '@':
+                                sort_duration += 100000  # 100毫秒 = 100000微秒
+                            elif prefix_char == '#':
+                                sort_duration += 1000  # 1000微秒
+                            elif prefix_char == '!':
+                                sort_duration += 100  # 100微秒
+                            elif prefix_char == '+':
+                                sort_duration += 10  # 10微秒
+                            # ' ' 或没有前缀：0-10微秒，直接使用数值
+                        except ValueError:
+                            duration = None
+                            sort_duration = None
 
                     # 在清理后的区域中查找 PID/Comm
                     pid_comm_match = re.search(r'\s+(\d+)/(\d+)', search_area)
@@ -829,6 +864,9 @@ def parse_ftrace_file(file_path, verbose=False):
                             'func_name_info': None,  # 用于存储函数名的源码信息
                             'ret_value': ret_value if 'ret_value' in locals() else None,  # 返回值
                             'params': params if 'params' in locals() else None,  # 函数参数
+                            'duration': duration,  # 耗时（微秒）- 用于过滤（原始显示值）
+                            'sort_duration': sort_duration if 'sort_duration' in locals() else duration,  # 排序用的实际值
+                            'duration_raw': duration_raw,  # 原始耗时字符串
                             }
                         parsed_lines.append(line_data)
                         expandable_count += 1
@@ -862,6 +900,9 @@ def parse_ftrace_file(file_path, verbose=False):
                             'func_name_info': None,  # 用于存储函数名的源码信息
                             'ret_value': ret_value,  # 返回值
                             'params': None,  # 这类行通常没有参数
+                            'duration': duration,  # 耗时（微秒）- 用于过滤（原始显示值）
+                            'sort_duration': sort_duration if 'sort_duration' in locals() else duration,  # 排序用的实际值
+                            'duration_raw': duration_raw,  # 原始耗时字符串
                             }
                         parsed_lines.append(line_data)
 
@@ -885,6 +926,9 @@ def parse_ftrace_file(file_path, verbose=False):
                             'comm': comm,
                             'func_name_info': None,
                             'ret_value': ret_value,  # 返回值
+                            'duration': duration,  # 耗时（微秒）- 用于过滤（原始显示值）
+                            'sort_duration': sort_duration if 'sort_duration' in locals() else duration,  # 排序用的实际值
+                            'duration_raw': duration_raw,  # 原始耗时字符串
                         }
                         parsed_lines.append(line_data)
                         continue
@@ -901,6 +945,9 @@ def parse_ftrace_file(file_path, verbose=False):
                         'comm': comm,
                         'func_name_info': None,
                         'ret_value': None,  # 没有返回值
+                        'duration': duration,  # 耗时（微秒）- 用于过滤（原始显示值）
+                        'sort_duration': sort_duration if 'sort_duration' in locals() else duration,  # 排序用的实际值
+                        'duration_raw': duration_raw,  # 原始耗时字符串
                     }
                     parsed_lines.append(line_data)
 
@@ -919,6 +966,8 @@ def parse_ftrace_file(file_path, verbose=False):
                         'comm': None,
                         'func_name_info': None,
                         'ret_value': None,
+                        'duration': None,
+                        'duration_raw': None,
                     }
                     parsed_lines.append(line_data)
 
@@ -2066,35 +2115,51 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
                 except ValueError:
                     pass
 
-        # 只生成有数据的输入框
+        # 收集数据类型信息
+        has_cpu = len(unique_cpus) > 0
+        has_pid = len(unique_pids) > 0
+        has_comm = len(unique_comms) > 0
+        has_ret = len(unique_error_codes) > 0
+
+        # 检查是否有参数数据
+        has_params = False
+        has_duration = False
+        for line_data in parsed_lines:
+            if not has_params and line_data.get('params'):
+                has_params = True
+            if not has_duration and line_data.get('duration') is not None:
+                has_duration = True
+            if has_params and has_duration:
+                break
+
+        # 只有当有相关数据时才生成过滤框
         filter_inputs = []
 
-        if unique_cpus:
+        if has_cpu:
             cpus_json = ','.join(sorted(unique_cpus))
             filter_inputs.append(f'''
             <div class="filter-input-group">
-                <input type="text" id="filterCpu" placeholder="CPU regex (e.g., 0|1|2 or [0-2])" style="width: 140px;" data-suggestions="{cpus_json}" onkeypress="handleFilterKeypress(event)">
+                <input type="text" id="filterCpu" placeholder="CPU regex (e.g., 0|1|2 or [0-2])" style="width: 140px;" data-suggestions="{cpus_json}" onkeypress="handleFilterKeypress(event)" onmouseenter="showHint(event, 'CPU过滤：支持正则表达式，如 0|1|2 或 [0-2]')" onmouseleave="hideHint()">
                 <div class="suggestions" id="cpuSuggestions"></div>
             </div>''')
 
-        if unique_pids:
+        if has_pid:
             pids_json = ','.join(sorted(unique_pids))
             filter_inputs.append(f'''
             <div class="filter-input-group">
-                <input type="text" id="filterPid" placeholder="PID regex (e.g., 1234|5678 or 0-100)" style="width: 140px;" data-suggestions="{pids_json}" onkeypress="handleFilterKeypress(event)">
+                <input type="text" id="filterPid" placeholder="PID regex (e.g., 1234|5678 or 0-100)" style="width: 140px;" data-suggestions="{pids_json}" onkeypress="handleFilterKeypress(event)" onmouseenter="showHint(event, 'PID过滤：支持正则表达式，如 1234|5678 或 0-100')" onmouseleave="hideHint()">
                 <div class="suggestions" id="pidSuggestions"></div>
             </div>''')
 
-        if unique_comms:
+        if has_comm:
             comms_json = ','.join(sorted(unique_comms))
             filter_inputs.append(f'''
             <div class="filter-input-group">
-                <input type="text" id="filterComm" placeholder="Comm regex (e.g., bash|python or ^idle)" style="width: 140px;" data-suggestions="{comms_json}" onkeypress="handleFilterKeypress(event)">
+                <input type="text" id="filterComm" placeholder="Comm regex (e.g., bash|python or ^idle)" style="width: 140px;" data-suggestions="{comms_json}" onkeypress="handleFilterKeypress(event)" onmouseenter="showHint(event, '进程名过滤：支持正则表达式，如 bash|python 或 ^idle')" onmouseleave="hideHint()">
                 <div class="suggestions" id="commSuggestions"></div>
             </div>''')
 
-        # 生成错误码过滤框
-        if unique_error_codes:
+        if has_ret:
             # 转换为显示格式：错误码宏（数字）
             # 例如：-22 -> EINVAL（-22），-1 -> EPERM（-1）
             error_display_list = []
@@ -2121,15 +2186,23 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
             error_codes_json = ','.join(error_display_list)
             filter_inputs.append(f'''
             <div class="filter-input-group">
-                <input type="text" id="filterRet" placeholder="Return value (e.g., -22 or EINVAL)" style="width: 160px;" data-suggestions="{error_codes_json}" data-error-values="{error_values_json}" onkeypress="handleFilterKeypress(event)">
+                <input type="text" id="filterRet" placeholder="Return value (e.g., -22 or EINVAL)" style="width: 160px;" data-suggestions="{error_codes_json}" data-error-values="{error_values_json}" onkeypress="handleFilterKeypress(event)" onmouseenter="showHint(event, '返回值过滤：输入数字如 -22，或宏名如 EINVAL，或 all 显示所有')" onmouseleave="hideHint()">
                 <div class="suggestions" id="retSuggestions"></div>
             </div>''')
 
-        # 添加参数过滤窗口（不需要候选词）
-        filter_inputs.append(f'''
-        <div class="filter-input-group">
-            <input type="text" id="filterParams" placeholder="Function params (e.g., folio=0x... or address=...)" style="width: 200px;" onkeypress="handleFilterKeypress(event)">
-        </div>''')
+        # 只有当有参数数据时才添加参数过滤框
+        if has_params:
+            filter_inputs.append(f'''
+            <div class="filter-input-group">
+                <input type="text" id="filterParams" placeholder="Function params (e.g., folio=0x... or address=...)" style="width: 200px;" onkeypress="handleFilterKeypress(event)" onmouseenter="showHint(event, '参数过滤：匹配函数参数，如 folio=0x1234 或 address=0x...')" onmouseleave="hideHint()">
+            </div>''')
+
+        # 只有当有耗时数据时才添加耗时过滤框
+        if has_duration:
+            filter_inputs.append(f'''
+            <div class="filter-input-group">
+                <input type="text" id="durationFilter" placeholder="Duration filter (e.g., >10, <5&&>2, sort:desc)" style="width: 220px;" onkeypress="handleFilterKeypress(event)" onmouseenter="showHint(event, '耗时过滤：支持 >, <, >=, <=, &&, ||, sort:desc/asc，如 >10 sort:desc')" onmouseleave="hideHint()">
+            </div>''')
 
         # 只有当有至少一个输入框时才生成过滤框
         if filter_inputs:
@@ -2138,7 +2211,8 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
                 {''.join(filter_inputs)}
                 <button class="control-btn filter-btn" onclick="applyFilter()">Filter</button>
                 <button class="control-btn clear-btn" onclick="clearFilter()">Clear</button>
-            </div>'''
+            </div>
+            <div class="filter-hint" id="filterHint"></div>'''
 
     # 解析module_url参数（支持多个--module-url参数）
     if module_url is None:
@@ -3038,6 +3112,27 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
             color: var(--text-secondary);
         }}
 
+        /* Hint tooltip */
+        .filter-hint {{
+            position: fixed;
+            background: rgba(0, 0, 0, 0.9);
+            color: white;
+            padding: 8px 12px;
+            border-radius: 4px;
+            font-size: 12px;
+            max-width: 300px;
+            z-index: 2000;
+            pointer-events: none;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+            line-height: 1.4;
+            display: none;
+        }}
+
+        [data-theme="dark"] .filter-hint {{
+            background: rgba(255, 255, 255, 0.95);
+            color: #000;
+        }}
+
         /* Suggestions dropdown - pull-up menu */
         .suggestions {{
             position: absolute;
@@ -3049,7 +3144,7 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
             border-radius: 3px;
             max-height: 150px;
             overflow-y: auto;
-            z-index: 1000;
+            z-index: 3000; /* Higher than filter-hint (2000) to avoid overlap */
             display: none;
             box-shadow: 0 -2px 8px rgba(0,0,0,0.2); /* Shadow upward */
             margin-bottom: 4px; /* Space between input and menu */
@@ -3538,6 +3633,9 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
         comm = line_data.get('comm')
         ret_value = line_data.get('ret_value')
         params = line_data.get('params')
+        duration = line_data.get('duration')  # 耗时（微秒）- 用于过滤（原始显示值）
+        sort_duration = line_data.get('sort_duration')  # 排序用的实际值
+        duration_raw = line_data.get('duration_raw')  # 原始耗时字符串
 
         # 构建数据属性用于过滤
         data_attrs = f' data-cpu="{cpu if cpu is not None else ""}" data-pid="{pid if pid is not None else ""}" data-comm="{comm if comm else ""}"'
@@ -3548,6 +3646,18 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
             # 使用html.escape，但只转义引号、尖括号
             escaped_params = params.replace('"', '"').replace('<', '<').replace('>', '>')
             data_attrs += f' data-params="{escaped_params}"'
+
+        # 添加耗时属性（用于耗时过滤和排序）
+        # data-duration 用于过滤（使用原始显示值）
+        # data-sort-duration 用于排序（使用实际值）
+        if duration is not None:
+            data_attrs += f' data-duration="{duration}"'
+            if sort_duration is not None and sort_duration != duration:
+                data_attrs += f' data-sort-duration="{sort_duration}"'
+            if duration_raw:
+                # 显示原始耗时字符串（带单位）
+                escaped_duration = duration_raw.replace('"', '"').replace('<', '<').replace('>', '>')
+                data_attrs += f' data-duration-raw="{escaped_duration}"'
 
         # 添加返回值属性（用于错误码过滤）
         if ret_value:
@@ -3812,6 +3922,29 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
             }
         }
 
+        // 显示过滤提示
+        function showHint(event, text) {
+            const hint = document.getElementById('filterHint');
+            if (hint) {
+                hint.textContent = text;
+                hint.style.display = 'block';
+
+                // 计算位置：在输入框上方
+                const rect = event.target.getBoundingClientRect();
+                const hintHeight = hint.offsetHeight || 40; // 默认高度
+                hint.style.left = rect.left + 'px';
+                hint.style.top = (rect.top - hintHeight - 8) + 'px';
+            }
+        }
+
+        // 隐藏过滤提示
+        function hideHint() {
+            const hint = document.getElementById('filterHint');
+            if (hint) {
+                hint.style.display = 'none';
+            }
+        }
+
         // 处理回车键过滤
         function handleFilterKeypress(event) {
             if (event.key === 'Enter') {
@@ -3827,6 +3960,7 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
             const commInput = document.getElementById('filterComm')?.value.trim() || '';
             const retInput = document.getElementById('filterRet')?.value.trim() || '';
             const paramsInput = document.getElementById('filterParams')?.value.trim() || '';
+            const durationFilterInput = document.getElementById('durationFilter')?.value.trim() || '';
 
             // 编译正则表达式
             let cpuRegex = null, pidRegex = null, commRegex = null, retRegex = null, paramsRegex = null;
@@ -3885,8 +4019,56 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
                 }
             }
 
+            // 处理耗时过滤表达式（支持排序指令）
+            let durationFilters = [];  // 存储解析后的耗时过滤条件
+            let durationSort = '';  // 排序方向: 'desc' 或 'asc'
+
+            if (durationFilterInput) {
+                // 首先检查是否有排序指令 (sort:desc 或 sort:asc)
+                const sortMatch = durationFilterInput.match(/sort:(desc|asc)/i);
+                if (sortMatch) {
+                    durationSort = sortMatch[1].toLowerCase();
+                }
+
+                // 移除排序指令，只保留过滤条件
+                let filterExpr = durationFilterInput.replace(/sort:(desc|asc)/gi, '').trim();
+
+                // 如果还有剩余内容，解析过滤条件
+                if (filterExpr) {
+                    // 支持的运算符: >, >=, <, <=
+                    // 支持的逻辑运算符: &&, ||
+                    // 示例: >10, <5&&>2, >=1||<=0.5
+
+                    // 按 || 分割多个条件组
+                    const orGroups = filterExpr.split('||');
+
+                    for (const orGroup of orGroups) {
+                        // 按 && 分割条件
+                        const andConditions = orGroup.split('&&');
+                        const groupConditions = [];
+
+                        for (const condition of andConditions) {
+                            const trimmed = condition.trim();
+                            if (!trimmed) continue;
+
+                            // 匹配运算符和值
+                            const match = trimmed.match(/^(>=|<=|>|<)\s*(\d+(?:\.\d+)?)$/);
+                            if (match) {
+                                const operator = match[1];
+                                const value = parseFloat(match[2]);
+                                groupConditions.push({ operator, value });
+                            }
+                        }
+
+                        if (groupConditions.length > 0) {
+                            durationFilters.push(groupConditions);
+                        }
+                    }
+                }
+            }
+
             // 检查是否有任何过滤条件
-            const hasFilter = cpuRegex || pidRegex || commRegex || retInput || paramsInput;
+            const hasFilter = cpuRegex || pidRegex || commRegex || retInput || paramsInput || durationFilters.length > 0;
 
             // 获取所有行
             const allLines = document.querySelectorAll('.line-container');
@@ -3994,6 +4176,58 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
                     }
                 }
 
+                // 检查耗时过滤
+                if (show && durationFilters.length > 0) {
+                    const durationAttr = line.getAttribute('data-duration');
+                    if (durationAttr) {
+                        const duration = parseFloat(durationAttr);
+                        let matchesAny = false;
+
+                        // 检查所有OR条件组
+                        for (const orGroup of durationFilters) {
+                            let matchesGroup = true;
+
+                            // 检查AND条件
+                            for (const condition of orGroup) {
+                                const { operator, value } = condition;
+                                let matchesCondition = false;
+
+                                switch (operator) {
+                                    case '>':
+                                        matchesCondition = duration > value;
+                                        break;
+                                    case '>=':
+                                        matchesCondition = duration >= value;
+                                        break;
+                                    case '<':
+                                        matchesCondition = duration < value;
+                                        break;
+                                    case '<=':
+                                        matchesCondition = duration <= value;
+                                        break;
+                                }
+
+                                if (!matchesCondition) {
+                                    matchesGroup = false;
+                                    break;
+                                }
+                            }
+
+                            if (matchesGroup) {
+                                matchesAny = true;
+                                break;
+                            }
+                        }
+
+                        if (!matchesAny) {
+                            show = false;
+                        }
+                    } else {
+                        // 没有耗时信息的行在有过滤条件时隐藏
+                        show = false;
+                    }
+                }
+
                 line.style.display = show ? '' : 'none';
                 if (show) visibleCount++;
             });
@@ -4036,6 +4270,61 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
                 }
             });
 
+            // 应用排序（如果选择了排序）
+            if (durationSort && visibleCount > 0) {
+                // 获取所有可见的行
+                const visibleLines = Array.from(allLines).filter(line => line.style.display !== 'none');
+
+                // 按耗时排序（优先使用data-sort-duration，如果没有则使用data-duration）
+                visibleLines.sort((a, b) => {
+                    const durationA = parseFloat(a.getAttribute('data-sort-duration') || a.getAttribute('data-duration') || '0');
+                    const durationB = parseFloat(b.getAttribute('data-sort-duration') || b.getAttribute('data-duration') || '0');
+
+                    if (durationSort === 'desc') {
+                        // 从大到小
+                        return durationB - durationA;
+                    } else if (durationSort === 'asc') {
+                        // 从小到大
+                        return durationA - durationB;
+                    }
+                    return 0;
+                });
+
+                // 重新插入排序后的行
+                const container = visibleLines[0]?.parentElement;
+                if (container) {
+                    // 先移除所有可见行
+                    visibleLines.forEach(line => line.remove());
+
+                    // 按排序顺序重新插入
+                    visibleLines.forEach(line => {
+                        // 找到合适的插入位置（在最后一个可见行之后）
+                        const lastVisible = Array.from(container.children).findLast(child =>
+                            child.classList.contains('line-container') && child.style.display !== 'none'
+                        );
+                        if (lastVisible) {
+                            lastVisible.after(line);
+                        } else {
+                            container.insertBefore(line, container.firstChild);
+                        }
+                    });
+
+                    // 也需要重新排序展开内容
+                    const visibleContents = Array.from(container.querySelectorAll('.expanded-content')).filter(content => {
+                        const prevSibling = content.previousElementSibling;
+                        return prevSibling && prevSibling.style.display !== 'none';
+                    });
+
+                    visibleContents.forEach(content => {
+                        content.remove();
+                        const prevSibling = content.previousElementSibling;
+                        if (prevSibling && prevSibling.style.display !== 'none') {
+                            prevSibling.after(content);
+                        }
+                    });
+                }
+            }
+
             // 更新信息面板中的可见行数
             // 更新摘要中的过滤行数显示（放在 Modules 后面）
             const visibleLinesContainer = document.getElementById('visibleLinesContainer');
@@ -4061,11 +4350,15 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
             const pidInput = document.getElementById('filterPid');
             const commInput = document.getElementById('filterComm');
             const retInput = document.getElementById('filterRet');
+            const paramsInput = document.getElementById('filterParams');
+            const durationFilter = document.getElementById('durationFilter');
 
             if (cpuInput) cpuInput.value = '';
             if (pidInput) pidInput.value = '';
             if (commInput) commInput.value = '';
             if (retInput) retInput.value = '';
+            if (paramsInput) paramsInput.value = '';
+            if (durationFilter) durationFilter.value = '';
 
             currentFilter = { cpu: [], pid: [], comm: [], ret: [] };
 
@@ -4150,6 +4443,10 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
                 // 点击输入框时显示所有建议
                 input.addEventListener('focus', function() {
                     if (suggestionList.length > 0) {
+                        // 隐藏filter-hint，避免与suggestions重叠
+                        const hint = document.getElementById('filterHint');
+                        if (hint) hint.style.display = 'none';
+
                         suggestionsDiv.innerHTML = suggestionList.slice(0, 10).map(item => {
                             const escaped = escapeHtml(item);
                             return `<div class="suggestion-item" data-value="${escaped}">${escaped}</div>`;
@@ -4163,6 +4460,10 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
                     // 阻止事件冒泡，避免触发其他点击事件
                     e.stopPropagation();
                     if (suggestionList.length > 0) {
+                        // 隐藏filter-hint，避免与suggestions重叠
+                        const hint = document.getElementById('filterHint');
+                        if (hint) hint.style.display = 'none';
+
                         suggestionsDiv.innerHTML = suggestionList.slice(0, 10).map(item => {
                             const escaped = escapeHtml(item);
                             return `<div class="suggestion-item" data-value="${escaped}">${escaped}</div>`;
@@ -4178,6 +4479,10 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
                     // 如果输入框为空，显示所有建议
                     if (value.length === 0) {
                         if (suggestionList.length > 0) {
+                            // 隐藏filter-hint，避免与suggestions重叠
+                            const hint = document.getElementById('filterHint');
+                            if (hint) hint.style.display = 'none';
+
                             suggestionsDiv.innerHTML = suggestionList.slice(0, 10).map(item => {
                                 const escaped = escapeHtml(item);
                                 return `<div class="suggestion-item" data-value="${escaped}">${escaped}</div>`;
@@ -4196,6 +4501,10 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
                     );
 
                     if (filtered.length > 0) {
+                        // 隐藏filter-hint，避免与suggestions重叠
+                        const hint = document.getElementById('filterHint');
+                        if (hint) hint.style.display = 'none';
+
                         suggestionsDiv.innerHTML = filtered.slice(0, 10).map(item => {
                             const escaped = escapeHtml(item);
                             return `<div class="suggestion-item" data-value="${escaped}">${escaped}</div>`;
@@ -4275,6 +4584,8 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
                 input.addEventListener('blur', function() {
                     setTimeout(() => {
                         suggestionsDiv.classList.remove('active');
+                        // 如果鼠标仍在输入框上，重新显示hint
+                        // (onmouseenter会自动处理)
                     }, 200);
                 });
 
@@ -5445,7 +5756,8 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
             initKeyboardNavigation();
 
             // 初始化自动补全（如果过滤框存在）
-            if (document.getElementById('filterCpu') || document.getElementById('filterRet')) {
+            if (document.getElementById('filterCpu') || document.getElementById('filterPid') ||
+                document.getElementById('filterComm') || document.getElementById('filterRet')) {
                 initAutocomplete();
             }
 
