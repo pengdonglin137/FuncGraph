@@ -2073,7 +2073,7 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
             cpus_json = ','.join(sorted(unique_cpus))
             filter_inputs.append(f'''
             <div class="filter-input-group">
-                <input type="text" id="filterCpu" placeholder="CPU regex (e.g., 0|1|2 or [0-2])" style="width: 140px;" data-suggestions="{cpus_json}">
+                <input type="text" id="filterCpu" placeholder="CPU regex (e.g., 0|1|2 or [0-2])" style="width: 140px;" data-suggestions="{cpus_json}" onkeypress="handleFilterKeypress(event)">
                 <div class="suggestions" id="cpuSuggestions"></div>
             </div>''')
 
@@ -2081,7 +2081,7 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
             pids_json = ','.join(sorted(unique_pids))
             filter_inputs.append(f'''
             <div class="filter-input-group">
-                <input type="text" id="filterPid" placeholder="PID regex (e.g., 1234|5678 or 0-100)" style="width: 140px;" data-suggestions="{pids_json}">
+                <input type="text" id="filterPid" placeholder="PID regex (e.g., 1234|5678 or 0-100)" style="width: 140px;" data-suggestions="{pids_json}" onkeypress="handleFilterKeypress(event)">
                 <div class="suggestions" id="pidSuggestions"></div>
             </div>''')
 
@@ -2089,7 +2089,7 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
             comms_json = ','.join(sorted(unique_comms))
             filter_inputs.append(f'''
             <div class="filter-input-group">
-                <input type="text" id="filterComm" placeholder="Comm regex (e.g., bash|python or ^idle)" style="width: 140px;" data-suggestions="{comms_json}">
+                <input type="text" id="filterComm" placeholder="Comm regex (e.g., bash|python or ^idle)" style="width: 140px;" data-suggestions="{comms_json}" onkeypress="handleFilterKeypress(event)">
                 <div class="suggestions" id="commSuggestions"></div>
             </div>''')
 
@@ -2121,14 +2121,14 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
             error_codes_json = ','.join(error_display_list)
             filter_inputs.append(f'''
             <div class="filter-input-group">
-                <input type="text" id="filterRet" placeholder="Return value (e.g., -22 or EINVAL)" style="width: 160px;" data-suggestions="{error_codes_json}" data-error-values="{error_values_json}">
+                <input type="text" id="filterRet" placeholder="Return value (e.g., -22 or EINVAL)" style="width: 160px;" data-suggestions="{error_codes_json}" data-error-values="{error_values_json}" onkeypress="handleFilterKeypress(event)">
                 <div class="suggestions" id="retSuggestions"></div>
             </div>''')
 
         # 添加参数过滤窗口（不需要候选词）
         filter_inputs.append(f'''
         <div class="filter-input-group">
-            <input type="text" id="filterParams" placeholder="Function params (e.g., folio=0x... or address=...)" style="width: 200px;" oninput="applyFilter()">
+            <input type="text" id="filterParams" placeholder="Function params (e.g., folio=0x... or address=...)" style="width: 200px;" onkeypress="handleFilterKeypress(event)">
         </div>''')
 
         # 只有当有至少一个输入框时才生成过滤框
@@ -2136,6 +2136,7 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
             filter_html = f'''
             <div class="filter-box">
                 {''.join(filter_inputs)}
+                <button class="control-btn filter-btn" onclick="applyFilter()">Filter</button>
                 <button class="control-btn clear-btn" onclick="clearFilter()">Clear</button>
             </div>'''
 
@@ -3808,6 +3809,14 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
             if (keyboardHintTimer) {
                 clearTimeout(keyboardHintTimer);
                 keyboardHintTimer = null;
+            }
+        }
+
+        // 处理回车键过滤
+        function handleFilterKeypress(event) {
+            if (event.key === 'Enter') {
+                event.preventDefault();
+                applyFilter();
             }
         }
 
