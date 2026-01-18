@@ -12,7 +12,7 @@ import time
 
 # ==================== 配置变量 ====================
 # 修改这里来定制 HTML 的显示
-APP_VERSION = "0.4"      # 应用版本号
+APP_VERSION = "0.5"      # 应用版本号
 APP_AUTHOR = "@dolinux"  # 作者信息
 APP_TITLE = "FuncGraph"  # 应用标题
 # ================================================
@@ -3683,6 +3683,8 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
         html_str += f'<div class="line-container {expandable_class}" id="{line_anchor_id}" data-line-number="{line_number}" data-line-id="{line_id}"{data_attrs}'
         if is_expandable:
             html_str += f' onclick="handleLineClick(event, \'{line_id}\')" ondblclick="handleDoubleClick(event, \'{line_id}\')"'
+        # 添加tabindex使行可聚焦，支持键盘导航
+        html_str += ' tabindex="0"'
         html_str += '>'
         html_str += f'<span class="line-number" onclick="updateAnchor(\'{line_anchor_id}\', event)" title="Click to copy anchor link">{line_number}</span>'
         html_str += f'<span class="line-content">{escaped_line}</span>'
@@ -4706,34 +4708,38 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
             if (keyboardSelectedLine) {
                 keyboardSelectedLine.classList.remove('keyboard-selected');
             }
-            
+
             if (index < 0) index = 0;
             if (index >= allLines.length) index = allLines.length - 1;
-            
+
             keyboardSelectedIndex = index;
             keyboardSelectedLine = allLines[index];
-            
+
             // 添加新的选择样式
             if (keyboardSelectedLine) {
                 keyboardSelectedLine.classList.add('keyboard-selected');
-                
+
+                // 移动焦点到该行，这样event.target会更新
+                // 这样Enter键就能正确处理
+                keyboardSelectedLine.focus();
+
                 // 只有在需要滚动时才滚动
                 if (scrollIntoView) {
                     // 获取当前行的位置
                     const rect = keyboardSelectedLine.getBoundingClientRect();
                     const windowHeight = window.innerHeight;
-                    
+
                     // 计算行在视口中的位置
                     const lineTop = rect.top;
                     const lineBottom = rect.bottom;
                     const lineHeight = rect.height;
-                    
+
                     // 判断是否需要滚动到中间
                     // 如果当前行接近视口底部（距离底部小于2行高度），则滚动到中间
                     // 如果当前行接近视口顶部（距离顶部小于1行高度），也滚动到中间
                     const nearBottom = windowHeight - lineBottom < lineHeight * 2;
                     const nearTop = lineTop < lineHeight;
-                    
+
                     if (nearBottom || nearTop || lineTop < 0 || lineBottom > windowHeight) {
                         // 如果接近边界或不在视口中，滚动到中间
                         keyboardSelectedLine.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -5187,14 +5193,22 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
             // console.log('Keydown:', event.key, 'keyCode:', event.keyCode);
 
             
-            // Enter键特殊处理：在链接上按Enter时，用来展开/收起，而不是打开链接
+            // Enter键特殊处理：在链接上按Enter时，允许打开链接；在行上按Enter时，展开/收起
             if (event.key === 'Enter' || event.keyCode === 13) {
-                let handled = false;
-                
-                // 检查当前焦点是否在可展开行内（包括链接）
+                // 检查当前焦点是否在链接上
+                const target = event.target;
+                const isLink = target.tagName === 'A' || target.closest('a');
+
+                // 如果焦点在链接上，让链接正常跳转（不阻止默认行为）
+                if (isLink) {
+                    // 链接会正常跳转，不需要额外处理
+                    return;
+                }
+
+                // 如果焦点不在链接上，检查是否在可展开行内
                 let focusedLine = null;
-                let element = event.target;
-                
+                let element = target;
+
                 // 向上查找包含 expandable 类的行容器
                 while (element && element !== document.body) {
                     if (element.classList && element.classList.contains('line-container') && element.classList.contains('expandable')) {
@@ -5203,53 +5217,68 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
                     }
                     element = element.parentElement;
                 }
-                
+
                 // 如果找到可展开行，触发展开/收起
                 if (focusedLine) {
                     event.preventDefault();
                     const lineId = focusedLine.getAttribute('data-line-id');
                     if (lineId) {
                         toggleExpand(lineId, event);
-                        handled = true;
                     }
+                    return;
                 }
-                
-                // 如果当前没有焦点在链接上，使用键盘选中的行
+
+                // 如果当前焦点不在行内，使用键盘选中的行
                 // 但只有在有可见的可展开行时才处理
-                if (!handled && keyboardSelectedLine && keyboardSelectedLine.classList.contains('expandable') &&
+                if (keyboardSelectedLine && keyboardSelectedLine.classList.contains('expandable') &&
                     keyboardSelectedLine.style.display !== 'none') {
                     event.preventDefault();
                     const lineId = keyboardSelectedLine.getAttribute('data-line-id');
                     if (lineId) {
                         toggleExpand(lineId, event);
-                        handled = true;
                     }
+                    return;
                 }
-                
+
                 // 如果没有可展开行被处理，但 keyboardSelectedLine 不可展开，尝试展开当前行
                 // 但只有在该行可见时才处理
-                if (!handled && keyboardSelectedLine && keyboardSelectedLine.style.display !== 'none') {
+                if (keyboardSelectedLine && keyboardSelectedLine.style.display !== 'none') {
                     event.preventDefault();
                     const lineId = keyboardSelectedLine.getAttribute('data-line-id');
                     if (lineId) {
                         toggleExpand(lineId, event);
                     }
                 }
-                
-                if (handled) {
-                    return;
-                }
             }
             
             // 按下ESC键取消选择
             if (event.key === 'Escape' || event.keyCode === 27) {
-                // 清除高亮
+                // 1. 清除键盘选中（键盘导航）
+                if (keyboardSelectedLine) {
+                    keyboardSelectedLine.classList.remove('keyboard-selected');
+                    keyboardSelectedLine = null;
+                    keyboardSelectedIndex = -1;
+                }
+
+                // 2. 清除文本选择高亮
                 if (highlightedLine) {
                     highlightedLine.classList.remove('highlighted');
                     highlightedLine = null;
                 }
-                // 清除文本选择
-                window.getSelection().removeAllRanges();
+
+                // 3. 清除文本选择
+                const selection = window.getSelection();
+                if (selection.toString().length > 0) {
+                    selection.removeAllRanges();
+                }
+
+                // 4. 移除焦点（清除Tab选中）
+                if (document.activeElement && document.activeElement !== document.body) {
+                    document.activeElement.blur();
+                }
+
+                // 阻止默认行为
+                event.preventDefault();
             }
             
             // VIM风格导航键和方向键
