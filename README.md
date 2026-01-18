@@ -1,338 +1,411 @@
-
-
-# FuncGraph
+# FuncGraph - ftrace 可视化工具
 
 ![FuncGraph可视化示例](sample.png)
 
-## 介绍
+## 项目介绍
 
-FuncGraph是一个用 **AI** 开发的 ftrace 可视化工具，主要用于：
+FuncGraph 是一个功能完整的 ftrace 可视化工具，主要功能：
 
-1. **可视化 funcgraph-retaddr 输出**：将 Linux 内核的 function_graph tracer 输出转换为交互式 HTML 格式，大幅提高通过 trace 直接定位代码行的效率
-2. **快速 faddr2line 实现**：使用 Python 重写了 Linux 内核中的 faddr2line 功能，处理性能得到数量级的提升
+1. **ftrace 可视化**：将 Linux 内核的 function_graph tracer 输出转换为交互式 HTML
+2. **源码链接**：点击函数即可跳转到对应源代码位置
+3. **高性能解析**：使用 Python 实现的快速地址解析工具
+4. **智能过滤**：支持多维度实时过滤和排序
 
-## 功能特点
+## 核心功能
 
-- **交互式 HTML 输出**：点击函数即可跳转到对应源代码位置
-- **支持内核模块**：可解析内核模块的符号信息
-- **源代码链接**：支持设置 base-url，直接链接到在线代码仓库（如 bootlin）
-- **多模块 URL 支持**：支持为不同模块设置不同的源代码 URL
-- **高性能处理**：fastfaddr2line.py 比传统 addr2line 方式快几个数量级
-- **灵活的参数配置**：支持指定 vmlinux、内核源码、模块目录等
-- **交叉编译和 LLVM 支持**：支持 CROSS_COMPILE 和 LLVM 环境变量，适配各种工具链
-- **处理统计**：显示解析时间、总耗时等性能统计信息
-- **过滤功能**：支持按 CPU、PID、进程名过滤 trace 行
-- **实时进度显示**：Expand/Collapse 操作显示进度百分比
-- **编译器优化后缀处理**：自动去除编译器优化后缀（如 `.isra.0`, `.constprop.0`），显示原始函数名
+### 🎯 过滤系统
 
-## 环境要求
+#### 支持的过滤类型
+- **CPU 过滤**：正则表达式匹配 CPU 编号
+- **PID 过滤**：正则表达式匹配进程 ID
+- **进程名过滤**：正则表达式匹配进程名
+- **返回值过滤**：支持数字、宏名和 `all` 选项
+- **参数过滤**：字符串匹配函数参数
+- **耗时过滤**：支持比较运算符和排序
 
-- Python 3.6+
-- gawk（用于某些数据处理功能）
-- addr2line 工具（通常随 binutils 一起安装）
-- ELF 分析库（可选，用于 fastfaddr2line.py）
+#### 智能显示
+- 自动检测 trace 数据类型
+- 只显示有数据的过滤输入框
+- 无数据时不显示过滤窗口
 
-## 安装
+#### 悬停提示
+- 鼠标悬停显示完整使用说明
+- 自动定位，不遮挡输入
+- 无需查看文档即可使用
 
-```bash
-# 克隆仓库
-git clone https://gitee.com/pengdonglin137/funcgraph_visualization.git
-cd funcgraph_visualization
+#### 耗时过滤和排序
+```javascript
+// 基本过滤
+>10              // 显示>10μs
+<5&&>2           // 显示2-5μs
+>100||<0.1       // 显示异常值
 
-# 确保脚本有执行权限
-chmod +x *.py
+// 排序
+sort:desc        // 从大到小排序
+sort:asc         // 从小到大排序
+
+// 组合使用
+>10 sort:desc    // 显示>10μs，按从大到小排序
+<5&&>2 sort:asc  // 显示2-5μs，按从小到大排序
 ```
 
-## 使用方法
+#### 上拉菜单（Suggestions）
+- 点击输入框显示候选词列表
+- 输入时实时过滤候选词
+- 键盘导航（上下箭头选择）
+- 回车或点击选择
+
+#### 前缀问题修复
+```javascript
+// 带前缀的耗时也能正确过滤
+!145.859 us      // 显示值：145.859，实际值：245.859
+>100 && <200     // 正确显示（使用显示值过滤）
+sort:desc        // 正确排序（使用实际值排序）
+```
+
+### 📊 HTML 交互功能
+
+#### 展开/折叠
+- 点击 `+` / `-` 展开/折叠单个函数
+- **Expand All**：展开所有可见行
+- **Collapse All**：折叠所有可见行
+- **进度显示**：操作时显示进度百分比
+
+#### 过滤操作
+- **Filter**：应用当前过滤条件
+- **Clear**：清除所有过滤条件
+- **实时统计**：显示 "Filtered: X / Total: Y"
+
+#### 键盘导航
+- `↑` / `↓` 或 `j` / `k`：在可展开行间移动（焦点跟随）
+- `Enter`：展开/折叠选中行（在链接上按 Enter 会打开链接）
+- `Esc`：清除所有选中状态（键盘选中、文本选择高亮、文本选择、Tab焦点）
+
+**键盘导航特性**：
+- ✅ 焦点自动跟随选中行
+- ✅ Tab选中链接后，↑↓选新行会覆盖焦点
+- ✅ 在链接上按 Enter 正常打开链接
+- ✅ 在行上按 Enter 展开/折叠
+- ✅ Esc 清除所有选中状态
+
+#### 主题切换
+- 浅色/深色模式
+- 自动保存用户偏好
+
+### 🔗 源码链接系统
+
+#### 支持的配置
+- **基础 URL**：设置源码仓库根路径
+- **模块 URL**：为不同模块设置不同的源码 URL
+- **路径前缀**：处理编译路径与源码路径不一致的情况
+
+#### 链接类型
+- **函数名链接**：点击函数名跳转到源码（需 `--func-links`）
+- **返回地址链接**：点击返回地址跳转到源码
+- **源码高亮**：支持语法高亮（需 Pygments）
+
+### 🚀 性能优化
+
+#### 编译器优化后缀处理
+自动去除编译器优化后缀，显示原始函数名：
+
+**支持的后缀**：
+- `.isra.0`, `.constprop.0`, `.lto.0`, `.part.0`
+- `.cold.0`, `.cold`, `.plt`, `.ifunc`
+- `.llvm.0`, `.clone.0`, `.unk.0`
+
+**示例**：
+```
+finish_task_switch.isra.0+0x150/0x4a8
+↓
+finish_task_switch+0x150/0x4a8
+```
+
+#### 高性能解析
+- **fastfaddr2line.py**：Python 实现，比传统工具快数倍
+- **外部工具支持**：可强制使用系统 faddr2line
+- **批量处理**：优化的地址解析流程
+
+## 安装和使用
+
+### 环境要求
+- Python 3.6+
+- addr2line（binutils 包含）
+- 可选：Pygments（语法高亮）
+
+### 基本用法
+
+```bash
+# 最小配置
+python3 funcgraph.py trace.txt --vmlinux vmlinux --filter --fast
+
+# 完整配置
+python3 funcgraph.py trace.txt \
+    --vmlinux /path/to/vmlinux \
+    --kernel-src /path/to/kernel/src \
+    --module-dirs /path/to/modules \
+    --base-url https://elixir.bootlin.com/linux/v6.18/source \
+    --filter \
+    --fast \
+    --highlight-code \
+    --output result.html
+```
 
 ### 参数说明
 
-```bash
-./funcgraph.py -h
-```
+| 参数 | 说明 |
+|------|------|
+| `ftrace_file` | ftrace 输出文件（必需） |
+| `--vmlinux` | vmlinux 文件路径（必需） |
+| `--kernel-src` | 内核源码根目录 |
+| `--module-dirs` | 内核模块搜索目录（可多个） |
+| `--module-srcs` | 模块源码根目录（可多个） |
+| `--base-url` | 源码链接基础 URL |
+| `--module-url` | 模块 URL 映射（可多次指定） |
+| `--output` | 输出 HTML 文件 |
+| `--auto-search` | 自动搜索常见模块目录 |
+| `--verbose` | 详细调试输出 |
+| `--fast` | 使用 fastfaddr2line.py |
+| `--use-external` | 强制使用外部 faddr2line |
+| `--highlight-code` | 启用语法高亮 |
+| `--path-prefix` | 路径前缀替换（可多个） |
+| `--filter` | 启用过滤窗口 |
+| `--func-links` | 函数名源码链接 |
+| `--entry-offset` | 函数入口地址偏移 |
 
-参数说明：
-- `ftrace_file`：ftrace 输出文件路径（必需）
-- `--vmlinux VMLINUX`：vmlinux 文件路径
-- `--kernel-src KERNEL_SRC`：内核源码根目录
-- `--module-dirs [MODULE_DIRS ...]`：内核模块搜索目录
-- `--module-srcs [MODULE_SRCS ...]`：模块源码根目录（可指定多个路径）
-- `--base-url BASE_URL`：源代码链接的基础 URL
-- `--module-url MODULE_URL`：模块 URL 映射（可多次指定，格式：url:mod1,mod2）
-- `--output OUTPUT`：输出 HTML 文件路径
-- `--auto-search`：自动搜索常见模块目录
-- `--verbose`：启用详细调试输出
-- `--fast`：使用 fastfaddr2line.py 处理 vmlinux
-- `--use-external`：强制使用外部 faddr2line
-- `--highlight-code`：启用 C 源代码语法高亮（需要 Pygments）
-- `--path-prefix [PATH_PREFIX ...]`：剔除 addr2line 返回的源码路径中的前缀，得到相对路径（可指定多个路径）
-- `--filter`：在 HTML 中启用过滤窗口（自动启用 --fast 模式）
-
-### 用法示例
-
-#### 基本用法
+### 模块 URL 配置示例
 
 ```bash
-./funcgraph.py --fast --vmlinux /home/pengdl/work/linux-6.18/vmlinux \
-    --kernel-src /home/pengdl/work/linux-6.18 \
-    --module-dirs /home/pengdl/work/linux-6.18/modules_install/ \
-    --base-url https://elixir.bootlin.com/linux/v6.18/source \
-    --output output.html ftrace.txt
-```
-
-#### 使用多个模块 URL
-
-为不同模块设置不同的源代码 URL：
-
-```bash
-./funcgraph.py --fast --vmlinux /home/pengdl/work/linux-6.18/vmlinux \
-    --kernel-src /home/pengdl/work/linux-6.18 \
+# 为不同模块设置不同 URL
+python3 funcgraph.py trace.txt \
+    --vmlinux vmlinux \
     --base-url https://elixir.bootlin.com/linux/v6.18/source \
     --module-url https://url1.com:mod1,mod2 \
     --module-url https://url2.com:mod3,mod4 \
     --module-url https://default.com \
-    --output output.html ftrace.txt
+    --filter --fast
 ```
 
-说明：
-- `mod1,mod2` 使用 `https://url1.com`
-- `mod3,mod4` 使用 `https://url2.com`
-- 其他模块使用 `https://default.com`
-- 如果没有指定默认 URL，则使用 `--base-url`
+规则：
+- `mod1,mod2` → 使用 `https://url1.com`
+- `mod3,mod4` → 使用 `https://url2.com`
+- 其他模块 → 使用 `https://default.com`
+- 无默认 URL → 使用 `--base-url`
 
-#### 启用语法高亮
-
-```bash
-./funcgraph.py --fast --vmlinux /home/pengdl/work/linux-6.18/vmlinux \
-    --kernel-src /home/pengdl/work/linux-6.18 \
-    --base-url https://elixir.bootlin.com/linux/v6.18/source \
-    --highlight-code \
-    --output output.html ftrace.txt
-```
-
-#### 单独使用 fastfaddr2line
-
-```bash
-# 查看帮助
-./fastfaddr2line.py -h
-
-# 解析单个地址
-./fastfaddr2line.py vmlinux arch_stack_walk+0x150/0x4a8
-```
-
-#### 使用交叉编译和 LLVM 工具链
-
-对于交叉编译或使用 LLVM 工具链的内核，可以通过环境变量配置：
-
-**交叉编译：**
-```bash
-# 设置交叉编译前缀
-export CROSS_COMPILE=aarch64-linux-gnu-
-
-# 使用 funcgraph.py 生成 HTML
-./funcgraph.py --fast --vmlinux vmlinux \
-    --kernel-src /path/to/kernel \
-    --base-url https://elixir.bootlin.com/linux/v6.18/source \
-    --output output.html ftrace.txt
-```
-
-**LLVM 工具链：**
-```bash
-# 使用 LLVM 工具链（自动使用 llvm- 前缀）
-export LLVM=1
-
-# 或者指定 LLVM 路径前缀
-export LLVM=/usr/bin/
-
-# 或者使用 LLVM 版本后缀
-export LLVM=-10
-
-# 使用 funcgraph.py 生成 HTML
-./funcgraph.py --fast --vmlinux vmlinux \
-    --kernel-src /path/to/kernel \
-    --base-url https://elixir.bootlin.com/linux/v6.18/source \
-    --output output.html ftrace.txt
-```
-
-**工具链说明：**
-- `CROSS_COMPILE`：交叉编译前缀（如 `arm-linux-gnueabi-`）
-- `LLVM`：LLVM 工具链配置
-  - `LLVM=1`：使用 `llvm-` 前缀
-  - `LLVM=/usr/bin/`：使用 `/usr/bin/llvm-` 前缀
-  - `LLVM=-10`：使用 `llvm-` 前缀 + `-10` 后缀
-- **注意**：faddr2line 只存在于内核源码的 `scripts/` 目录下，不受 LLVM/CROSS_COMPILE 影响
-- 工具链信息会在 verbose 模式下显示，为未来扩展做准备
-
-#### 使用 path-prefix 剔除路径前缀
-
-当 addr2line 返回的源码路径与内核源码路径不一致时，使用 `--path-prefix` 剔除前缀：
+### 路径前缀处理
 
 ```bash
 # addr2line 返回：/home/user/build/kernel/fs/open.c
 # 内核源码路径：/home/user/linux/fs/open.c
-# 使用 path-prefix 剔除差异部分
 
-./funcgraph.py --fast --vmlinux vmlinux \
-    --kernel-src /path/to/kernel \
+python3 funcgraph.py trace.txt \
+    --vmlinux vmlinux \
+    --kernel-src /home/user/linux \
     --path-prefix /home/user/build/kernel \
-    --output output.html ftrace.txt
+    --filter --fast
 ```
 
-**path-prefix 说明：**
-- **主要作用**：剔除 addr2line 返回的源码路径中的前缀，得到相对路径
-- **使用场景**：编译路径与源码路径不一致时
-- **多个路径**：可以指定多个备选前缀，脚本会尝试匹配
-- **结果**：生成的 HTML 中源码链接使用相对路径，更简洁
+### 交叉编译和 LLVM
 
-#### 编译器优化后缀处理
-
-FuncGraph 自动去除编译器优化后缀，显示原始函数名，便于 trace 文件分析和语法高亮：
-
-**支持的编译器：**
-- ✅ GCC
-- ✅ LLVM/Clang
-
-**支持的后缀类型：**
-
-GCC 和 LLVM 共有：
-- `.isra.0`, `.isra.1`, `.isra.N` - 函数内联优化
-- `.constprop.0`, `.constprop.1`, `.constprop.N` - 常量传播优化
-- `.lto.0`, `.lto.1`, `.lto.N` - 链接时优化
-- `.part.0`, `.part.1`, `.part.N` - 函数部分内联
-- `.cold.0`, `.cold.1`, `.cold.N` - 冷路径优化
-- `.cold` - 冷路径（无数字）
-- `.plt` - PLT 条目
-- `.ifunc` - 间接函数
-- `.const` - 常量函数
-- `.pure` - 纯函数
-
-LLVM/Clang 特有：
-- `.llvm.0`, `.llvm.1`, `.llvm.N` - LLVM 特定优化
-- `.clone.0`, `.clone.1`, `.clone.N` - 函数克隆
-- `.unk.0`, `.unk.1`, `.unk.N` - 未知优化
-
-**支持复杂场景：**
-- 多个后缀组合：`func.isra.0.constprop.1` → `func`
-- 带偏移/长度：`func.llvm.123+0x100/0x200` → `func+0x100/0x200`
-
-**处理示例：**
-```
-原始 trace:  3)   0.208 us |  } /* finish_task_switch.isra.0+0x150/0x4a8 */
-显示结果:    3)   0.208 us |  } /* finish_task_switch+0x150/0x4a8 */
-
-原始 trace:  1)   0.123 us |  unwind_find_stack.constprop.0+0x20/0x50
-显示结果:    1)   0.123 us |  unwind_find_stack+0x20/0x50
+**交叉编译**：
+```bash
+export CROSS_COMPILE=aarch64-linux-gnu-
+python3 funcgraph.py trace.txt --vmlinux vmlinux --filter --fast
 ```
 
-**优势：**
-- ✅ 函数名更清晰，便于阅读和理解
-- ✅ 语法高亮更准确
-- ✅ 便于 grep 和文本搜索
-- ✅ 保持偏移和长度信息不变
+**LLVM 工具链**：
+```bash
+export LLVM=1
+# 或 export LLVM=/usr/bin/
+# 或 export LLVM=-10
+python3 funcgraph.py trace.txt --vmlinux vmlinux --filter --fast
+```
 
-#### 使用过滤功能
+## 抓取 Trace
 
-启用 `--filter` 选项可以在 HTML 页面中添加过滤窗口，支持按 CPU、PID 和进程名过滤 trace 行：
+### 推荐配置
 
 ```bash
-# 启用过滤功能（自动启用 --fast 模式）
-./funcgraph.py --filter --fast --vmlinux vmlinux \
-    --kernel-src /path/to/kernel \
-    --output output.html ftrace.txt
-```
-
-**过滤功能说明：**
-- **自动启用 fast 模式**：`--filter` 会自动启用 `--fast` 模式
-- **实时过滤**：在 HTML 页面中输入 CPU、PID 或进程名，实时过滤显示的行
-- **Summary Bar 更新**：过滤后显示 "Filtered: X" 统计
-- **Expand/Collapse 优化**：只对当前可见的行进行展开/折叠操作
-- **过滤条件**：支持多个条件组合过滤
-
-**使用场景：**
-```bash
-# 1. 生成带过滤功能的 HTML
-./funcgraph.py --filter --vmlinux vmlinux --kernel-src /path/to/kernel --output result.html trace.txt
-
-# 2. 在浏览器中打开 result.html
-# 3. 在过滤窗口中输入正则表达式：
-#    - CPU: 0|1|2 或 [0-2]          # 匹配 CPU 0, 1, 2
-#    - PID: 1234|5678 或 0-100      # 匹配 PID 1234 或 5678
-#    - Comm: nginx|bash 或 ^nginx    # 匹配进程名 nginx 或 bash
-# 4. 点击 Expand All 只会展开过滤后的行
-```
-
-**正则表达式说明：**
-- `|`：或操作，如 `0|1|2` 匹配 0、1 或 2
-- `[0-9]`：字符集，如 `[0-2]` 匹配 0、1 或 2
-- `^`：开头匹配，如 `^nginx` 匹配以 nginx 开头的进程名
-- `$`：结尾匹配，如 `bash$` 匹配以 bash 结尾的进程名
-- `*`：零次或多次，如 `.*` 匹配任意字符
-
-## 抓取 trace 的方法
-
-在 Linux 系统上执行以下命令来抓取 function_graph trace：
-
-```bash
-# 进入 tracing 目录
 cd /sys/kernel/tracing
 
 # 停止当前追踪
 echo 0 > tracing_on
 
-# 推荐配置：启用所有有用的 trace 选项
-echo 1 > options/funcgraph-retaddr    # 函数返回地址（**必选**）
-echo 1 > options/funcgraph-proc       # 显示进程名和 PID（**推荐**）
-echo 1 > options/funcgraph-retval     # 函数返回值（**推荐**）
-echo 1 > options/funcgraph-args       # 函数参数（**推荐**）
+# 启用推荐选项
+echo 1 > options/funcgraph-retaddr    # 返回地址（必选）
+echo 1 > options/funcgraph-proc       # 进程名和 PID
+echo 1 > options/funcgraph-retval     # 返回值
+echo 1 > options/funcgraph-args       # 函数参数
 
-# 设置 function_graph tracer
+# 设置 tracer
 echo function_graph > current_tracer
 
-# 开始追踪（运行 1 秒后停止）
+# 开始追踪（1秒）
 echo 1 > tracing_on; sleep 1; echo 0 > tracing_on
 
-# 保存 trace 结果
+# 保存结果
 cat trace > ~/ftrace.txt
 ```
 
-**推荐选项说明：**
-- `funcgraph-retaddr`：**必选** - 提供函数返回地址，用于定位源代码行
-- `funcgraph-proc`：**推荐** - 显示进程名和 PID，便于过滤和分析
-- `funcgraph-retval`：**推荐** - 显示函数返回值，便于调试
-- `funcgraph-args`：**推荐** - 显示函数参数，便于分析调用关系
+### 选项说明
 
-**注意：** 启用更多选项会增加 trace 文件大小，但提供更丰富的调试信息。FuncGraph 支持按 CPU、PID、进程名过滤，因此推荐启用这些选项。
+| 选项 | 作用 | 推荐度 |
+|------|------|--------|
+| `funcgraph-retaddr` | 提供返回地址，用于源码定位 | ⭐⭐⭐⭐⭐ |
+| `funcgraph-proc` | 显示进程名和 PID，便于过滤 | ⭐⭐⭐⭐ |
+| `funcgraph-retval` | 显示函数返回值，便于调试 | ⭐⭐⭐⭐ |
+| `funcgraph-args` | 显示函数参数，便于分析 | ⭐⭐⭐⭐ |
+
+## Fastfaddr2line 工具
+
+### 独立使用
+
+```bash
+# 查看帮助
+python3 fastfaddr2line.py -h
+
+# 解析单个地址
+python3 fastfaddr2line.py vmlinux arch_stack_walk+0x150/0x4a8
+
+# 完整功能
+python3 fastfaddr2line.py vmlinux \
+    --functions \
+    --basenames \
+    --inlines \
+    --pretty-print \
+    arch_stack_walk+0x150/0x4a8
+```
+
+### 参数说明
+
+| 参数 | 说明 |
+|------|------|
+| `-f, --functions` | 显示函数名 |
+| `-s, --basenames` | 仅显示文件名（不含路径） |
+| `-i, --inlines` | 显示内联函数 |
+| `-p, --pretty-print` | 格式化输出 |
+| `-C, --demangle` | C++ 符号解混淆 |
+| `--path-prefix` | 路径前缀替换 |
+| `--module-srcs` | 模块源码目录 |
+| `--entry-offset` | 入口地址偏移 |
+
+## 使用流程示例
+
+### 1. 抓取 Trace
+```bash
+cd /sys/kernel/tracing
+echo 0 > tracing_on
+echo 1 > options/funcgraph-retaddr
+echo 1 > options/funcgraph-proc
+echo 1 > options/funcgraph-retval
+echo 1 > options/funcgraph-args
+echo function_graph > current_tracer
+echo 1 > tracing_on; sleep 1; echo 0 > tracing_on
+cat trace > ~/ftrace.txt
+```
+
+### 2. 生成 HTML
+```bash
+cd /vol_1t/Qemu/x86_64/funcgraph_visualization
+
+python3 funcgraph.py ~/ftrace.txt \
+    --vmlinux /path/to/vmlinux \
+    --kernel-src /path/to/kernel \
+    --base-url https://elixir.bootlin.com/linux/v6.18/source \
+    --filter \
+    --fast \
+    --output result.html
+```
+
+### 3. 在浏览器中使用
+
+打开 `result.html`，使用过滤功能：
+- **找最慢函数**：耗时输入 `sort:desc`
+- **找异常值**：耗时输入 `>100||<0.1 sort:desc`
+- **特定进程**：PID 输入 `1234|5678`，进程名输入 `nginx|bash`
+- **组合过滤**：CPU `0|1`，PID `1234`，耗时 `>5&&<50 sort:desc`
 
 ## 项目结构
 
 ```
 funcgraph_visualization/
-├── README.md                    # 中文说明文档
-├── README.en.md                 # 英文说明文档
-├── funcgraph.py                 # 主程序：将 ftrace 转换为 HTML
-├── fastfaddr2line.py            # 高性能地址解析工具
-├── ftrace.txt                   # trace 数据示例
-├── sample.png                   # 输出效果截图
-└── sample.html                  # HTML 输出示例
+├── README.md                    # 本文件
+├── funcgraph.py                 # 主程序
+├── fastfaddr2line.py            # 地址解析工具
+├── CHANGELOG.md                 # 更新日志
+├── QUICK_START.md               # 快速开始
+├── USAGE.md                     # 详细使用指南
+├── DURATION_FILTER.md           # 耗时过滤说明
+├── HOVER_HINT.md                # 悬停提示说明
+├── FEATURE_SUMMARY.md           # 功能总结
+├── PROJECT_STATUS.md            # 项目状态
+├── FIX_SUMMARY.md               # 修复总结
+├── ESC_KEY_FIX.md               # Esc键修复详情
+├── ENTER_KEY_FIX.md             # Enter键修复详情
+├── FOCUS_FIX.md                 # 焦点管理修复详情
+├── KEYBOARD_NAVIGATION_FIX.md   # 键盘导航修复详情
+├── FINAL_STATUS.md              # 最终状态报告
+├── tests/                       # 测试目录
+│   ├── README.md
+│   ├── test_*.py
+│   └── test_*.txt
+├── ftrace.txt                   # 示例数据
+└── sample.png                   # 效果截图
 ```
 
-## 工作原理
+## 常见问题
 
-1. **解析 ftrace 输出**：funcgraph.py 解析 function_graph 格式的 trace 数据
-2. **提取函数地址**：从 trace 中获取每个函数的返回地址
-3. **符号解析**：使用 fastfaddr2line 或 addr2line 将地址转换为源代码位置
-4. **生成 HTML**：构建交互式 HTML 页面，显示函数调用关系和源代码
+### Q: 过滤窗口不显示
+A: 确保使用 `--filter` 参数，且 trace 数据包含 CPU/PID/进程名等信息
 
-## 参考文章
+### Q: 上拉菜单不工作
+A: 检查是否有 `data-suggestions` 属性，确保输入框有候选词数据
 
-- [ftrace可视化工具迎来重大升级](https://mp.weixin.qq.com/s/xRVVgF5IDnLXGu2i-TbS5Q)
+### Q: 源码链接不工作
+A: 需要提供 `--base-url` 或 `--module-url`，并确保路径正确
+
+### Q: 耗时过滤不准确
+A: 检查 trace 是否包含耗时信息，带前缀的耗时也能正确过滤
+
+### Q: 性能问题
+A: 使用 `--fast` 参数启用 fastfaddr2line.py，速度提升数倍
+
+### Q: Enter键在链接上无效
+A: 这是已修复的问题。在链接上按 Enter 应该打开链接，在行上按 Enter 展开/折叠。如果仍有问题，请更新到最新版本。
+
+### Q: 键盘导航时 Esc 键无效
+A: 这是已修复的问题。Esc 键现在会清除所有选中状态，包括键盘选中、文本选择和 Tab 焦点。如果仍有问题，请更新到最新版本。
+
+### Q: Tab 选中后，↑↓ 选新行，按 Enter 还是操作原来的元素
+A: 这是已修复的问题。键盘导航时会自动移动焦点，确保 Enter 操作正确的行。如果仍有问题，请更新到最新版本。
+
+## 参考资料
+
+- [ftrace可视化工具](https://mp.weixin.qq.com/s/xRVVgF5IDnLXGu2i-TbS5Q)
 - [ftrace可视化工具(续)](https://mp.weixin.qq.com/s/Mq8uTR3c8V1gAR2zklsFPw)
-- [写了一个ftrace可视化工具，支持点击跳转](https://mp.weixin.qq.com/s/rNiWXC8YlZiAjfcjv7QtQA)
+- [写了一个ftrace可视化工具](https://mp.weixin.qq.com/s/rNiWXC8YlZiAjfcjv7QtQA)
 
 ## 许可证
 
-本项目遵循开源许可证，具体信息请查看仓库中的 LICENSE 文件。
+开源项目，欢迎贡献！
 
-## 贡献
+---
 
-欢迎提交 Issue 和 Pull Request 来改进这个项目。
+**版本**: v0.5
+**最后更新**: 2026-01-18
+**状态**: ✅ 完整可用
+
+## 🔧 最新修复 (2026-01-18)
+
+### 键盘导航焦点管理
+- ✅ 键盘导航时焦点自动跟随
+- ✅ Enter键区分链接和行
+- ✅ Esc键清除所有选中状态（含Tab焦点）
+- ✅ Tab和键盘导航完美兼容
+
+### 上拉菜单优化
+- ✅ 修复上拉菜单功能失效
+- ✅ 修复菜单与提示重叠
+- ✅ 支持所有4个输入框（CPU/PID/进程名/返回值）
+
+**详细修复说明**: 查看 `FIX_SUMMARY.md` 和 `FINAL_STATUS.md`

@@ -2570,7 +2570,7 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Funcgraph Visualization</title>
+    <title>{APP_TITLE} v{APP_VERSION} - {APP_AUTHOR}</title>
     <style>
         :root {{
             --bg-color: #f5f5f5;
@@ -2628,44 +2628,77 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
         h1 {{
             text-align: center;
             color: var(--text-color);
-            margin-bottom: 15px;
-            font-size: 26px;
-            font-weight: 600;
-            letter-spacing: 1px;
+            margin-bottom: 20px;
+            font-size: 32px;
+            font-weight: 700;
+            letter-spacing: 1.5px;
             display: flex;
             align-items: center;
             justify-content: center;
-            gap: 12px;
+            gap: 16px;
             flex-wrap: wrap;
+            position: relative;
+            padding-bottom: 15px;
+        }}
+        h1::after {{
+            content: '';
+            position: absolute;
+            bottom: 0;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 80px;
+            height: 3px;
+            background: linear-gradient(90deg, transparent, var(--btn-primary), transparent);
+            border-radius: 2px;
         }}
         .title-main {{
             display: inline;
+            background: linear-gradient(135deg, var(--btn-primary), var(--link-color));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            font-weight: 800;
+            letter-spacing: 2px;
         }}
         .title-meta {{
             display: flex;
             align-items: center;
-            gap: 8px;
+            gap: 10px;
             white-space: nowrap;
+            font-size: 14px;
+            margin-left: 8px;
         }}
         .version-badge {{
-            display: inline-block;
-            color: var(--text-color);
-            opacity: 0.6;
-            padding: 0 6px;
-            font-size: 11px;
-            font-weight: 500;
+            display: inline-flex;
+            align-items: center;
+            background: linear-gradient(135deg, var(--btn-primary), #2e7d32);
+            color: white;
+            padding: 4px 10px;
+            font-size: 12px;
+            font-weight: 700;
+            border-radius: 12px;
+            box-shadow: 0 2px 6px rgba(76, 175, 80, 0.3);
+            letter-spacing: 0.5px;
         }}
         [data-theme="dark"] .version-badge {{
-            opacity: 0.6;
+            background: linear-gradient(135deg, #66bb6a, #2e7d32);
+            box-shadow: 0 2px 6px rgba(102, 187, 106, 0.4);
         }}
         .author-badge {{
-            display: inline-block;
-            color: var(--text-color);
-            font-size: 11px;
-            padding: 0 6px;
-            border-left: 1px solid var(--border-color);
-            opacity: 0.5;
-            padding-left: 10px;
+            display: inline-flex;
+            align-items: center;
+            background: linear-gradient(135deg, #64b5f6, #1976d2);
+            color: white;
+            padding: 4px 10px;
+            font-size: 12px;
+            font-weight: 600;
+            border-radius: 12px;
+            box-shadow: 0 2px 6px rgba(25, 118, 210, 0.3);
+            letter-spacing: 0.5px;
+        }}
+        [data-theme="dark"] .author-badge {{
+            background: linear-gradient(135deg, #42a5f5, #1565c0);
+            box-shadow: 0 2px 6px rgba(66, 165, 245, 0.4);
         }}
         .info-panel {{
             margin-top: 12px;

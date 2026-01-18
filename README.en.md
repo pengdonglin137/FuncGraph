@@ -2,6 +2,8 @@
 
 ![Funcgraph_retaddr Visualization Example](sample.png)
 
+**Version**: v0.5 | **Last Updated**: 2026-01-18 | **Status**: ✅ Production Ready
+
 ## Introduction
 
 FuncGraph is a powerful ftrace visualization tool developed with **AI assistance**, primarily designed for:
@@ -9,8 +11,49 @@ FuncGraph is a powerful ftrace visualization tool developed with **AI assistance
 1. **Visualizing funcgraph-retaddr output**: Converts the output of the Linux kernel's function_graph tracer into an interactive HTML format, significantly improving the efficiency of locating code lines directly through traces.
 2. **Fast faddr2line implementation**: Rewrote the faddr2line functionality in the Linux kernel using Python, achieving an order-of-magnitude improvement in processing performance.
 
+## What's New in v0.5 (2026-01-18)
+
+### 🎯 Key Improvements
+
+- **Keyboard Navigation Focus Management**: Tab and arrow key navigation now work seamlessly together
+- **Enter Key Behavior Fix**: Correctly distinguishes between links and lines
+- **Autocomplete Menu Fix**: All 4 input boxes (CPU/PID/Process/Return) now support suggestions
+- **Esc Key Enhancement**: Clears all selection states including Tab focus
+- **Professional Title Design**: Gradient colors, shadows, rounded badges, and decorative divider
+
+### 🎨 UI/UX Upgrades
+
+**Browser Title**: `FuncGraph v0.5 - @dolinux`
+**Page Title**:
+```
+FuncGraph  v0.5  @dolinux
+───────────────────────────────
+```
+
+**Features**:
+- ✅ Gradient text (green → blue)
+- ✅ Shadow effects on badges
+- ✅ Decorative divider line
+- ✅ Professional typography (32px/800 weight)
+- ✅ Perfect theme adaptation (light/dark)
+
+### ⌨️ Enhanced Keyboard Navigation
+
+- **↑↓j/k**: Navigate between expandable lines (focus follows selection)
+- **Enter**: Expand/collapse lines (or open links when focused)
+- **Esc**: Clear all selections (keyboard, text highlight, Tab focus)
+- **Tab**: Navigate to links (works with keyboard navigation)
+
+### 🛠️ Technical Improvements
+
+- **Tabindex Support**: Lines are now focusable elements
+- **Focus Management**: Automatic focus movement during keyboard navigation
+- **Event Handling**: Smart distinction between link clicks and line interactions
+- **Performance**: Optimized event processing
+
 ## Features
 
+### Core Features
 - **Interactive HTML output**: Click on functions to jump to the corresponding source code location
 - **Kernel module support**: Parses symbol information of kernel modules
 - **Source code linking**: Supports setting a base-url to directly link to online code repositories (e.g., bootlin)
@@ -19,9 +62,22 @@ FuncGraph is a powerful ftrace visualization tool developed with **AI assistance
 - **Flexible parameter configuration**: Supports specifying vmlinux, kernel source code, module directories, etc.
 - **Cross-compilation and LLVM support**: Supports CROSS_COMPILE and LLVM environment variables for various toolchains
 - **Processing statistics**: Displays parsing time, total duration, and other performance metrics
-- **Filtering functionality**: Supports filtering trace lines by CPU, PID, and process name
-- **Real-time progress display**: Expand/Collapse operations show progress percentage
-- **Compiler suffix removal**: Automatically removes compiler optimization suffixes (e.g., `.isra.0`, `.constprop.0`) to display original function names
+
+### Filtering & Navigation
+- **Filter window**: Real-time filtering by CPU, PID, process name, and duration
+- **Autocomplete suggestions**: Smart suggestions for filter inputs (CPU/PID/Process/Return)
+- **Keyboard navigation**: ↑↓j/k navigation, Enter to expand/collapse, Esc to clear
+- **Tab navigation**: Full keyboard support for links and interactive elements
+- **Expand/Collapse**: Click or keyboard to show/hide function details
+
+### UI/UX Enhancements
+- **Professional title design**: Gradient colors, shadows, rounded badges, decorative divider
+- **Theme switching**: Light/dark mode with automatic preference saving
+- **Hover hints**: Contextual help for filter inputs
+- **Duration filtering**: Advanced filtering with >, <, >=, <=, ==, != operators
+- **Sorting support**: Sort trace lines by duration (asc/desc)
+- **Compiler suffix removal**: Automatically removes optimization suffixes (`.isra.0`, `.constprop.0`, etc.)
+- **Real-time progress**: Expand/Collapse operations show progress percentage
 
 ## Environment Requirements
 
@@ -230,7 +286,7 @@ Display result:  1)   0.123 us |  unwind_find_stack+0x20/0x50
 
 #### Using Filter Function
 
-Enable the `--filter` option to add a filter window in the HTML page, supporting filtering trace lines by CPU, PID, and process name:
+Enable the `--filter` option to add a filter window in the HTML page, supporting filtering trace lines by CPU, PID, process name, and duration:
 
 ```bash
 # Enable filter function (automatically enables --fast mode)
@@ -241,10 +297,13 @@ Enable the `--filter` option to add a filter window in the HTML page, supporting
 
 **Filter function explanation:**
 - **Auto-enables fast mode**: `--filter` automatically enables `--fast` mode
-- **Real-time filtering**: Enter CPU, PID, or process name in the HTML page to filter displayed lines in real-time
-- **Summary Bar update**: Shows "Filtered: X" statistics after filtering
+- **Real-time filtering**: Enter CPU, PID, process name, or duration in the HTML page
+- **Autocomplete suggestions**: Smart suggestions appear as you type
+- **Duration filtering**: Use operators like `>10`, `<5`, `>=100`, `<=200`, `==50`, `!=0`
+- **Sorting**: Use `sort:asc` or `sort:desc` in duration filter to sort by duration
+- **Combined filters**: Use `&&` to combine multiple conditions (e.g., `>10 sort:desc && cpu:0`)
+- **Summary Bar update**: Shows "Filtered: X / Total: Y" statistics after filtering
 - **Expand/Collapse optimization**: Only expands/collapses currently visible lines
-- **Multiple conditions**: Supports filtering with multiple conditions combined
 
 **Usage scenario:**
 ```bash
@@ -252,11 +311,30 @@ Enable the `--filter` option to add a filter window in the HTML page, supporting
 ./funcgraph.py --filter --vmlinux vmlinux --kernel-src /path/to/kernel --output result.html trace.txt
 
 # 2. Open result.html in browser
-# 3. Enter regular expressions in filter boxes:
+# 3. Use filter boxes:
 #    - CPU: 0|1|2 or [0-2]          # Matches CPU 0, 1, 2
 #    - PID: 1234|5678 or 0-100      # Matches PID 1234 or 5678
 #    - Comm: nginx|bash or ^nginx    # Matches process name nginx or bash
+#    - Duration: >10 sort:desc      # Show functions >10us, sorted descending
+#    - Return: 0 or -22             # Filter by return value
 # 4. Click Expand All to only expand filtered lines
+# 5. Press Esc to clear all selections
+# 6. Use Tab to navigate to links, Enter to open
+```
+
+**Advanced filter examples:**
+```bash
+# Duration > 10us, sorted descending, CPU 0 only
+>10 sort:desc && cpu:0
+
+# Duration between 5 and 100us, PID 1234 or 5678
+>5 && <100 && pid:1234,5678
+
+# Return value 0, process name starting with bash
+return:0 && comm:^bash
+
+# All functions > 100us, sorted ascending
+>100 sort:asc
 ```
 
 **Regular expression explanation:**
@@ -265,6 +343,13 @@ Enable the `--filter` option to add a filter window in the HTML page, supporting
 - `^`: Start anchor, e.g., `^nginx` matches process names starting with nginx
 - `$`: End anchor, e.g., `bash$` matches process names ending with bash
 - `*`: Zero or more, e.g., `.*` matches any character
+
+**Keyboard shortcuts in HTML:**
+- `↑` / `↓` or `j` / `k`: Navigate between expandable lines
+- `Enter`: Expand/collapse line (or open link if focused on link)
+- `Esc`: Clear all selections (keyboard, text highlight, Tab focus)
+- `Tab`: Navigate to interactive elements (links, buttons)
+- `Shift+Tab`: Navigate backwards
 
 ## Method to Capture Traces
 
@@ -321,6 +406,29 @@ funcgraph_visualization/
 3. **Symbol resolution**: Convert addresses to source code locations using fastfaddr2line or addr2line
 4. **Generate HTML**: Build an interactive HTML page showing function call relationships and source code
 
+## FAQ
+
+### Q: Keyboard navigation doesn't work properly
+A: This was fixed in v0.5. Make sure you're using the latest version. The HTML should include `tabindex="0"` on line containers and `focus()` calls in keyboard navigation.
+
+### Q: Enter key doesn't open links
+A: This was fixed in v0.5. Enter key now correctly distinguishes between links (opens link) and lines (expands/collapses). Update to the latest version.
+
+### Q: Esc key doesn't clear selection
+A: This was fixed in v0.5. Esc now clears all selection states including keyboard selection, text highlight, and Tab focus.
+
+### Q: Autocomplete doesn't show suggestions
+A: This was fixed in v0.5. All 4 input boxes (CPU/PID/Process/Return) now support autocomplete. Ensure you're using the latest version.
+
+### Q: Title looks plain
+A: This was upgraded in v0.5. The new title features gradient colors, shadows, rounded badges, and a decorative divider. Update to see the professional design.
+
+### Q: How to use duration filtering?
+A: Use operators in the duration filter box: `>10`, `<5`, `>=100`, `<=200`, `==50`, `!=0`. Combine with `sort:asc` or `sort:desc` for sorting.
+
+### Q: How to combine multiple filters?
+A: Use `&&` to combine conditions: `>10 sort:desc && cpu:0` or `>5 && <100 && pid:1234`
+
 ## Reference Articles
 
 - [Ftrace Visualization Tool Gets Major Upgrade](https://mp.weixin.qq.com/s/xRVVgF5IDnLXGu2i-TbS5Q)
@@ -334,3 +442,7 @@ This project is licensed under an open-source license. For detailed information,
 ## Contribution
 
 Issues and Pull Requests are welcome to improve this project.
+
+---
+
+**Version**: v0.5 | **Last Updated**: 2026-01-18 | **Status**: ✅ Production Ready
