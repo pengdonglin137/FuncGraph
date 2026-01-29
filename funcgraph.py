@@ -671,10 +671,18 @@ def parse_ftrace_file(file_path, verbose=False):
                     duration = None  # 耗时（微秒）
                     duration_raw = None  # 原始耗时字符串（包含单位）
 
-                    # 方法1: 匹配CPU编号: " 3)" 或 " 0)" 等
+                    # 方法1: 匹配CPU编号
+                    # 支持两种格式：
+                    # 1. 普通格式: "  3)" 或 " 0)"（行首）
+                    # 2. 带时间戳格式: "1324242.786252 |   5)"（时间戳 | CPU）
                     cpu_match = re.match(r'^\s*(\d+)\)', line)
                     if cpu_match:
                         cpu = int(cpu_match.group(1))
+                    else:
+                        # 尝试匹配带时间戳的格式: "时间戳 | CPU)"
+                        cpu_match_timestamp = re.match(r'^\s*[\d.]+\s*\|\s*(\d+)\)', line)
+                        if cpu_match_timestamp:
+                            cpu = int(cpu_match_timestamp.group(1))
 
                     # 方法2: 查找 PID/Comm 格式（只在函数调用之前的部分查找）
                     # 关键：只在函数调用之前的部分查找，避免匹配函数参数
@@ -685,8 +693,12 @@ def parse_ftrace_file(file_path, verbose=False):
                     prefix = line[:func_start]
 
                     # 关键：排除耗时信息和状态字符（latency 模式）
-                    # 普通格式：CPU)  [进程-PID]  |  [耗时]  |  函数
-                    # Latency 格式：CPU)  进程-PID  |  状态字符  |  [耗时]  |  函数
+                    # 格式1（普通）：CPU)  [进程-PID]  |  [耗时]  |  函数
+                    # 格式2（Latency）：CPU)  进程-PID  |  状态字符  |  [耗时]  |  函数
+                    # 格式3（带时间戳）：时间戳 | CPU)  进程-PID  |  状态  |  [耗时]  |  函数
+
+                    # 检查是否是带时间戳的格式
+                    has_timestamp = bool(re.match(r'^\s*[\d.]+\s*\|\s*\d+\)', prefix))
 
                     # 找到第一个分隔符 | 的位置
                     pipe_pos = prefix.find('|')
@@ -698,18 +710,42 @@ def parse_ftrace_file(file_path, verbose=False):
                         # 找到第二个分隔符 | 的位置（状态字符之后）
                         second_pipe = prefix.find('|', pipe_pos + 1)
                         if second_pipe != -1:
-                            # 有第二个分隔符，说明是 latency 模式
-                            # 在第一个分隔符之前查找 PID/Comm
-                            search_area = prefix[:pipe_pos]
+                            # 有第二个分隔符
+                            if has_timestamp:
+                                # 带时间戳格式：时间戳 | CPU)  进程-PID  |  状态  |  [耗时]  |  函数
+                                # 在第一个分隔符之后查找 PID/Comm
+                                search_area = prefix[pipe_pos + 1:]
+                            else:
+                                # Latency 模式：CPU)  进程-PID  |  状态  |  [耗时]  |  函数
+                                # 在第一个分隔符之前查找 PID/Comm
+                                search_area = prefix[:pipe_pos]
                         else:
-                            # 只有一个分隔符，可能是普通模式或耗时模式
-                            # 在分隔符之前查找 PID/Comm
-                            search_area = prefix[:pipe_pos]
+                            # 只有一个分隔符
+                            if has_timestamp:
+                                # 带时间戳格式：时间戳 | CPU)  进程-PID  |  ...
+                                # 在第一个分隔符之后查找 PID/Comm
+                                search_area = prefix[pipe_pos + 1:]
+                            else:
+                                # 普通格式：CPU)  进程-PID  |  ...
+                                # 在分隔符之前查找 PID/Comm
+                                search_area = prefix[:pipe_pos]
                     else:
                         # 没有分隔符，耗时信息可能在 CPU 编号之后
                         # 移除耗时格式：[ $@*#!+ ]数字.us
                         timing_pattern = r'[ $@*#!+]*\d+\.us'
                         search_area = re.sub(timing_pattern, '', prefix)
+
+                    # 如果是带时间戳的格式，需要从search_area中移除CPU部分
+                    # 格式：时间戳 | CPU)  进程-PID  |  ...
+                    # 现在search_area是：CPU)  进程-PID  |  ...
+                    # 需要移除 CPU) 部分
+                    if has_timestamp:
+                        cpu_match = re.match(r'^\s*\d+\)\s*', search_area)
+                        if cpu_match:
+                            search_area = search_area[cpu_match.end():]
+
+                    # DEBUG: 打印search_area内容（可以注释掉）
+                    # print(f"DEBUG: has_timestamp={has_timestamp}, search_area='{search_area}'", file=sys.stderr)
 
                     # 提取耗时信息（在搜索区域之前）
                     # 格式: " 3)   0.157 us    |" 或 " 3)  $1.234 us    |"
@@ -2207,7 +2243,7 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
         # 只有当有至少一个输入框时才生成过滤框
         if filter_inputs:
             filter_html = f'''
-            <div class="filter-box">
+            <div class="filter-box" id="filterBox">
                 {''.join(filter_inputs)}
                 <button class="control-btn filter-btn" onclick="applyFilter()">Filter</button>
                 <button class="control-btn clear-btn" onclick="clearFilter()">Clear</button>
@@ -3571,6 +3607,7 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
             <!-- 过滤窗口占位符，稍后插入 -->
             <div id="filterPlaceholder"></div>
             <div class="right-buttons">
+                <button class="control-btn" onclick="toggleFilterBox()">Toggle Filter</button>
                 <button class="control-btn" onclick="scrollToTop()">Top</button>
                 <button class="control-btn" onclick="copyVisibleContent(event)">Copy</button>
                 <button class="control-btn" onclick="expandAll()">Expand All</button>
@@ -3985,6 +4022,23 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
             if (event.key === 'Enter') {
                 event.preventDefault();
                 applyFilter();
+            }
+        }
+
+        // 切换过滤器窗口的显示/隐藏
+        function toggleFilterBox() {
+            const filterBox = document.getElementById('filterBox');
+            if (filterBox) {
+                // 切换显示状态
+                if (filterBox.style.display === 'none') {
+                    filterBox.style.display = 'flex';
+                    // 保存状态到localStorage
+                    localStorage.setItem('filterBoxVisible', 'true');
+                } else {
+                    filterBox.style.display = 'none';
+                    // 保存状态到localStorage
+                    localStorage.setItem('filterBoxVisible', 'false');
+                }
             }
         }
 
@@ -5211,7 +5265,24 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
                 }
             }
         });
-        
+
+        // 页面初始化：恢复filter窗口状态
+        document.addEventListener('DOMContentLoaded', function() {
+            // 从localStorage读取filter窗口的显示状态
+            const filterBoxVisible = localStorage.getItem('filterBoxVisible');
+            const filterBox = document.getElementById('filterBox');
+
+            if (filterBox) {
+                // 如果有保存的状态，按状态显示
+                if (filterBoxVisible === 'false') {
+                    filterBox.style.display = 'none';
+                } else {
+                    // 默认显示（包括filterBoxVisible为'true'或未设置的情况）
+                    filterBox.style.display = 'flex';
+                }
+            }
+        });
+
         // 添加键盘快捷键支持
         document.addEventListener('keydown', function(event) {
             console.log('🔑 Keydown event:', 'key=', event.key, 'keyCode=', event.keyCode, 'code=', event.code);
