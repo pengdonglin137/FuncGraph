@@ -1001,11 +1001,11 @@
                 <div class="info-item"><div class="info-label">OS:</div><div class="info-value">Linux 6.8.0-90-generic</div></div>
                 <div class="info-item"><div class="info-label">Hostname:</div><div class="info-value">pengdl-pc</div></div>
                 <div class="info-item"><div class="info-label">Processor:</div><div class="info-value">x86_64</div></div>
-                <div class="info-item"><div class="info-label">Generated At:</div><div class="info-value">2026-01-18 22:30:08</div></div>
+                <div class="info-item"><div class="info-label">Generated At:</div><div class="info-value">2026-01-29 23:37:10</div></div>
                 <div style="border-top: 1px solid var(--border-color); margin: 8px 0;"></div>
                 <div style="font-weight: 600; color: var(--text-color); margin-bottom: 8px; font-size: 11px;">Processing Stats</div>
                 <div class="info-item"><div class="info-label">Parse Time:</div><div class="info-value">0.01s</div></div>
-                <div class="info-item"><div class="info-label">Vmlinux Time:</div><div class="info-value">4.72s</div></div>
+                <div class="info-item"><div class="info-label">Vmlinux Time:</div><div class="info-value">4.94s</div></div>
                 <div class="info-item"><div class="info-label">Modules Time:</div><div class="info-value">0.00s</div></div>
                 <div class="info-item"><div class="info-label">Total Lines:</div><div class="info-value">320</div></div>
                 <div class="info-item"><div class="info-label">Expandable:</div><div class="info-value">212</div></div>
@@ -1033,7 +1033,7 @@
         <div class="controls">
             <!-- 过滤窗口占位符，稍后插入 -->
             
-            <div class="filter-box">
+            <div class="filter-box" id="filterBox">
                 
             <div class="filter-input-group">
                 <input type="text" id="filterCpu" placeholder="CPU regex (e.g., 0|1|2 or [0-2])" style="width: 140px;" data-suggestions="3" onkeypress="handleFilterKeypress(event)" onmouseenter="showHint(event, 'CPU过滤：支持正则表达式，如 0|1|2 或 [0-2]')" onmouseleave="hideHint()">
@@ -1062,6 +1062,7 @@
             </div>
             <div class="filter-hint" id="filterHint"></div>
             <div class="right-buttons">
+                <button class="control-btn" onclick="toggleFilterBox()">Toggle Filter</button>
                 <button class="control-btn" onclick="scrollToTop()">Top</button>
                 <button class="control-btn" onclick="copyVisibleContent(event)">Copy</button>
                 <button class="control-btn" onclick="expandAll()">Expand All</button>
@@ -1219,6 +1220,23 @@
             if (event.key === 'Enter') {
                 event.preventDefault();
                 applyFilter();
+            }
+        }
+
+        // 切换过滤器窗口的显示/隐藏
+        function toggleFilterBox() {
+            const filterBox = document.getElementById('filterBox');
+            if (filterBox) {
+                // 切换显示状态
+                if (filterBox.style.display === 'none') {
+                    filterBox.style.display = 'flex';
+                    // 保存状态到localStorage
+                    localStorage.setItem('filterBoxVisible', 'true');
+                } else {
+                    filterBox.style.display = 'none';
+                    // 保存状态到localStorage
+                    localStorage.setItem('filterBoxVisible', 'false');
+                }
             }
         }
 
@@ -2445,7 +2463,24 @@
                 }
             }
         });
-        
+
+        // 页面初始化：恢复filter窗口状态
+        document.addEventListener('DOMContentLoaded', function() {
+            // 从localStorage读取filter窗口的显示状态
+            const filterBoxVisible = localStorage.getItem('filterBoxVisible');
+            const filterBox = document.getElementById('filterBox');
+
+            if (filterBox) {
+                // 如果有保存的状态，按状态显示
+                if (filterBoxVisible === 'false') {
+                    filterBox.style.display = 'none';
+                } else {
+                    // 默认显示（包括filterBoxVisible为'true'或未设置的情况）
+                    filterBox.style.display = 'flex';
+                }
+            }
+        });
+
         // 添加键盘快捷键支持
         document.addEventListener('keydown', function(event) {
             console.log('🔑 Keydown event:', 'key=', event.key, 'keyCode=', event.keyCode, 'code=', event.code);
