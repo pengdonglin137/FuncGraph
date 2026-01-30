@@ -3023,7 +3023,7 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
         }}
         .line-container {{
             display: flex;
-            align-items: flex-start;
+            align-items: center;
             padding: 2px 5px;
             border-radius: 3px;
             transition: background-color 0.2s;
@@ -3073,20 +3073,21 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
         }}
         .line-content {{
             flex-grow: 1;
-            padding: 2px 0;
+            padding: 0;
             -webkit-user-select: text;
             -moz-user-select: text;
             -ms-user-select: text;
             user-select: text;
             white-space: pre;
             font-family: 'Courier New', monospace;
+            line-height: 1.2;
         }}
         .fold-marker {{
             display: inline-block;
             width: 16px;
             color: var(--btn-primary);
             font-weight: bold;
-            font-size: 12px;
+            font-size: 14px;
             margin-right: 4px;
             cursor: pointer;
             -webkit-user-select: none;
@@ -3094,6 +3095,8 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
             -ms-user-select: none;
             user-select: none;
             flex-shrink: 0;
+            line-height: 1.2;
+            text-align: center;
         }}
         .fold-marker:hover {{
             color: var(--btn-primary-hover);
@@ -3963,10 +3966,10 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
                 fold_marker = '<span class="fold-icon" style="transform:rotate(0deg)">▼</span>'  # 折叠标记（默认展开）
             elif fold_type == 'exit':
                 fold_class = "fold-exit"
-                fold_marker = ""  # 函数返回行不需要折叠图标
+                fold_marker = '<span style="display:inline-block; width:20px;"></span>'  # 保持对齐的空格
             elif fold_type == 'inner':
                 fold_class = "fold-inner"
-                fold_marker = "  "  # 空白标记，保持对齐
+                fold_marker = '<span style="display:inline-block; width:20px;"></span>'  # 保持对齐的空格
 
         # 获取CPU、PID、进程名信息，用于过滤
         cpu = line_data.get('cpu')
@@ -4042,9 +4045,12 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
         html_str += '>'
         html_str += f'<span class="line-number" onclick="updateAnchor(\'{line_anchor_id}\', event)" title="Click to copy anchor link">{line_number}</span>'
 
-        # 添加折叠标记
+        # 添加折叠标记 - 所有行都需要折叠标记区域来保持对齐
         if is_foldable:
             html_str += f'<span class="fold-marker">{fold_marker}</span>'
+        else:
+            # 没有折叠信息的行也需要对齐空格
+            html_str += '<span class="fold-marker"><span style="display:inline-block; width:20px;"></span></span>'
 
         html_str += f'<span class="line-content">{escaped_line}</span>'
 
