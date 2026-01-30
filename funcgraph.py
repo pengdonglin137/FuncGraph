@@ -661,6 +661,10 @@ def identify_fold_blocks(parsed_lines, verbose=False):
         indent_match = re.match(r'(\s*)', func_column)
         indent_level = len(indent_match.group(1)) if indent_match else 0
 
+        # 记录当前行所处的折叠祖先（以空格分隔），用于在折叠父函数时也能匹配到内部行
+        ancestor_ids = [entry['fold_id'] for entry in call_stack]
+        line_data['fold_ancestors'] = ' '.join(ancestor_ids) if ancestor_ids else ''
+
         # 检查是否是函数入口（包含 {）
         # 格式: func() { 或 func(args) {
         # 注意：行尾可能有注释，所以不能使用 $ 匹配行尾
@@ -3956,7 +3960,13 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
 
         # 添加折叠属性
         if is_foldable:
+            # fold_ancestors 作为空格分隔的 token 列表，便于在 JS 中使用 ~= 选择器匹配
+            ancestors_attr = ''
+            if line_data.get('fold_ancestors'):
+                ancestors_attr = line_data.get('fold_ancestors')
             data_attrs += f' data-fold-id="{fold_id}" data-fold-type="{fold_type}"'
+            if ancestors_attr:
+                data_attrs += f' data-fold-ancestors="{ancestors_attr}"'
 
         # 添加参数属性（用于参数过滤）
         if params:
@@ -4211,12 +4221,13 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
         function restoreFoldedState() {
             for (const [foldId, isFolded] of Object.entries(foldedBlocks)) {
                 // 折叠/展开对应的内容行（entry 行始终显示，但图标需要更新）
-                const lines = document.querySelectorAll(`[data-fold-id="${foldId}"]`);
+                const lines = document.querySelectorAll(`[data-fold-id="${foldId}"], [data-fold-ancestors~="${foldId}"]`);
                 if (isFolded) {
-                    // 折叠：隐藏所有非入口行
+                    // 折叠：隐藏所有属于该 foldId 或其后代的行（但保留本入口行）
                     lines.forEach(line => {
                         const type = line.getAttribute('data-fold-type');
-                        if (type !== 'entry') {
+                        const thisId = line.getAttribute('data-fold-id');
+                        if (!(type === 'entry' && thisId === foldId)) {
                             line.style.display = 'none';
                         }
                     });
@@ -4231,7 +4242,7 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
                         }
                     }
                 } else {
-                    // 展开：确保所有行显示（默认应为展开，但显式恢复）
+                    // 展开：确保所有相关行显示
                     lines.forEach(line => {
                         line.style.display = '';
                     });
@@ -5408,16 +5419,28 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
                     icon.textContent = '▼';
                     icon.style.transform = 'rotate(0deg)';
                 }
+
+                // 展开：显示所有属于这个 foldId 的行或包含该 foldId 的祖先的行
+                const linesToShow = document.querySelectorAll(`[data-fold-id="${foldId}"], [data-fold-ancestors~="${foldId}"]`);
+                console.log(`Found ${linesToShow.length} lines to show (including descendants)`);
+                linesToShow.forEach(line => {
+                    line.style.display = '';
+                });
+
+                // 在展开后重新应用其他已保存的折叠状态（例如子折叠）
+                restoreFoldedState();
             } else {
                 // 折叠
                 console.log(`Collapsing foldId: ${foldId}`);
                 foldedBlocks[foldId] = true;
-                // 隐藏所有属于这个foldId的行（除了入口行）
-                const lines = document.querySelectorAll(`[data-fold-id="${foldId}"]`);
-                console.log(`Found ${lines.length} lines to hide`);
+                // 隐藏所有属于这个 foldId 的行或祖先中包含该 foldId 的行（但保留本入口行）
+                const lines = document.querySelectorAll(`[data-fold-id="${foldId}"], [data-fold-ancestors~="${foldId}"]`);
+                console.log(`Found ${lines.length} lines to hide (including descendants)`);
                 lines.forEach(line => {
                     const type = line.getAttribute('data-fold-type');
-                    if (type !== 'entry') {
+                    const thisId = line.getAttribute('data-fold-id');
+                    // 保留当前折叠入口行（与 foldId 相同且类型为 entry）
+                    if (!(type === 'entry' && thisId === foldId)) {
                         line.style.display = 'none';
                     }
                 });
