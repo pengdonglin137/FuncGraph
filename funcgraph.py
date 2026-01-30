@@ -652,9 +652,13 @@ def identify_fold_blocks(parsed_lines, verbose=False):
         if cpu is None or raw_func_name is None:
             continue
 
-        # 计算缩进级别（通过前导空格数量）
-        # 找到第一个非空格字符的位置
-        indent_match = re.match(r'(\s*)', raw_line)
+        # 计算缩进级别：基于函数列（最后一个 '|' 之后）的前导空格数量
+        # 这样能更准确地反映函数调用的显示缩进（原始行的行首可能是CPU/时间戳列）
+        func_column = raw_line
+        if '|' in raw_line:
+            # 取最后一个 '|' 之后的部分作为函数显示列
+            func_column = raw_line.split('|')[-1]
+        indent_match = re.match(r'(\s*)', func_column)
         indent_level = len(indent_match.group(1)) if indent_match else 0
 
         # 检查是否是函数入口（包含 {）
@@ -3928,8 +3932,8 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
         if is_foldable:
             if fold_type == 'entry':
                 fold_class = "fold-entry"
-                # 使用一个可选的图标元素，便于 JavaScript 查找并旋转/替换图标字符
-                fold_marker = '<span class="fold-icon">▶</span>'  # 折叠标记
+                # 默认展开状态：使用向下箭头表示展开（可通过 CSS/JS 旋转和替换）
+                fold_marker = '<span class="fold-icon" style="transform:rotate(0deg)">▼</span>'  # 折叠标记（默认展开）
             elif fold_type == 'exit':
                 fold_class = "fold-exit"
                 fold_marker = ""  # 函数返回行不需要折叠图标
@@ -4141,8 +4145,7 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
         </ul>
         <h3>Function Call Folding</h3>
         <ul>
-            <li>Click the <strong>▶</strong> marker to fold a function call block</li>
-            <li>Click the <strong>▼</strong> marker to unfold a function call block</li>
+            <li>Click the marker (<strong>▼</strong>/<strong>▶</strong>) to fold/unfold a function call block</li>
             <li>Folds all lines between function entry and exit (including sub-functions)</li>
             <li>Folded blocks are saved in browser storage</li>
         </ul>
@@ -4207,15 +4210,41 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
         // 恢复折叠状态
         function restoreFoldedState() {
             for (const [foldId, isFolded] of Object.entries(foldedBlocks)) {
+                // 折叠/展开对应的内容行（entry 行始终显示，但图标需要更新）
+                const lines = document.querySelectorAll(`[data-fold-id="${foldId}"]`);
                 if (isFolded) {
-                    // 折叠所有属于这个foldId的行（除了入口行）
-                    const lines = document.querySelectorAll(`[data-fold-id="${foldId}"]`);
+                    // 折叠：隐藏所有非入口行
                     lines.forEach(line => {
                         const type = line.getAttribute('data-fold-type');
                         if (type !== 'entry') {
                             line.style.display = 'none';
                         }
                     });
+
+                    // 更新入口图标为折叠状态
+                    const entryEl = document.querySelector(`[data-fold-id="${foldId}"][data-fold-type="entry"]`);
+                    if (entryEl) {
+                        const icon = entryEl.querySelector('.fold-icon');
+                        if (icon) {
+                            icon.textContent = '▶';
+                            icon.style.transform = 'rotate(90deg)';
+                        }
+                    }
+                } else {
+                    // 展开：确保所有行显示（默认应为展开，但显式恢复）
+                    lines.forEach(line => {
+                        line.style.display = '';
+                    });
+
+                    // 更新入口图标为展开状态
+                    const entryEl = document.querySelector(`[data-fold-id="${foldId}"][data-fold-type="entry"]`);
+                    if (entryEl) {
+                        const icon = entryEl.querySelector('.fold-icon');
+                        if (icon) {
+                            icon.textContent = '▼';
+                            icon.style.transform = 'rotate(0deg)';
+                        }
+                    }
                 }
             }
         }
