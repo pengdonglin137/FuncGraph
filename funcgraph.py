@@ -670,10 +670,12 @@ def identify_fold_blocks(parsed_lines, verbose=False):
         # 注意：行尾可能有注释，所以不能使用 $ 匹配行尾
         if re.search(r'\)\s*\{', raw_line):
             # 这是一个函数入口
-            # 创建唯一标识符: CPU_PID_函数名_调用深度_缩进级别
+            # 创建唯一标识符: CPU_PID_函数名_行号_调用深度_缩进级别
+            # 包含行号以确保同名连续调用（同一 depth/indent）具有不同的 fold_id
             # 如果pid为None，则使用空字符串
             pid_str = pid if pid is not None else ""
-            fold_id = f"{cpu}_{pid_str}_{raw_func_name}_{len(call_stack)}_{indent_level}"
+            # 使用 line_index 作为唯一性的一部分
+            fold_id = f"{cpu}_{pid_str}_{raw_func_name}_{line_index}_{len(call_stack)}_{indent_level}"
 
             # 将入口信息推入栈
             call_stack.append({
@@ -808,17 +810,23 @@ def parse_ftrace_file(file_path, verbose=False, enable_fold=False):
                     duration_raw = None  # 原始耗时字符串（包含单位）
 
                     # 方法1: 匹配CPU编号
-                    # 支持两种格式：
-                    # 1. 普通格式: "  3)" 或 " 0)"（行首）
-                    # 2. 带时间戳格式: "1324242.786252 |   5)"（时间戳 | CPU）
+                    # 支持多种前缀：
+                    # - 直接 CPU 格式: "  3)" 或 " 0)"（行首）
+                    # - 带时间戳格式: "1324242.786252 |   5)"（时间戳 | CPU）
+                    # - 由行号前缀的格式: "84  3)"（行号 + CPU）
                     cpu_match = re.match(r'^\s*(\d+)\)', line)
                     if cpu_match:
                         cpu = int(cpu_match.group(1))
                     else:
-                        # 尝试匹配带时间戳的格式: "时间戳 | CPU)"
-                        cpu_match_timestamp = re.match(r'^\s*[\d.]+\s*\|\s*(\d+)\)', line)
-                        if cpu_match_timestamp:
-                            cpu = int(cpu_match_timestamp.group(1))
+                        # 先尝试匹配行号 + CPU 的格式，如: "84  3)"
+                        cpu_match_line_num = re.match(r'^\s*\d+\s+(\d+)\)', line)
+                        if cpu_match_line_num:
+                            cpu = int(cpu_match_line_num.group(1))
+                        else:
+                            # 尝试匹配带时间戳的格式: "时间戳 | CPU)"
+                            cpu_match_timestamp = re.match(r'^\s*[\d.]+\s*\|\s*(\d+)\)', line)
+                            if cpu_match_timestamp:
+                                cpu = int(cpu_match_timestamp.group(1))
 
                     # 方法2: 查找 PID/Comm 格式（只在函数调用之前的部分查找）
                     # 关键：只在函数调用之前的部分查找，避免匹配函数参数
@@ -3096,6 +3104,21 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
         [data-theme="dark"] .fold-entry {{
             background-color: rgba(102, 187, 106, 0.08);
         }}
+        /* 折叠时的高亮样式：更醒目的背景与图标颜色 */
+        .fold-entry.folded {{
+            background-color: rgba(244, 67, 54, 0.12);
+            color: var(--text-muted);
+        }}
+        [data-theme="dark"] .fold-entry.folded {{
+            background-color: rgba(211, 47, 47, 0.18);
+            color: var(--text-muted);
+        }}
+        .fold-entry.folded .fold-icon {{
+            color: var(--btn-danger);
+        }}
+        [data-theme="dark"] .fold-entry.folded .fold-icon {{
+            color: var(--btn-danger);
+        }}
         .fold-exit {{
             background-color: rgba(244, 67, 54, 0.05);
         }}
@@ -4240,6 +4263,8 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
                             icon.textContent = '▶';
                             icon.style.transform = 'rotate(90deg)';
                         }
+                        // 同步 folded 类
+                        entryEl.classList.add('folded');
                     }
                 } else {
                     // 展开：确保所有相关行显示
@@ -5420,6 +5445,14 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
                     icon.style.transform = 'rotate(0deg)';
                 }
 
+                // 移除入口行的 folded 类，恢复颜色
+                try {
+                    const entryEl = document.querySelector(`[data-fold-id="${foldId}"][data-fold-type="entry"]`);
+                    if (entryEl) entryEl.classList.remove('folded');
+                } catch (e) {
+                    console.warn('Failed to remove folded class on expand', e);
+                }
+
                 // 展开：显示所有属于这个 foldId 的行或包含该 foldId 的祖先的行
                 const linesToShow = document.querySelectorAll(`[data-fold-id="${foldId}"], [data-fold-ancestors~="${foldId}"]`);
                 console.log(`Found ${linesToShow.length} lines to show (including descendants)`);
@@ -5458,6 +5491,14 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
                     console.log(`Updating icon to collapsed state: ${icon.textContent} -> ▶`);
                     icon.textContent = '▶';
                     icon.style.transform = 'rotate(90deg)';
+                }
+
+                // 添加 folded 类，使入口行在折叠时颜色更醒目
+                try {
+                    const entryEl = document.querySelector(`[data-fold-id="${foldId}"][data-fold-type="entry"]`);
+                    if (entryEl) entryEl.classList.add('folded');
+                } catch (e) {
+                    console.warn('Failed to add folded class on collapse', e);
                 }
             }
 
