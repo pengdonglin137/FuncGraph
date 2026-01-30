@@ -2,7 +2,7 @@
 
 ![Funcgraph_retaddr Visualization Example](sample.png)
 
-**Version**: v0.5 | **Last Updated**: 2026-01-18 | **Status**: ✅ Production Ready
+**Version**: v0.6 | **Last Updated**: 2026-01-30 | **Status**: ✅ Production Ready
 
 ## Introduction
 
@@ -10,32 +10,17 @@ FuncGraph is a powerful ftrace visualization tool developed with **AI assistance
 
 1. **Visualizing funcgraph-retaddr output**: Converts the output of the Linux kernel's function_graph tracer into an interactive HTML format, significantly improving the efficiency of locating code lines directly through traces.
 2. **Fast faddr2line implementation**: Rewrote the faddr2line functionality in the Linux kernel using Python, achieving an order-of-magnitude improvement in processing performance.
+3. **Function call folding**: Supports folding/expanding function call blocks to simplify viewing of complex call stacks.
 
-## What's New in v0.5 (2026-01-18)
+## What's New in v0.6 (2026-01-30)
 
-### 🎯 Key Improvements
+### 🎯 Function Call Folding Feature
 
-- **Keyboard Navigation Focus Management**: Tab and arrow key navigation now work seamlessly together
-- **Enter Key Behavior Fix**: Correctly distinguishes between links and lines
-- **Autocomplete Menu Fix**: All 4 input boxes (CPU/PID/Process/Return) now support suggestions
-- **Esc Key Enhancement**: Clears all selection states including Tab focus
-- **Professional Title Design**: Gradient colors, shadows, rounded badges, and decorative divider
-
-### 🎨 UI/UX Upgrades
-
-**Browser Title**: `FuncGraph v0.5 - @dolinux`
-**Page Title**:
-```
-FuncGraph  v0.5  @dolinux
-───────────────────────────────
-```
-
-**Features**:
-- ✅ Gradient text (green → blue)
-- ✅ Shadow effects on badges
-- ✅ Decorative divider line
-- ✅ Professional typography (32px/800 weight)
-- ✅ Perfect theme adaptation (light/dark)
+- ✅ **Function call folding/expanding**: Click the `▶` icon before function entry lines to fold/expand function call blocks
+- ✅ **Fold icon display**: Only shows fold icon on function entry lines (not on return lines)
+- ✅ **Nested function support**: Correctly handles folding of nested function calls
+- ✅ **State persistence**: Fold state automatically saved to localStorage
+- ✅ **Icon state switching**: Real-time icon state switching (`▶` ↔ `▼`)
 
 ### ⌨️ Enhanced Keyboard Navigation
 
@@ -62,6 +47,20 @@ FuncGraph  v0.5  @dolinux
 - **Flexible parameter configuration**: Supports specifying vmlinux, kernel source code, module directories, etc.
 - **Cross-compilation and LLVM support**: Supports CROSS_COMPILE and LLVM environment variables for various toolchains
 - **Processing statistics**: Displays parsing time, total duration, and other performance metrics
+
+### Function Call Folding
+- **Fold icon**: Displays `▶` icon before function entry lines
+- **Fold operation**: Click icon to fold/expand function call blocks
+- **Nested support**: Correctly handles folding of nested function calls
+- **State persistence**: Fold state automatically saved to localStorage
+- **Icon switching**: `▶` when folded, `▼` when expanded
+
+**Folding features**:
+- ✅ Only shows fold icon on function entry lines
+- ✅ Hides all lines between function entry and exit when folded
+- ✅ Supports nested function call folding
+- ✅ Automatic fold state saving and restoration
+- ✅ Real-time icon state switching
 
 ### Filtering & Navigation
 - **Filter window**: Real-time filtering by CPU, PID, process name, and duration
@@ -320,6 +319,7 @@ Enable the `--filter` option to add a filter window in the HTML page, supporting
 # 4. Click Expand All to only expand filtered lines
 # 5. Press Esc to clear all selections
 # 6. Use Tab to navigate to links, Enter to open
+# 7. Click ▶ icons to fold/expand function call blocks
 ```
 
 **Advanced filter examples:**
@@ -429,6 +429,15 @@ A: Use operators in the duration filter box: `>10`, `<5`, `>=100`, `<=200`, `==5
 ### Q: How to combine multiple filters?
 A: Use `&&` to combine conditions: `>10 sort:desc && cpu:0` or `>5 && <100 && pid:1234`
 
+### Q: Function call folding icon doesn't show
+A: Ensure trace data contains function entry and exit information. Folding feature requires complete function_graph data.
+
+### Q: Icon doesn't switch after folding
+A: This was fixed in v0.6. Icon should show `▶` when folded and `▼` when expanded. If still having issues, please update to the latest version.
+
+### Q: Folding feature doesn't work
+A: Check browser console for error messages. Folding feature requires complete function_graph data support.
+
 ## Reference Articles
 
 - [Ftrace Visualization Tool Gets Major Upgrade](https://mp.weixin.qq.com/s/xRVVgF5IDnLXGu2i-TbS5Q)
@@ -445,4 +454,26 @@ Issues and Pull Requests are welcome to improve this project.
 
 ---
 
-**Version**: v0.5 | **Last Updated**: 2026-01-18 | **Status**: ✅ Production Ready
+**Version**: v0.6 | **Last Updated**: 2026-01-30 | **Status**: ✅ Production Ready
+
+## 🔧 Latest Fixes (2026-01-30)
+
+### Function Call Folding Feature
+- ✅ Implemented function call folding/expanding feature
+- ✅ Fold icon only displayed on function entry lines
+- ✅ Supports nested function call folding
+- ✅ Fold state automatically saved to localStorage
+- ✅ Icon state real-time switching (▶ ↔ ▼)
+
+### Keyboard Navigation Focus Management
+- ✅ Keyboard navigation with automatic focus following
+- ✅ Enter key distinguishes between links and lines
+- ✅ Esc key clears all selection states (including Tab focus)
+- ✅ Tab and keyboard navigation work seamlessly together
+
+### Autocomplete Menu Optimization
+- ✅ Fixed autocomplete menu functionality
+- ✅ Fixed menu overlap with hints
+- ✅ Supports all 4 input boxes (CPU/PID/Process/Return)
+
+**Detailed fix information**: See `FIX_SUMMARY.md` and `FINAL_STATUS.md`
