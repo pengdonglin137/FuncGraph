@@ -627,12 +627,126 @@ def remove_compiler_suffix(func_name):
     else:
         return cleaned
 
-def parse_ftrace_file(file_path, verbose=False):
+def identify_fold_blocks(parsed_lines, verbose=False):
+    """识别函数调用折叠块
+
+    参数:
+        parsed_lines: 解析后的行列表
+        verbose: 是否输出详细信息
+
+    返回:
+        无，直接修改parsed_lines中的fold_id和fold_type字段
+    """
+    # 使用栈来跟踪函数调用关系
+    # 栈中存储: (cpu, pid, func_name, line_index, fold_id, call_depth)
+    call_stack = []
+
+    for line_index, line_data in enumerate(parsed_lines):
+        cpu = line_data.get('cpu')
+        pid = line_data.get('pid')
+        raw_func_name = line_data.get('raw_func_name')
+        display_func_name = line_data.get('display_func_name')
+        raw_line = line_data.get('raw_line', '')
+
+        # 跳过没有CPU/PID/函数名的行
+        if cpu is None or pid is None or raw_func_name is None:
+            continue
+
+        # 检查是否是函数入口（包含 {）
+        # 格式: func() { 或 func(args) {
+        # 注意：行尾可能有注释，所以不能使用 $ 匹配行尾
+        if re.search(r'\)\s*\{', raw_line):
+            # 这是一个函数入口
+            # 创建唯一标识符: CPU_PID_函数名_调用深度
+            fold_id = f"{cpu}_{pid}_{raw_func_name}_{len(call_stack)}"
+
+            # 将入口信息推入栈
+            call_stack.append({
+                'cpu': cpu,
+                'pid': pid,
+                'func_name': raw_func_name,
+                'line_index': line_index,
+                'fold_id': fold_id,
+                'call_depth': len(call_stack)
+            })
+
+            # 标记为入口
+            line_data['fold_id'] = fold_id
+            line_data['fold_type'] = 'entry'
+            line_data['call_depth'] = len(call_stack) - 1  # 当前调用深度
+
+            if verbose:
+                print(f"Fold entry: {fold_id} at line {line_index + 1}, depth {len(call_stack) - 1}", file=sys.stderr)
+
+        # 检查是否是函数出口（包含 }）
+        # 格式: } /* func */ 或 } /* func ret=xxx */
+        elif re.search(r'}\s*/\*\s*([a-zA-Z_][a-zA-Z0-9_.]*)', raw_line):
+            # 这是一个函数出口
+            # 提取函数名
+            exit_func_match = re.search(r'}\s*/\*\s*([a-zA-Z_][a-zA-Z0-9_.]*)', raw_line)
+            if exit_func_match:
+                exit_func_name = exit_func_match.group(1)
+
+                # 从栈中查找匹配的入口
+                # 从栈顶开始查找，找到第一个匹配的入口
+                found_match = False
+                for i in range(len(call_stack) - 1, -1, -1):
+                    entry = call_stack[i]
+                    if (entry['cpu'] == cpu and
+                        entry['pid'] == pid and
+                        entry['func_name'] == exit_func_name):
+                        # 找到匹配的入口
+                        fold_id = entry['fold_id']
+                        call_depth = entry['call_depth']
+
+                        # 标记为出口
+                        line_data['fold_id'] = fold_id
+                        line_data['fold_type'] = 'exit'
+                        line_data['call_depth'] = call_depth
+
+                        # 从栈中移除
+                        call_stack.pop(i)
+
+                        if verbose:
+                            print(f"Fold exit: {fold_id} at line {line_index + 1}, depth {call_depth}", file=sys.stderr)
+
+                        found_match = True
+                        break
+
+                # 如果没有找到匹配的入口，说明这是一个只有出口的行
+                if not found_match:
+                    line_data['fold_id'] = None
+                    line_data['fold_type'] = None
+                    line_data['call_depth'] = None
+        else:
+            # 既不是入口也不是出口
+            # 检查是否在某个函数调用块内部
+            if call_stack:
+                # 当前在某个函数调用块内部
+                # 找到当前最内层的函数调用块
+                innermost_entry = call_stack[-1]
+                fold_id = innermost_entry['fold_id']
+                call_depth = innermost_entry['call_depth']
+
+                line_data['fold_id'] = fold_id
+                line_data['fold_type'] = 'inner'
+                line_data['call_depth'] = call_depth
+
+                if verbose:
+                    print(f"Fold inner: {fold_id} at line {line_index + 1}, depth {call_depth}", file=sys.stderr)
+            else:
+                line_data['fold_id'] = None
+                line_data['fold_type'] = None
+                line_data['call_depth'] = None
+
+
+def parse_ftrace_file(file_path, verbose=False, enable_fold=False):
     """解析ftrace文件，提取可展开的行及其函数信息
 
     参数:
         file_path: ftrace输出文件路径
         verbose: 是否输出详细信息
+        enable_fold: 是否启用函数调用折叠功能
 
     返回:
         parsed_lines: 包含所有行信息的列表
@@ -660,6 +774,8 @@ def parse_ftrace_file(file_path, verbose=False):
                             'func_name_info': None,
                             'duration': None,
                             'duration_raw': None,
+                            'fold_id': None,
+                            'fold_type': None,
                         }
                         parsed_lines.append(line_data)
                         continue
@@ -857,7 +973,7 @@ def parse_ftrace_file(file_path, verbose=False):
                         # 提取当前函数的返回值（如果存在）
                         # 格式: func() { /* <-... ret=xxx */
                         ret_value = None
-                        ret_match = re.search(r'ret=([0-9a-fA-FxX-]+)', line)
+                        ret_match = re.search(r'ret=([0-9a-fA-FxX-]+|true|false)', line)
                         if ret_match:
                             ret_value = ret_match.group(1)
 
@@ -903,7 +1019,9 @@ def parse_ftrace_file(file_path, verbose=False):
                             'duration': duration,  # 耗时（微秒）- 用于过滤（原始显示值）
                             'sort_duration': sort_duration if 'sort_duration' in locals() else duration,  # 排序用的实际值
                             'duration_raw': duration_raw,  # 原始耗时字符串
-                            }
+                            'fold_id': None,  # 折叠ID，将在后续处理中填充
+                            'fold_type': None,  # 折叠类型，将在后续处理中填充
+                        }
                         parsed_lines.append(line_data)
                         expandable_count += 1
 
@@ -919,7 +1037,7 @@ def parse_ftrace_file(file_path, verbose=False):
 
                         # 提取返回值（支持 ret=xxx 或 ret = xxx）
                         ret_value = None
-                        ret_match = re.search(r'ret\s*=\s*([0-9a-fA-FxX-]+)', line)
+                        ret_match = re.search(r'ret\s*=\s*([0-9a-fA-FxX-]+|true|false)', line)
                         if ret_match:
                             ret_value = ret_match.group(1)
 
@@ -939,7 +1057,9 @@ def parse_ftrace_file(file_path, verbose=False):
                             'duration': duration,  # 耗时（微秒）- 用于过滤（原始显示值）
                             'sort_duration': sort_duration if 'sort_duration' in locals() else duration,  # 排序用的实际值
                             'duration_raw': duration_raw,  # 原始耗时字符串
-                            }
+                            'fold_id': None,  # 折叠ID，将在后续处理中填充
+                            'fold_type': None,  # 折叠类型，将在后续处理中填充
+                        }
                         parsed_lines.append(line_data)
 
 
@@ -947,7 +1067,7 @@ def parse_ftrace_file(file_path, verbose=False):
 
                     # 检查不可展开的行中是否只包含返回值（没有函数名）
                     # 格式: 2)    bash-509    |               |                            } /* ret=0 */
-                    ret_only_match = re.search(r'/\*\s*ret=([0-9a-fA-FxX-]+)\s*\*/', line)
+                    ret_only_match = re.search(r'/\*\s*ret=([0-9a-fA-FxX-]+|true|false)\s*\*/', line)
                     if ret_only_match:
                         ret_value = ret_only_match.group(1)
                         line_data = {
@@ -965,6 +1085,42 @@ def parse_ftrace_file(file_path, verbose=False):
                             'duration': duration,  # 耗时（微秒）- 用于过滤（原始显示值）
                             'sort_duration': sort_duration if 'sort_duration' in locals() else duration,  # 排序用的实际值
                             'duration_raw': duration_raw,  # 原始耗时字符串
+                            'fold_id': None,  # 折叠ID，将在后续处理中填充
+                            'fold_type': None,  # 折叠类型，将在后续处理中填充
+                        }
+                        parsed_lines.append(line_data)
+                        continue
+
+                    # 检查是否是函数出口（包含 }）
+                    # 格式: } /* func */ 或 } /* func ret=xxx */
+                    exit_match = re.search(r'}\s*/\*\s*([a-zA-Z_][a-zA-Z0-9_.]*)', line)
+                    if exit_match:
+                        raw_func_name = exit_match.group(1)
+                        display_func_name = remove_compiler_suffix(raw_func_name)
+
+                        # 提取返回值（如果存在）
+                        ret_value = None
+                        ret_match = re.search(r'ret\s*=\s*([0-9a-fA-FxX-]+|true|false)', line)
+                        if ret_match:
+                            ret_value = ret_match.group(1)
+
+                        line_data = {
+                            'raw_line': line,
+                            'expandable': False,
+                            'func_info': None,
+                            'raw_func_name': raw_func_name,  # 原始函数名，用于折叠识别
+                            'display_func_name': display_func_name,  # 处理后的函数名，用于显示
+                            'module_name': None,
+                            'cpu': cpu,
+                            'pid': pid,
+                            'comm': comm,
+                            'func_name_info': None,
+                            'ret_value': ret_value,  # 返回值
+                            'duration': duration,  # 耗时（微秒）- 用于过滤（原始显示值）
+                            'sort_duration': sort_duration if 'sort_duration' in locals() else duration,  # 排序用的实际值
+                            'duration_raw': duration_raw,  # 原始耗时字符串
+                            'fold_id': None,  # 折叠ID，将在后续处理中填充
+                            'fold_type': None,  # 折叠类型，将在后续处理中填充
                         }
                         parsed_lines.append(line_data)
                         continue
@@ -984,6 +1140,8 @@ def parse_ftrace_file(file_path, verbose=False):
                         'duration': duration,  # 耗时（微秒）- 用于过滤（原始显示值）
                         'sort_duration': sort_duration if 'sort_duration' in locals() else duration,  # 排序用的实际值
                         'duration_raw': duration_raw,  # 原始耗时字符串
+                        'fold_id': None,  # 折叠ID，将在后续处理中填充
+                        'fold_type': None,  # 折叠类型，将在后续处理中填充
                     }
                     parsed_lines.append(line_data)
 
@@ -1004,12 +1162,19 @@ def parse_ftrace_file(file_path, verbose=False):
                         'ret_value': None,
                         'duration': None,
                         'duration_raw': None,
+                        'fold_id': None,
+                        'fold_type': None,
                     }
                     parsed_lines.append(line_data)
 
     except Exception as e:
         print(f"Error reading file {file_path}: {str(e)}", file=sys.stderr)
         sys.exit(1)
+
+    # 如果启用了折叠功能，识别函数调用折叠块
+    if enable_fold:
+        verbose_print("Identifying fold blocks...", verbose)
+        identify_fold_blocks(parsed_lines, verbose)
 
     verbose_print(f"Parsed {len(parsed_lines)} lines, found {expandable_count} expandable entries", verbose)
     return parsed_lines
@@ -1957,7 +2122,7 @@ def call_faddr2line_for_func_names(vmlinux_path, faddr2line_path, func_names, us
     return results
 
 
-def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None, base_url=None, module_url=None, kernel_src=None, use_list=False, verbose=False, fast_mode=False, highlight_code=False, path_prefix=None, module_src=None, module_srcs=None, script_args=None, enable_filter=False, parse_time=0, total_time=0, func_links=False, entry_offset=0):
+def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None, base_url=None, module_url=None, kernel_src=None, use_list=False, verbose=False, fast_mode=False, highlight_code=False, path_prefix=None, module_src=None, module_srcs=None, script_args=None, enable_filter=False, parse_time=0, total_time=0, func_links=False, entry_offset=0, enable_fold=False):
     """生成交互式HTML页面，保留原始空格和格式"""
     if module_dirs is None:
         module_dirs = []
@@ -2590,6 +2755,9 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
             info_content_html += f'                <div class="info-item"><div class="info-label">Total Time:</div><div class="info-value">{total_time:.2f}s</div></div>\n'
         info_content_html += f'                <div class="info-item"><div class="info-label">Total Lines:</div><div class="info-value">{len(parsed_lines)}</div></div>\n'
         info_content_html += f'                <div class="info-item"><div class="info-label">Expandable:</div><div class="info-value">{sum(1 for l in parsed_lines if l["expandable"])}</div></div>\n'
+        if enable_fold:
+            foldable_count = sum(1 for l in parsed_lines if l.get('fold_id') and l.get('fold_type') in ['entry', 'exit', 'inner'])
+            info_content_html += f'                <div class="info-item"><div class="info-label">Foldable:</div><div class="info-value">{foldable_count}</div></div>\n'
 
     # 添加脚本参数部分
     if info_items:
@@ -2884,6 +3052,41 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
             user-select: text;
             white-space: pre;
             font-family: 'Courier New', monospace;
+        }}
+        .fold-marker {{
+            display: inline-block;
+            width: 16px;
+            color: var(--btn-primary);
+            font-weight: bold;
+            font-size: 12px;
+            margin-right: 4px;
+            cursor: pointer;
+            -webkit-user-select: none;
+            -moz-user-select: none;
+            -ms-user-select: none;
+            user-select: none;
+            flex-shrink: 0;
+        }}
+        .fold-marker:hover {{
+            color: var(--btn-primary-hover);
+        }}
+        .fold-entry {{
+            background-color: rgba(76, 175, 80, 0.05);
+        }}
+        [data-theme="dark"] .fold-entry {{
+            background-color: rgba(102, 187, 106, 0.08);
+        }}
+        .fold-exit {{
+            background-color: rgba(244, 67, 54, 0.05);
+        }}
+        [data-theme="dark"] .fold-exit {{
+            background-color: rgba(239, 83, 80, 0.08);
+        }}
+        .fold-inner {{
+            background-color: rgba(33, 150, 243, 0.03);
+        }}
+        [data-theme="dark"] .fold-inner {{
+            background-color: rgba(33, 150, 243, 0.05);
         }}
         .func-name-link {{
             color: var(--link-color);
@@ -3310,6 +3513,9 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
         .keyboard-hint li {{
             margin: 2px 0;
         }}
+        .keyboard-hint strong {{
+            color: var(--btn-primary);
+        }}
         .keyboard-hint kbd {{
             background-color: var(--bg-color);
             border: 1px solid var(--border-color);
@@ -3697,6 +3903,27 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
         is_expandable = line_data['expandable'] and line_data['func_info']
         expandable_class = "expandable" if is_expandable else ""
 
+        # 获取折叠信息
+        fold_id = line_data.get('fold_id')
+        fold_type = line_data.get('fold_type')
+        call_depth = line_data.get('call_depth')
+
+        # 检查是否是可折叠的函数调用块
+        is_foldable = enable_fold and fold_id is not None and fold_type in ['entry', 'exit', 'inner']
+        fold_class = ""
+        fold_marker = ""
+
+        if is_foldable:
+            if fold_type == 'entry':
+                fold_class = "fold-entry"
+                fold_marker = "▶ "  # 折叠标记
+            elif fold_type == 'exit':
+                fold_class = "fold-exit"
+                fold_marker = ""  # 函数返回行不需要折叠图标
+            elif fold_type == 'inner':
+                fold_class = "fold-inner"
+                fold_marker = "  "  # 空白标记，保持对齐
+
         # 获取CPU、PID、进程名信息，用于过滤
         cpu = line_data.get('cpu')
         pid = line_data.get('pid')
@@ -3709,6 +3936,10 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
 
         # 构建数据属性用于过滤
         data_attrs = f' data-cpu="{cpu if cpu is not None else ""}" data-pid="{pid if pid is not None else ""}" data-comm="{comm if comm else ""}"'
+
+        # 添加折叠属性
+        if is_foldable:
+            data_attrs += f' data-fold-id="{fold_id}" data-fold-type="{fold_type}"'
 
         # 添加参数属性（用于参数过滤）
         if params:
@@ -3750,13 +3981,21 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
             except ValueError:
                 pass
 
-        html_str += f'<div class="line-container {expandable_class}" id="{line_anchor_id}" data-line-number="{line_number}" data-line-id="{line_id}"{data_attrs}'
+        # 添加折叠类
+        line_container_class = f"line-container {expandable_class} {fold_class}".strip()
+
+        html_str += f'<div class="{line_container_class}" id="{line_anchor_id}" data-line-number="{line_number}" data-line-id="{line_id}"{data_attrs}'
         if is_expandable:
             html_str += f' onclick="handleLineClick(event, \'{line_id}\')" ondblclick="handleDoubleClick(event, \'{line_id}\')"'
         # 添加tabindex使行可聚焦，支持键盘导航
         html_str += ' tabindex="0"'
         html_str += '>'
         html_str += f'<span class="line-number" onclick="updateAnchor(\'{line_anchor_id}\', event)" title="Click to copy anchor link">{line_number}</span>'
+
+        # 添加折叠标记
+        if is_foldable:
+            html_str += f'<span class="fold-marker">{fold_marker}</span>'
+
         html_str += f'<span class="line-content">{escaped_line}</span>'
 
         if is_expandable:
@@ -3887,6 +4126,13 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
             <li><kbd>Space</kbd>: Scroll down</li>
             <li><kbd>Esc</kbd>: Clear selection</li>
         </ul>
+        <h3>Function Call Folding</h3>
+        <ul>
+            <li>Click the <strong>▶</strong> marker to fold a function call block</li>
+            <li>Click the <strong>▼</strong> marker to unfold a function call block</li>
+            <li>Folds all lines between function entry and exit (including sub-functions)</li>
+            <li>Folded blocks are saved in browser storage</li>
+        </ul>
     </div>
 
     <script>
@@ -3900,6 +4146,8 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
         let currentTheme = localStorage.getItem('theme') || 'light';
         // 记录展开状态
         let expandedLines = JSON.parse(localStorage.getItem('expandedLines')) || {};
+        // 记录折叠状态
+        let foldedBlocks = JSON.parse(localStorage.getItem('foldedBlocks')) || {};
         // 双击选择相关变量
         let lastClickTime = 0;
         let lastClickTarget = null;
@@ -3933,7 +4181,7 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
                     const content = document.getElementById(lineId + '_content');
                     const btn = document.querySelector('#' + lineId + '_container .expand-btn');
                     const container = document.getElementById(lineId + '_container');
-                    
+
                     if (content && btn && container) {
                         content.style.display = 'block';
                         if (btn) btn.textContent = '-';
@@ -3942,7 +4190,23 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
                 }
             }
         }
-        
+
+        // 恢复折叠状态
+        function restoreFoldedState() {
+            for (const [foldId, isFolded] of Object.entries(foldedBlocks)) {
+                if (isFolded) {
+                    // 折叠所有属于这个foldId的行（除了入口行）
+                    const lines = document.querySelectorAll(`[data-fold-id="${foldId}"]`);
+                    lines.forEach(line => {
+                        const type = line.getAttribute('data-fold-type');
+                        if (type !== 'entry') {
+                            line.style.display = 'none';
+                        }
+                    });
+                }
+            }
+        }
+
         // 保存展开状态
         function saveExpandedState(lineId, isExpanded) {
             expandedLines[lineId] = isExpanded;
@@ -4904,42 +5168,57 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
                 x: window.scrollX,
                 y: window.scrollY
             };
-            
+
             // 阻止默认行为，防止可能的滚动
             event.preventDefault();
-            
+
+            // 检查是否点击的是折叠标记
+            const foldMarker = event.target.closest('.fold-marker');
+            if (foldMarker) {
+                // 处理折叠/展开
+                const lineContainer = event.target.closest('.line-container');
+                if (lineContainer) {
+                    const foldId = lineContainer.getAttribute('data-fold-id');
+                    const foldType = lineContainer.getAttribute('data-fold-type');
+                    if (foldId && foldType) {
+                        toggleFold(foldId, foldType);
+                    }
+                }
+                return;
+            }
+
             // 检查是否正在进行文本选择
             const selection = window.getSelection();
             const hasSelection = selection.toString().trim().length > 0;
-            
+
             // 检查鼠标移动距离，判断是否是拖动选择
             const mouseUpInfo = { x: event.clientX, y: event.clientY, time: Date.now() };
             const distance = Math.sqrt(
-                Math.pow(mouseUpInfo.x - mouseDownInfo.x, 2) + 
+                Math.pow(mouseUpInfo.x - mouseDownInfo.x, 2) +
                 Math.pow(mouseUpInfo.y - mouseDownInfo.y, 2)
             );
             const timeDiff = mouseUpInfo.time - mouseDownInfo.time;
-            
+
             // 如果存在文本选择，并且是拖动操作，则不触发展开/收起
             if (hasSelection && (distance > 5 || timeDiff > 200)) {
                 // 高亮被选中的行
                 highlightSelectedLines();
                 return;
             }
-            
+
             // 清除之前的点击定时器
             if (clickTimer) {
                 clearTimeout(clickTimer);
                 clickTimer = null;
             }
-            
+
             // 如果是双击事件的一部分，则不执行单击
             if (doubleClickTimer) {
                 clearTimeout(doubleClickTimer);
                 doubleClickTimer = null;
                 return;
             }
-            
+
             // 设置键盘选中行，但不滚动
             // 根据 data-line-id 查找对应的行元素
             let clickedLine = null;
@@ -4950,14 +5229,14 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
                     break;
                 }
             }
-            
+
             if (clickedLine) {
                 const lineIndex = allLineElements.findIndex(line => line === clickedLine);
                 if (lineIndex >= 0) {
                     setKeyboardSelectedLine(lineIndex, false);
                 }
             }
-            
+
             // 设置延迟执行单击事件，以便在双击时可以取消
             clickTimer = setTimeout(() => {
                 toggleExpand(lineId, event);
@@ -5054,19 +5333,49 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
         }
         
         // 切换展开/收起状态 - 只影响当前行，不滚动
+        // 切换折叠状态
+        function toggleFold(foldId, foldType) {
+            // 检查是否已折叠
+            const isFolded = foldedBlocks[foldId] === true;
+
+            if (isFolded) {
+                // 展开
+                delete foldedBlocks[foldId];
+                // 显示所有属于这个foldId的行
+                const lines = document.querySelectorAll(`[data-fold-id="${foldId}"]`);
+                lines.forEach(line => {
+                    line.style.display = '';
+                });
+            } else {
+                // 折叠
+                foldedBlocks[foldId] = true;
+                // 隐藏所有属于这个foldId的行（除了入口行）
+                const lines = document.querySelectorAll(`[data-fold-id="${foldId}"]`);
+                lines.forEach(line => {
+                    const type = line.getAttribute('data-fold-type');
+                    if (type !== 'entry') {
+                        line.style.display = 'none';
+                    }
+                });
+            }
+
+            // 保存折叠状态
+            localStorage.setItem('foldedBlocks', JSON.stringify(foldedBlocks));
+        }
+
         function toggleExpand(lineId, event) {
             // 保存当前滚动位置
             const scrollX = window.scrollX;
             const scrollY = window.scrollY;
-            
+
             const content = document.getElementById(lineId + '_content');
             const btn = document.querySelector('[data-line-id="' + lineId + '"] .expand-btn');
             const container = document.querySelector('[data-line-id="' + lineId + '"]');
-            
+
             // 使用getComputedStyle获取计算后的显示状态
             const computedStyle = window.getComputedStyle(content);
             const isCurrentlyVisible = computedStyle.display === 'block';
-            
+
             if (isCurrentlyVisible) {
                 // 收起当前行
                 content.style.display = 'none';
@@ -5080,7 +5389,7 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
                 container.classList.add('selected');
                 saveExpandedState(lineId, true);
             }
-            
+
             // 恢复滚动位置
             setTimeout(() => {
                 window.scrollTo(scrollX, scrollY);
@@ -5281,6 +5590,9 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
                     filterBox.style.display = 'flex';
                 }
             }
+
+            // 恢复折叠状态
+            restoreFoldedState();
         });
 
         // 添加键盘快捷键支持
@@ -5950,6 +6262,8 @@ def main():
                         help='Enable source links for function names (adds some overhead)')
     parser.add_argument('--entry-offset', type=int, default=0,
                         help='Offset to add to function entry addresses (for -fpatchable-function-entry)')
+    parser.add_argument('--enable-fold', action='store_true',
+                        help='Enable function call folding (adds some overhead)')
     args = parser.parse_args()
 
     # 参数健壮性检查
@@ -6162,7 +6476,7 @@ def main():
     
     # 解析ftrace文件
     start_time = time.time()
-    parsed_lines = parse_ftrace_file(args.ftrace_file, args.verbose)
+    parsed_lines = parse_ftrace_file(args.ftrace_file, args.verbose, args.enable_fold)
     parse_time = time.time() - start_time
     verbose_print(f"File parsing completed in {parse_time:.2f} seconds", args.verbose)
 
@@ -6192,7 +6506,8 @@ def main():
         parse_time=parse_time,  # 传递解析时间
         total_time=0,  # 占位符，稍后计算
         func_links=args.func_links,  # 传递函数名超链接开关
-        entry_offset=args.entry_offset  # 传递函数入口地址偏移量
+        entry_offset=args.entry_offset,  # 传递函数入口地址偏移量
+        enable_fold=args.enable_fold  # 传递折叠功能开关
     )
 
     # 计算总时间
