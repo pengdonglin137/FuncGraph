@@ -638,7 +638,7 @@ def identify_fold_blocks(parsed_lines, verbose=False):
         无，直接修改parsed_lines中的fold_id和fold_type字段
     """
     # 使用栈来跟踪函数调用关系
-    # 栈中存储: (cpu, pid, func_name, line_index, fold_id, call_depth)
+    # 栈中存储: (cpu, pid, func_name, line_index, fold_id, call_depth, indent_level)
     call_stack = []
 
     for line_index, line_data in enumerate(parsed_lines):
@@ -648,17 +648,24 @@ def identify_fold_blocks(parsed_lines, verbose=False):
         display_func_name = line_data.get('display_func_name')
         raw_line = line_data.get('raw_line', '')
 
-        # 跳过没有CPU/PID/函数名的行
-        if cpu is None or pid is None or raw_func_name is None:
+        # 跳过没有CPU/函数名的行
+        if cpu is None or raw_func_name is None:
             continue
+
+        # 计算缩进级别（通过前导空格数量）
+        # 找到第一个非空格字符的位置
+        indent_match = re.match(r'(\s*)', raw_line)
+        indent_level = len(indent_match.group(1)) if indent_match else 0
 
         # 检查是否是函数入口（包含 {）
         # 格式: func() { 或 func(args) {
         # 注意：行尾可能有注释，所以不能使用 $ 匹配行尾
         if re.search(r'\)\s*\{', raw_line):
             # 这是一个函数入口
-            # 创建唯一标识符: CPU_PID_函数名_调用深度
-            fold_id = f"{cpu}_{pid}_{raw_func_name}_{len(call_stack)}"
+            # 创建唯一标识符: CPU_PID_函数名_调用深度_缩进级别
+            # 如果pid为None，则使用空字符串
+            pid_str = pid if pid is not None else ""
+            fold_id = f"{cpu}_{pid_str}_{raw_func_name}_{len(call_stack)}_{indent_level}"
 
             # 将入口信息推入栈
             call_stack.append({
@@ -667,7 +674,8 @@ def identify_fold_blocks(parsed_lines, verbose=False):
                 'func_name': raw_func_name,
                 'line_index': line_index,
                 'fold_id': fold_id,
-                'call_depth': len(call_stack)
+                'call_depth': len(call_stack),
+                'indent_level': indent_level
             })
 
             # 标记为入口
@@ -676,7 +684,7 @@ def identify_fold_blocks(parsed_lines, verbose=False):
             line_data['call_depth'] = len(call_stack) - 1  # 当前调用深度
 
             if verbose:
-                print(f"Fold entry: {fold_id} at line {line_index + 1}, depth {len(call_stack) - 1}", file=sys.stderr)
+                print(f"Fold entry: {fold_id} at line {line_index + 1}, depth {len(call_stack) - 1}, indent {indent_level}", file=sys.stderr)
 
         # 检查是否是函数出口（包含 }）
         # 格式: } /* func */ 或 } /* func ret=xxx */
@@ -692,9 +700,13 @@ def identify_fold_blocks(parsed_lines, verbose=False):
                 found_match = False
                 for i in range(len(call_stack) - 1, -1, -1):
                     entry = call_stack[i]
+                    # 匹配条件：CPU、PID、函数名、缩进级别
+                    # 如果entry['pid']为None，则匹配任意pid（包括None）
+                    pid_match = (entry['pid'] == pid) or (entry['pid'] is None and pid is None)
                     if (entry['cpu'] == cpu and
-                        entry['pid'] == pid and
-                        entry['func_name'] == exit_func_name):
+                        pid_match and
+                        entry['func_name'] == exit_func_name and
+                        entry['indent_level'] == indent_level):
                         # 找到匹配的入口
                         fold_id = entry['fold_id']
                         call_depth = entry['call_depth']
@@ -708,7 +720,7 @@ def identify_fold_blocks(parsed_lines, verbose=False):
                         call_stack.pop(i)
 
                         if verbose:
-                            print(f"Fold exit: {fold_id} at line {line_index + 1}, depth {call_depth}", file=sys.stderr)
+                            print(f"Fold exit: {fold_id} at line {line_index + 1}, depth {call_depth}, indent {indent_level}", file=sys.stderr)
 
                         found_match = True
                         break
@@ -3916,7 +3928,8 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
         if is_foldable:
             if fold_type == 'entry':
                 fold_class = "fold-entry"
-                fold_marker = "▶ "  # 折叠标记
+                # 使用一个可选的图标元素，便于 JavaScript 查找并旋转/替换图标字符
+                fold_marker = '<span class="fold-icon">▶</span>'  # 折叠标记
             elif fold_type == 'exit':
                 fold_class = "fold-exit"
                 fold_marker = ""  # 函数返回行不需要折叠图标
@@ -5335,32 +5348,70 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
         // 切换展开/收起状态 - 只影响当前行，不滚动
         // 切换折叠状态
         function toggleFold(foldId, foldType) {
+            console.log(`toggleFold called: foldId=${foldId}, foldType=${foldType}`);
+
             // 检查是否已折叠
             const isFolded = foldedBlocks[foldId] === true;
+            console.log(`Current folded state: ${isFolded}`);
 
             if (isFolded) {
                 // 展开
+                console.log(`Expanding foldId: ${foldId}`);
                 delete foldedBlocks[foldId];
                 // 显示所有属于这个foldId的行
                 const lines = document.querySelectorAll(`[data-fold-id="${foldId}"]`);
+                console.log(`Found ${lines.length} lines to show`);
                 lines.forEach(line => {
                     line.style.display = '';
                 });
+                // 更新折叠图标为展开状态（更鲁棒的查找，处理选择器异常并提供回退）
+                let icon = null;
+                try {
+                    icon = document.querySelector(`[data-fold-id="${foldId}"][data-fold-type="entry"] .fold-icon`);
+                } catch (e) {
+                    console.warn('Selector failed for expand icon, trying fallback lookup', e);
+                    const entryEl = document.querySelector('[data-fold-type="entry"][data-fold-id="' + foldId + '"]') || document.querySelector('[data-fold-id="' + foldId + '"][data-fold-type="entry"]');
+                    if (entryEl) icon = entryEl.querySelector('.fold-icon');
+                }
+                console.log(`Found icon: ${icon ? 'yes' : 'no'}`);
+                if (icon) {
+                    console.log(`Updating icon to expanded state: ${icon.textContent} -> ▼`);
+                    icon.textContent = '▼';
+                    icon.style.transform = 'rotate(0deg)';
+                }
             } else {
                 // 折叠
+                console.log(`Collapsing foldId: ${foldId}`);
                 foldedBlocks[foldId] = true;
                 // 隐藏所有属于这个foldId的行（除了入口行）
                 const lines = document.querySelectorAll(`[data-fold-id="${foldId}"]`);
+                console.log(`Found ${lines.length} lines to hide`);
                 lines.forEach(line => {
                     const type = line.getAttribute('data-fold-type');
                     if (type !== 'entry') {
                         line.style.display = 'none';
                     }
                 });
+                // 更新折叠图标为折叠状态（更鲁棒的查找，处理选择器异常并提供回退）
+                let icon = null;
+                try {
+                    icon = document.querySelector(`[data-fold-id="${foldId}"][data-fold-type="entry"] .fold-icon`);
+                } catch (e) {
+                    console.warn('Selector failed for collapse icon, trying fallback lookup', e);
+                    const entryEl = document.querySelector('[data-fold-type="entry"][data-fold-id="' + foldId + '"]') || document.querySelector('[data-fold-id="' + foldId + '"][data-fold-type="entry"]');
+                    if (entryEl) icon = entryEl.querySelector('.fold-icon');
+                }
+                console.log(`Found icon: ${icon ? 'yes' : 'no'}`);
+                if (icon) {
+                    console.log(`Updating icon to collapsed state: ${icon.textContent} -> ▶`);
+                    icon.textContent = '▶';
+                    icon.style.transform = 'rotate(90deg)';
+                }
             }
 
             // 保存折叠状态
             localStorage.setItem('foldedBlocks', JSON.stringify(foldedBlocks));
+            console.log(`Fold state saved: ${JSON.stringify(foldedBlocks)}`);
         }
 
         function toggleExpand(lineId, event) {
