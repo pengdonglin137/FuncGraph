@@ -1,160 +1,160 @@
-# FuncGraph - ftrace 可视化工具
+# FuncGraph - Specialized Linux ftrace Visualization Tool
 
-![FuncGraph可视化示例](sample.png)
+![FuncGraph Visualization Example](sample.png)
 
-## 项目介绍
+## Project Overview
 
-FuncGraph 是一个功能完整的 ftrace 可视化工具，主要功能：
+FuncGraph is a feature-rich ftrace visualization tool for Linux kernel development, performance analysis, and debugging. Key features include:
 
-1. **ftrace 可视化**：将 Linux 内核的 function_graph tracer 输出转换为交互式 HTML
-2. **源码链接**：点击函数即可跳转到对应源代码位置
-3. **高性能解析**：使用 Python 实现的快速地址解析工具
-4. **智能过滤**：支持多维度实时过滤和排序
-5. **函数调用折叠**：支持折叠/展开函数调用块，简化复杂调用栈的查看
+1. **ftrace Visualization**: Converts Linux kernel function_graph tracer output into interactive HTML
+2. **Source Code Linking**: Click function names to jump to corresponding source code locations
+3. **High-Performance Parsing**: Fast Python-based address resolution
+4. **Intelligent Filtering**: Multi-dimensional real-time filtering and sorting
+5. **Call Stack Folding**: Fold/expand function call blocks to simplify complex call stacks
 
-## 核心功能
+## Core Features
 
-### 🎯 过滤系统
+### 🎯 Filtering System
 
-#### 支持的过滤类型
-- **CPU 过滤**：正则表达式匹配 CPU 编号
-- **PID 过滤**：正则表达式匹配进程 ID
-- **进程名过滤**：正则表达式匹配进程名
-- **返回值过滤**：支持数字、宏名和 `all` 选项
-- **参数过滤**：字符串匹配函数参数
-- **耗时过滤**：支持比较运算符和排序
+#### Supported Filter Types
+- **CPU Filter**: Regex match for CPU number
+- **PID Filter**: Regex match for process ID
+- **Process Name Filter**: Regex match for process name
+- **Return Value Filter**: Supports numbers, macro names, and `all` option
+- **Parameter Filter**: String match for function parameters
+- **Duration Filter**: Supports comparison operators and sorting
 
-#### 智能显示
-- 自动检测 trace 数据类型
-- 只显示有数据的过滤输入框
-- 无数据时不显示过滤窗口
+#### Smart Display
+- Auto-detects trace data type
+- Shows filter input boxes only when data is available
+- Hides filter window when no data
 
-#### 悬停提示
-- 鼠标悬停显示完整使用说明
-- 自动定位，不遮挡输入
-- 无需查看文档即可使用
+#### Hover Hints
+- Mouse hover shows full usage instructions
+- Auto-positioning, does not block input
+- No need to read docs to use
 
-#### 耗时过滤和排序
+#### Duration Filtering & Sorting
 ```javascript
-// 基本过滤
->10              // 显示>10μs
-<5&&>2           // 显示2-5μs
->100||<0.1       // 显示异常值
+// Basic filtering
+>10              // Show >10μs
+<5&&>2           // Show 2-5μs
+>100||<0.1       // Show outliers
 
-// 排序
-sort:desc        // 从大到小排序
-sort:asc         // 从小到大排序
+// Sorting
+sort:desc        // Sort descending
+sort:asc         // Sort ascending
 
-// 组合使用
->10 sort:desc    // 显示>10μs，按从大到小排序
-<5&&>2 sort:asc  // 显示2-5μs，按从小到大排序
+// Combined usage
+>10 sort:desc    // Show >10μs, sort descending
+<5&&>2 sort:asc  // Show 2-5μs, sort ascending
 ```
 
-#### 上拉菜单（Suggestions）
-- 点击输入框显示候选词列表
-- 输入时实时过滤候选词
-- 键盘导航（上下箭头选择）
-- 回车或点击选择
+#### Suggestions Dropdown
+- Click input box to show candidate list
+- Real-time filtering of candidates as you type
+- Keyboard navigation (up/down arrows)
+- Enter or click to select
 
-#### 前缀问题修复
+#### Prefix Handling Fixes
 ```javascript
-// 带前缀的耗时也能正确过滤
-!145.859 us      // 显示值：145.859，实际值：245.859
->100 && <200     // 正确显示（使用显示值过滤）
-sort:desc        // 正确排序（使用实际值排序）
+// Duration with prefix is correctly filtered
+!145.859 us      // Displayed: 145.859, actual: 245.859
+>100 && <200     // Correct display (filter by shown value)
+sort:desc        // Correct sorting (by actual value)
 ```
 
-### 📊 HTML 交互功能
+### 📊 HTML Interactive Features
 
-#### 展开/折叠
-- 点击 `+` / `-` 展开/折叠单个函数
-- **Expand All**：展开所有可见行
-- **Collapse All**：折叠所有可见行
-- **进度显示**：操作时显示进度百分比
+#### Expand/Collapse
+- Click `+` / `-` to expand/collapse a single function
+- **Expand All**: Expand all visible lines
+- **Collapse All**: Collapse all visible lines
+- **Progress Display**: Shows progress percentage during operations
 
-#### 函数调用折叠
-- **折叠图标**：在可折叠的函数入口行前显示 `▶` 图标
-- **折叠操作**：点击图标折叠/展开函数调用块
-- **嵌套支持**：正确处理嵌套函数调用的折叠
-- **状态保存**：折叠状态自动保存到 localStorage
-- **图标切换**：折叠时显示 `▶`，展开时显示 `▼`
+#### Call Stack Folding
+- **Fold Icon**: Shows `▶` icon before foldable function entry lines
+- **Fold Operation**: Click icon to fold/expand function call blocks
+- **Nested Support**: Correctly handles folding of nested function calls
+- **State Saving**: Fold state auto-saved to localStorage
+- **Icon Switching**: `▶` when folded, `▼` when expanded
 
-**折叠特性**：
-- ✅ 只在函数入口行显示折叠图标
-- ✅ 折叠时隐藏函数入口和出口之间的所有行
-- ✅ 支持嵌套函数调用的折叠
-- ✅ 折叠状态自动保存和恢复
-- ✅ 图标状态实时切换
+**Folding Features:**
+- ✅ Fold icon only on function entry lines
+- ✅ Hides all lines between entry and exit when folded
+- ✅ Supports nested function call folding
+- ✅ Fold state auto-saved and restored
+- ✅ Real-time icon state switching
 
-#### 过滤操作
-- **Filter**：应用当前过滤条件
-- **Clear**：清除所有过滤条件
-- **实时统计**：显示 "Filtered: X / Total: Y"
+#### Filtering Actions
+- **Filter**: Apply current filter conditions
+- **Clear**: Clear all filter conditions
+- **Live Stats**: Shows "Filtered: X / Total: Y"
 
-#### 键盘导航
-- `↑` / `↓` 或 `j` / `k`：在可展开行间移动（焦点跟随）
-- `Enter`：展开/折叠选中行（在链接上按 Enter 会打开链接）
-- `Esc`：清除所有选中状态（键盘选中、文本选择高亮、文本选择、Tab焦点）
+#### Keyboard Navigation
+- `↑` / `↓` or `j` / `k`: Move between expandable lines (focus follows selection)
+- `Enter`: Expand/collapse selected line (Enter on a link opens the link)
+- `Esc`: Clear all selection states (keyboard, text highlight, Tab focus)
 
-**键盘导航特性**：
-- ✅ 焦点自动跟随选中行
-- ✅ Tab选中链接后，↑↓选新行会覆盖焦点
-- ✅ 在链接上按 Enter 正常打开链接
-- ✅ 在行上按 Enter 展开/折叠
-- ✅ Esc 清除所有选中状态
+**Keyboard Navigation Features:**
+- ✅ Focus automatically follows selected line
+- ✅ Tab to link, then ↑↓ selects new line and overrides focus
+- ✅ Enter on link opens link
+- ✅ Enter on line expands/collapses
+- ✅ Esc clears all selection states
 
-#### 主题切换
-- 浅色/深色模式
-- 自动保存用户偏好
+#### Theme Switching
+- Light/Dark mode
+- Auto-save user preference
 
-### 🔗 源码链接系统
+### 🔗 Source Code Linking System
 
-#### 支持的配置
-- **基础 URL**：设置源码仓库根路径
-- **模块 URL**：为不同模块设置不同的源码 URL
-- **路径前缀**：处理编译路径与源码路径不一致的情况
+#### Supported Configurations
+- **Base URL**: Set root path for source repository
+- **Module URL**: Set different source URLs for different modules
+- **Path Prefix**: Handle mismatches between build and source paths
 
-#### 链接类型
-- **函数名链接**：点击函数名跳转到源码（需 `--func-links`）
-- **返回地址链接**：点击返回地址跳转到源码
-- **源码高亮**：支持语法高亮（需 Pygments）
+#### Link Types
+- **Function Name Link**: Click function name to jump to source (requires `--func-links`)
+- **Return Address Link**: Click return address to jump to source
+- **Source Highlighting**: Syntax highlighting supported (requires Pygments)
 
-### 🚀 性能优化
+### 🚀 Performance Optimization
 
-#### 编译器优化后缀处理
-自动去除编译器优化后缀，显示原始函数名：
+#### Compiler Suffix Handling
+Automatically removes compiler optimization suffixes, showing original function names:
 
-**支持的后缀**：
+**Supported Suffixes:**
 - `.isra.0`, `.constprop.0`, `.lto.0`, `.part.0`
 - `.cold.0`, `.cold`, `.plt`, `.ifunc`
 - `.llvm.0`, `.clone.0`, `.unk.0`
 
-**示例**：
+**Example:**
 ```
 finish_task_switch.isra.0+0x150/0x4a8
 ↓
 finish_task_switch+0x150/0x4a8
 ```
 
-#### 高性能解析
-- **fastfaddr2line.py**：Python 实现，比传统工具快数倍
-- **外部工具支持**：可强制使用系统 faddr2line
-- **批量处理**：优化的地址解析流程
+#### High-Performance Parsing
+- **fastfaddr2line.py**: Python implementation, much faster than traditional tools
+- **External Tool Support**: Can force use of system faddr2line
+- **Batch Processing**: Optimized address resolution flow
 
-## 安装和使用
+## Installation & Usage
 
-### 环境要求
+### Requirements
 - Python 3.6+
-- addr2line（binutils 包含）
-- 可选：Pygments（语法高亮）
+- addr2line (from binutils)
+- Optional: Pygments (for syntax highlighting)
 
-### 基本用法
+### Basic Usage
 
 ```bash
-# 最小配置
+# Minimal config
 python3 funcgraph.py trace.txt --vmlinux vmlinux --filter --fast
 
-# 完整配置
+# Full config
 python3 funcgraph.py trace.txt \
     --vmlinux /path/to/vmlinux \
     --kernel-src /path/to/kernel/src \
@@ -166,32 +166,32 @@ python3 funcgraph.py trace.txt \
     --output result.html
 ```
 
-### 参数说明
+### Parameter Description
 
-| 参数 | 说明 |
-|------|------|
-| `ftrace_file` | ftrace 输出文件（必需） |
-| `--vmlinux` | vmlinux 文件路径（必需） |
-| `--kernel-src` | 内核源码根目录 |
-| `--module-dirs` | 内核模块搜索目录（可多个） |
-| `--module-srcs` | 模块源码根目录（可多个） |
-| `--base-url` | 源码链接基础 URL |
-| `--module-url` | 模块 URL 映射（可多次指定） |
-| `--output` | 输出 HTML 文件 |
-| `--auto-search` | 自动搜索常见模块目录 |
-| `--verbose` | 详细调试输出 |
-| `--fast` | 使用 fastfaddr2line.py |
-| `--use-external` | 强制使用外部 faddr2line |
-| `--highlight-code` | 启用语法高亮 |
-| `--path-prefix` | 路径前缀替换（可多个） |
-| `--filter` | 启用过滤窗口 |
-| `--func-links` | 函数名源码链接 |
-| `--entry-offset` | 函数入口地址偏移 |
+| Parameter | Description |
+|-----------|-------------|
+| `ftrace_file` | ftrace output file (required) |
+| `--vmlinux` | Path to vmlinux file (required) |
+| `--kernel-src` | Kernel source root |
+| `--module-dirs` | Kernel module search directories (multiple allowed) |
+| `--module-srcs` | Module source root directories (multiple allowed) |
+| `--base-url` | Base URL for source links |
+| `--module-url` | Module URL mapping (can specify multiple times) |
+| `--output` | Output HTML file |
+| `--auto-search` | Auto-search common module directories |
+| `--verbose` | Verbose debug output |
+| `--fast` | Use fastfaddr2line.py |
+| `--use-external` | Force use of external faddr2line |
+| `--highlight-code` | Enable syntax highlighting |
+| `--path-prefix` | Path prefix replacement (multiple allowed) |
+| `--filter` | Enable filter window |
+| `--func-links` | Function name source links |
+| `--entry-offset` | Function entry address offset |
 
-### 模块 URL 配置示例
+### Module URL Example
 
 ```bash
-# 为不同模块设置不同 URL
+# Set different URLs for different modules
 python3 funcgraph.py trace.txt \
     --vmlinux vmlinux \
     --base-url https://elixir.bootlin.com/linux/v6.18/source \
@@ -201,17 +201,17 @@ python3 funcgraph.py trace.txt \
     --filter --fast
 ```
 
-规则：
-- `mod1,mod2` → 使用 `https://url1.com`
-- `mod3,mod4` → 使用 `https://url2.com`
-- 其他模块 → 使用 `https://default.com`
-- 无默认 URL → 使用 `--base-url`
+Rules:
+- `mod1,mod2` → use `https://url1.com`
+- `mod3,mod4` → use `https://url2.com`
+- other modules → use `https://default.com`
+- no default URL → use `--base-url`
 
-### 路径前缀处理
+### Path Prefix Handling
 
 ```bash
-# addr2line 返回：/home/user/build/kernel/fs/open.c
-# 内核源码路径：/home/user/linux/fs/open.c
+# addr2line returns: /home/user/build/kernel/fs/open.c
+# Kernel source path: /home/user/linux/fs/open.c
 
 python3 funcgraph.py trace.txt \
     --vmlinux vmlinux \
@@ -220,69 +220,69 @@ python3 funcgraph.py trace.txt \
     --filter --fast
 ```
 
-### 交叉编译和 LLVM
+### Cross-Compilation & LLVM
 
-**交叉编译**：
+**Cross-compilation:**
 ```bash
 export CROSS_COMPILE=aarch64-linux-gnu-
 python3 funcgraph.py trace.txt --vmlinux vmlinux --filter --fast
 ```
 
-**LLVM 工具链**：
+**LLVM Toolchain:**
 ```bash
 export LLVM=1
-# 或 export LLVM=/usr/bin/
-# 或 export LLVM=-10
+# or export LLVM=/usr/bin/
+# or export LLVM=-10
 python3 funcgraph.py trace.txt --vmlinux vmlinux --filter --fast
 ```
 
-## 抓取 Trace
+## Capturing Trace
 
-### 推荐配置
+### Recommended Settings
 
 ```bash
 cd /sys/kernel/tracing
 
-# 停止当前追踪
+# Stop current tracing
 echo 0 > tracing_on
 
-# 启用推荐选项
-echo 1 > options/funcgraph-retaddr    # 返回地址（必选）
-echo 1 > options/funcgraph-proc       # 进程名和 PID
-echo 1 > options/funcgraph-retval     # 返回值
-echo 1 > options/funcgraph-args       # 函数参数
+# Enable recommended options
+echo 1 > options/funcgraph-retaddr    # Return address (required)
+echo 1 > options/funcgraph-proc       # Process name and PID
+echo 1 > options/funcgraph-retval     # Return value
+echo 1 > options/funcgraph-args       # Function parameters
 
-# 设置 tracer
+# Set tracer
 echo function_graph > current_tracer
 
-# 开始追踪（1秒）
+# Start tracing (1 second)
 echo 1 > tracing_on; sleep 1; echo 0 > tracing_on
 
-# 保存结果
+# Save result
 cat trace > ~/ftrace.txt
 ```
 
-### 选项说明
+### Option Description
 
-| 选项 | 作用 | 推荐度 |
-|------|------|--------|
-| `funcgraph-retaddr` | 提供返回地址，用于源码定位 | ⭐⭐⭐⭐⭐ |
-| `funcgraph-proc` | 显示进程名和 PID，便于过滤 | ⭐⭐⭐⭐ |
-| `funcgraph-retval` | 显示函数返回值，便于调试 | ⭐⭐⭐⭐ |
-| `funcgraph-args` | 显示函数参数，便于分析 | ⭐⭐⭐⭐ |
+| Option | Purpose | Recommended |
+|--------|---------|-------------|
+| `funcgraph-retaddr` | Provides return address for source mapping | ⭐⭐⭐⭐⭐ |
+| `funcgraph-proc` | Shows process name and PID for filtering | ⭐⭐⭐⭐ |
+| `funcgraph-retval` | Shows function return value for debugging | ⭐⭐⭐⭐ |
+| `funcgraph-args` | Shows function parameters for analysis | ⭐⭐⭐⭐ |
 
-## Fastfaddr2line 工具
+## Fastfaddr2line Tool
 
-### 独立使用
+### Standalone Usage
 
 ```bash
-# 查看帮助
+# Show help
 python3 fastfaddr2line.py -h
 
-# 解析单个地址
+# Parse a single address
 python3 fastfaddr2line.py vmlinux arch_stack_walk+0x150/0x4a8
 
-# 完整功能
+# Full features
 python3 fastfaddr2line.py vmlinux \
     --functions \
     --basenames \
@@ -291,22 +291,22 @@ python3 fastfaddr2line.py vmlinux \
     arch_stack_walk+0x150/0x4a8
 ```
 
-### 参数说明
+### Parameter Description
 
-| 参数 | 说明 |
-|------|------|
-| `-f, --functions` | 显示函数名 |
-| `-s, --basenames` | 仅显示文件名（不含路径） |
-| `-i, --inlines` | 显示内联函数 |
-| `-p, --pretty-print` | 格式化输出 |
-| `-C, --demangle` | C++ 符号解混淆 |
-| `--path-prefix` | 路径前缀替换 |
-| `--module-srcs` | 模块源码目录 |
-| `--entry-offset` | 入口地址偏移 |
+| Parameter | Description |
+|-----------|-------------|
+| `-f, --functions` | Show function names |
+| `-s, --basenames` | Show only file names (no path) |
+| `-i, --inlines` | Show inline functions |
+| `-p, --pretty-print` | Pretty print output |
+| `-C, --demangle` | C++ symbol demangling |
+| `--path-prefix` | Path prefix replacement |
+| `--module-srcs` | Module source directories |
+| `--entry-offset` | Entry address offset |
 
-## 使用流程示例
+## Usage Example
 
-### 1. 抓取 Trace
+### 1. Capture Trace
 ```bash
 cd /sys/kernel/tracing
 echo 0 > tracing_on
@@ -319,7 +319,7 @@ echo 1 > tracing_on; sleep 1; echo 0 > tracing_on
 cat trace > ~/ftrace.txt
 ```
 
-### 2. 生成 HTML
+### 2. Generate HTML
 ```bash
 cd /vol_1t/Qemu/x86_64/funcgraph_visualization
 
@@ -332,38 +332,38 @@ python3 funcgraph.py ~/ftrace.txt \
     --output result.html
 ```
 
-### 3. 在浏览器中使用
+### 3. In the Browser
 
-打开 `result.html`，使用过滤功能：
-- **找最慢函数**：耗时输入 `sort:desc`
-- **找异常值**：耗时输入 `>100||<0.1 sort:desc`
-- **特定进程**：PID 输入 `1234|5678`，进程名输入 `nginx|bash`
-- **组合过滤**：CPU `0|1`，PID `1234`，耗时 `>5&&<50 sort:desc`
-- **折叠函数调用**：点击函数入口行前的 `▶` 图标折叠/展开
+Open `result.html` and use the filter features:
+- **Find slowest functions**: Enter `sort:desc` in duration
+- **Find outliers**: Enter `>100||<0.1 sort:desc` in duration
+- **Specific process**: Enter `1234|5678` in PID, `nginx|bash` in process name
+- **Combined filtering**: CPU `0|1`, PID `1234`, duration `>5&&<50 sort:desc`
+- **Fold calls**: Click the `▶` icon before function entry lines to fold/expand
 
-## 项目结构
+## Project Structure
 
 ```
 funcgraph_visualization/
-├── README.md                    # 本文件
-├── funcgraph.py                 # 主程序
-├── fastfaddr2line.py            # 地址解析工具
-├── ftrace.txt                   # 示例数据
-└── sample.png                   # 效果截图
+├── README.md                    # This file
+├── funcgraph.py                 # Main program
+├── fastfaddr2line.py            # Address resolution tool
+├── ftrace.txt                   # Example data
+└── sample.png                   # Screenshot
 ```
 
-## 参考资料
+## References
 
-- [ftrace可视化工具](https://mp.weixin.qq.com/s/xRVVgF5IDnLXGu2i-TbS5Q)
-- [ftrace可视化工具(续)](https://mp.weixin.qq.com/s/Mq8uTR3c8V1gAR2zklsFPw)
-- [写了一个ftrace可视化工具](https://mp.weixin.qq.com/s/rNiWXC8YlZiAjfcjv7QtQA)
+- [ftrace visualization tool](https://mp.weixin.qq.com/s/xRVVgF5IDnLXGu2i-TbS5Q)
+- [ftrace visualization tool (continued)](https://mp.weixin.qq.com/s/Mq8uTR3c8V1gAR2zklsFPw)
+- [Wrote an ftrace visualization tool](https://mp.weixin.qq.com/s/rNiWXC8YlZiAjfcjv7QtQA)
 
-## 许可证
+## License
 
-开源项目，欢迎贡献！
+Open source project, contributions welcome!
 
 ---
 
-**版本**: v0.6
-**最后更新**: 2026-01-30
-**状态**: ✅ 完整可用
+**Version**: v0.6
+**Last Updated**: 2026-01-30
+**Status**: ✅ Production Ready
