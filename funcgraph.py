@@ -3023,7 +3023,7 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
         }}
         .line-container {{
             display: flex;
-            align-items: center;
+            align-items: flex-start;
             padding: 2px 5px;
             border-radius: 3px;
             transition: background-color 0.2s;
@@ -3073,22 +3073,20 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
         }}
         .line-content {{
             flex-grow: 1;
-            padding: 0;
+            padding: 2px 0;
             -webkit-user-select: text;
             -moz-user-select: text;
             -ms-user-select: text;
             user-select: text;
             white-space: pre;
             font-family: 'Courier New', monospace;
-            line-height: 1.2;
         }}
         .fold-marker {{
             display: inline-block;
             width: 16px;
-            height: 16px;
             color: var(--btn-primary);
             font-weight: bold;
-            font-size: 14px;
+            font-size: 12px;
             margin-right: 4px;
             cursor: pointer;
             -webkit-user-select: none;
@@ -3096,9 +3094,6 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
             -ms-user-select: none;
             user-select: none;
             flex-shrink: 0;
-            line-height: 16px;
-            text-align: center;
-            overflow: hidden;
         }}
         .fold-marker:hover {{
             color: var(--btn-primary-hover);
@@ -3968,10 +3963,10 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
                 fold_marker = '<span class="fold-icon" style="transform:rotate(0deg)">▼</span>'  # 折叠标记（默认展开）
             elif fold_type == 'exit':
                 fold_class = "fold-exit"
-                fold_marker = '<span style="display:inline-block; width:20px; height:16px;"></span>'  # 保持对齐的空格
+                fold_marker = ""  # 函数返回行不需要折叠图标
             elif fold_type == 'inner':
                 fold_class = "fold-inner"
-                fold_marker = '<span style="display:inline-block; width:20px; height:16px;"></span>'  # 保持对齐的空格
+                fold_marker = "  "  # 空白标记，保持对齐
 
         # 获取CPU、PID、进程名信息，用于过滤
         cpu = line_data.get('cpu')
@@ -4041,17 +4036,22 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
 
         html_str += f'<div class="{line_container_class}" id="{line_anchor_id}" data-line-number="{line_number}" data-line-id="{line_id}"{data_attrs}'
         if is_expandable:
-            html_str += f' onclick="handleLineClick(event, \'{line_id}\')" ondblclick="handleDoubleClick(event, \'{line_id}\')"'
-        # 添加tabindex使行可聚焦，支持键盘导航
-        html_str += ' tabindex="0"'
-        html_str += '>'
+            html_str += f' onclick="handleLineClick(event, \'{line_id}\')" ondblclick="handleDoubleClick(event, \'{line_id}\')" tabindex="0"'
+            html_str += '>'
+        else:
+            html_str += '>'
         html_str += f'<span class="line-number" onclick="updateAnchor(\'{line_anchor_id}\', event)" title="Click to copy anchor link">{line_number}</span>'
 
-        # 添加折叠标记 - 所有行都需要折叠标记区域来保持对齐
+        # 添加折叠标记
         if is_foldable:
+            # 只为fold-icon添加tabindex和键盘事件
+            if fold_type == 'entry':
+                # 判断当前是否折叠，选择图标
+                icon = '▶' if 'folded' in fold_class else '▼'
+                fold_marker = f'<span class="fold-icon" tabindex="0" role="button" aria-label="Toggle fold" aria-expanded="{"false" if icon=="▶" else "true"}" onkeydown="handleFoldIconKeydown(event, this)" onclick="handleFoldIconClick(event, this)">{icon}</span>'
             html_str += f'<span class="fold-marker">{fold_marker}</span>'
         else:
-            # 没有折叠信息的行也需要对齐空格
+            # 非可折叠行也插入空白fold-marker以保持对齐
             html_str += '<span class="fold-marker"><span style="display:inline-block; width:20px; height:16px;"></span></span>'
 
         html_str += f'<span class="line-content">{escaped_line}</span>'
@@ -4227,6 +4227,28 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
 
         // 过滤功能相关变量
         let currentFilter = { cpu: [], pid: [], comm: [] };
+
+        // 折叠图标键盘事件处理
+                // 折叠图标点击事件处理
+                function handleFoldIconClick(event, icon) {
+                    // 阻止事件冒泡，防止多次触发
+                    event.stopPropagation();
+                    // 找到最近的 .line-container
+                    const lineContainer = icon.closest('.line-container');
+                    if (lineContainer) {
+                        const foldId = lineContainer.getAttribute('data-fold-id');
+                        const foldType = lineContainer.getAttribute('data-fold-type');
+                        if (foldId && foldType) {
+                            toggleFold(foldId, foldType);
+                        }
+                    }
+                }
+        function handleFoldIconKeydown(event, icon) {
+            if (event.key === 'Enter' || event.key === ' ') {
+                event.preventDefault();
+                handleFoldIconClick(event, icon);
+            }
+        }
 
         // 初始化主题
         document.documentElement.setAttribute('data-theme', currentTheme);
