@@ -3023,7 +3023,7 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
         }}
         .line-container {{
             display: flex;
-            align-items: flex-start;
+            align-items: center;
             padding: 2px 5px;
             border-radius: 3px;
             transition: background-color 0.2s;
