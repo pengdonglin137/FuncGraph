@@ -2,144 +2,42 @@
 
 ![FuncGraph Visualization Example](sample.png)
 
-## Project Overview
+## What is FuncGraph?
 
-FuncGraph is a feature-rich ftrace visualization tool for Linux kernel development, performance analysis, and debugging. Key features include:
+FuncGraph converts `function_graph` ftrace output into an interactive, filterable HTML report for kernel developers and performance engineers. It is optimized for fast triage: source linking, high-speed address resolution, parameter and duration filtering, and keyboard-friendly call folding.
 
-1. **ftrace Visualization**: Converts Linux kernel function_graph tracer output into interactive HTML
-2. **Source Code Linking**: Click function names to jump to corresponding source code locations
-3. **High-Performance Parsing**: Fast Python-based address resolution
-4. **Intelligent Filtering**: Multi-dimensional real-time filtering and sorting
-5. **Call Stack Folding**: Fold/expand function call blocks to simplify complex call stacks
+## Quick Start
 
-## Core Features
-
-### 🎯 Filtering System
-
-#### Supported Filter Types
-- **CPU Filter**: Regex match for CPU number
-- **PID Filter**: Regex match for process ID
-- **Process Name Filter**: Regex match for process name
-- **Return Value Filter**: Supports numbers, macro names, and `all` option
-- **Parameter Filter**: String match for function parameters
-- **Duration Filter**: Supports comparison operators and sorting
-
-#### Smart Display
-- Auto-detects trace data type
-- Shows filter input boxes only when data is available
-- Hides filter window when no data
-
-#### Hover Hints
-- Mouse hover shows full usage instructions
-- Auto-positioning, does not block input
-- No need to read docs to use
-
-#### Duration Filtering & Sorting
-```javascript
-// Basic filtering
->10              // Show >10μs
-<5&&>2           // Show 2-5μs
->100||<0.1       // Show outliers
-
-// Sorting
-sort:desc        // Sort descending
-sort:asc         // Sort ascending
-
-// Combined usage
->10 sort:desc    // Show >10μs, sort descending
-<5&&>2 sort:asc  // Show 2-5μs, sort ascending
+Minimal:
+```bash
+python3 funcgraph.py trace.txt --vmlinux vmlinux --filter --fast
+```
+Full:
+```bash
+python3 funcgraph.py trace.txt \
+  --vmlinux /path/to/vmlinux \
+  --kernel-src /path/to/kernel \
+  --filter --fast --highlight-code --output result.html
 ```
 
-#### Suggestions Dropdown
-- Click input box to show candidate list
-- Real-time filtering of candidates as you type
-- Keyboard navigation (up/down arrows)
-- Enter or click to select
+## Cheat Sheet
 
-#### Prefix Handling Fixes
-```javascript
-// Duration with prefix is correctly filtered
-!145.859 us      // Displayed: 145.859, actual: 245.859
->100 && <200     // Correct display (filter by shown value)
-sort:desc        // Correct sorting (by actual value)
-```
+- Common flags: `--fast`, `--filter`, `--func-links`, `--highlight-code` 🔧
+- Duration filters: `>10`, `<5&&>2`, `sort:desc` ⏱️
+- Parameter filters examples: `skb=...`, `do_xxx(arg=1)` 🔎
+- Keyboard: Tab focuses fold icon; Enter toggles fold; `Esc` clears selection ⌨️
 
-### 📊 HTML Interactive Features
+## Key features
 
-#### Expand/Collapse
-- Click `+` / `-` to expand/collapse a single function
-- **Expand All**: Expand all visible lines
-- **Collapse All**: Collapse all visible lines
-- **Progress Display**: Shows progress percentage during operations
+- Interactive ftrace visualization with fold/unfold call blocks
+- Clickable source links (local or online) and optional syntax highlighting
+- High-performance address resolution (`fastfaddr2line.py`)
+- Multi-dimensional filtering (CPU/PID/params/duration) with suggestions
+- Keyboard-friendly navigation and accessible fold controls
 
-#### Call Stack Folding
-- **Fold Icon**: Shows `▶` icon before foldable function entry lines
-- **Fold Operation**: Click icon to fold/expand function call blocks
-- **Nested Support**: Correctly handles folding of nested function calls
-- **State Saving**: Fold state auto-saved to localStorage
-- **Icon Switching**: `▶` when folded, `▼` when expanded
+---
 
-**Folding Features:**
-- ✅ Fold icon only on function entry lines
-- ✅ Hides all lines between entry and exit when folded
-- ✅ Supports nested function call folding
-- ✅ Fold state auto-saved and restored
-- ✅ Real-time icon state switching
-
-#### Filtering Actions
-- **Filter**: Apply current filter conditions
-- **Clear**: Clear all filter conditions
-- **Live Stats**: Shows "Filtered: X / Total: Y"
-
-#### Keyboard Navigation
-- `↑` / `↓` or `j` / `k`: Move between expandable lines (focus follows selection)
-- `Enter`: Expand/collapse selected line (Enter on a link opens the link)
-- `Esc`: Clear all selection states (keyboard, text highlight, Tab focus)
-
-**Keyboard Navigation Features:**
-- ✅ Focus automatically follows selected line
-- ✅ Tab to link, then ↑↓ selects new line and overrides focus
-- ✅ Enter on link opens link
-- ✅ Enter on line expands/collapses
-- ✅ Esc clears all selection states
-
-#### Theme Switching
-- Light/Dark mode
-- Auto-save user preference
-
-### 🔗 Source Code Linking System
-
-#### Supported Configurations
-- **Base URL**: Set root path for source repository
-- **Module URL**: Set different source URLs for different modules
-- **Path Prefix**: Handle mismatches between build and source paths
-
-#### Link Types
-- **Function Name Link**: Click function name to jump to source (requires `--func-links`)
-- **Return Address Link**: Click return address to jump to source
-- **Source Highlighting**: Syntax highlighting supported (requires Pygments)
-
-### 🚀 Performance Optimization
-
-#### Compiler Suffix Handling
-Automatically removes compiler optimization suffixes, showing original function names:
-
-**Supported Suffixes:**
-- `.isra.0`, `.constprop.0`, `.lto.0`, `.part.0`
-- `.cold.0`, `.cold`, `.plt`, `.ifunc`
-- `.llvm.0`, `.clone.0`, `.unk.0`
-
-**Example:**
-```
-finish_task_switch.isra.0+0x150/0x4a8
-↓
-finish_task_switch+0x150/0x4a8
-```
-
-#### High-Performance Parsing
-- **fastfaddr2line.py**: Python implementation, much faster than traditional tools
-- **External Tool Support**: Can force use of system faddr2line
-- **Batch Processing**: Optimized address resolution flow
+<!-- Installation & Usage continues below -->
 
 ## Installation & Usage
 
@@ -168,25 +66,32 @@ python3 funcgraph.py trace.txt \
 
 ### Parameter Description
 
-| Parameter | Description |
-|-----------|-------------|
-| `ftrace_file` | ftrace output file (required) |
-| `--vmlinux` | Path to vmlinux file (required) |
-| `--kernel-src` | Kernel source root |
-| `--module-dirs` | Kernel module search directories (multiple allowed) |
-| `--module-srcs` | Module source root directories (multiple allowed) |
-| `--base-url` | Base URL for source links |
-| `--module-url` | Module URL mapping (can specify multiple times) |
-| `--output` | Output HTML file |
-| `--auto-search` | Auto-search common module directories |
-| `--verbose` | Verbose debug output |
-| `--fast` | Use fastfaddr2line.py |
-| `--use-external` | Force use of external faddr2line |
-| `--highlight-code` | Enable syntax highlighting |
-| `--path-prefix` | Path prefix replacement (multiple allowed) |
-| `--filter` | Enable filter window |
-| `--func-links` | Function name source links |
-| `--entry-offset` | Function entry address offset |
+The following table documents each command-line option supported by `funcgraph.py`, including types, defaults, and examples.
+
+| Parameter | Type / Default | Description | Example |
+|-----------|----------------|-------------|---------|
+| `ftrace_file` | path (required) | Path to ftrace output file to parse and visualize | `trace.txt` |
+| `--vmlinux` | path (required) | Path to the vmlinux binary (used for address -> source resolution) | `--vmlinux /path/to/vmlinux` |
+| `--kernel-src` | path | Kernel source tree root (used for local source linking and syntax highlighting) | `--kernel-src /usr/src/linux` |
+| `--module-dirs` | paths... | Directories to search for kernel modules (can specify multiple) | `--module-dirs /lib/modules /usr/lib/modules` |
+| `--module-srcs` | paths... | Module source directories for module-specific source linking | `--module-srcs /path/to/module/src` |
+| `--base-url` | URL | Base URL for online source links (e.g., Bootlin) | `--base-url https://elixir.bootlin.com/linux/v6.18/source` |
+| `--module-url` | url:mods (appendable) | Map specific modules to a source URL; format: `url:mod1,mod2`. Can be specified multiple times. | `--module-url https://url1.com:modA,modB` |
+| `--output` | path (default: `ftrace_viz.html`) | Output file path for generated HTML | `--output result.html` |
+| `--auto-search` | flag | Auto-search common module directories (adds common `/lib/modules` paths) | `--auto-search` |
+| `--verbose` | flag | Enable verbose logging for debugging and diagnostics | `--verbose` |
+| `--fast` | flag | Use bundled `fastfaddr2line.py` for faster vmlinux processing | `--fast` |
+| `--use-external` | flag | Force use of external `faddr2line`/`addr2line` (mutually exclusive with `--fast`) | `--use-external` |
+| `--highlight-code` | flag | Enable C source syntax highlighting in HTML (requires Pygments) | `--highlight-code` |
+| `--path-prefix` | paths... | Path prefixes to strip/replace when mapping addr2line paths to kernel-src | `--path-prefix /home/user/build/kernel` |
+| `--filter` | flag | Include the interactive filter box (CPU/PID/params/duration) in the HTML | `--filter` |
+| `--func-links` | flag | Add clickable source links to function names (adds some processing overhead) | `--func-links` |
+| `--entry-offset` | int (default: `0`) | Offset to add to function entry addresses (useful for patched functions) | `--entry-offset 8` |
+| `--enable-fold` | flag | Enable function call folding UI (collapse/expand call blocks) | `--enable-fold` |
+
+**Notes:**
+- `--fast` and `--use-external` should not be used together; if both are specified, `--use-external` will be ignored.
+- `--module-url` supports either a bare URL (default for all modules) or `url:mod1,mod2` mappings; repeat the flag to add multiple mappings.
 
 ### Module URL Example
 
@@ -281,14 +186,6 @@ python3 fastfaddr2line.py -h
 
 # Parse a single address
 python3 fastfaddr2line.py vmlinux arch_stack_walk+0x150/0x4a8
-
-# Full features
-python3 fastfaddr2line.py vmlinux \
-    --functions \
-    --basenames \
-    --inlines \
-    --pretty-print \
-    arch_stack_walk+0x150/0x4a8
 ```
 
 ### Parameter Description
