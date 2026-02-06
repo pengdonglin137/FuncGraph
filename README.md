@@ -6,20 +6,6 @@
 
 FuncGraph converts `function_graph` ftrace output into an interactive, filterable HTML report for kernel developers and performance engineers. It is optimized for fast triage: source linking, high-speed address resolution, parameter and duration filtering, and keyboard-friendly call folding.
 
-## Quick Start
-
-Minimal:
-```bash
-python3 funcgraph.py trace.txt --vmlinux vmlinux --filter --fast
-```
-Full:
-```bash
-python3 funcgraph.py trace.txt \
-  --vmlinux /path/to/vmlinux \
-  --kernel-src /path/to/kernel \
-  --filter --fast --highlight-code --output result.html
-```
-
 ## Cheat Sheet
 
 - Common flags: `--fast`, `--filter`, `--func-links`, `--highlight-code` 🔧
@@ -49,10 +35,6 @@ python3 funcgraph.py trace.txt \
 ### Basic Usage
 
 ```bash
-# Minimal config
-python3 funcgraph.py trace.txt --vmlinux vmlinux --filter --fast
-
-# Full config
 python3 funcgraph.py trace.txt \
     --vmlinux /path/to/vmlinux \
     --kernel-src /path/to/kernel/src \
