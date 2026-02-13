@@ -2863,7 +2863,7 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
         body {{
             font-family: 'Courier New', monospace;
             background-color: var(--bg-color);
-            padding: 20px;
+            padding: 8px;
             line-height: 1.5;
             margin: 0;
             color: var(--text-color);
@@ -2871,26 +2871,27 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
         }}
         .container {{
             background: var(--container-bg);
-            padding: 20px;
-            border-radius: 8px;
-            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            padding: 12px 8px 12px 8px;
+            border-radius: 4px;
+            box-shadow: none;
             overflow-x: auto;
             transition: background-color 0.3s;
+            max-width: 100%;
         }}
         h1 {{
             text-align: center;
             color: var(--text-color);
-            margin-bottom: 20px;
-            font-size: 32px;
+            margin: 0 0 12px 0;
+            font-size: 28px;
             font-weight: 700;
             letter-spacing: 1.5px;
             display: flex;
             align-items: center;
             justify-content: center;
-            gap: 16px;
+            gap: 12px;
             flex-wrap: wrap;
             position: relative;
-            padding-bottom: 15px;
+            padding-bottom: 10px;
         }}
         h1::after {{
             content: '';
@@ -3044,12 +3045,12 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
         .line-container {{
             display: flex;
             align-items: center;
-            padding: 2px 5px;
-            border-radius: 3px;
+            padding: 1px 2px;
+            border-radius: 2px;
             transition: background-color 0.2s;
             white-space: pre;
             font-family: 'Courier New', monospace;
-            font-size: 14px;
+            font-size: 13px;
             cursor: default;
             -webkit-user-select: none;
             -moz-user-select: none;
@@ -3187,14 +3188,14 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
         }}
         .expanded-content {{
             display: none;
-            margin-left: 50px;
-            padding: 10px;
+            margin-left: 40px;
+            padding: 6px 8px;
             background-color: var(--expanded-bg);
             border-left: 2px solid var(--btn-primary);
-            border-radius: 0 4px 4px 0;
+            border-radius: 0;
             white-space: pre;
             font-family: 'Courier New', monospace;
-            font-size: 13px;
+            font-size: 12px;
         }}
         .location-link {{
             display: block;
@@ -3221,16 +3222,17 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
         }}
         .summary {{
             background-color: var(--summary-bg);
-            border: 1px solid var(--border-color);
-            border-radius: 5px;
-            padding: 8px 12px;
-            margin-bottom: 0;
-            font-size: 12px;
+            border: none;
+            border-bottom: 1px solid var(--border-color);
+            border-radius: 0;
+            padding: 6px 0;
+            margin: 0 0 8px 0;
+            font-size: 11px;
             color: var(--summary-text);
             display: flex;
             justify-content: space-between;
             align-items: center;
-            gap: 15px;
+            gap: 12px;
         }}
         .summary > div:first-child {{
             flex: 1;
@@ -3853,18 +3855,27 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
         
         @media (max-width: 768px) {{
             body {{
-                padding: 10px;
+                padding: 4px;
             }}
             .container {{
-                padding: 10px;
+                padding: 6px 4px;
+            }}
+            h1 {{
+                font-size: 20px;
+                margin-bottom: 8px;
+            }}
+            .summary {{
+                font-size: 10px;
+                gap: 8px;
             }}
             .line-container {{
-                font-size: 12px;
+                font-size: 11px;
+                padding: 0.5px 1px;
             }}
             .expanded-content {{
-                margin-left: 30px;
-                padding: 5px;
-                font-size: 11px;
+                margin-left: 25px;
+                padding: 4px 6px;
+                font-size: 10px;
             }}
             .controls {{
                 bottom: 10px;
