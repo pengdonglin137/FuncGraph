@@ -3536,9 +3536,66 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
             background: var(--btn-danger-hover);
         }}
 
-        /* 移除旧的固定定位按钮样式 */
+        /* 浮动控件：默认显示，允许通过 body.hide-floating-controls 隐藏 */
         .copy-btn, .jump-to-top, .floating-buttons {{
-            display: none;
+            display: block;
+        }}
+
+        /* 当 body 带有 hide-floating-controls 时隐藏所有浮动按钮 */
+        body.hide-floating-controls .copy-btn,
+        body.hide-floating-controls .jump-to-top,
+        body.hide-floating-controls .floating-buttons,
+        body.hide-floating-controls .controls {{
+            display: none !important;
+        }}
+
+        /* 小型悬浮切换按钮（不会遮挡正文，默认靠右中间，支持鼠标拖动） */
+        .floating-toggle {{
+            position: fixed;
+            top: 50%;
+            right: 12px;
+            width: 44px;
+            height: 44px;
+            border-radius: 22px;
+            background: var(--container-bg);
+            border: 1px solid var(--border-color);
+            box-shadow: 0 2px 6px rgba(0,0,0,0.12);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: grab;
+            z-index: 3000;
+            opacity: 0.95;
+            user-select: none;
+            transition: background-color 0.15s, opacity 0.15s;
+            /* 仅在非拖动状态下使用 transform 和 transition 动画 */
+            transform: translateY(-50%);
+        }}
+        .floating-toggle:hover:not(.dragging) {{
+            background: var(--container-bg-hover, #f3f4f6);
+            transform: translateY(-50%) scale(1.05);
+            box-shadow: 0 4px 8px rgba(0,0,0,0.15);
+        }}
+        .floating-toggle.dragging {{
+            cursor: grabbing;
+            opacity: 0.98;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+            transition: none;
+            transform: none !important;
+        }}
+        .floating-toggle .ft-icon {{
+            font-size: 18px;
+            color: var(--text-color);
+            user-select: none;
+            pointer-events: none;
+        }}
+        /* 在移动端靠底部放置，避免遮挡阅读区 */
+        @media (max-width: 768px) {{
+            .floating-toggle {{
+                top: auto;
+                bottom: 18px;
+                right: 12px;
+            }}
         }}
         .progress-bar {{
             position: fixed;
@@ -3832,6 +3889,10 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
 </head>
 <body>
     <div class="progress-bar" id="progressBar"></div>
+    <!-- 小悬浮切换按钮：用于显示/隐藏页面上的其他浮动控件 -->
+    <button id="floatingToggle" class="floating-toggle" aria-label="Toggle floating controls" title="Toggle floating controls" onclick="handleFloatingToggleClick(event)">
+        <span class="ft-icon" id="floatingToggleIcon">☰</span>
+    </button>
     
     <div class="container">
         <h1>
@@ -5626,6 +5687,128 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
                 icon.classList.add('expanded');
             }
         }
+
+        // 切换浮动控件（显示/隐藏），并保存状态到 localStorage
+        function toggleFloatingControls() {
+            const hidden = document.body.classList.toggle('hide-floating-controls');
+            const icon = document.getElementById('floatingToggleIcon');
+            if (hidden) {
+                icon.textContent = '✕';
+                localStorage.setItem('floatingControlsHidden', 'true');
+            } else {
+                icon.textContent = '☰';
+                localStorage.setItem('floatingControlsHidden', 'false');
+            }
+        }
+
+        // 初始化浮动控件的显示状态（从 localStorage 读取）
+        function initFloatingControls() {
+            const hidden = localStorage.getItem('floatingControlsHidden') === 'true';
+            const icon = document.getElementById('floatingToggleIcon');
+            if (hidden) {
+                document.body.classList.add('hide-floating-controls');
+                if (icon) icon.textContent = '✕';
+            } else {
+                document.body.classList.remove('hide-floating-controls');
+                if (icon) icon.textContent = '☰';
+            }
+        }
+
+        // 拖动相关的全局变量
+        let isDraggingToggle = false;
+        let dragStartX = 0;
+        let dragStartY = 0;
+        let dragStartLeft = 0;
+        let dragStartTop = 0;
+        let wasDragged = false;  // 标记本次操作是否有移动（拖动而非点击）
+
+        // 点击处理器：检查是否为拖动，只在非拖动时执行 toggle
+        function handleFloatingToggleClick(event) {
+            // 如果拖动过程中产生了移动，则忽略本次点击
+            if (wasDragged) {
+                wasDragged = false;  // 重置标志
+                return;
+            }
+            toggleFloatingControls();
+        }
+
+        // 初始化悬浮按钮的拖动功能
+        function initFloatingToggleDrag() {
+            const toggle = document.getElementById('floatingToggle');
+            if (!toggle) return;
+
+            // 从 localStorage 恢复之前保存的位置
+            const savedPos = localStorage.getItem('floatingTogglePos');
+            if (savedPos) {
+                try {
+                    const pos = JSON.parse(savedPos);
+                    toggle.style.position = 'fixed';
+                    toggle.style.top = pos.top + 'px';
+                    toggle.style.left = pos.left + 'px';
+                    toggle.style.right = 'auto';
+                    toggle.style.bottom = 'auto';
+                    toggle.style.transform = 'none';
+                } catch (e) {
+                    console.warn('Failed to restore toggle position:', e);
+                }
+            }
+
+            // 鼠标按下：开始拖动
+            toggle.addEventListener('mousedown', function(e) {
+                e.preventDefault();
+                isDraggingToggle = true;
+                wasDragged = false;  // 初始化拖动标志
+                toggle.classList.add('dragging');
+                dragStartX = e.clientX;
+                dragStartY = e.clientY;
+                dragStartLeft = toggle.offsetLeft;
+                dragStartTop = toggle.offsetTop;
+                e.stopPropagation();
+            });
+
+            // 鼠标移动：更新位置
+            document.addEventListener('mousemove', function(e) {
+                if (!isDraggingToggle) return;
+                
+                const deltaX = e.clientX - dragStartX;
+                const deltaY = e.clientY - dragStartY;
+                
+                // 移动距离超过 3px 时才认为是拖动（避免误触发）
+                if (Math.abs(deltaX) > 3 || Math.abs(deltaY) > 3) {
+                    wasDragged = true;
+                }
+                
+                const newLeft = dragStartLeft + deltaX;
+                const newTop = dragStartTop + deltaY;
+                
+                // 边界约束：防止拖出窗口
+                const maxLeft = window.innerWidth - toggle.offsetWidth;
+                const maxTop = window.innerHeight - toggle.offsetHeight;
+                
+                toggle.style.left = Math.max(0, Math.min(newLeft, maxLeft)) + 'px';
+                toggle.style.top = Math.max(0, Math.min(newTop, maxTop)) + 'px';
+            });
+
+            // 鼠标释放：停止拖动，保存位置
+            document.addEventListener('mouseup', function(e) {
+                if (!isDraggingToggle) return;
+                
+                isDraggingToggle = false;
+                toggle.classList.remove('dragging');
+                
+                // 保存位置到 localStorage
+                const pos = {
+                    left: toggle.offsetLeft,
+                    top: toggle.offsetTop
+                };
+                localStorage.setItem('floatingTogglePos', JSON.stringify(pos));
+            });
+
+            // 防止文本选中干扰拖动
+            toggle.addEventListener('selectstart', function(e) {
+                e.preventDefault();
+            });
+        }
         
         // 高亮被选中的行
         function highlightSelectedLines() {
@@ -6387,6 +6570,16 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
 
             // 初始化信息面板
             initInfoPanel();
+
+            // 初始化浮动控件显示状态
+            if (typeof initFloatingControls === 'function') {
+                try { initFloatingControls(); } catch (e) { console.warn('initFloatingControls failed', e); }
+            }
+
+            // 初始化浮动按钮的拖动功能
+            if (typeof initFloatingToggleDrag === 'function') {
+                try { initFloatingToggleDrag(); } catch (e) { console.warn('initFloatingToggleDrag failed', e); }
+            }
 
             // 监听滚动事件
             window.addEventListener('scroll', updateProgressBar);
