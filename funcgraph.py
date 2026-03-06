@@ -10,14 +10,13 @@ import fnmatch
 from collections import defaultdict
 import time
 
-# ==================== 配置变量 ====================
-# 修改这里来定制 HTML 的显示
+# ============================================================
+# Constants and Configuration
+# ============================================================
 APP_VERSION = "0.6"      # 应用版本号
 APP_AUTHOR = "@dolinux"  # 作者信息
 APP_TITLE = "FuncGraph"  # 应用标题
-# ================================================
 
-# ==================== 错误码映射 ====================
 # Linux内核常见错误码映射（负值表示错误）
 # 注意：0不包含在内，因为0是成功返回值，不是错误码
 ERROR_CODE_MAP = {
@@ -179,7 +178,7 @@ ERROR_CODE_MAP = {
 ERROR_CODE_NAME_MAP = {v: k for k, v in ERROR_CODE_MAP.items()}
 
 # ============================================================
-# 数据模型
+# Data Model
 # ============================================================
 class FtraceLine:
     """Parsed ftrace line data. Uses __slots__ for memory efficiency."""
@@ -233,7 +232,9 @@ class FtraceLine:
         """Dict-compatible 'in' operator for gradual migration."""
         return hasattr(self, key) and getattr(self, key) is not None
 
-# ================================================
+# ============================================================
+# Utility Functions
+# ============================================================
 
 def verbose_print(message, verbose_flag, end='\n'):
     """根据verbose标志输出调试信息"""
@@ -246,6 +247,10 @@ def escape_html_preserve_spaces(text):
     escaped = escaped.replace(' ', '&nbsp;')
     escaped = escaped.replace('\t', '&nbsp;&nbsp;&nbsp;&nbsp;')
     return escaped
+
+# ============================================================
+# Syntax Highlighting
+# ============================================================
 
 def highlight_ftrace_line(text):
     """
@@ -701,6 +706,10 @@ def remove_compiler_suffix(func_name):
         return f"{cleaned}{offset}{length}"
     else:
         return cleaned
+
+# ============================================================
+# Ftrace Parser
+# ============================================================
 
 class FtraceParser:
     """Parses ftrace function_graph output files."""
@@ -1271,6 +1280,10 @@ def identify_fold_blocks(parsed_lines, verbose=False):
     """Identify fold blocks. Wrapper for backward compatibility."""
     parser = FtraceParser(verbose=verbose)
     parser._identify_fold_blocks(parsed_lines)
+
+# ============================================================
+# Address Resolver
+# ============================================================
 
 class AddressResolver:
     """Resolves function addresses to source code locations via faddr2line."""
@@ -2147,6 +2160,10 @@ def call_faddr2line_for_func_names(vmlinux_path, faddr2line_path, func_names, us
                                        module_paths=module_paths)
 
 
+# ============================================================
+# HTML Generator
+# ============================================================
+
 class HtmlGenerator:
     """Generates self-contained interactive HTML visualization."""
 
@@ -2196,28 +2213,15 @@ class HtmlGenerator:
         # 1. Pre-process data
         self._prepare_data()
 
-        parsed_lines = self.parsed_lines
-        vmlinux_time = self.vmlinux_time
-        module_time = self.module_time
-        filter_html = self.filter_html
-        enable_fold = self.enable_fold
-        parse_time = self.parse_time
-        total_time = self.total_time
-        script_args = self.script_args
-        kernel_src = self.kernel_src
-        path_prefix = self.path_prefix
-        module_src = self.module_src
-        verbose = self.verbose
-
-        verbose_print("Generating HTML content", verbose)
+        verbose_print("Generating HTML content", self.verbose)
         start_time = time.time()
 
         # 计算统计数据
-        total_lines = len(parsed_lines)
-        expandable_entries = sum(1 for l in parsed_lines if l['expandable'])
+        total_lines = len(self.parsed_lines)
+        expandable_entries = sum(1 for l in self.parsed_lines if l['expandable'])
 
         # 生成信息面板内容
-        info_items = format_args_info(script_args)
+        info_items = format_args_info(self.script_args)
         env_items = get_environment_info()
 
         info_content_html = ""
@@ -2230,20 +2234,20 @@ class HtmlGenerator:
             info_content_html += '                <div style="border-top: 1px solid var(--border-color); margin: 8px 0;"></div>\n'
 
         # 添加处理统计信息
-        if parse_time > 0 or total_time > 0 or vmlinux_time > 0 or module_time > 0:
+        if self.parse_time > 0 or self.total_time > 0 or self.vmlinux_time > 0 or self.module_time > 0:
             info_content_html += '                <div style="font-weight: 600; color: var(--text-color); margin-bottom: 8px; font-size: 11px;">Processing Stats</div>\n'
-            if parse_time > 0:
-                info_content_html += f'                <div class="info-item"><div class="info-label">Parse Time:</div><div class="info-value">{parse_time:.2f}s</div></div>\n'
-            if vmlinux_time > 0:
-                info_content_html += f'                <div class="info-item"><div class="info-label">Vmlinux Time:</div><div class="info-value">{vmlinux_time:.2f}s</div></div>\n'
-            if module_time > 0:
-                info_content_html += f'                <div class="info-item"><div class="info-label">Modules Time:</div><div class="info-value">{module_time:.2f}s</div></div>\n'
-            if total_time > 0:
-                info_content_html += f'                <div class="info-item"><div class="info-label">Total Time:</div><div class="info-value">{total_time:.2f}s</div></div>\n'
-            info_content_html += f'                <div class="info-item"><div class="info-label">Total Lines:</div><div class="info-value">{len(parsed_lines)}</div></div>\n'
-            info_content_html += f'                <div class="info-item"><div class="info-label">Expandable:</div><div class="info-value">{sum(1 for l in parsed_lines if l["expandable"])}</div></div>\n'
-            if enable_fold:
-                foldable_count = sum(1 for l in parsed_lines if l.get('fold_id') and l.get('fold_type') in ['entry', 'exit', 'inner'])
+            if self.parse_time > 0:
+                info_content_html += f'                <div class="info-item"><div class="info-label">Parse Time:</div><div class="info-value">{self.parse_time:.2f}s</div></div>\n'
+            if self.vmlinux_time > 0:
+                info_content_html += f'                <div class="info-item"><div class="info-label">Vmlinux Time:</div><div class="info-value">{self.vmlinux_time:.2f}s</div></div>\n'
+            if self.module_time > 0:
+                info_content_html += f'                <div class="info-item"><div class="info-label">Modules Time:</div><div class="info-value">{self.module_time:.2f}s</div></div>\n'
+            if self.total_time > 0:
+                info_content_html += f'                <div class="info-item"><div class="info-label">Total Time:</div><div class="info-value">{self.total_time:.2f}s</div></div>\n'
+            info_content_html += f'                <div class="info-item"><div class="info-label">Total Lines:</div><div class="info-value">{len(self.parsed_lines)}</div></div>\n'
+            info_content_html += f'                <div class="info-item"><div class="info-label">Expandable:</div><div class="info-value">{sum(1 for l in self.parsed_lines if l["expandable"])}</div></div>\n'
+            if self.enable_fold:
+                foldable_count = sum(1 for l in self.parsed_lines if l.get('fold_id') and l.get('fold_type') in ['entry', 'exit', 'inner'])
                 info_content_html += f'                <div class="info-item"><div class="info-label">Foldable:</div><div class="info-value">{foldable_count}</div></div>\n'
 
         # 添加脚本参数部分
@@ -2252,7 +2256,7 @@ class HtmlGenerator:
             for label, value in info_items:
                 info_content_html += f'                <div class="info-item"><div class="info-label">{label}:</div><div class="info-value">{html.escape(str(value))}</div></div>\n'
 
-        if not env_items and not info_items and parse_time == 0:
+        if not env_items and not info_items and self.parse_time == 0:
             info_content_html = '                <div style="color: var(--summary-text); font-size: 12px;">No information available</div>'
 
         # 2. 构建HTML字符串
@@ -2357,16 +2361,16 @@ class HtmlGenerator:
 """
 
         elapsed = time.time() - start_time
-        verbose_print(f"HTML generation completed in {elapsed:.2f} seconds", verbose)
+        verbose_print(f"HTML generation completed in {elapsed:.2f} seconds", self.verbose)
 
         # 替换信息面板占位符
         html_str = html_str.replace('{INFO_CONTENT_PLACEHOLDER}', info_content_html)
 
         # 将过滤窗口插入到 filterPlaceholder 位置
-        if filter_html:
-            html_str = html_str.replace('<div id="filterPlaceholder"></div>', filter_html)
+        if self.filter_html:
+            html_str = html_str.replace('<div id="filterPlaceholder"></div>', self.filter_html)
 
-        return html_str, vmlinux_time, module_time
+        return html_str, self.vmlinux_time, self.module_time
 
     def _prepare_data(self):
         """Pre-process data: resolve func names, collect filter data, parse module URLs.
@@ -2375,25 +2379,7 @@ class HtmlGenerator:
         self.filter_html, self.combined_module_url_map, self.default_module_url,
         self.func_locations_map, self.vmlinux_funcs, self.module_funcs.
         """
-        parsed_lines = self.parsed_lines
-        vmlinux_path = self.vmlinux_path
-        faddr2line_path = self.faddr2line_path
-        module_dirs = self.module_dirs
-        base_url = self.base_url
-        module_url = self.module_url
-        kernel_src = self.kernel_src
-        use_list = self.use_list
-        verbose = self.verbose
-        fast_mode = self.fast_mode
-        path_prefix = self.path_prefix
-        module_src = self.module_src
-        module_srcs = self.module_srcs
-        enable_filter = self.enable_filter
-        func_links = self.func_links
-        entry_offset = self.entry_offset
-
-        if module_dirs is None:
-            module_dirs = []
+        module_dirs = self.module_dirs if self.module_dirs is not None else []
 
         # 初始化时间统计
         vmlinux_time = 0
@@ -2401,13 +2387,13 @@ class HtmlGenerator:
 
         # 如果启用函数名超链接，收集需要解析的函数名
         func_name_results = {}
-        if func_links:
+        if self.func_links:
             # 收集所有唯一的原始函数名（去重）和模块信息
             unique_func_names = set()
             func_module_map = {}  # 函数名 -> 模块名
             module_paths = {}     # 模块名 -> 模块文件路径
 
-            for line_data in parsed_lines:
+            for line_data in self.parsed_lines:
                 raw_func_name = line_data.get('raw_func_name')
                 module_name = line_data.get('module_name')
 
@@ -2447,7 +2433,6 @@ class HtmlGenerator:
                                 break
 
                             # 方法2: 查找带版本号的模块（优先匹配精确名称）
-                            import glob
                             # 先查找精确匹配
                             exact_files = glob.glob(os.path.join(module_dir, f"{variant}.ko"))
                             if exact_files:
@@ -2489,39 +2474,39 @@ class HtmlGenerator:
                         if found:
                             break
 
-            if unique_func_names and vmlinux_path and faddr2line_path:
-                verbose_print(f"收集到 {len(unique_func_names)} 个唯一函数名用于解析", verbose)
+            if unique_func_names and self.vmlinux_path and self.faddr2line_path:
+                verbose_print(f"收集到 {len(unique_func_names)} 个唯一函数名用于解析", self.verbose)
                 if func_module_map:
-                    verbose_print(f"其中 {len(func_module_map)} 个是模块函数", verbose)
+                    verbose_print(f"其中 {len(func_module_map)} 个是模块函数", self.verbose)
 
                 # 调用 faddr2line 解析函数名（使用原始函数名）
                 func_name_list = list(unique_func_names)
                 func_name_results = call_faddr2line_for_func_names(
-                    vmlinux_path, faddr2line_path, func_name_list,
-                    use_list=use_list, verbose=verbose, fast_mode=fast_mode,
-                    path_prefix=path_prefix, module_srcs=module_srcs,
-                    entry_offset=entry_offset,
+                    self.vmlinux_path, self.faddr2line_path, func_name_list,
+                    use_list=self.use_list, verbose=self.verbose, fast_mode=self.fast_mode,
+                    path_prefix=self.path_prefix, module_srcs=self.module_srcs,
+                    entry_offset=self.entry_offset,
                     func_module_map=func_module_map,
                     module_paths=module_paths
                 )
-                verbose_print(f"函数名解析完成，获取 {len(func_name_results)} 个结果", verbose)
+                verbose_print(f"函数名解析完成，获取 {len(func_name_results)} 个结果", self.verbose)
 
                 # 将解析结果存储到 parsed_lines 中
-                for line_data in parsed_lines:
+                for line_data in self.parsed_lines:
                     raw_func_name = line_data.get('raw_func_name')
                     if raw_func_name and raw_func_name in func_name_results:
                         line_data['func_name_info'] = func_name_results[raw_func_name]
 
         # 根据enable_filter参数生成过滤框HTML
         filter_html = ""
-        if enable_filter:
+        if self.enable_filter:
             # 收集所有唯一的CPU、PID、进程名和错误码用于自动补全
             unique_cpus = set()
             unique_pids = set()
             unique_comms = set()
             unique_error_codes = set()  # 存储错误码的数字值
 
-            for line_data in parsed_lines:
+            for line_data in self.parsed_lines:
                 cpu = line_data.get('cpu')
                 pid = line_data.get('pid')
                 comm = line_data.get('comm')
@@ -2593,7 +2578,7 @@ class HtmlGenerator:
             # 检查是否有参数数据
             has_params = False
             has_duration = False
-            for line_data in parsed_lines:
+            for line_data in self.parsed_lines:
                 if not has_params and line_data.get('params'):
                     has_params = True
                 if not has_duration and line_data.get('duration') is not None:
@@ -2684,39 +2669,39 @@ class HtmlGenerator:
             <div class="filter-hint" id="filterHint"></div>'''
 
         # 解析module_url参数（支持多个--module-url参数）
-        if module_url is None:
+        if self.module_url is None:
             module_url_list = []
-        elif isinstance(module_url, list):
-            module_url_list = module_url
+        elif isinstance(self.module_url, list):
+            module_url_list = self.module_url
         else:
-            module_url_list = [module_url]
+            module_url_list = [self.module_url]
 
         # 合并所有module_url参数的解析结果
         combined_module_url_map = {}
-        default_module_url = base_url
+        default_module_url = self.base_url
 
         for module_url_str in module_url_list:
-            url_map, default_url = parse_module_url(module_url_str, base_url)
+            url_map, default_url = parse_module_url(module_url_str, self.base_url)
 
             # 合并映射
             combined_module_url_map.update(url_map)
 
             # 如果这个参数提供了默认URL（即没有跟模块名），更新默认URL
             # （后面的参数会覆盖前面的）
-            if default_url != base_url:
+            if default_url != self.base_url:
                 default_module_url = default_url
 
         # 如果没有提供任何module_url参数，使用base_url作为默认
         if not module_url_list:
-            default_module_url = base_url
+            default_module_url = self.base_url
 
-        verbose_print(f"Module URL map: {combined_module_url_map}", verbose)
-        verbose_print(f"Default module URL: {default_module_url}", verbose)
+        verbose_print(f"Module URL map: {combined_module_url_map}", self.verbose)
+        verbose_print(f"Default module URL: {default_module_url}", self.verbose)
 
         # 验证module_url_map中的模块名是否在parsed_lines中存在
-        if combined_module_url_map and parsed_lines:
+        if combined_module_url_map and self.parsed_lines:
             available_modules = set()
-            for line_data in parsed_lines:
+            for line_data in self.parsed_lines:
                 if line_data.get('module_name'):
                     available_modules.add(line_data['module_name'])
 
@@ -2726,46 +2711,41 @@ class HtmlGenerator:
                 print(f"Warning: module-url specifies mappings for modules not found in trace: {', '.join(sorted(unused_mappings))}", file=sys.stderr)
 
             # 检查是否有模块没有URL映射但default_module_url不是base_url
-            if default_module_url and default_module_url != base_url:
+            if default_module_url and default_module_url != self.base_url:
                 unmapped_modules = available_modules - set(combined_module_url_map.keys())
                 if unmapped_modules:
-                    verbose_print(f"Modules using default URL '{default_module_url}': {', '.join(sorted(unmapped_modules))}", verbose)
+                    verbose_print(f"Modules using default URL '{default_module_url}': {', '.join(sorted(unmapped_modules))}", self.verbose)
 
         # 确保path_prefix、module_src和module_srcs是列表
-        if path_prefix and not isinstance(path_prefix, list):
-            path_prefix = [path_prefix]
-        if module_src and not isinstance(module_src, list):
-            module_src = [module_src]
-        if module_srcs and not isinstance(module_srcs, list):
-            module_srcs = [module_srcs]
+        if self.path_prefix and not isinstance(self.path_prefix, list):
+            self.path_prefix = [self.path_prefix]
+        if self.module_src and not isinstance(self.module_src, list):
+            self.module_src = [self.module_src]
+        if self.module_srcs and not isinstance(self.module_srcs, list):
+            self.module_srcs = [self.module_srcs]
 
         # kernel_src保持单个路径（可以是None）
 
-        # Update instance attributes with normalized values
-        self.path_prefix = path_prefix
-        self.module_src = module_src
-        self.module_srcs = module_srcs
-
         # 使用绝对路径
-        abs_vmlinux_path = os.path.abspath(vmlinux_path)
-        abs_faddr2line_path = os.path.abspath(faddr2line_path)
+        abs_vmlinux_path = os.path.abspath(self.vmlinux_path)
+        abs_faddr2line_path = os.path.abspath(self.faddr2line_path)
 
         # 如果使用fast模式，优先使用fastfaddr2line.py
-        if fast_mode:
+        if self.fast_mode:
             script_dir = os.path.dirname(os.path.abspath(__file__))
             fast_faddr2line_path = os.path.join(script_dir, 'fastfaddr2line.py')
             if os.path.exists(fast_faddr2line_path):
-                verbose_print(f"Using fastfaddr2line.py at {fast_faddr2line_path}", verbose)
+                verbose_print(f"Using fastfaddr2line.py at {fast_faddr2line_path}", self.verbose)
                 abs_faddr2line_path = fast_faddr2line_path
             else:
-                verbose_print(f"Warning: fastfaddr2line.py not found at {fast_faddr2line_path}, using fallback", verbose)
+                verbose_print(f"Warning: fastfaddr2line.py not found at {fast_faddr2line_path}, using fallback", self.verbose)
 
         # 收集所有需要解析的函数信息（使用字典去重）
         func_info_map = defaultdict(list)  # func_info -> [line_index]
         module_funcs = defaultdict(set)   # module_name -> set(func_info)
         vmlinux_funcs = set()              # set(func_info)
 
-        for idx, line_data in enumerate(parsed_lines):
+        for idx, line_data in enumerate(self.parsed_lines):
             if line_data['expandable'] and line_data['func_info']:
                 func_info = line_data['func_info']
 
@@ -2791,10 +2771,10 @@ class HtmlGenerator:
                 else:
                     vmlinux_funcs.add(func_info)
 
-        verbose_print(f"Found {len(vmlinux_funcs)} unique kernel functions", verbose)
-        verbose_print(f"Found {len(module_funcs)} modules with functions", verbose)
+        verbose_print(f"Found {len(vmlinux_funcs)} unique kernel functions", self.verbose)
+        verbose_print(f"Found {len(module_funcs)} modules with functions", self.verbose)
         for module, funcs in module_funcs.items():
-            verbose_print(f"Module {module}: {len(funcs)} functions", verbose)
+            verbose_print(f"Module {module}: {len(funcs)} functions", self.verbose)
 
         # 批量获取所有函数的位置信息
         func_locations_map = {}
@@ -2809,22 +2789,22 @@ class HtmlGenerator:
                 vmlinux_funcs_for_call.add(adjusted_func)
 
             vmlinux_funcs_list = list(vmlinux_funcs_for_call)
-            verbose_print(f"Processing {len(vmlinux_funcs_list)} kernel functions", verbose)
+            verbose_print(f"Processing {len(vmlinux_funcs_list)} kernel functions", self.verbose)
 
             # 记录vmlinux解析开始时间
             vmlinux_start = time.time()
 
             # 如果是fast模式且处理的是vmlinux，使用fastfaddr2line.py
             # 对于内核函数，不传递模块相关的路径参数
-            if fast_mode and os.path.basename(abs_faddr2line_path) == 'fastfaddr2line.py':
+            if self.fast_mode and os.path.basename(abs_faddr2line_path) == 'fastfaddr2line.py':
                 batch_results = call_faddr2line_batch(
                     abs_faddr2line_path,
                     abs_vmlinux_path,
                     vmlinux_funcs_list,
-                    use_list,
-                    kernel_src,
-                    verbose,
-                    path_prefix,
+                    self.use_list,
+                    self.kernel_src,
+                    self.verbose,
+                    self.path_prefix,
                     None,  # 内核函数不需要模块源码路径
                     None   # 内核函数不需要模块源码路径
                 )
@@ -2833,9 +2813,9 @@ class HtmlGenerator:
                     abs_faddr2line_path,
                     abs_vmlinux_path,
                     vmlinux_funcs_list,
-                    use_list,
-                    kernel_src,
-                    verbose,
+                    self.use_list,
+                    self.kernel_src,
+                    self.verbose,
                     None,  # 原生faddr2line不支持path_prefix
                     None,  # 内核函数不需要模块源码路径
                     None   # 原生faddr2line不支持module_srcs
@@ -2843,20 +2823,20 @@ class HtmlGenerator:
 
             vmlinux_time = time.time() - vmlinux_start
             func_locations_map.update(batch_results)
-            verbose_print(f"Resolved {len(batch_results)} kernel function locations in {vmlinux_time:.2f}s", verbose)
+            verbose_print(f"Resolved {len(batch_results)} kernel function locations in {vmlinux_time:.2f}s", self.verbose)
 
         # 2. 处理模块函数（去重后）
         module_start = time.time()
         for module_name, funcs in module_funcs.items():
-            verbose_print(f"Processing module {module_name} with {len(funcs)} functions", verbose)
+            verbose_print(f"Processing module {module_name} with {len(funcs)} functions", self.verbose)
             # 查找模块文件
-            module_path = find_module_path(module_name, self.module_dirs, verbose)
+            module_path = find_module_path(module_name, self.module_dirs, self.verbose)
 
             if not module_path or not os.path.isfile(module_path):
-                verbose_print(f"Module file not found for {module_name}", verbose)
+                verbose_print(f"Module file not found for {module_name}", self.verbose)
                 continue
 
-            verbose_print(f"Using module file: {module_path}", verbose)
+            verbose_print(f"Using module file: {module_path}", self.verbose)
 
             # 为调用fastfaddr2line准备函数列表（只调整偏移量，保留编译器后缀）
             funcs_for_call = set()
@@ -2867,24 +2847,24 @@ class HtmlGenerator:
 
             funcs_list = list(funcs_for_call)
             # 如果使用fastfaddr2line.py，传递path_prefix和module_srcs；否则传递None
-            should_pass_fast_args = fast_mode and os.path.basename(abs_faddr2line_path) == 'fastfaddr2line.py'
+            should_pass_fast_args = self.fast_mode and os.path.basename(abs_faddr2line_path) == 'fastfaddr2line.py'
             batch_results = call_faddr2line_batch(
                 abs_faddr2line_path,
                 module_path,
                 funcs_list,
-                use_list,
-                kernel_src,
-                verbose,
-                path_prefix if should_pass_fast_args else None,
-                module_src,
-                module_srcs if should_pass_fast_args else None
+                self.use_list,
+                self.kernel_src,
+                self.verbose,
+                self.path_prefix if should_pass_fast_args else None,
+                self.module_src,
+                self.module_srcs if should_pass_fast_args else None
             )
             func_locations_map.update(batch_results)
-            verbose_print(f"Resolved {len(batch_results)} function locations for module {module_name}", verbose)
+            verbose_print(f"Resolved {len(batch_results)} function locations for module {module_name}", self.verbose)
 
         module_time = time.time() - module_start
         if module_funcs:
-            verbose_print(f"Resolved all modules in {module_time:.2f}s", verbose)
+            verbose_print(f"Resolved all modules in {module_time:.2f}s", self.verbose)
 
         # Store all computed state
         self.vmlinux_time = vmlinux_time
@@ -3007,24 +2987,10 @@ class HtmlGenerator:
 
         Returns a string of all line-container divs.
         """
-        parsed_lines = self.parsed_lines
-        base_url = self.base_url
-        kernel_src = self.kernel_src
-        verbose = self.verbose
-        highlight_code = self.highlight_code
-        path_prefix = self.path_prefix
-        module_src = self.module_src
-        module_srcs = self.module_srcs
-        func_links = self.func_links
-        enable_fold = self.enable_fold
-        module_url_map = self.combined_module_url_map
-        default_module_url = self.default_module_url
-        func_locations_map = self.func_locations_map
-
         content_html = ""
 
         # 添加行号并输出原始ftrace日志
-        for idx, line_data in enumerate(parsed_lines):
+        for idx, line_data in enumerate(self.parsed_lines):
             line_number = idx + 1  # 行号从1开始
             line_anchor_id = f"L{line_number}"  # 使用L{行号}格式作为锚点
             line_id = f"line_{idx}"  # 保留用于JavaScript引用
@@ -3049,19 +3015,19 @@ class HtmlGenerator:
                         in_comment = True
 
                 # 如果启用了函数名超链接且有解析结果且不在注释中
-                if func_links and line_data.get('func_name_info') and not in_comment:
+                if self.func_links and line_data.get('func_name_info') and not in_comment:
                     source_file, line_num = line_data['func_name_info']
                     # 获取模块信息（如果适用）
                     module_name = line_data.get('module_name')
                     # 确定使用哪个URL（模块特定URL或默认URL）
-                    current_base_url = base_url
+                    current_base_url = self.base_url
                     if module_name:
-                        if module_name in module_url_map:
-                            current_base_url = module_url_map[module_name]
-                        elif default_module_url and default_module_url != base_url:
-                            current_base_url = default_module_url
+                        if module_name in self.combined_module_url_map:
+                            current_base_url = self.combined_module_url_map[module_name]
+                        elif self.default_module_url and self.default_module_url != self.base_url:
+                            current_base_url = self.default_module_url
                     # 生成超链接（使用显示名）
-                    link_html = create_source_link(source_file, line_num, display_name, base_url, kernel_src, module_srcs, module_name, current_base_url)
+                    link_html = create_source_link(source_file, line_num, display_name, self.base_url, self.kernel_src, self.module_srcs, module_name, current_base_url)
                     # 替换原始行中的原始函数名为显示名
                     if raw_func_name != display_name:
                         raw_line = raw_line.replace(raw_func_name, display_name)
@@ -3108,7 +3074,7 @@ class HtmlGenerator:
             call_depth = line_data.get('call_depth')
 
             # 检查是否是可折叠的函数调用块
-            is_foldable = enable_fold and fold_id is not None and fold_type in ['entry', 'exit', 'inner']
+            is_foldable = self.enable_fold and fold_id is not None and fold_type in ['entry', 'exit', 'inner']
             fold_class = ""
             fold_marker = ""
 
@@ -3228,7 +3194,7 @@ class HtmlGenerator:
                 func_info_for_display = self._adjust_func_info(func_info, remove_suffix=True)
 
                 # 从预取的数据中获取位置信息（使用调用时的键）
-                locations = func_locations_map.get(func_info_for_call, {})
+                locations = self.func_locations_map.get(func_info_for_call, {})
 
                 # 为expanded-content添加内联样式style="display: none;"，确保初始状态
                 content_html += f'<div class="expanded-content" id="{line_id}_content" style="display: none;">'
@@ -3245,13 +3211,13 @@ class HtmlGenerator:
 
                     if return_addr_module_name:
                         # 返回地址是模块函数
-                        if return_addr_module_name in module_url_map:
-                            current_base_url = module_url_map[return_addr_module_name]
+                        if return_addr_module_name in self.combined_module_url_map:
+                            current_base_url = self.combined_module_url_map[return_addr_module_name]
                         else:
-                            current_base_url = default_module_url if default_module_url else base_url
+                            current_base_url = self.default_module_url if self.default_module_url else self.base_url
                     else:
                         # 返回地址是内核函数
-                        current_base_url = base_url
+                        current_base_url = self.base_url
 
                     # 检查是结构化数据还是原始输出
                     if isinstance(locations, dict) and 'func' in str(next(iter(locations.values()), {})):
@@ -3261,19 +3227,19 @@ class HtmlGenerator:
                             if current_base_url:
                                 file_path = loc['file']
                                 # 清理文件路径
-                                file_path = clean_file_path(file_path, kernel_src, path_prefix)
+                                file_path = clean_file_path(file_path, self.kernel_src, self.path_prefix)
 
                                 # 提取文件路径和行号
-                                clean_path = self._extract_file_path(file_path, kernel_src, path_prefix)
+                                clean_path = self._extract_file_path(file_path, self.kernel_src, self.path_prefix)
                                 line_num = loc.get('line')
 
                                 # 如果行号不在loc中，尝试从file_path中提取
                                 if line_num is None:
-                                    line_num = self._extract_line_number(file_path, kernel_src, path_prefix)
+                                    line_num = self._extract_line_number(file_path, self.kernel_src, self.path_prefix)
 
                                 if clean_path and line_num is not None:
                                     # 获取相对于内核源码的路径
-                                    relative_path = get_relative_path(clean_path, kernel_src)
+                                    relative_path = get_relative_path(clean_path, self.kernel_src)
 
                                     # 构建URL
                                     url = build_source_url(current_base_url, relative_path, line_num)
@@ -3296,15 +3262,15 @@ class HtmlGenerator:
                                 # 没有base_url，只显示文本
                                 file_path = loc['file']
                                 # 清理文件路径
-                                file_path = clean_file_path(file_path, kernel_src, path_prefix)
+                                file_path = clean_file_path(file_path, self.kernel_src, self.path_prefix)
 
                                 # 提取文件路径
-                                clean_path = self._extract_file_path(file_path, kernel_src, path_prefix)
+                                clean_path = self._extract_file_path(file_path, self.kernel_src, self.path_prefix)
                                 line_num = loc.get('line')
 
                                 # 如果行号不在loc中，尝试从file_path中提取
                                 if line_num is None:
-                                    line_num = self._extract_line_number(file_path, kernel_src, path_prefix)
+                                    line_num = self._extract_line_number(file_path, self.kernel_src, self.path_prefix)
 
                                 if clean_path and line_num is not None:
                                     link_text = f"{loc['func']} at {clean_path}:{line_num}"
@@ -3317,7 +3283,7 @@ class HtmlGenerator:
                                 content_html += f'<div class="location-link">{escaped_link}</div>'
                     elif isinstance(locations, str):
                         # 原始输出（--list模式）
-                        content_html += parse_list_output(locations, current_base_url, kernel_src, highlight_code, path_prefix, module_src)
+                        content_html += parse_list_output(locations, current_base_url, self.kernel_src, self.highlight_code, self.path_prefix, self.module_src)
                     else:
                         # 未知格式
                         content_html += f'<div class="location-link">Source information unavailable for: {escape_html_preserve_spaces(func_info_for_display)}</div>'
@@ -6754,6 +6720,10 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
         enable_fold=enable_fold
     )
     return generator.generate()
+
+# ============================================================
+# Main Entry Point
+# ============================================================
 
 def main():
     parser = argparse.ArgumentParser(description='Convert ftrace output to interactive HTML')
