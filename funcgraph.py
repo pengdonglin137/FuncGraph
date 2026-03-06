@@ -178,6 +178,61 @@ ERROR_CODE_MAP = {
 # 反向映射：从宏名到数字
 ERROR_CODE_NAME_MAP = {v: k for k, v in ERROR_CODE_MAP.items()}
 
+# ============================================================
+# 数据模型
+# ============================================================
+class FtraceLine:
+    """Parsed ftrace line data. Uses __slots__ for memory efficiency."""
+    __slots__ = [
+        'raw_line', 'expandable', 'func_info', 'raw_func_name',
+        'display_func_name', 'module_name', 'cpu', 'pid', 'comm',
+        'func_name_info', 'ret_value', 'params', 'duration',
+        'sort_duration', 'duration_raw', 'fold_id', 'fold_type',
+        'fold_ancestors', 'call_depth',
+    ]
+
+    def __init__(self, raw_line='', expandable=False, func_info=None,
+                 raw_func_name=None, display_func_name=None, module_name=None,
+                 cpu=None, pid=None, comm=None, func_name_info=None,
+                 ret_value=None, params=None, duration=None,
+                 sort_duration=None, duration_raw=None, fold_id=None,
+                 fold_type=None, fold_ancestors='', call_depth=None):
+        self.raw_line = raw_line
+        self.expandable = expandable
+        self.func_info = func_info
+        self.raw_func_name = raw_func_name
+        self.display_func_name = display_func_name
+        self.module_name = module_name
+        self.cpu = cpu
+        self.pid = pid
+        self.comm = comm
+        self.func_name_info = func_name_info
+        self.ret_value = ret_value
+        self.params = params
+        self.duration = duration
+        self.sort_duration = sort_duration
+        self.duration_raw = duration_raw
+        self.fold_id = fold_id
+        self.fold_type = fold_type
+        self.fold_ancestors = fold_ancestors
+        self.call_depth = call_depth
+
+    def get(self, key, default=None):
+        """Dict-compatible get() for gradual migration."""
+        return getattr(self, key, default)
+
+    def __setitem__(self, key, value):
+        """Dict-compatible __setitem__ for gradual migration."""
+        setattr(self, key, value)
+
+    def __getitem__(self, key):
+        """Dict-compatible __getitem__ for gradual migration."""
+        return getattr(self, key)
+
+    def __contains__(self, key):
+        """Dict-compatible 'in' operator for gradual migration."""
+        return hasattr(self, key) and getattr(self, key) is not None
+
 # ================================================
 
 def verbose_print(message, verbose_flag, end='\n'):
@@ -805,20 +860,7 @@ def parse_ftrace_file(file_path, verbose=False, enable_fold=False):
 
                     # 首先检查是否是注释行或空行（跳过）
                     if line.startswith('#') or not line.strip():
-                        line_data = {
-                            'raw_line': line,
-                            'expandable': False,
-                            'func_info': None,
-                            'module_name': None,
-                            'cpu': None,
-                            'pid': None,
-                            'comm': None,
-                            'func_name_info': None,
-                            'duration': None,
-                            'duration_raw': None,
-                            'fold_id': None,
-                            'fold_type': None,
-                        }
+                        line_data = FtraceLine(raw_line=line)
                         parsed_lines.append(line_data)
                         continue
 
@@ -828,6 +870,9 @@ def parse_ftrace_file(file_path, verbose=False, enable_fold=False):
                     comm = None
                     duration = None  # 耗时（微秒）
                     duration_raw = None  # 原始耗时字符串（包含单位）
+                    sort_duration = None
+                    ret_value = None
+                    params = None
 
                     # 方法1: 匹配CPU编号
                     # 支持多种前缀：
@@ -1051,25 +1096,19 @@ def parse_ftrace_file(file_path, verbose=False, enable_fold=False):
 
                     # 如果找到函数信息，添加到解析结果
                     if func_info or raw_func_name:
-                        line_data = {
-                            'raw_line': line,
-                            'expandable': True,
-                            'func_info': func_info,  # 返回地址，用于源码链接
-                            'raw_func_name': raw_func_name,  # 原始函数名，用于传给 faddr2line
-                            'display_func_name': display_func_name,  # 处理后的函数名，用于显示
-                            'module_name': module_name,
-                            'cpu': cpu,
-                            'pid': pid,
-                            'comm': comm,
-                            'func_name_info': None,  # 用于存储函数名的源码信息
-                            'ret_value': ret_value if 'ret_value' in locals() else None,  # 返回值
-                            'params': params if 'params' in locals() else None,  # 函数参数
-                            'duration': duration,  # 耗时（微秒）- 用于过滤（原始显示值）
-                            'sort_duration': sort_duration if 'sort_duration' in locals() else duration,  # 排序用的实际值
-                            'duration_raw': duration_raw,  # 原始耗时字符串
-                            'fold_id': None,  # 折叠ID，将在后续处理中填充
-                            'fold_type': None,  # 折叠类型，将在后续处理中填充
-                        }
+                        line_data = FtraceLine(
+                            raw_line=line, expandable=True,
+                            func_info=func_info,
+                            raw_func_name=raw_func_name,
+                            display_func_name=display_func_name,
+                            module_name=module_name,
+                            cpu=cpu, pid=pid, comm=comm,
+                            ret_value=ret_value,
+                            params=params,
+                            duration=duration,
+                            sort_duration=sort_duration if sort_duration is not None else duration,
+                            duration_raw=duration_raw,
+                        )
                         parsed_lines.append(line_data)
                         expandable_count += 1
 
@@ -1089,25 +1128,16 @@ def parse_ftrace_file(file_path, verbose=False, enable_fold=False):
                         if ret_match:
                             ret_value = ret_match.group(1)
 
-                        line_data = {
-                            'raw_line': line,
-                            'expandable': False,
-                            'func_info': None,
-                            'raw_func_name': raw_func_name,  # 原始函数名，用于传给 faddr2line
-                            'display_func_name': display_func_name,  # 处理后的函数名，用于显示
-                            'module_name': None,
-                            'cpu': cpu,
-                            'pid': pid,
-                            'comm': comm,
-                            'func_name_info': None,  # 用于存储函数名的源码信息
-                            'ret_value': ret_value,  # 返回值
-                            'params': None,  # 这类行通常没有参数
-                            'duration': duration,  # 耗时（微秒）- 用于过滤（原始显示值）
-                            'sort_duration': sort_duration if 'sort_duration' in locals() else duration,  # 排序用的实际值
-                            'duration_raw': duration_raw,  # 原始耗时字符串
-                            'fold_id': None,  # 折叠ID，将在后续处理中填充
-                            'fold_type': None,  # 折叠类型，将在后续处理中填充
-                        }
+                        line_data = FtraceLine(
+                            raw_line=line,
+                            raw_func_name=raw_func_name,
+                            display_func_name=display_func_name,
+                            cpu=cpu, pid=pid, comm=comm,
+                            ret_value=ret_value,
+                            duration=duration,
+                            sort_duration=sort_duration if sort_duration is not None else duration,
+                            duration_raw=duration_raw,
+                        )
                         parsed_lines.append(line_data)
 
 
@@ -1118,24 +1148,14 @@ def parse_ftrace_file(file_path, verbose=False, enable_fold=False):
                     ret_only_match = re.search(r'/\*\s*ret=([0-9a-fA-FxX-]+|true|false)\s*\*/', line)
                     if ret_only_match:
                         ret_value = ret_only_match.group(1)
-                        line_data = {
-                            'raw_line': line,
-                            'expandable': False,
-                            'func_info': None,
-                            'raw_func_name': None,
-                            'display_func_name': None,
-                            'module_name': None,
-                            'cpu': cpu,
-                            'pid': pid,
-                            'comm': comm,
-                            'func_name_info': None,
-                            'ret_value': ret_value,  # 返回值
-                            'duration': duration,  # 耗时（微秒）- 用于过滤（原始显示值）
-                            'sort_duration': sort_duration if 'sort_duration' in locals() else duration,  # 排序用的实际值
-                            'duration_raw': duration_raw,  # 原始耗时字符串
-                            'fold_id': None,  # 折叠ID，将在后续处理中填充
-                            'fold_type': None,  # 折叠类型，将在后续处理中填充
-                        }
+                        line_data = FtraceLine(
+                            raw_line=line,
+                            cpu=cpu, pid=pid, comm=comm,
+                            ret_value=ret_value,
+                            duration=duration,
+                            sort_duration=sort_duration if sort_duration is not None else duration,
+                            duration_raw=duration_raw,
+                        )
                         parsed_lines.append(line_data)
                         continue
 
@@ -1152,67 +1172,32 @@ def parse_ftrace_file(file_path, verbose=False, enable_fold=False):
                         if ret_match:
                             ret_value = ret_match.group(1)
 
-                        line_data = {
-                            'raw_line': line,
-                            'expandable': False,
-                            'func_info': None,
-                            'raw_func_name': raw_func_name,  # 原始函数名，用于折叠识别
-                            'display_func_name': display_func_name,  # 处理后的函数名，用于显示
-                            'module_name': None,
-                            'cpu': cpu,
-                            'pid': pid,
-                            'comm': comm,
-                            'func_name_info': None,
-                            'ret_value': ret_value,  # 返回值
-                            'duration': duration,  # 耗时（微秒）- 用于过滤（原始显示值）
-                            'sort_duration': sort_duration if 'sort_duration' in locals() else duration,  # 排序用的实际值
-                            'duration_raw': duration_raw,  # 原始耗时字符串
-                            'fold_id': None,  # 折叠ID，将在后续处理中填充
-                            'fold_type': None,  # 折叠类型，将在后续处理中填充
-                        }
+                        line_data = FtraceLine(
+                            raw_line=line,
+                            raw_func_name=raw_func_name,
+                            display_func_name=display_func_name,
+                            cpu=cpu, pid=pid, comm=comm,
+                            ret_value=ret_value,
+                            duration=duration,
+                            sort_duration=sort_duration if sort_duration is not None else duration,
+                            duration_raw=duration_raw,
+                        )
                         parsed_lines.append(line_data)
                         continue
 
-                    line_data = {
-                        'raw_line': line,
-                        'expandable': False,
-                        'func_info': None,
-                        'raw_func_name': None,
-                        'display_func_name': None,
-                        'module_name': None,
-                        'cpu': cpu,
-                        'pid': pid,
-                        'comm': comm,
-                        'func_name_info': None,
-                        'ret_value': None,  # 没有返回值
-                        'duration': duration,  # 耗时（微秒）- 用于过滤（原始显示值）
-                        'sort_duration': sort_duration if 'sort_duration' in locals() else duration,  # 排序用的实际值
-                        'duration_raw': duration_raw,  # 原始耗时字符串
-                        'fold_id': None,  # 折叠ID，将在后续处理中填充
-                        'fold_type': None,  # 折叠类型，将在后续处理中填充
-                    }
+                    line_data = FtraceLine(
+                        raw_line=line,
+                        cpu=cpu, pid=pid, comm=comm,
+                        duration=duration,
+                        sort_duration=sort_duration if sort_duration is not None else duration,
+                        duration_raw=duration_raw,
+                    )
                     parsed_lines.append(line_data)
 
                 except Exception as e:
                     verbose_print(f"Error parsing line {line_num}: {str(e)}", verbose)
                     # 添加为普通行继续处理
-                    line_data = {
-                        'raw_line': line.rstrip('\n'),
-                        'expandable': False,
-                        'func_info': None,
-                        'raw_func_name': None,
-                        'display_func_name': None,
-                        'module_name': None,
-                        'cpu': None,
-                        'pid': None,
-                        'comm': None,
-                        'func_name_info': None,
-                        'ret_value': None,
-                        'duration': None,
-                        'duration_raw': None,
-                        'fold_id': None,
-                        'fold_type': None,
-                    }
+                    line_data = FtraceLine(raw_line=line.rstrip('\n'))
                     parsed_lines.append(line_data)
 
     except Exception as e:
