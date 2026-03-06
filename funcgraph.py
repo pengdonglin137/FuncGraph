@@ -2187,9 +2187,194 @@ class HtmlGenerator:
         self.combined_module_url_map = {}
         self.default_module_url = base_url
         self.func_name_results = {}
+        self.func_locations_map = {}
+        self.vmlinux_funcs = set()
+        self.module_funcs = defaultdict(set)
 
     def generate(self):
         """Generate the complete HTML string. Returns (html_str, vmlinux_time, module_time)."""
+        # 1. Pre-process data
+        self._prepare_data()
+
+        parsed_lines = self.parsed_lines
+        vmlinux_time = self.vmlinux_time
+        module_time = self.module_time
+        filter_html = self.filter_html
+        enable_fold = self.enable_fold
+        parse_time = self.parse_time
+        total_time = self.total_time
+        script_args = self.script_args
+        kernel_src = self.kernel_src
+        path_prefix = self.path_prefix
+        module_src = self.module_src
+        verbose = self.verbose
+
+        verbose_print("Generating HTML content", verbose)
+        start_time = time.time()
+
+        # 计算统计数据
+        total_lines = len(parsed_lines)
+        expandable_entries = sum(1 for l in parsed_lines if l['expandable'])
+
+        # 生成信息面板内容
+        info_items = format_args_info(script_args)
+        env_items = get_environment_info()
+
+        info_content_html = ""
+
+        # 添加环境信息部分
+        if env_items:
+            info_content_html += '                <div style="font-weight: 600; color: var(--text-color); margin-bottom: 8px; font-size: 11px;">Environment</div>\n'
+            for label, value in env_items:
+                info_content_html += f'                <div class="info-item"><div class="info-label">{label}:</div><div class="info-value">{html.escape(str(value))}</div></div>\n'
+            info_content_html += '                <div style="border-top: 1px solid var(--border-color); margin: 8px 0;"></div>\n'
+
+        # 添加处理统计信息
+        if parse_time > 0 or total_time > 0 or vmlinux_time > 0 or module_time > 0:
+            info_content_html += '                <div style="font-weight: 600; color: var(--text-color); margin-bottom: 8px; font-size: 11px;">Processing Stats</div>\n'
+            if parse_time > 0:
+                info_content_html += f'                <div class="info-item"><div class="info-label">Parse Time:</div><div class="info-value">{parse_time:.2f}s</div></div>\n'
+            if vmlinux_time > 0:
+                info_content_html += f'                <div class="info-item"><div class="info-label">Vmlinux Time:</div><div class="info-value">{vmlinux_time:.2f}s</div></div>\n'
+            if module_time > 0:
+                info_content_html += f'                <div class="info-item"><div class="info-label">Modules Time:</div><div class="info-value">{module_time:.2f}s</div></div>\n'
+            if total_time > 0:
+                info_content_html += f'                <div class="info-item"><div class="info-label">Total Time:</div><div class="info-value">{total_time:.2f}s</div></div>\n'
+            info_content_html += f'                <div class="info-item"><div class="info-label">Total Lines:</div><div class="info-value">{len(parsed_lines)}</div></div>\n'
+            info_content_html += f'                <div class="info-item"><div class="info-label">Expandable:</div><div class="info-value">{sum(1 for l in parsed_lines if l["expandable"])}</div></div>\n'
+            if enable_fold:
+                foldable_count = sum(1 for l in parsed_lines if l.get('fold_id') and l.get('fold_type') in ['entry', 'exit', 'inner'])
+                info_content_html += f'                <div class="info-item"><div class="info-label">Foldable:</div><div class="info-value">{foldable_count}</div></div>\n'
+
+        # 添加脚本参数部分
+        if info_items:
+            info_content_html += '                <div style="font-weight: 600; color: var(--text-color); margin-bottom: 8px; font-size: 11px;">Parameters</div>\n'
+            for label, value in info_items:
+                info_content_html += f'                <div class="info-item"><div class="info-label">{label}:</div><div class="info-value">{html.escape(str(value))}</div></div>\n'
+
+        if not env_items and not info_items and parse_time == 0:
+            info_content_html = '                <div style="color: var(--summary-text); font-size: 12px;">No information available</div>'
+
+        # 2. 构建HTML字符串
+        html_str = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{APP_TITLE} v{APP_VERSION} - {APP_AUTHOR}</title>
+    <style>
+{self._generate_css()}    </style>
+</head>
+<body>
+    <div class="progress-bar" id="progressBar"></div>
+    <!-- 小悬浮切换按钮：用于显示/隐藏页面上的其他浮动控件 -->
+    <button id="floatingToggle" class="floating-toggle" aria-label="Toggle floating controls" title="Toggle floating controls" onclick="handleFloatingToggleClick(event)">
+        <span class="ft-icon" id="floatingToggleIcon">☰</span>
+    </button>
+    
+    <div class="container">
+        <h1>
+            <span class="title-main">{APP_TITLE}</span>
+            <span class="title-meta">
+                <span class="version-badge">v{APP_VERSION}</span>
+                <span class="author-badge">{APP_AUTHOR}</span>
+            </span>
+        </h1>
+        
+        <div class="header-controls">
+            <div></div> <!-- 占位元素 -->
+            <button class="theme-toggle" onclick="toggleTheme()">Theme</button>
+        </div>
+        
+        <div class="summary">
+            <div>
+                <span>Lines: {total_lines}</span>
+                <span>•</span>
+                <span>Expandable: {expandable_entries}</span>
+                <span>•</span>
+                <span>Kernel Functions: {len(self.vmlinux_funcs)}</span>
+                <span>•</span>
+                <span>Modules: {len(self.module_funcs)}</span>
+                <span id="visibleLinesContainer" style="display: none;">
+                    <span>•</span>
+                    <span>Filtered: <span id="summaryVisibleLines">{total_lines}</span></span>
+                </span>
+            </div>
+            <div class="info-toggle-btn" onclick="toggleInfoPanel()">
+                <span class="info-toggle-icon">▶</span>
+                <span>ⓘ</span>
+            </div>
+        </div>
+
+        <div class="info-panel" id="infoPanel">
+            {{INFO_CONTENT_PLACEHOLDER}}
+        </div>
+
+        <!-- 控制按钮 - 立即显示，不用等待内容加载 -->
+        <div class="controls">
+            <!-- 过滤窗口占位符，稍后插入 -->
+            <div id="filterPlaceholder"></div>
+            <div class="right-buttons">
+                <button class="control-btn" onclick="toggleFilterBox()">Toggle Filter</button>
+                <button class="control-btn" onclick="scrollToTop()">Top</button>
+                <button class="control-btn" onclick="copyVisibleContent(event)">Copy</button>
+                <button class="control-btn" onclick="expandAll()">Expand All</button>
+                <button class="control-btn collapse" onclick="collapseAll()">Collapse All</button>
+            </div>
+        </div>
+
+        <div id="content">
+"""
+
+        # 3. Generate content lines
+        html_str += self._generate_content_lines()
+
+        html_str += """
+        </div>
+    </div>
+
+    <div class="keyboard-hint" id="keyboardHint">
+        <button class="keyboard-hint-close" onclick="closeKeyboardHint()">×</button>
+        <h3>Keyboard Shortcuts</h3>
+        <ul>
+            <li><kbd>j</kbd>/<kbd>k</kbd> or <kbd>↓</kbd>/<kbd>↑</kbd>: Move to next/prev expandable line</li>
+            <li><kbd>h</kbd>/<kbd>l</kbd>: Scroll left/right</li>
+            <li><kbd>Enter</kbd>: Expand/collapse</li>
+            <li><kbd>Space</kbd>: Scroll down</li>
+            <li><kbd>Esc</kbd>: Clear selection</li>
+        </ul>
+        <h3>Function Call Folding</h3>
+        <ul>
+            <li>Click the marker (<strong>▼</strong>/<strong>▶</strong>) to fold/unfold a function call block</li>
+            <li>Folds all lines between function entry and exit (including sub-functions)</li>
+            <li>Folded blocks are saved in browser storage</li>
+        </ul>
+    </div>
+"""
+        html_str += self._generate_javascript()
+        html_str += """</body>
+</html>
+"""
+
+        elapsed = time.time() - start_time
+        verbose_print(f"HTML generation completed in {elapsed:.2f} seconds", verbose)
+
+        # 替换信息面板占位符
+        html_str = html_str.replace('{INFO_CONTENT_PLACEHOLDER}', info_content_html)
+
+        # 将过滤窗口插入到 filterPlaceholder 位置
+        if filter_html:
+            html_str = html_str.replace('<div id="filterPlaceholder"></div>', filter_html)
+
+        return html_str, vmlinux_time, module_time
+
+    def _prepare_data(self):
+        """Pre-process data: resolve func names, collect filter data, parse module URLs.
+
+        Sets self.vmlinux_time, self.module_time, self.func_name_results,
+        self.filter_html, self.combined_module_url_map, self.default_module_url,
+        self.func_locations_map, self.vmlinux_funcs, self.module_funcs.
+        """
         parsed_lines = self.parsed_lines
         vmlinux_path = self.vmlinux_path
         faddr2line_path = self.faddr2line_path
@@ -2200,17 +2385,12 @@ class HtmlGenerator:
         use_list = self.use_list
         verbose = self.verbose
         fast_mode = self.fast_mode
-        highlight_code = self.highlight_code
         path_prefix = self.path_prefix
         module_src = self.module_src
         module_srcs = self.module_srcs
-        script_args = self.script_args
         enable_filter = self.enable_filter
-        parse_time = self.parse_time
-        total_time = self.total_time
         func_links = self.func_links
         entry_offset = self.entry_offset
-        enable_fold = self.enable_fold
 
         if module_dirs is None:
             module_dirs = []
@@ -2561,17 +2741,15 @@ class HtmlGenerator:
 
         # kernel_src保持单个路径（可以是None）
 
-        # 为了兼容后续代码，使用旧的变量名
-        module_url_map = combined_module_url_map
-        # default_module_url 已经设置好了
+        # Update instance attributes with normalized values
+        self.path_prefix = path_prefix
+        self.module_src = module_src
+        self.module_srcs = module_srcs
 
-        verbose_print("Generating HTML content", verbose)
-        start_time = time.time()
-    
         # 使用绝对路径
         abs_vmlinux_path = os.path.abspath(vmlinux_path)
         abs_faddr2line_path = os.path.abspath(faddr2line_path)
-    
+
         # 如果使用fast模式，优先使用fastfaddr2line.py
         if fast_mode:
             script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -2581,7 +2759,7 @@ class HtmlGenerator:
                 abs_faddr2line_path = fast_faddr2line_path
             else:
                 verbose_print(f"Warning: fastfaddr2line.py not found at {fast_faddr2line_path}, using fallback", verbose)
-    
+
         # 收集所有需要解析的函数信息（使用字典去重）
         func_info_map = defaultdict(list)  # func_info -> [line_index]
         module_funcs = defaultdict(set)   # module_name -> set(func_info)
@@ -2612,75 +2790,22 @@ class HtmlGenerator:
                     module_funcs[effective_module].add(func_info)
                 else:
                     vmlinux_funcs.add(func_info)
-    
+
         verbose_print(f"Found {len(vmlinux_funcs)} unique kernel functions", verbose)
         verbose_print(f"Found {len(module_funcs)} modules with functions", verbose)
         for module, funcs in module_funcs.items():
             verbose_print(f"Module {module}: {len(funcs)} functions", verbose)
-    
+
         # 批量获取所有函数的位置信息
         func_locations_map = {}
 
-        # 定义函数偏移量调整函数
-        def adjust_func_info(func_info, remove_suffix=True):
-            """
-        调整函数信息，用于显示或调用fastfaddr2line
-
-        参数:
-            func_info: 函数信息字符串，格式: func+offset/length [module]
-            remove_suffix: 是否移除编译器后缀（用于显示），默认True
-                          设为False时保留后缀（用于调用fastfaddr2line）
-        """
-            # 先提取模块名（如果存在）
-            module_part = ''
-            if '[' in func_info and ']' in func_info:
-                module_match = re.search(r'(\s*\[.*?\])', func_info)
-                if module_match:
-                    module_part = module_match.group(1)
-                    func_info = func_info.replace(module_part, '')
-
-            # 匹配函数名+偏移/长度格式
-            match = re.match(r'^(.*?)([+][0-9a-fA-FxX]+)(/[0-9a-fA-FxX]+)$', func_info)
-            if not match:
-                # 如果不匹配，恢复模块名并返回
-                return func_info + module_part
-
-            func_name = match.group(1)
-            offset_str = match.group(2)[1:]  # 去掉前面的+号
-            length_str = match.group(3)
-
-            try:
-                # 解析十六进制偏移量
-                offset_val = int(offset_str, 16)
-
-                # 根据参数决定是否去除编译器后缀
-                if remove_suffix:
-                    cleaned_func = remove_compiler_suffix(func_name)
-                else:
-                    cleaned_func = func_name
-
-                if offset_val == 0:
-                    # 偏移量为0，但可能仍需要去除后缀（如果remove_suffix=True）
-                    if remove_suffix and cleaned_func != func_name:
-                        return f"{cleaned_func}+{offset_str}{length_str}{module_part}"
-                    return func_info + module_part  # 偏移量为0，不需要调整
-
-                # 计算新偏移量（减1）
-                new_offset_val = offset_val - 1
-                new_offset_str = hex(new_offset_val)
-
-                # 重构函数信息字符串
-                return f"{cleaned_func}+{new_offset_str}{length_str}{module_part}"
-            except ValueError:
-                return func_info + module_part  # 解析失败，返回原始字符串
-    
         # 1. 处理内核函数（去重后）
         if vmlinux_funcs:
             # 为调用fastfaddr2line准备函数列表（只调整偏移量，保留编译器后缀）
             vmlinux_funcs_for_call = set()
             for func in vmlinux_funcs:
                 # 只调整偏移量，不移除编译器后缀
-                adjusted_func = adjust_func_info(func, remove_suffix=False)
+                adjusted_func = self._adjust_func_info(func, remove_suffix=False)
                 vmlinux_funcs_for_call.add(adjusted_func)
 
             vmlinux_funcs_list = list(vmlinux_funcs_for_call)
@@ -2719,13 +2844,13 @@ class HtmlGenerator:
             vmlinux_time = time.time() - vmlinux_start
             func_locations_map.update(batch_results)
             verbose_print(f"Resolved {len(batch_results)} kernel function locations in {vmlinux_time:.2f}s", verbose)
-    
+
         # 2. 处理模块函数（去重后）
         module_start = time.time()
         for module_name, funcs in module_funcs.items():
             verbose_print(f"Processing module {module_name} with {len(funcs)} functions", verbose)
             # 查找模块文件
-            module_path = find_module_path(module_name, module_dirs, verbose)
+            module_path = find_module_path(module_name, self.module_dirs, verbose)
 
             if not module_path or not os.path.isfile(module_path):
                 verbose_print(f"Module file not found for {module_name}", verbose)
@@ -2737,7 +2862,7 @@ class HtmlGenerator:
             funcs_for_call = set()
             for func in funcs:
                 # 只调整偏移量，不移除编译器后缀
-                adjusted_func = adjust_func_info(func, remove_suffix=False)
+                adjusted_func = self._adjust_func_info(func, remove_suffix=False)
                 funcs_for_call.add(adjusted_func)
 
             funcs_list = list(funcs_for_call)
@@ -2761,171 +2886,142 @@ class HtmlGenerator:
         if module_funcs:
             verbose_print(f"Resolved all modules in {module_time:.2f}s", verbose)
 
-        # 计算统计数据
-        total_lines = len(parsed_lines)
-        expandable_entries = sum(1 for l in parsed_lines if l['expandable'])
-    
-        # 定义提取行号的函数
-        def extract_line_number(location_str, kernel_src, path_prefix=None, module_src=None):
-            """从位置字符串中提取行号"""
-            if not location_str:
-                return None
+        # Store all computed state
+        self.vmlinux_time = vmlinux_time
+        self.module_time = module_time
+        self.func_name_results = func_name_results
+        self.filter_html = filter_html
+        self.combined_module_url_map = combined_module_url_map
+        self.default_module_url = default_module_url
+        self.func_locations_map = func_locations_map
+        self.vmlinux_funcs = vmlinux_funcs
+        self.module_funcs = module_funcs
 
-            # 尝试匹配各种行号格式
-            # 1. 标准格式: file.c:1234
-            # 2. 带discriminator: file.c:1234 (discriminator 9)
-            # 3. 带inlined: file.c:1234 (inlined)
-            # 4. 其他格式
+    @staticmethod
+    def _adjust_func_info(func_info, remove_suffix=True):
+        """
+        调整函数信息，用于显示或调用fastfaddr2line
 
-            # 首先清理字符串
-            clean_str = clean_file_path(location_str, kernel_src, path_prefix, module_src)
+        参数:
+            func_info: 函数信息字符串，格式: func+offset/length [module]
+            remove_suffix: 是否移除编译器后缀（用于显示），默认True
+                          设为False时保留后缀（用于调用fastfaddr2line）
+        """
+        # 先提取模块名（如果存在）
+        module_part = ''
+        if '[' in func_info and ']' in func_info:
+            module_match = re.search(r'(\s*\[.*?\])', func_info)
+            if module_match:
+                module_part = module_match.group(1)
+                func_info = func_info.replace(module_part, '')
 
-            # 尝试从原始字符串提取行号
-            line_match = re.search(r':(\d+)(?:\s|$)', location_str)
-            if line_match:
-                try:
-                    return int(line_match.group(1))
-                except (ValueError, IndexError):
-                    pass
+        # 匹配函数名+偏移/长度格式
+        match = re.match(r'^(.*?)([+][0-9a-fA-FxX]+)(/[0-9a-fA-FxX]+)$', func_info)
+        if not match:
+            # 如果不匹配，恢复模块名并返回
+            return func_info + module_part
 
-            # 如果上述方法失败，尝试其他方法
-            # 查找冒号后的数字
-            match = re.search(r':(\d+)', location_str)
-            if match:
-                try:
-                    return int(match.group(1))
-                except (ValueError, IndexError):
-                    pass
+        func_name = match.group(1)
+        offset_str = match.group(2)[1:]  # 去掉前面的+号
+        length_str = match.group(3)
 
+        try:
+            # 解析十六进制偏移量
+            offset_val = int(offset_str, 16)
+
+            # 根据参数决定是否去除编译器后缀
+            if remove_suffix:
+                cleaned_func = remove_compiler_suffix(func_name)
+            else:
+                cleaned_func = func_name
+
+            if offset_val == 0:
+                # 偏移量为0，但可能仍需要去除后缀（如果remove_suffix=True）
+                if remove_suffix and cleaned_func != func_name:
+                    return f"{cleaned_func}+{offset_str}{length_str}{module_part}"
+                return func_info + module_part  # 偏移量为0，不需要调整
+
+            # 计算新偏移量（减1）
+            new_offset_val = offset_val - 1
+            new_offset_str = hex(new_offset_val)
+
+            # 重构函数信息字符串
+            return f"{cleaned_func}+{new_offset_str}{length_str}{module_part}"
+        except ValueError:
+            return func_info + module_part  # 解析失败，返回原始字符串
+
+    @staticmethod
+    def _extract_line_number(location_str, kernel_src, path_prefix=None, module_src=None):
+        """从位置字符串中提取行号"""
+        if not location_str:
             return None
 
-        # 定义从位置字符串提取文件路径的函数
-        def extract_file_path(location_str, kernel_src, path_prefix=None, module_src=None):
-            """从位置字符串中提取文件路径"""
-            if not location_str:
-                return ""
+        # 尝试匹配各种行号格式
+        # 1. 标准格式: file.c:1234
+        # 2. 带discriminator: file.c:1234 (discriminator 9)
+        # 3. 带inlined: file.c:1234 (inlined)
+        # 4. 其他格式
 
-            # 清理字符串
-            cleaned = clean_file_path(location_str, kernel_src, path_prefix, module_src)
+        # 首先清理字符串
+        clean_str = clean_file_path(location_str, kernel_src, path_prefix, module_src)
 
-            # 如果还有冒号和数字，去除它们
-            # 匹配文件路径:行号格式
-            file_match = re.match(r'^(.*?):\d+', cleaned)
-            if file_match:
-                return file_match.group(1)
+        # 尝试从原始字符串提取行号
+        line_match = re.search(r':(\d+)(?:\s|$)', location_str)
+        if line_match:
+            try:
+                return int(line_match.group(1))
+            except (ValueError, IndexError):
+                pass
 
-            # 如果没有行号，直接返回清理后的路径
-            return cleaned
-    
-        # 生成信息面板内容
-        info_items = format_args_info(script_args)
-        env_items = get_environment_info()
-    
-        info_content_html = ""
-    
-        # 添加环境信息部分
-        if env_items:
-            info_content_html += '                <div style="font-weight: 600; color: var(--text-color); margin-bottom: 8px; font-size: 11px;">Environment</div>\n'
-            for label, value in env_items:
-                info_content_html += f'                <div class="info-item"><div class="info-label">{label}:</div><div class="info-value">{html.escape(str(value))}</div></div>\n'
-            info_content_html += '                <div style="border-top: 1px solid var(--border-color); margin: 8px 0;"></div>\n'
-    
-        # 添加处理统计信息
-        if parse_time > 0 or total_time > 0 or vmlinux_time > 0 or module_time > 0:
-            info_content_html += '                <div style="font-weight: 600; color: var(--text-color); margin-bottom: 8px; font-size: 11px;">Processing Stats</div>\n'
-            if parse_time > 0:
-                info_content_html += f'                <div class="info-item"><div class="info-label">Parse Time:</div><div class="info-value">{parse_time:.2f}s</div></div>\n'
-            if vmlinux_time > 0:
-                info_content_html += f'                <div class="info-item"><div class="info-label">Vmlinux Time:</div><div class="info-value">{vmlinux_time:.2f}s</div></div>\n'
-            if module_time > 0:
-                info_content_html += f'                <div class="info-item"><div class="info-label">Modules Time:</div><div class="info-value">{module_time:.2f}s</div></div>\n'
-            if total_time > 0:
-                info_content_html += f'                <div class="info-item"><div class="info-label">Total Time:</div><div class="info-value">{total_time:.2f}s</div></div>\n'
-            info_content_html += f'                <div class="info-item"><div class="info-label">Total Lines:</div><div class="info-value">{len(parsed_lines)}</div></div>\n'
-            info_content_html += f'                <div class="info-item"><div class="info-label">Expandable:</div><div class="info-value">{sum(1 for l in parsed_lines if l["expandable"])}</div></div>\n'
-            if enable_fold:
-                foldable_count = sum(1 for l in parsed_lines if l.get('fold_id') and l.get('fold_type') in ['entry', 'exit', 'inner'])
-                info_content_html += f'                <div class="info-item"><div class="info-label">Foldable:</div><div class="info-value">{foldable_count}</div></div>\n'
+        # 如果上述方法失败，尝试其他方法
+        # 查找冒号后的数字
+        match = re.search(r':(\d+)', location_str)
+        if match:
+            try:
+                return int(match.group(1))
+            except (ValueError, IndexError):
+                pass
 
-        # 添加脚本参数部分
-        if info_items:
-            info_content_html += '                <div style="font-weight: 600; color: var(--text-color); margin-bottom: 8px; font-size: 11px;">Parameters</div>\n'
-            for label, value in info_items:
-                info_content_html += f'                <div class="info-item"><div class="info-label">{label}:</div><div class="info-value">{html.escape(str(value))}</div></div>\n'
+        return None
 
-        if not env_items and not info_items and parse_time == 0:
-            info_content_html = '                <div style="color: var(--summary-text); font-size: 12px;">No information available</div>'
-    
-        # 构建HTML字符串
-        html_str = f"""<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{APP_TITLE} v{APP_VERSION} - {APP_AUTHOR}</title>
-    <style>
-{self._generate_css()}    </style>
-</head>
-<body>
-    <div class="progress-bar" id="progressBar"></div>
-    <!-- 小悬浮切换按钮：用于显示/隐藏页面上的其他浮动控件 -->
-    <button id="floatingToggle" class="floating-toggle" aria-label="Toggle floating controls" title="Toggle floating controls" onclick="handleFloatingToggleClick(event)">
-        <span class="ft-icon" id="floatingToggleIcon">☰</span>
-    </button>
-    
-    <div class="container">
-        <h1>
-            <span class="title-main">{APP_TITLE}</span>
-            <span class="title-meta">
-                <span class="version-badge">v{APP_VERSION}</span>
-                <span class="author-badge">{APP_AUTHOR}</span>
-            </span>
-        </h1>
-        
-        <div class="header-controls">
-            <div></div> <!-- 占位元素 -->
-            <button class="theme-toggle" onclick="toggleTheme()">Theme</button>
-        </div>
-        
-        <div class="summary">
-            <div>
-                <span>Lines: {total_lines}</span>
-                <span>•</span>
-                <span>Expandable: {expandable_entries}</span>
-                <span>•</span>
-                <span>Kernel Functions: {len(vmlinux_funcs)}</span>
-                <span>•</span>
-                <span>Modules: {len(module_funcs)}</span>
-                <span id="visibleLinesContainer" style="display: none;">
-                    <span>•</span>
-                    <span>Filtered: <span id="summaryVisibleLines">{total_lines}</span></span>
-                </span>
-            </div>
-            <div class="info-toggle-btn" onclick="toggleInfoPanel()">
-                <span class="info-toggle-icon">▶</span>
-                <span>ⓘ</span>
-            </div>
-        </div>
+    @staticmethod
+    def _extract_file_path(location_str, kernel_src, path_prefix=None, module_src=None):
+        """从位置字符串中提取文件路径"""
+        if not location_str:
+            return ""
 
-        <div class="info-panel" id="infoPanel">
-            {{INFO_CONTENT_PLACEHOLDER}}
-        </div>
+        # 清理字符串
+        cleaned = clean_file_path(location_str, kernel_src, path_prefix, module_src)
 
-        <!-- 控制按钮 - 立即显示，不用等待内容加载 -->
-        <div class="controls">
-            <!-- 过滤窗口占位符，稍后插入 -->
-            <div id="filterPlaceholder"></div>
-            <div class="right-buttons">
-                <button class="control-btn" onclick="toggleFilterBox()">Toggle Filter</button>
-                <button class="control-btn" onclick="scrollToTop()">Top</button>
-                <button class="control-btn" onclick="copyVisibleContent(event)">Copy</button>
-                <button class="control-btn" onclick="expandAll()">Expand All</button>
-                <button class="control-btn collapse" onclick="collapseAll()">Collapse All</button>
-            </div>
-        </div>
+        # 如果还有冒号和数字，去除它们
+        # 匹配文件路径:行号格式
+        file_match = re.match(r'^(.*?):\d+', cleaned)
+        if file_match:
+            return file_match.group(1)
 
-        <div id="content">
-"""
+        # 如果没有行号，直接返回清理后的路径
+        return cleaned
+
+    def _generate_content_lines(self):
+        """Generate HTML for all ftrace content lines.
+
+        Returns a string of all line-container divs.
+        """
+        parsed_lines = self.parsed_lines
+        base_url = self.base_url
+        kernel_src = self.kernel_src
+        verbose = self.verbose
+        highlight_code = self.highlight_code
+        path_prefix = self.path_prefix
+        module_src = self.module_src
+        module_srcs = self.module_srcs
+        func_links = self.func_links
+        enable_fold = self.enable_fold
+        module_url_map = self.combined_module_url_map
+        default_module_url = self.default_module_url
+        func_locations_map = self.func_locations_map
+
+        content_html = ""
 
         # 添加行号并输出原始ftrace日志
         for idx, line_data in enumerate(parsed_lines):
@@ -3055,7 +3151,7 @@ class HtmlGenerator:
             if params:
                 # 转义特殊字符，避免HTML属性问题
                 # 使用html.escape，但只转义引号、尖括号
-                escaped_params = params.replace('"', '"').replace('<', '<').replace('>', '>')
+                escaped_params = params.replace('"', '&quot;').replace('<', '&lt;').replace('>', '&gt;')
                 data_attrs += f' data-params="{escaped_params}"'
 
             # 添加耗时属性（用于耗时过滤和排序）
@@ -3067,7 +3163,7 @@ class HtmlGenerator:
                     data_attrs += f' data-sort-duration="{sort_duration}"'
                 if duration_raw:
                     # 显示原始耗时字符串（带单位）
-                    escaped_duration = duration_raw.replace('"', '"').replace('<', '<').replace('>', '>')
+                    escaped_duration = duration_raw.replace('"', '&quot;').replace('<', '&lt;').replace('>', '&gt;')
                     data_attrs += f' data-duration-raw="{escaped_duration}"'
 
             # 添加返回值属性（用于错误码过滤）
@@ -3094,13 +3190,13 @@ class HtmlGenerator:
             # 添加折叠类
             line_container_class = f"line-container {expandable_class} {fold_class}".strip()
 
-            html_str += f'<div class="{line_container_class}" id="{line_anchor_id}" data-line-number="{line_number}" data-line-id="{line_id}"{data_attrs}'
+            content_html += f'<div class="{line_container_class}" id="{line_anchor_id}" data-line-number="{line_number}" data-line-id="{line_id}"{data_attrs}'
             if is_expandable:
-                html_str += f' onclick="handleLineClick(event, \'{line_id}\')" ondblclick="handleDoubleClick(event, \'{line_id}\')" tabindex="0"'
-                html_str += '>'
+                content_html += f' onclick="handleLineClick(event, \'{line_id}\')" ondblclick="handleDoubleClick(event, \'{line_id}\')" tabindex="0"'
+                content_html += '>'
             else:
-                html_str += '>'
-            html_str += f'<span class="line-number" onclick="updateAnchor(\'{line_anchor_id}\', event)" title="Click to copy anchor link">{line_number}</span>'
+                content_html += '>'
+            content_html += f'<span class="line-number" onclick="updateAnchor(\'{line_anchor_id}\', event)" title="Click to copy anchor link">{line_number}</span>'
 
             # 添加折叠标记
             if is_foldable:
@@ -3109,34 +3205,34 @@ class HtmlGenerator:
                     # 判断当前是否折叠，选择图标
                     icon = '▶' if 'folded' in fold_class else '▼'
                     fold_marker = f'<span class="fold-icon" tabindex="0" role="button" aria-label="Toggle fold" aria-expanded="{"false" if icon=="▶" else "true"}" onkeydown="handleFoldIconKeydown(event, this)" onclick="handleFoldIconClick(event, this)">{icon}</span>'
-                html_str += f'<span class="fold-marker">{fold_marker}</span>'
+                content_html += f'<span class="fold-marker">{fold_marker}</span>'
             else:
                 # 非可折叠行也插入空白fold-marker以保持对齐
-                html_str += '<span class="fold-marker"><span style="display:inline-block; width:20px; height:16px;"></span></span>'
+                content_html += '<span class="fold-marker"><span style="display:inline-block; width:20px; height:16px;"></span></span>'
 
-            html_str += f'<span class="line-content">{escaped_line}</span>'
+            content_html += f'<span class="line-content">{escaped_line}</span>'
 
             if is_expandable:
-                html_str += f'<span class="expand-btn">+</span>'
+                content_html += f'<span class="expand-btn">+</span>'
 
-            html_str += '</div>'
-        
+            content_html += '</div>'
+
             if is_expandable:
                 # 获取函数信息
                 func_info = line_data['func_info']
 
                 # 为调用fastfaddr2line准备的键（保留后缀，调整偏移）
-                func_info_for_call = adjust_func_info(func_info, remove_suffix=False)
+                func_info_for_call = self._adjust_func_info(func_info, remove_suffix=False)
 
                 # 为显示准备的键（移除后缀，调整偏移）
-                func_info_for_display = adjust_func_info(func_info, remove_suffix=True)
+                func_info_for_display = self._adjust_func_info(func_info, remove_suffix=True)
 
                 # 从预取的数据中获取位置信息（使用调用时的键）
                 locations = func_locations_map.get(func_info_for_call, {})
-            
+
                 # 为expanded-content添加内联样式style="display: none;"，确保初始状态
-                html_str += f'<div class="expanded-content" id="{line_id}_content" style="display: none;">' 
-            
+                content_html += f'<div class="expanded-content" id="{line_id}_content" style="display: none;">'
+
                 if locations:
                     # 确定使用哪个URL
                     # 从func_info_for_call中提取模块名，判断返回地址的函数类型
@@ -3168,12 +3264,12 @@ class HtmlGenerator:
                                 file_path = clean_file_path(file_path, kernel_src, path_prefix)
 
                                 # 提取文件路径和行号
-                                clean_path = extract_file_path(file_path, kernel_src, path_prefix)
+                                clean_path = self._extract_file_path(file_path, kernel_src, path_prefix)
                                 line_num = loc.get('line')
 
                                 # 如果行号不在loc中，尝试从file_path中提取
                                 if line_num is None:
-                                    line_num = extract_line_number(file_path, kernel_src, path_prefix)
+                                    line_num = self._extract_line_number(file_path, kernel_src, path_prefix)
 
                                 if clean_path and line_num is not None:
                                     # 获取相对于内核源码的路径
@@ -3188,14 +3284,14 @@ class HtmlGenerator:
 
                                     escaped_link = escape_html_preserve_spaces(link_text)
                                     escaped_url = html.escape(url)
-                                    html_str += f'<a class="location-link" href="{escaped_url}" target="_blank">{escaped_link}</a>'
+                                    content_html += f'<a class="location-link" href="{escaped_url}" target="_blank">{escaped_link}</a>'
                                 else:
                                     # 无法提取有效路径或行号
                                     link_text = f"{loc['func']} at {file_path}"
                                     if loc.get('inlined'):
                                         link_text = f"(inlined) {link_text}"
                                     escaped_link = escape_html_preserve_spaces(link_text)
-                                    html_str += f'<div class="location-link">{escaped_link}</div>'
+                                    content_html += f'<div class="location-link">{escaped_link}</div>'
                             else:
                                 # 没有base_url，只显示文本
                                 file_path = loc['file']
@@ -3203,12 +3299,12 @@ class HtmlGenerator:
                                 file_path = clean_file_path(file_path, kernel_src, path_prefix)
 
                                 # 提取文件路径
-                                clean_path = extract_file_path(file_path, kernel_src, path_prefix)
+                                clean_path = self._extract_file_path(file_path, kernel_src, path_prefix)
                                 line_num = loc.get('line')
 
                                 # 如果行号不在loc中，尝试从file_path中提取
                                 if line_num is None:
-                                    line_num = extract_line_number(file_path, kernel_src, path_prefix)
+                                    line_num = self._extract_line_number(file_path, kernel_src, path_prefix)
 
                                 if clean_path and line_num is not None:
                                     link_text = f"{loc['func']} at {clean_path}:{line_num}"
@@ -3218,56 +3314,19 @@ class HtmlGenerator:
                                 if loc.get('inlined'):
                                     link_text = f"(inlined) {link_text}"
                                 escaped_link = escape_html_preserve_spaces(link_text)
-                                html_str += f'<div class="location-link">{escaped_link}</div>'
+                                content_html += f'<div class="location-link">{escaped_link}</div>'
                     elif isinstance(locations, str):
                         # 原始输出（--list模式）
-                        html_str += parse_list_output(locations, current_base_url, kernel_src, highlight_code, path_prefix, module_src)
+                        content_html += parse_list_output(locations, current_base_url, kernel_src, highlight_code, path_prefix, module_src)
                     else:
                         # 未知格式
-                        html_str += f'<div class="location-link">Source information unavailable for: {escape_html_preserve_spaces(func_info_for_display)}</div>'
+                        content_html += f'<div class="location-link">Source information unavailable for: {escape_html_preserve_spaces(func_info_for_display)}</div>'
                 else:
-                    html_str += f'<div class="location-link">Source information unavailable for: {escape_html_preserve_spaces(func_info_for_display)}</div>'
-            
-                html_str += '</div>'
+                    content_html += f'<div class="location-link">Source information unavailable for: {escape_html_preserve_spaces(func_info_for_display)}</div>'
 
-        html_str += """
-        </div>
-    </div>
+                content_html += '</div>'
 
-    <div class="keyboard-hint" id="keyboardHint">
-        <button class="keyboard-hint-close" onclick="closeKeyboardHint()">×</button>
-        <h3>Keyboard Shortcuts</h3>
-        <ul>
-            <li><kbd>j</kbd>/<kbd>k</kbd> or <kbd>↓</kbd>/<kbd>↑</kbd>: Move to next/prev expandable line</li>
-            <li><kbd>h</kbd>/<kbd>l</kbd>: Scroll left/right</li>
-            <li><kbd>Enter</kbd>: Expand/collapse</li>
-            <li><kbd>Space</kbd>: Scroll down</li>
-            <li><kbd>Esc</kbd>: Clear selection</li>
-        </ul>
-        <h3>Function Call Folding</h3>
-        <ul>
-            <li>Click the marker (<strong>▼</strong>/<strong>▶</strong>) to fold/unfold a function call block</li>
-            <li>Folds all lines between function entry and exit (including sub-functions)</li>
-            <li>Folded blocks are saved in browser storage</li>
-        </ul>
-    </div>
-"""
-        html_str += self._generate_javascript()
-        html_str += """</body>
-</html>
-"""
-    
-        elapsed = time.time() - start_time
-        verbose_print(f"HTML generation completed in {elapsed:.2f} seconds", verbose)
-
-        # 替换信息面板占位符
-        html_str = html_str.replace('{INFO_CONTENT_PLACEHOLDER}', info_content_html)
-
-        # 将过滤窗口插入到 filterPlaceholder 位置
-        if filter_html:
-            html_str = html_str.replace('<div id="filterPlaceholder"></div>', filter_html)
-
-        return html_str, vmlinux_time, module_time
+        return content_html
 
     def _generate_javascript(self):
         """Generate all JavaScript code."""
