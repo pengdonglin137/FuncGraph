@@ -3251,7 +3251,27 @@ class HtmlGenerator:
             <li>Folded blocks are saved in browser storage</li>
         </ul>
     </div>
+"""
+        html_str += self._generate_javascript()
+        html_str += """</body>
+</html>
+"""
+    
+        elapsed = time.time() - start_time
+        verbose_print(f"HTML generation completed in {elapsed:.2f} seconds", verbose)
 
+        # 替换信息面板占位符
+        html_str = html_str.replace('{INFO_CONTENT_PLACEHOLDER}', info_content_html)
+
+        # 将过滤窗口插入到 filterPlaceholder 位置
+        if filter_html:
+            html_str = html_str.replace('<div id="filterPlaceholder"></div>', filter_html)
+
+        return html_str, vmlinux_time, module_time
+
+    def _generate_javascript(self):
+        """Generate all JavaScript code."""
+        return """
     <script>
         // 标记是否正在进行文本选择
         let isSelectingText = false;
@@ -5581,21 +5601,7 @@ class HtmlGenerator:
             handleAnchorNavigation();
         });
     </script>
-</body>
-</html>
 """
-    
-        elapsed = time.time() - start_time
-        verbose_print(f"HTML generation completed in {elapsed:.2f} seconds", verbose)
-
-        # 替换信息面板占位符
-        html_str = html_str.replace('{INFO_CONTENT_PLACEHOLDER}', info_content_html)
-
-        # 将过滤窗口插入到 filterPlaceholder 位置
-        if filter_html:
-            html_str = html_str.replace('<div id="filterPlaceholder"></div>', filter_html)
-
-        return html_str, vmlinux_time, module_time
 
     def _generate_css(self):
         """Generate all CSS styles."""
