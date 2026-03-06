@@ -2147,292 +2147,355 @@ def call_faddr2line_for_func_names(vmlinux_path, faddr2line_path, func_names, us
                                        module_paths=module_paths)
 
 
-def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None, base_url=None, module_url=None, kernel_src=None, use_list=False, verbose=False, fast_mode=False, highlight_code=False, path_prefix=None, module_src=None, module_srcs=None, script_args=None, enable_filter=False, parse_time=0, total_time=0, func_links=False, entry_offset=0, enable_fold=False):
-    """生成交互式HTML页面，保留原始空格和格式"""
-    if module_dirs is None:
-        module_dirs = []
+class HtmlGenerator:
+    """Generates self-contained interactive HTML visualization."""
 
-    # 初始化时间统计
-    vmlinux_time = 0
-    module_time = 0
+    def __init__(self, parsed_lines, vmlinux_path, faddr2line_path,
+                 module_dirs=None, base_url=None, module_url=None,
+                 kernel_src=None, use_list=False, verbose=False,
+                 fast_mode=False, highlight_code=False, path_prefix=None,
+                 module_src=None, module_srcs=None, script_args=None,
+                 enable_filter=False, parse_time=0, total_time=0,
+                 func_links=False, entry_offset=0, enable_fold=False):
+        # Store all parameters as instance attributes
+        self.parsed_lines = parsed_lines
+        self.vmlinux_path = vmlinux_path
+        self.faddr2line_path = faddr2line_path
+        self.module_dirs = module_dirs or []
+        self.base_url = base_url
+        self.module_url = module_url
+        self.kernel_src = kernel_src
+        self.use_list = use_list
+        self.verbose = verbose
+        self.fast_mode = fast_mode
+        self.highlight_code = highlight_code
+        self.path_prefix = path_prefix
+        self.module_src = module_src
+        self.module_srcs = module_srcs
+        self.script_args = script_args
+        self.enable_filter = enable_filter
+        self.parse_time = parse_time
+        self.total_time = total_time
+        self.func_links = func_links
+        self.entry_offset = entry_offset
+        self.enable_fold = enable_fold
 
-    # 如果启用函数名超链接，收集需要解析的函数名
-    func_name_results = {}
-    if func_links:
-        # 收集所有唯一的原始函数名（去重）和模块信息
-        unique_func_names = set()
-        func_module_map = {}  # 函数名 -> 模块名
-        module_paths = {}     # 模块名 -> 模块文件路径
+        # Computed state (filled during generate)
+        self.vmlinux_time = 0
+        self.module_time = 0
+        self.filter_html = ""
+        self.combined_module_url_map = {}
+        self.default_module_url = base_url
+        self.func_name_results = {}
 
-        for line_data in parsed_lines:
-            raw_func_name = line_data.get('raw_func_name')
-            module_name = line_data.get('module_name')
+    def generate(self):
+        """Generate the complete HTML string. Returns (html_str, vmlinux_time, module_time)."""
+        parsed_lines = self.parsed_lines
+        vmlinux_path = self.vmlinux_path
+        faddr2line_path = self.faddr2line_path
+        module_dirs = self.module_dirs
+        base_url = self.base_url
+        module_url = self.module_url
+        kernel_src = self.kernel_src
+        use_list = self.use_list
+        verbose = self.verbose
+        fast_mode = self.fast_mode
+        highlight_code = self.highlight_code
+        path_prefix = self.path_prefix
+        module_src = self.module_src
+        module_srcs = self.module_srcs
+        script_args = self.script_args
+        enable_filter = self.enable_filter
+        parse_time = self.parse_time
+        total_time = self.total_time
+        func_links = self.func_links
+        entry_offset = self.entry_offset
+        enable_fold = self.enable_fold
 
-            if raw_func_name:
-                unique_func_names.add(raw_func_name)
-                # 如果有模块名，记录映射关系
-                if module_name:
-                    func_module_map[raw_func_name] = module_name
+        if module_dirs is None:
+            module_dirs = []
 
-        # 如果有模块函数，需要查找模块文件路径
-        if func_module_map and module_dirs:
-            for module_name in set(func_module_map.values()):
-                found = False
-                # 在 module_dirs 中查找模块文件
-                for module_dir in module_dirs:
-                    # 尝试多种可能的模块名格式
-                    # 内核加载模块时会将 - 替换为 _，所以需要双向查找
-                    module_name_variants = [module_name]
+        # 初始化时间统计
+        vmlinux_time = 0
+        module_time = 0
 
-                    # 如果模块名包含下划线，尝试替换为中划线
-                    if '_' in module_name:
-                        module_name_variants.append(module_name.replace('_', '-'))
+        # 如果启用函数名超链接，收集需要解析的函数名
+        func_name_results = {}
+        if func_links:
+            # 收集所有唯一的原始函数名（去重）和模块信息
+            unique_func_names = set()
+            func_module_map = {}  # 函数名 -> 模块名
+            module_paths = {}     # 模块名 -> 模块文件路径
 
-                    # 如果模块名包含中划线，尝试替换为下划线
-                    if '-' in module_name:
-                        module_name_variants.append(module_name.replace('-', '_'))
+            for line_data in parsed_lines:
+                raw_func_name = line_data.get('raw_func_name')
+                module_name = line_data.get('module_name')
 
-                    # 去重
-                    module_name_variants = list(dict.fromkeys(module_name_variants))
+                if raw_func_name:
+                    unique_func_names.add(raw_func_name)
+                    # 如果有模块名，记录映射关系
+                    if module_name:
+                        func_module_map[raw_func_name] = module_name
 
-                    for variant in module_name_variants:
-                        # 方法1: 直接查找精确的 .ko 文件
-                        module_path = os.path.join(module_dir, f"{variant}.ko")
-                        if os.path.exists(module_path):
-                            module_paths[module_name] = module_path
-                            found = True
-                            break
+            # 如果有模块函数，需要查找模块文件路径
+            if func_module_map and module_dirs:
+                for module_name in set(func_module_map.values()):
+                    found = False
+                    # 在 module_dirs 中查找模块文件
+                    for module_dir in module_dirs:
+                        # 尝试多种可能的模块名格式
+                        # 内核加载模块时会将 - 替换为 _，所以需要双向查找
+                        module_name_variants = [module_name]
 
-                        # 方法2: 查找带版本号的模块（优先匹配精确名称）
-                        import glob
-                        # 先查找精确匹配
-                        exact_files = glob.glob(os.path.join(module_dir, f"{variant}.ko"))
-                        if exact_files:
-                            module_paths[module_name] = exact_files[0]
-                            found = True
-                            break
+                        # 如果模块名包含下划线，尝试替换为中划线
+                        if '_' in module_name:
+                            module_name_variants.append(module_name.replace('_', '-'))
 
-                        # 再查找带后缀的模块，但优先选择最短的（最接近精确匹配的）
-                        module_files = glob.glob(os.path.join(module_dir, f"{variant}*.ko"))
-                        if module_files:
-                            # 按文件名长度排序，优先选择最短的
-                            module_files.sort(key=lambda x: len(os.path.basename(x)))
-                            module_paths[module_name] = module_files[0]
-                            found = True
-                            break
+                        # 如果模块名包含中划线，尝试替换为下划线
+                        if '-' in module_name:
+                            module_name_variants.append(module_name.replace('-', '_'))
 
-                        # 方法3: 递归查找子目录
-                        for root, dirs, files in os.walk(module_dir):
-                            # 先查找精确匹配
-                            if f"{variant}.ko" in files:
-                                full_path = os.path.join(root, f"{variant}.ko")
-                                module_paths[module_name] = full_path
+                        # 去重
+                        module_name_variants = list(dict.fromkeys(module_name_variants))
+
+                        for variant in module_name_variants:
+                            # 方法1: 直接查找精确的 .ko 文件
+                            module_path = os.path.join(module_dir, f"{variant}.ko")
+                            if os.path.exists(module_path):
+                                module_paths[module_name] = module_path
                                 found = True
                                 break
 
-                            # 再查找带后缀的模块
-                            matching_files = [f for f in files if f.startswith(f"{variant}") and f.endswith(".ko")]
-                            if matching_files:
-                                # 按文件名长度排序
-                                matching_files.sort(key=lambda x: len(x))
-                                full_path = os.path.join(root, matching_files[0])
-                                module_paths[module_name] = full_path
+                            # 方法2: 查找带版本号的模块（优先匹配精确名称）
+                            import glob
+                            # 先查找精确匹配
+                            exact_files = glob.glob(os.path.join(module_dir, f"{variant}.ko"))
+                            if exact_files:
+                                module_paths[module_name] = exact_files[0]
                                 found = True
+                                break
+
+                            # 再查找带后缀的模块，但优先选择最短的（最接近精确匹配的）
+                            module_files = glob.glob(os.path.join(module_dir, f"{variant}*.ko"))
+                            if module_files:
+                                # 按文件名长度排序，优先选择最短的
+                                module_files.sort(key=lambda x: len(os.path.basename(x)))
+                                module_paths[module_name] = module_files[0]
+                                found = True
+                                break
+
+                            # 方法3: 递归查找子目录
+                            for root, dirs, files in os.walk(module_dir):
+                                # 先查找精确匹配
+                                if f"{variant}.ko" in files:
+                                    full_path = os.path.join(root, f"{variant}.ko")
+                                    module_paths[module_name] = full_path
+                                    found = True
+                                    break
+
+                                # 再查找带后缀的模块
+                                matching_files = [f for f in files if f.startswith(f"{variant}") and f.endswith(".ko")]
+                                if matching_files:
+                                    # 按文件名长度排序
+                                    matching_files.sort(key=lambda x: len(x))
+                                    full_path = os.path.join(root, matching_files[0])
+                                    module_paths[module_name] = full_path
+                                    found = True
+                                    break
+
+                            if found:
                                 break
 
                         if found:
                             break
 
-                    if found:
-                        break
+            if unique_func_names and vmlinux_path and faddr2line_path:
+                verbose_print(f"收集到 {len(unique_func_names)} 个唯一函数名用于解析", verbose)
+                if func_module_map:
+                    verbose_print(f"其中 {len(func_module_map)} 个是模块函数", verbose)
 
-        if unique_func_names and vmlinux_path and faddr2line_path:
-            verbose_print(f"收集到 {len(unique_func_names)} 个唯一函数名用于解析", verbose)
-            if func_module_map:
-                verbose_print(f"其中 {len(func_module_map)} 个是模块函数", verbose)
+                # 调用 faddr2line 解析函数名（使用原始函数名）
+                func_name_list = list(unique_func_names)
+                func_name_results = call_faddr2line_for_func_names(
+                    vmlinux_path, faddr2line_path, func_name_list,
+                    use_list=use_list, verbose=verbose, fast_mode=fast_mode,
+                    path_prefix=path_prefix, module_srcs=module_srcs,
+                    entry_offset=entry_offset,
+                    func_module_map=func_module_map,
+                    module_paths=module_paths
+                )
+                verbose_print(f"函数名解析完成，获取 {len(func_name_results)} 个结果", verbose)
 
-            # 调用 faddr2line 解析函数名（使用原始函数名）
-            func_name_list = list(unique_func_names)
-            func_name_results = call_faddr2line_for_func_names(
-                vmlinux_path, faddr2line_path, func_name_list,
-                use_list=use_list, verbose=verbose, fast_mode=fast_mode,
-                path_prefix=path_prefix, module_srcs=module_srcs,
-                entry_offset=entry_offset,
-                func_module_map=func_module_map,
-                module_paths=module_paths
-            )
-            verbose_print(f"函数名解析完成，获取 {len(func_name_results)} 个结果", verbose)
+                # 将解析结果存储到 parsed_lines 中
+                for line_data in parsed_lines:
+                    raw_func_name = line_data.get('raw_func_name')
+                    if raw_func_name and raw_func_name in func_name_results:
+                        line_data['func_name_info'] = func_name_results[raw_func_name]
 
-            # 将解析结果存储到 parsed_lines 中
+        # 根据enable_filter参数生成过滤框HTML
+        filter_html = ""
+        if enable_filter:
+            # 收集所有唯一的CPU、PID、进程名和错误码用于自动补全
+            unique_cpus = set()
+            unique_pids = set()
+            unique_comms = set()
+            unique_error_codes = set()  # 存储错误码的数字值
+
             for line_data in parsed_lines:
-                raw_func_name = line_data.get('raw_func_name')
-                if raw_func_name and raw_func_name in func_name_results:
-                    line_data['func_name_info'] = func_name_results[raw_func_name]
+                cpu = line_data.get('cpu')
+                pid = line_data.get('pid')
+                comm = line_data.get('comm')
+                ret_value = line_data.get('ret_value')
 
-    # 根据enable_filter参数生成过滤框HTML
-    filter_html = ""
-    if enable_filter:
-        # 收集所有唯一的CPU、PID、进程名和错误码用于自动补全
-        unique_cpus = set()
-        unique_pids = set()
-        unique_comms = set()
-        unique_error_codes = set()  # 存储错误码的数字值
+                # 只收集合法的值
+                if cpu is not None:
+                    cpu_str = str(cpu)
+                    # 确保是有效的数字（过滤掉空字符串、None等）
+                    if cpu_str.strip() and cpu_str.isdigit():
+                        unique_cpus.add(cpu_str)
 
-        for line_data in parsed_lines:
-            cpu = line_data.get('cpu')
-            pid = line_data.get('pid')
-            comm = line_data.get('comm')
-            ret_value = line_data.get('ret_value')
+                if pid is not None:
+                    pid_str = str(pid)
+                    # 确保是有效的数字（过滤掉空字符串、None等）
+                    # 修改：保留 PID=0，但只在过滤器中显示，不用于过滤
+                    if pid_str.strip() and pid_str.isdigit():
+                        # 对于过滤器备选关键字，包含 PID=0
+                        unique_pids.add(pid_str)
 
-            # 只收集合法的值
-            if cpu is not None:
-                cpu_str = str(cpu)
-                # 确保是有效的数字（过滤掉空字符串、None等）
-                if cpu_str.strip() and cpu_str.isdigit():
-                    unique_cpus.add(cpu_str)
+                if comm:
+                    comm_str = str(comm).strip()
+                    # 确保进程名不是空字符串
+                    # 修改：去除特殊字符后添加到备选关键字
+                    if comm_str and len(comm_str) > 0:
+                        # 清理进程名：去除特殊字符
+                        cleaned_comm = comm_str
+                        if cleaned_comm.startswith('<') and cleaned_comm.endswith('>'):
+                            cleaned_comm = cleaned_comm[1:-1]  # 去除 < >
+                        if cleaned_comm.startswith('(') and cleaned_comm.endswith(')'):
+                            cleaned_comm = cleaned_comm[1:-1]  # 去除 ( )
+                        if '@' in cleaned_comm:
+                            cleaned_comm = cleaned_comm.split('@')[0]  # 去除 @ 后面的部分
 
-            if pid is not None:
-                pid_str = str(pid)
-                # 确保是有效的数字（过滤掉空字符串、None等）
-                # 修改：保留 PID=0，但只在过滤器中显示，不用于过滤
-                if pid_str.strip() and pid_str.isdigit():
-                    # 对于过滤器备选关键字，包含 PID=0
-                    unique_pids.add(pid_str)
+                        # 只添加清理后的进程名
+                        if cleaned_comm and len(cleaned_comm) > 0:
+                            unique_comms.add(cleaned_comm)
 
-            if comm:
-                comm_str = str(comm).strip()
-                # 确保进程名不是空字符串
-                # 修改：去除特殊字符后添加到备选关键字
-                if comm_str and len(comm_str) > 0:
-                    # 清理进程名：去除特殊字符
-                    cleaned_comm = comm_str
-                    if cleaned_comm.startswith('<') and cleaned_comm.endswith('>'):
-                        cleaned_comm = cleaned_comm[1:-1]  # 去除 < >
-                    if cleaned_comm.startswith('(') and cleaned_comm.endswith(')'):
-                        cleaned_comm = cleaned_comm[1:-1]  # 去除 ( )
-                    if '@' in cleaned_comm:
-                        cleaned_comm = cleaned_comm.split('@')[0]  # 去除 @ 后面的部分
+                # 收集错误码
+                if ret_value:
+                    try:
+                        # 解析为整数（支持10进制和16进制）
+                        if ret_value.startswith('0x') or ret_value.startswith('0X'):
+                            ret_int = int(ret_value, 16)
+                            # 处理64位无符号整数转换为有符号整数
+                            # 但只对明显是负数的值进行转换（避免误判大正数）
+                            if ret_int >= 0x8000000000000000:
+                                # 检查是否可能是负数的补码
+                                # 如果转换后是负数，才使用转换后的值
+                                converted = ret_int - 0x10000000000000000
+                                if converted < 0:
+                                    ret_int = converted
+                        else:
+                            ret_int = int(ret_value)
 
-                    # 只添加清理后的进程名
-                    if cleaned_comm and len(cleaned_comm) > 0:
-                        unique_comms.add(cleaned_comm)
+                        # 只收集已知的错误码（在ERROR_CODE_MAP中）
+                        # 0不收集，未知负数也不收集
+                        if ret_int in ERROR_CODE_MAP:
+                            unique_error_codes.add(ret_int)
+                    except ValueError:
+                        pass
 
-            # 收集错误码
-            if ret_value:
-                try:
-                    # 解析为整数（支持10进制和16进制）
-                    if ret_value.startswith('0x') or ret_value.startswith('0X'):
-                        ret_int = int(ret_value, 16)
-                        # 处理64位无符号整数转换为有符号整数
-                        # 但只对明显是负数的值进行转换（避免误判大正数）
-                        if ret_int >= 0x8000000000000000:
-                            # 检查是否可能是负数的补码
-                            # 如果转换后是负数，才使用转换后的值
-                            converted = ret_int - 0x10000000000000000
-                            if converted < 0:
-                                ret_int = converted
-                    else:
-                        ret_int = int(ret_value)
+            # 收集数据类型信息
+            has_cpu = len(unique_cpus) > 0
+            has_pid = len(unique_pids) > 0
+            has_comm = len(unique_comms) > 0
+            has_ret = len(unique_error_codes) > 0
 
-                    # 只收集已知的错误码（在ERROR_CODE_MAP中）
-                    # 0不收集，未知负数也不收集
-                    if ret_int in ERROR_CODE_MAP:
-                        unique_error_codes.add(ret_int)
-                except ValueError:
-                    pass
+            # 检查是否有参数数据
+            has_params = False
+            has_duration = False
+            for line_data in parsed_lines:
+                if not has_params and line_data.get('params'):
+                    has_params = True
+                if not has_duration and line_data.get('duration') is not None:
+                    has_duration = True
+                if has_params and has_duration:
+                    break
 
-        # 收集数据类型信息
-        has_cpu = len(unique_cpus) > 0
-        has_pid = len(unique_pids) > 0
-        has_comm = len(unique_comms) > 0
-        has_ret = len(unique_error_codes) > 0
+            # 只有当有相关数据时才生成过滤框
+            filter_inputs = []
 
-        # 检查是否有参数数据
-        has_params = False
-        has_duration = False
-        for line_data in parsed_lines:
-            if not has_params and line_data.get('params'):
-                has_params = True
-            if not has_duration and line_data.get('duration') is not None:
-                has_duration = True
-            if has_params and has_duration:
-                break
-
-        # 只有当有相关数据时才生成过滤框
-        filter_inputs = []
-
-        if has_cpu:
-            cpus_json = ','.join(sorted(unique_cpus))
-            filter_inputs.append(f'''
+            if has_cpu:
+                cpus_json = ','.join(sorted(unique_cpus))
+                filter_inputs.append(f'''
             <div class="filter-input-group">
                 <input type="text" id="filterCpu" placeholder="CPU regex (e.g., 0|1|2 or [0-2])" style="width: 140px;" data-suggestions="{cpus_json}" onkeypress="handleFilterKeypress(event)" onmouseenter="showHint(event, 'CPU过滤：支持正则表达式，如 0|1|2 或 [0-2]')" onmouseleave="hideHint()">
                 <div class="suggestions" id="cpuSuggestions"></div>
             </div>''')
 
-        if has_pid:
-            pids_json = ','.join(sorted(unique_pids))
-            filter_inputs.append(f'''
+            if has_pid:
+                pids_json = ','.join(sorted(unique_pids))
+                filter_inputs.append(f'''
             <div class="filter-input-group">
                 <input type="text" id="filterPid" placeholder="PID regex (e.g., 1234|5678 or 0-100)" style="width: 140px;" data-suggestions="{pids_json}" onkeypress="handleFilterKeypress(event)" onmouseenter="showHint(event, 'PID过滤：支持正则表达式，如 1234|5678 或 0-100')" onmouseleave="hideHint()">
                 <div class="suggestions" id="pidSuggestions"></div>
             </div>''')
 
-        if has_comm:
-            comms_json = ','.join(sorted(unique_comms))
-            filter_inputs.append(f'''
+            if has_comm:
+                comms_json = ','.join(sorted(unique_comms))
+                filter_inputs.append(f'''
             <div class="filter-input-group">
                 <input type="text" id="filterComm" placeholder="Comm regex (e.g., bash|python or ^idle)" style="width: 140px;" data-suggestions="{comms_json}" onkeypress="handleFilterKeypress(event)" onmouseenter="showHint(event, '进程名过滤：支持正则表达式，如 bash|python 或 ^idle')" onmouseleave="hideHint()">
                 <div class="suggestions" id="commSuggestions"></div>
             </div>''')
 
-        if has_ret:
-            # 转换为显示格式：错误码宏（数字）
-            # 例如：-22 -> EINVAL（-22），-1 -> EPERM（-1）
-            error_display_list = []
-            error_values_list = []  # 用于all过滤的原始值列表
+            if has_ret:
+                # 转换为显示格式：错误码宏（数字）
+                # 例如：-22 -> EINVAL（-22），-1 -> EPERM（-1）
+                error_display_list = []
+                error_values_list = []  # 用于all过滤的原始值列表
 
-            for ret_int in sorted(unique_error_codes):
-                # 查找错误码宏
-                error_name = ERROR_CODE_MAP.get(ret_int)
-                if error_name:
-                    # 有宏名，保留负号
-                    display_str = f"{error_name}（{ret_int}）"
-                    error_values_list.append(str(ret_int))
-                else:
-                    # 没有宏名，只显示数字
-                    display_str = f"ret={ret_int}"
-                error_display_list.append(display_str)
+                for ret_int in sorted(unique_error_codes):
+                    # 查找错误码宏
+                    error_name = ERROR_CODE_MAP.get(ret_int)
+                    if error_name:
+                        # 有宏名，保留负号
+                        display_str = f"{error_name}（{ret_int}）"
+                        error_values_list.append(str(ret_int))
+                    else:
+                        # 没有宏名，只显示数字
+                        display_str = f"ret={ret_int}"
+                    error_display_list.append(display_str)
 
-            # 添加特殊选项：all
-            error_display_list.insert(0, "all")
+                # 添加特殊选项：all
+                error_display_list.insert(0, "all")
 
-            # 将错误码列表转换为JSON数组，用于JS中的all过滤
-            error_values_json = '[' + ','.join(error_values_list) + ']'
+                # 将错误码列表转换为JSON数组，用于JS中的all过滤
+                error_values_json = '[' + ','.join(error_values_list) + ']'
 
-            error_codes_json = ','.join(error_display_list)
-            filter_inputs.append(f'''
+                error_codes_json = ','.join(error_display_list)
+                filter_inputs.append(f'''
             <div class="filter-input-group">
                 <input type="text" id="filterRet" placeholder="Return value (e.g., -22 or EINVAL)" style="width: 160px;" data-suggestions="{error_codes_json}" data-error-values="{error_values_json}" onkeypress="handleFilterKeypress(event)" onmouseenter="showHint(event, '返回值过滤：输入数字如 -22，或宏名如 EINVAL，或 all 显示所有')" onmouseleave="hideHint()">
                 <div class="suggestions" id="retSuggestions"></div>
             </div>''')
 
-        # 只有当有参数数据时才添加参数过滤框
-        if has_params:
-            filter_inputs.append(f'''
+            # 只有当有参数数据时才添加参数过滤框
+            if has_params:
+                filter_inputs.append(f'''
             <div class="filter-input-group">
                 <input type="text" id="filterParams" placeholder="Function params (e.g., folio=0x... or address=...)" style="width: 200px;" onkeypress="handleFilterKeypress(event)" onmouseenter="showHint(event, '参数过滤：匹配函数参数，如 folio=0x1234 或 address=0x...')" onmouseleave="hideHint()">
             </div>''')
 
-        # 只有当有耗时数据时才添加耗时过滤框
-        if has_duration:
-            filter_inputs.append(f'''
+            # 只有当有耗时数据时才添加耗时过滤框
+            if has_duration:
+                filter_inputs.append(f'''
             <div class="filter-input-group">
                 <input type="text" id="durationFilter" placeholder="Duration filter (e.g., >10, <5&&>2, sort:desc)" style="width: 220px;" onkeypress="handleFilterKeypress(event)" onmouseenter="showHint(event, '耗时过滤：支持 >, <, >=, <=, &&, ||, sort:desc/asc，如 >10 sort:desc')" onmouseleave="hideHint()">
             </div>''')
 
-        # 只有当有至少一个输入框时才生成过滤框
-        if filter_inputs:
-            filter_html = f'''
+            # 只有当有至少一个输入框时才生成过滤框
+            if filter_inputs:
+                filter_html = f'''
             <div class="filter-box" id="filterBox">
                 {''.join(filter_inputs)}
                 <button class="control-btn filter-btn" onclick="applyFilter()">Filter</button>
@@ -2440,127 +2503,127 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
             </div>
             <div class="filter-hint" id="filterHint"></div>'''
 
-    # 解析module_url参数（支持多个--module-url参数）
-    if module_url is None:
-        module_url_list = []
-    elif isinstance(module_url, list):
-        module_url_list = module_url
-    else:
-        module_url_list = [module_url]
+        # 解析module_url参数（支持多个--module-url参数）
+        if module_url is None:
+            module_url_list = []
+        elif isinstance(module_url, list):
+            module_url_list = module_url
+        else:
+            module_url_list = [module_url]
 
-    # 合并所有module_url参数的解析结果
-    combined_module_url_map = {}
-    default_module_url = base_url
-
-    for module_url_str in module_url_list:
-        url_map, default_url = parse_module_url(module_url_str, base_url)
-
-        # 合并映射
-        combined_module_url_map.update(url_map)
-
-        # 如果这个参数提供了默认URL（即没有跟模块名），更新默认URL
-        # （后面的参数会覆盖前面的）
-        if default_url != base_url:
-            default_module_url = default_url
-
-    # 如果没有提供任何module_url参数，使用base_url作为默认
-    if not module_url_list:
+        # 合并所有module_url参数的解析结果
+        combined_module_url_map = {}
         default_module_url = base_url
 
-    verbose_print(f"Module URL map: {combined_module_url_map}", verbose)
-    verbose_print(f"Default module URL: {default_module_url}", verbose)
+        for module_url_str in module_url_list:
+            url_map, default_url = parse_module_url(module_url_str, base_url)
 
-    # 验证module_url_map中的模块名是否在parsed_lines中存在
-    if combined_module_url_map and parsed_lines:
-        available_modules = set()
-        for line_data in parsed_lines:
-            if line_data.get('module_name'):
-                available_modules.add(line_data['module_name'])
+            # 合并映射
+            combined_module_url_map.update(url_map)
 
-        # 检查是否有未使用的模块映射
-        unused_mappings = set(combined_module_url_map.keys()) - available_modules
-        if unused_mappings:
-            print(f"Warning: module-url specifies mappings for modules not found in trace: {', '.join(sorted(unused_mappings))}", file=sys.stderr)
+            # 如果这个参数提供了默认URL（即没有跟模块名），更新默认URL
+            # （后面的参数会覆盖前面的）
+            if default_url != base_url:
+                default_module_url = default_url
 
-        # 检查是否有模块没有URL映射但default_module_url不是base_url
-        if default_module_url and default_module_url != base_url:
-            unmapped_modules = available_modules - set(combined_module_url_map.keys())
-            if unmapped_modules:
-                verbose_print(f"Modules using default URL '{default_module_url}': {', '.join(sorted(unmapped_modules))}", verbose)
+        # 如果没有提供任何module_url参数，使用base_url作为默认
+        if not module_url_list:
+            default_module_url = base_url
 
-    # 确保path_prefix、module_src和module_srcs是列表
-    if path_prefix and not isinstance(path_prefix, list):
-        path_prefix = [path_prefix]
-    if module_src and not isinstance(module_src, list):
-        module_src = [module_src]
-    if module_srcs and not isinstance(module_srcs, list):
-        module_srcs = [module_srcs]
+        verbose_print(f"Module URL map: {combined_module_url_map}", verbose)
+        verbose_print(f"Default module URL: {default_module_url}", verbose)
 
-    # kernel_src保持单个路径（可以是None）
+        # 验证module_url_map中的模块名是否在parsed_lines中存在
+        if combined_module_url_map and parsed_lines:
+            available_modules = set()
+            for line_data in parsed_lines:
+                if line_data.get('module_name'):
+                    available_modules.add(line_data['module_name'])
 
-    # 为了兼容后续代码，使用旧的变量名
-    module_url_map = combined_module_url_map
-    # default_module_url 已经设置好了
+            # 检查是否有未使用的模块映射
+            unused_mappings = set(combined_module_url_map.keys()) - available_modules
+            if unused_mappings:
+                print(f"Warning: module-url specifies mappings for modules not found in trace: {', '.join(sorted(unused_mappings))}", file=sys.stderr)
 
-    verbose_print("Generating HTML content", verbose)
-    start_time = time.time()
+            # 检查是否有模块没有URL映射但default_module_url不是base_url
+            if default_module_url and default_module_url != base_url:
+                unmapped_modules = available_modules - set(combined_module_url_map.keys())
+                if unmapped_modules:
+                    verbose_print(f"Modules using default URL '{default_module_url}': {', '.join(sorted(unmapped_modules))}", verbose)
+
+        # 确保path_prefix、module_src和module_srcs是列表
+        if path_prefix and not isinstance(path_prefix, list):
+            path_prefix = [path_prefix]
+        if module_src and not isinstance(module_src, list):
+            module_src = [module_src]
+        if module_srcs and not isinstance(module_srcs, list):
+            module_srcs = [module_srcs]
+
+        # kernel_src保持单个路径（可以是None）
+
+        # 为了兼容后续代码，使用旧的变量名
+        module_url_map = combined_module_url_map
+        # default_module_url 已经设置好了
+
+        verbose_print("Generating HTML content", verbose)
+        start_time = time.time()
     
-    # 使用绝对路径
-    abs_vmlinux_path = os.path.abspath(vmlinux_path)
-    abs_faddr2line_path = os.path.abspath(faddr2line_path)
+        # 使用绝对路径
+        abs_vmlinux_path = os.path.abspath(vmlinux_path)
+        abs_faddr2line_path = os.path.abspath(faddr2line_path)
     
-    # 如果使用fast模式，优先使用fastfaddr2line.py
-    if fast_mode:
-        script_dir = os.path.dirname(os.path.abspath(__file__))
-        fast_faddr2line_path = os.path.join(script_dir, 'fastfaddr2line.py')
-        if os.path.exists(fast_faddr2line_path):
-            verbose_print(f"Using fastfaddr2line.py at {fast_faddr2line_path}", verbose)
-            abs_faddr2line_path = fast_faddr2line_path
-        else:
-            verbose_print(f"Warning: fastfaddr2line.py not found at {fast_faddr2line_path}, using fallback", verbose)
-    
-    # 收集所有需要解析的函数信息（使用字典去重）
-    func_info_map = defaultdict(list)  # func_info -> [line_index]
-    module_funcs = defaultdict(set)   # module_name -> set(func_info)
-    vmlinux_funcs = set()              # set(func_info)
-
-    for idx, line_data in enumerate(parsed_lines):
-        if line_data['expandable'] and line_data['func_info']:
-            func_info = line_data['func_info']
-
-            # 记录行索引
-            func_info_map[func_info].append(idx)
-
-            # 从func_info中提取模块名（如果存在）
-            # func_info格式: func+offset/length [module]
-            func_info_module_name = None
-            if '[' in func_info and ']' in func_info:
-                module_match = re.search(r'\[(.*?)\]', func_info)
-                if module_match:
-                    func_info_module_name = module_match.group(1)
-
-            # 优先使用func_info中的模块名
-            # 如果func_info没有模块名，则默认为内核函数（None）
-            # 不使用当前函数的模块名，因为返回地址可能属于不同的模块或内核
-            effective_module = func_info_module_name
-
-            # 按目标分组
-            if effective_module:
-                module_funcs[effective_module].add(func_info)
+        # 如果使用fast模式，优先使用fastfaddr2line.py
+        if fast_mode:
+            script_dir = os.path.dirname(os.path.abspath(__file__))
+            fast_faddr2line_path = os.path.join(script_dir, 'fastfaddr2line.py')
+            if os.path.exists(fast_faddr2line_path):
+                verbose_print(f"Using fastfaddr2line.py at {fast_faddr2line_path}", verbose)
+                abs_faddr2line_path = fast_faddr2line_path
             else:
-                vmlinux_funcs.add(func_info)
+                verbose_print(f"Warning: fastfaddr2line.py not found at {fast_faddr2line_path}, using fallback", verbose)
     
-    verbose_print(f"Found {len(vmlinux_funcs)} unique kernel functions", verbose)
-    verbose_print(f"Found {len(module_funcs)} modules with functions", verbose)
-    for module, funcs in module_funcs.items():
-        verbose_print(f"Module {module}: {len(funcs)} functions", verbose)
-    
-    # 批量获取所有函数的位置信息
-    func_locations_map = {}
+        # 收集所有需要解析的函数信息（使用字典去重）
+        func_info_map = defaultdict(list)  # func_info -> [line_index]
+        module_funcs = defaultdict(set)   # module_name -> set(func_info)
+        vmlinux_funcs = set()              # set(func_info)
 
-    # 定义函数偏移量调整函数
-    def adjust_func_info(func_info, remove_suffix=True):
-        """
+        for idx, line_data in enumerate(parsed_lines):
+            if line_data['expandable'] and line_data['func_info']:
+                func_info = line_data['func_info']
+
+                # 记录行索引
+                func_info_map[func_info].append(idx)
+
+                # 从func_info中提取模块名（如果存在）
+                # func_info格式: func+offset/length [module]
+                func_info_module_name = None
+                if '[' in func_info and ']' in func_info:
+                    module_match = re.search(r'\[(.*?)\]', func_info)
+                    if module_match:
+                        func_info_module_name = module_match.group(1)
+
+                # 优先使用func_info中的模块名
+                # 如果func_info没有模块名，则默认为内核函数（None）
+                # 不使用当前函数的模块名，因为返回地址可能属于不同的模块或内核
+                effective_module = func_info_module_name
+
+                # 按目标分组
+                if effective_module:
+                    module_funcs[effective_module].add(func_info)
+                else:
+                    vmlinux_funcs.add(func_info)
+    
+        verbose_print(f"Found {len(vmlinux_funcs)} unique kernel functions", verbose)
+        verbose_print(f"Found {len(module_funcs)} modules with functions", verbose)
+        for module, funcs in module_funcs.items():
+            verbose_print(f"Module {module}: {len(funcs)} functions", verbose)
+    
+        # 批量获取所有函数的位置信息
+        func_locations_map = {}
+
+        # 定义函数偏移量调整函数
+        def adjust_func_info(func_info, remove_suffix=True):
+            """
         调整函数信息，用于显示或调用fastfaddr2line
 
         参数:
@@ -2568,1312 +2631,240 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
             remove_suffix: 是否移除编译器后缀（用于显示），默认True
                           设为False时保留后缀（用于调用fastfaddr2line）
         """
-        # 先提取模块名（如果存在）
-        module_part = ''
-        if '[' in func_info and ']' in func_info:
-            module_match = re.search(r'(\s*\[.*?\])', func_info)
-            if module_match:
-                module_part = module_match.group(1)
-                func_info = func_info.replace(module_part, '')
+            # 先提取模块名（如果存在）
+            module_part = ''
+            if '[' in func_info and ']' in func_info:
+                module_match = re.search(r'(\s*\[.*?\])', func_info)
+                if module_match:
+                    module_part = module_match.group(1)
+                    func_info = func_info.replace(module_part, '')
 
-        # 匹配函数名+偏移/长度格式
-        match = re.match(r'^(.*?)([+][0-9a-fA-FxX]+)(/[0-9a-fA-FxX]+)$', func_info)
-        if not match:
-            # 如果不匹配，恢复模块名并返回
-            return func_info + module_part
+            # 匹配函数名+偏移/长度格式
+            match = re.match(r'^(.*?)([+][0-9a-fA-FxX]+)(/[0-9a-fA-FxX]+)$', func_info)
+            if not match:
+                # 如果不匹配，恢复模块名并返回
+                return func_info + module_part
 
-        func_name = match.group(1)
-        offset_str = match.group(2)[1:]  # 去掉前面的+号
-        length_str = match.group(3)
+            func_name = match.group(1)
+            offset_str = match.group(2)[1:]  # 去掉前面的+号
+            length_str = match.group(3)
 
-        try:
-            # 解析十六进制偏移量
-            offset_val = int(offset_str, 16)
+            try:
+                # 解析十六进制偏移量
+                offset_val = int(offset_str, 16)
 
-            # 根据参数决定是否去除编译器后缀
-            if remove_suffix:
-                cleaned_func = remove_compiler_suffix(func_name)
+                # 根据参数决定是否去除编译器后缀
+                if remove_suffix:
+                    cleaned_func = remove_compiler_suffix(func_name)
+                else:
+                    cleaned_func = func_name
+
+                if offset_val == 0:
+                    # 偏移量为0，但可能仍需要去除后缀（如果remove_suffix=True）
+                    if remove_suffix and cleaned_func != func_name:
+                        return f"{cleaned_func}+{offset_str}{length_str}{module_part}"
+                    return func_info + module_part  # 偏移量为0，不需要调整
+
+                # 计算新偏移量（减1）
+                new_offset_val = offset_val - 1
+                new_offset_str = hex(new_offset_val)
+
+                # 重构函数信息字符串
+                return f"{cleaned_func}+{new_offset_str}{length_str}{module_part}"
+            except ValueError:
+                return func_info + module_part  # 解析失败，返回原始字符串
+    
+        # 1. 处理内核函数（去重后）
+        if vmlinux_funcs:
+            # 为调用fastfaddr2line准备函数列表（只调整偏移量，保留编译器后缀）
+            vmlinux_funcs_for_call = set()
+            for func in vmlinux_funcs:
+                # 只调整偏移量，不移除编译器后缀
+                adjusted_func = adjust_func_info(func, remove_suffix=False)
+                vmlinux_funcs_for_call.add(adjusted_func)
+
+            vmlinux_funcs_list = list(vmlinux_funcs_for_call)
+            verbose_print(f"Processing {len(vmlinux_funcs_list)} kernel functions", verbose)
+
+            # 记录vmlinux解析开始时间
+            vmlinux_start = time.time()
+
+            # 如果是fast模式且处理的是vmlinux，使用fastfaddr2line.py
+            # 对于内核函数，不传递模块相关的路径参数
+            if fast_mode and os.path.basename(abs_faddr2line_path) == 'fastfaddr2line.py':
+                batch_results = call_faddr2line_batch(
+                    abs_faddr2line_path,
+                    abs_vmlinux_path,
+                    vmlinux_funcs_list,
+                    use_list,
+                    kernel_src,
+                    verbose,
+                    path_prefix,
+                    None,  # 内核函数不需要模块源码路径
+                    None   # 内核函数不需要模块源码路径
+                )
             else:
-                cleaned_func = func_name
+                batch_results = call_faddr2line_batch(
+                    abs_faddr2line_path,
+                    abs_vmlinux_path,
+                    vmlinux_funcs_list,
+                    use_list,
+                    kernel_src,
+                    verbose,
+                    None,  # 原生faddr2line不支持path_prefix
+                    None,  # 内核函数不需要模块源码路径
+                    None   # 原生faddr2line不支持module_srcs
+                )
 
-            if offset_val == 0:
-                # 偏移量为0，但可能仍需要去除后缀（如果remove_suffix=True）
-                if remove_suffix and cleaned_func != func_name:
-                    return f"{cleaned_func}+{offset_str}{length_str}{module_part}"
-                return func_info + module_part  # 偏移量为0，不需要调整
-
-            # 计算新偏移量（减1）
-            new_offset_val = offset_val - 1
-            new_offset_str = hex(new_offset_val)
-
-            # 重构函数信息字符串
-            return f"{cleaned_func}+{new_offset_str}{length_str}{module_part}"
-        except ValueError:
-            return func_info + module_part  # 解析失败，返回原始字符串
+            vmlinux_time = time.time() - vmlinux_start
+            func_locations_map.update(batch_results)
+            verbose_print(f"Resolved {len(batch_results)} kernel function locations in {vmlinux_time:.2f}s", verbose)
     
-    # 1. 处理内核函数（去重后）
-    if vmlinux_funcs:
-        # 为调用fastfaddr2line准备函数列表（只调整偏移量，保留编译器后缀）
-        vmlinux_funcs_for_call = set()
-        for func in vmlinux_funcs:
-            # 只调整偏移量，不移除编译器后缀
-            adjusted_func = adjust_func_info(func, remove_suffix=False)
-            vmlinux_funcs_for_call.add(adjusted_func)
+        # 2. 处理模块函数（去重后）
+        module_start = time.time()
+        for module_name, funcs in module_funcs.items():
+            verbose_print(f"Processing module {module_name} with {len(funcs)} functions", verbose)
+            # 查找模块文件
+            module_path = find_module_path(module_name, module_dirs, verbose)
 
-        vmlinux_funcs_list = list(vmlinux_funcs_for_call)
-        verbose_print(f"Processing {len(vmlinux_funcs_list)} kernel functions", verbose)
+            if not module_path or not os.path.isfile(module_path):
+                verbose_print(f"Module file not found for {module_name}", verbose)
+                continue
 
-        # 记录vmlinux解析开始时间
-        vmlinux_start = time.time()
+            verbose_print(f"Using module file: {module_path}", verbose)
 
-        # 如果是fast模式且处理的是vmlinux，使用fastfaddr2line.py
-        # 对于内核函数，不传递模块相关的路径参数
-        if fast_mode and os.path.basename(abs_faddr2line_path) == 'fastfaddr2line.py':
+            # 为调用fastfaddr2line准备函数列表（只调整偏移量，保留编译器后缀）
+            funcs_for_call = set()
+            for func in funcs:
+                # 只调整偏移量，不移除编译器后缀
+                adjusted_func = adjust_func_info(func, remove_suffix=False)
+                funcs_for_call.add(adjusted_func)
+
+            funcs_list = list(funcs_for_call)
+            # 如果使用fastfaddr2line.py，传递path_prefix和module_srcs；否则传递None
+            should_pass_fast_args = fast_mode and os.path.basename(abs_faddr2line_path) == 'fastfaddr2line.py'
             batch_results = call_faddr2line_batch(
                 abs_faddr2line_path,
-                abs_vmlinux_path,
-                vmlinux_funcs_list,
+                module_path,
+                funcs_list,
                 use_list,
                 kernel_src,
                 verbose,
-                path_prefix,
-                None,  # 内核函数不需要模块源码路径
-                None   # 内核函数不需要模块源码路径
+                path_prefix if should_pass_fast_args else None,
+                module_src,
+                module_srcs if should_pass_fast_args else None
             )
-        else:
-            batch_results = call_faddr2line_batch(
-                abs_faddr2line_path,
-                abs_vmlinux_path,
-                vmlinux_funcs_list,
-                use_list,
-                kernel_src,
-                verbose,
-                None,  # 原生faddr2line不支持path_prefix
-                None,  # 内核函数不需要模块源码路径
-                None   # 原生faddr2line不支持module_srcs
-            )
+            func_locations_map.update(batch_results)
+            verbose_print(f"Resolved {len(batch_results)} function locations for module {module_name}", verbose)
 
-        vmlinux_time = time.time() - vmlinux_start
-        func_locations_map.update(batch_results)
-        verbose_print(f"Resolved {len(batch_results)} kernel function locations in {vmlinux_time:.2f}s", verbose)
+        module_time = time.time() - module_start
+        if module_funcs:
+            verbose_print(f"Resolved all modules in {module_time:.2f}s", verbose)
+
+        # 计算统计数据
+        total_lines = len(parsed_lines)
+        expandable_entries = sum(1 for l in parsed_lines if l['expandable'])
     
-    # 2. 处理模块函数（去重后）
-    module_start = time.time()
-    for module_name, funcs in module_funcs.items():
-        verbose_print(f"Processing module {module_name} with {len(funcs)} functions", verbose)
-        # 查找模块文件
-        module_path = find_module_path(module_name, module_dirs, verbose)
+        # 定义提取行号的函数
+        def extract_line_number(location_str, kernel_src, path_prefix=None, module_src=None):
+            """从位置字符串中提取行号"""
+            if not location_str:
+                return None
 
-        if not module_path or not os.path.isfile(module_path):
-            verbose_print(f"Module file not found for {module_name}", verbose)
-            continue
+            # 尝试匹配各种行号格式
+            # 1. 标准格式: file.c:1234
+            # 2. 带discriminator: file.c:1234 (discriminator 9)
+            # 3. 带inlined: file.c:1234 (inlined)
+            # 4. 其他格式
 
-        verbose_print(f"Using module file: {module_path}", verbose)
+            # 首先清理字符串
+            clean_str = clean_file_path(location_str, kernel_src, path_prefix, module_src)
 
-        # 为调用fastfaddr2line准备函数列表（只调整偏移量，保留编译器后缀）
-        funcs_for_call = set()
-        for func in funcs:
-            # 只调整偏移量，不移除编译器后缀
-            adjusted_func = adjust_func_info(func, remove_suffix=False)
-            funcs_for_call.add(adjusted_func)
+            # 尝试从原始字符串提取行号
+            line_match = re.search(r':(\d+)(?:\s|$)', location_str)
+            if line_match:
+                try:
+                    return int(line_match.group(1))
+                except (ValueError, IndexError):
+                    pass
 
-        funcs_list = list(funcs_for_call)
-        # 如果使用fastfaddr2line.py，传递path_prefix和module_srcs；否则传递None
-        should_pass_fast_args = fast_mode and os.path.basename(abs_faddr2line_path) == 'fastfaddr2line.py'
-        batch_results = call_faddr2line_batch(
-            abs_faddr2line_path,
-            module_path,
-            funcs_list,
-            use_list,
-            kernel_src,
-            verbose,
-            path_prefix if should_pass_fast_args else None,
-            module_src,
-            module_srcs if should_pass_fast_args else None
-        )
-        func_locations_map.update(batch_results)
-        verbose_print(f"Resolved {len(batch_results)} function locations for module {module_name}", verbose)
+            # 如果上述方法失败，尝试其他方法
+            # 查找冒号后的数字
+            match = re.search(r':(\d+)', location_str)
+            if match:
+                try:
+                    return int(match.group(1))
+                except (ValueError, IndexError):
+                    pass
 
-    module_time = time.time() - module_start
-    if module_funcs:
-        verbose_print(f"Resolved all modules in {module_time:.2f}s", verbose)
-
-    # 计算统计数据
-    total_lines = len(parsed_lines)
-    expandable_entries = sum(1 for l in parsed_lines if l['expandable'])
-    
-    # 定义提取行号的函数
-    def extract_line_number(location_str, kernel_src, path_prefix=None, module_src=None):
-        """从位置字符串中提取行号"""
-        if not location_str:
             return None
 
-        # 尝试匹配各种行号格式
-        # 1. 标准格式: file.c:1234
-        # 2. 带discriminator: file.c:1234 (discriminator 9)
-        # 3. 带inlined: file.c:1234 (inlined)
-        # 4. 其他格式
+        # 定义从位置字符串提取文件路径的函数
+        def extract_file_path(location_str, kernel_src, path_prefix=None, module_src=None):
+            """从位置字符串中提取文件路径"""
+            if not location_str:
+                return ""
 
-        # 首先清理字符串
-        clean_str = clean_file_path(location_str, kernel_src, path_prefix, module_src)
+            # 清理字符串
+            cleaned = clean_file_path(location_str, kernel_src, path_prefix, module_src)
 
-        # 尝试从原始字符串提取行号
-        line_match = re.search(r':(\d+)(?:\s|$)', location_str)
-        if line_match:
-            try:
-                return int(line_match.group(1))
-            except (ValueError, IndexError):
-                pass
+            # 如果还有冒号和数字，去除它们
+            # 匹配文件路径:行号格式
+            file_match = re.match(r'^(.*?):\d+', cleaned)
+            if file_match:
+                return file_match.group(1)
 
-        # 如果上述方法失败，尝试其他方法
-        # 查找冒号后的数字
-        match = re.search(r':(\d+)', location_str)
-        if match:
-            try:
-                return int(match.group(1))
-            except (ValueError, IndexError):
-                pass
-
-        return None
-
-    # 定义从位置字符串提取文件路径的函数
-    def extract_file_path(location_str, kernel_src, path_prefix=None, module_src=None):
-        """从位置字符串中提取文件路径"""
-        if not location_str:
-            return ""
-
-        # 清理字符串
-        cleaned = clean_file_path(location_str, kernel_src, path_prefix, module_src)
-
-        # 如果还有冒号和数字，去除它们
-        # 匹配文件路径:行号格式
-        file_match = re.match(r'^(.*?):\d+', cleaned)
-        if file_match:
-            return file_match.group(1)
-
-        # 如果没有行号，直接返回清理后的路径
-        return cleaned
+            # 如果没有行号，直接返回清理后的路径
+            return cleaned
     
-    # 生成信息面板内容
-    info_items = format_args_info(script_args)
-    env_items = get_environment_info()
+        # 生成信息面板内容
+        info_items = format_args_info(script_args)
+        env_items = get_environment_info()
     
-    info_content_html = ""
+        info_content_html = ""
     
-    # 添加环境信息部分
-    if env_items:
-        info_content_html += '                <div style="font-weight: 600; color: var(--text-color); margin-bottom: 8px; font-size: 11px;">Environment</div>\n'
-        for label, value in env_items:
-            info_content_html += f'                <div class="info-item"><div class="info-label">{label}:</div><div class="info-value">{html.escape(str(value))}</div></div>\n'
-        info_content_html += '                <div style="border-top: 1px solid var(--border-color); margin: 8px 0;"></div>\n'
+        # 添加环境信息部分
+        if env_items:
+            info_content_html += '                <div style="font-weight: 600; color: var(--text-color); margin-bottom: 8px; font-size: 11px;">Environment</div>\n'
+            for label, value in env_items:
+                info_content_html += f'                <div class="info-item"><div class="info-label">{label}:</div><div class="info-value">{html.escape(str(value))}</div></div>\n'
+            info_content_html += '                <div style="border-top: 1px solid var(--border-color); margin: 8px 0;"></div>\n'
     
-    # 添加处理统计信息
-    if parse_time > 0 or total_time > 0 or vmlinux_time > 0 or module_time > 0:
-        info_content_html += '                <div style="font-weight: 600; color: var(--text-color); margin-bottom: 8px; font-size: 11px;">Processing Stats</div>\n'
-        if parse_time > 0:
-            info_content_html += f'                <div class="info-item"><div class="info-label">Parse Time:</div><div class="info-value">{parse_time:.2f}s</div></div>\n'
-        if vmlinux_time > 0:
-            info_content_html += f'                <div class="info-item"><div class="info-label">Vmlinux Time:</div><div class="info-value">{vmlinux_time:.2f}s</div></div>\n'
-        if module_time > 0:
-            info_content_html += f'                <div class="info-item"><div class="info-label">Modules Time:</div><div class="info-value">{module_time:.2f}s</div></div>\n'
-        if total_time > 0:
-            info_content_html += f'                <div class="info-item"><div class="info-label">Total Time:</div><div class="info-value">{total_time:.2f}s</div></div>\n'
-        info_content_html += f'                <div class="info-item"><div class="info-label">Total Lines:</div><div class="info-value">{len(parsed_lines)}</div></div>\n'
-        info_content_html += f'                <div class="info-item"><div class="info-label">Expandable:</div><div class="info-value">{sum(1 for l in parsed_lines if l["expandable"])}</div></div>\n'
-        if enable_fold:
-            foldable_count = sum(1 for l in parsed_lines if l.get('fold_id') and l.get('fold_type') in ['entry', 'exit', 'inner'])
-            info_content_html += f'                <div class="info-item"><div class="info-label">Foldable:</div><div class="info-value">{foldable_count}</div></div>\n'
+        # 添加处理统计信息
+        if parse_time > 0 or total_time > 0 or vmlinux_time > 0 or module_time > 0:
+            info_content_html += '                <div style="font-weight: 600; color: var(--text-color); margin-bottom: 8px; font-size: 11px;">Processing Stats</div>\n'
+            if parse_time > 0:
+                info_content_html += f'                <div class="info-item"><div class="info-label">Parse Time:</div><div class="info-value">{parse_time:.2f}s</div></div>\n'
+            if vmlinux_time > 0:
+                info_content_html += f'                <div class="info-item"><div class="info-label">Vmlinux Time:</div><div class="info-value">{vmlinux_time:.2f}s</div></div>\n'
+            if module_time > 0:
+                info_content_html += f'                <div class="info-item"><div class="info-label">Modules Time:</div><div class="info-value">{module_time:.2f}s</div></div>\n'
+            if total_time > 0:
+                info_content_html += f'                <div class="info-item"><div class="info-label">Total Time:</div><div class="info-value">{total_time:.2f}s</div></div>\n'
+            info_content_html += f'                <div class="info-item"><div class="info-label">Total Lines:</div><div class="info-value">{len(parsed_lines)}</div></div>\n'
+            info_content_html += f'                <div class="info-item"><div class="info-label">Expandable:</div><div class="info-value">{sum(1 for l in parsed_lines if l["expandable"])}</div></div>\n'
+            if enable_fold:
+                foldable_count = sum(1 for l in parsed_lines if l.get('fold_id') and l.get('fold_type') in ['entry', 'exit', 'inner'])
+                info_content_html += f'                <div class="info-item"><div class="info-label">Foldable:</div><div class="info-value">{foldable_count}</div></div>\n'
 
-    # 添加脚本参数部分
-    if info_items:
-        info_content_html += '                <div style="font-weight: 600; color: var(--text-color); margin-bottom: 8px; font-size: 11px;">Parameters</div>\n'
-        for label, value in info_items:
-            info_content_html += f'                <div class="info-item"><div class="info-label">{label}:</div><div class="info-value">{html.escape(str(value))}</div></div>\n'
+        # 添加脚本参数部分
+        if info_items:
+            info_content_html += '                <div style="font-weight: 600; color: var(--text-color); margin-bottom: 8px; font-size: 11px;">Parameters</div>\n'
+            for label, value in info_items:
+                info_content_html += f'                <div class="info-item"><div class="info-label">{label}:</div><div class="info-value">{html.escape(str(value))}</div></div>\n'
 
-    if not env_items and not info_items and parse_time == 0:
-        info_content_html = '                <div style="color: var(--summary-text); font-size: 12px;">No information available</div>'
+        if not env_items and not info_items and parse_time == 0:
+            info_content_html = '                <div style="color: var(--summary-text); font-size: 12px;">No information available</div>'
     
-    # 构建HTML字符串
-    html_str = f"""<!DOCTYPE html>
+        # 构建HTML字符串
+        html_str = f"""<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{APP_TITLE} v{APP_VERSION} - {APP_AUTHOR}</title>
     <style>
-        :root {{
-            --bg-color: #f5f5f5;
-            --container-bg: white;
-            --text-color: #333;
-            --line-hover: #f0f0f0;
-            --line-selected: #e3f2fd;
-            --line-highlighted: #fff8e1;
-            --line-keyboard-select: #e1f5fe;
-            --border-color: #ddd;
-            --summary-bg: #f8f9fa;
-            --summary-text: #6c757d;
-            --btn-primary: #4CAF50;
-            --btn-primary-hover: #45a049;
-            --btn-danger: #f44336;
-            --btn-danger-hover: #d32f2f;
-            --link-color: #0366d6;
-            --expanded-bg: #f9f9f9;
-        }}
-        [data-theme="dark"] {{
-            --bg-color: #1a1a1a;
-            --container-bg: #2d2d2d;
-            --text-color: #e0e0e0;
-            --line-hover: #3a3a3a;
-            --line-selected: #2c3e50;
-            --line-highlighted: #5d4037;
-            --line-keyboard-select: #01579b;
-            --border-color: #444;
-            --summary-bg: #2c2c2c;
-            --summary-text: #aaa;
-            --btn-primary: #4CAF50;
-            --btn-primary-hover: #45a049;
-            --btn-danger: #f44336;
-            --btn-danger-hover: #d32f2f;
-            --link-color: #64b5f6;
-            --expanded-bg: #363636;
-        }}
-        body {{
-            font-family: 'Courier New', monospace;
-            background-color: var(--bg-color);
-            padding: 8px;
-            line-height: 1.5;
-            margin: 0;
-            color: var(--text-color);
-            transition: background-color 0.3s, color 0.3s;
-        }}
-        .container {{
-            background: var(--container-bg);
-            padding: 12px 8px 12px 8px;
-            border-radius: 4px;
-            box-shadow: none;
-            overflow-x: auto;
-            transition: background-color 0.3s;
-            max-width: 100%;
-        }}
-        h1 {{
-            text-align: center;
-            color: var(--text-color);
-            margin: 0 0 12px 0;
-            font-size: 28px;
-            font-weight: 700;
-            letter-spacing: 1.5px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            gap: 12px;
-            flex-wrap: wrap;
-            position: relative;
-            padding-bottom: 10px;
-        }}
-        h1::after {{
-            content: '';
-            position: absolute;
-            bottom: 0;
-            left: 50%;
-            transform: translateX(-50%);
-            width: 80px;
-            height: 3px;
-            background: linear-gradient(90deg, transparent, var(--btn-primary), transparent);
-            border-radius: 2px;
-        }}
-        .title-main {{
-            display: inline;
-            background: linear-gradient(135deg, var(--btn-primary), var(--link-color));
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-            background-clip: text;
-            font-weight: 800;
-            letter-spacing: 2px;
-        }}
-        .title-meta {{
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            white-space: nowrap;
-            font-size: 14px;
-            margin-left: 8px;
-        }}
-        .version-badge {{
-            display: inline-flex;
-            align-items: center;
-            background: linear-gradient(135deg, var(--btn-primary), #2e7d32);
-            color: white;
-            padding: 4px 10px;
-            font-size: 12px;
-            font-weight: 700;
-            border-radius: 12px;
-            box-shadow: 0 2px 6px rgba(76, 175, 80, 0.3);
-            letter-spacing: 0.5px;
-        }}
-        [data-theme="dark"] .version-badge {{
-            background: linear-gradient(135deg, #66bb6a, #2e7d32);
-            box-shadow: 0 2px 6px rgba(102, 187, 106, 0.4);
-        }}
-        .author-badge {{
-            display: inline-flex;
-            align-items: center;
-            background: linear-gradient(135deg, #64b5f6, #1976d2);
-            color: white;
-            padding: 4px 10px;
-            font-size: 12px;
-            font-weight: 600;
-            border-radius: 12px;
-            box-shadow: 0 2px 6px rgba(25, 118, 210, 0.3);
-            letter-spacing: 0.5px;
-        }}
-        [data-theme="dark"] .author-badge {{
-            background: linear-gradient(135deg, #42a5f5, #1565c0);
-            box-shadow: 0 2px 6px rgba(66, 165, 245, 0.4);
-        }}
-        .info-panel {{
-            margin-top: 12px;
-            padding: 12px;
-            background-color: rgba(0, 0, 0, 0.02);
-            border-radius: 6px;
-            border-left: 3px solid var(--btn-primary);
-        }}
-        [data-theme="dark"] .info-panel {{
-            background-color: rgba(255, 255, 255, 0.03);
-        }}
-        .info-toggle {{
-            display: flex;
-            align-items: center;
-            cursor: pointer;
-            user-select: none;
-            padding: 8px;
-            margin: -8px;
-            font-size: 13px;
-            font-weight: 500;
-            color: var(--text-color);
-            transition: opacity 0.2s;
-        }}
-        .info-toggle:hover {{
-            opacity: 0.8;
-        }}
-        .info-toggle-icon {{
-            display: inline-block;
-            margin-right: 8px;
-            transition: transform 0.3s;
-            font-size: 14px;
-        }}
-        .info-toggle-icon.expanded {{
-            transform: rotate(90deg);
-        }}
-        .info-panel {{
-            display: none;
-            margin-top: 8px;
-            padding: 12px;
-            background-color: rgba(0, 0, 0, 0.02);
-            border-radius: 4px;
-            border-left: 3px solid var(--btn-primary);
-        }}
-        .info-panel.show {{
-            display: block;
-        }}
-        [data-theme="dark"] .info-panel {{
-            background-color: rgba(255, 255, 255, 0.03);
-        }}
-        .info-item {{
-            display: flex;
-            margin-bottom: 6px;
-            font-size: 11px;
-            line-height: 1.5;
-        }}
-        .info-item:last-child {{
-            margin-bottom: 0;
-        }}
-        .info-label {{
-            min-width: 100px;
-            font-weight: 600;
-            color: var(--summary-text);
-            margin-right: 12px;
-        }}
-        .info-value {{
-            flex: 1;
-            color: var(--text-color);
-            word-break: break-all;
-        }}
-        .header-controls {{
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 15px;
-            gap: 10px;
-            flex-wrap: wrap;
-        }}
-        .theme-toggle {{
-            padding: 8px 12px;
-            background-color: var(--btn-primary);
-            color: white;
-            border: none;
-            border-radius: 4px;
-            cursor: pointer;
-            font-size: 12px;
-            transition: background-color 0.2s;
-        }}
-        .theme-toggle:hover {{
-            background-color: var(--btn-primary-hover);
-        }}
-        .line-container {{
-            display: flex;
-            align-items: center;
-            padding: 1px 2px;
-            border-radius: 2px;
-            transition: background-color 0.2s;
-            white-space: pre;
-            font-family: 'Courier New', monospace;
-            font-size: 13px;
-            cursor: default;
-            -webkit-user-select: none;
-            -moz-user-select: none;
-            -ms-user-select: none;
-            user-select: none;
-        }}
-        .line-container.expandable {{
-            cursor: pointer;
-        }}
-        .line-container.expandable:hover {{
-            background-color: var(--line-hover);
-        }}
-        .line-container.expandable.selected {{
-            background-color: var(--line-selected);
-        }}
-        .line-container.expandable.highlighted {{
-            background-color: var(--line-highlighted);
-        }}
-        .line-container.expandable.keyboard-selected {{
-            background-color: var(--line-keyboard-select);
-            outline: 2px solid var(--btn-primary);
-        }}
-        .line-number {{
-            display: inline-block;
-            width: 40px;
-            text-align: right;
-            padding-right: 10px;
-            color: var(--summary-text);
-            -webkit-user-select: none;
-            -moz-user-select: none;
-            -ms-user-select: none;
-            user-select: none;
-            flex-shrink: 0;
-            cursor: pointer;
-            border-radius: 3px;
-            padding-left: 5px;
-            transition: background-color 0.2s, color 0.2s;
-        }}
-        .line-number:hover {{
-            background-color: var(--line-hover);
-        }}
-        .line-content {{
-            flex-grow: 1;
-            padding: 2px 0;
-            -webkit-user-select: text;
-            -moz-user-select: text;
-            -ms-user-select: text;
-            user-select: text;
-            white-space: pre;
-            font-family: 'Courier New', monospace;
-        }}
-        .fold-marker {{
-            display: inline-block;
-            width: 16px;
-            color: var(--btn-primary);
-            font-weight: bold;
-            font-size: 12px;
-            margin-right: 4px;
-            cursor: pointer;
-            -webkit-user-select: none;
-            -moz-user-select: none;
-            -ms-user-select: none;
-            user-select: none;
-            flex-shrink: 0;
-        }}
-        .fold-marker:hover {{
-            color: var(--btn-primary-hover);
-        }}
-        .fold-entry {{
-            background-color: rgba(76, 175, 80, 0.05);
-        }}
-        [data-theme="dark"] .fold-entry {{
-            background-color: rgba(102, 187, 106, 0.08);
-        }}
-        /* 折叠时的高亮样式：更醒目的背景与图标颜色 */
-        .fold-entry.folded {{
-            background-color: rgba(244, 67, 54, 0.12);
-            color: var(--text-muted);
-        }}
-        [data-theme="dark"] .fold-entry.folded {{
-            background-color: rgba(211, 47, 47, 0.18);
-            color: var(--text-muted);
-        }}
-        .fold-entry.folded .fold-icon {{
-            color: var(--btn-danger);
-        }}
-        [data-theme="dark"] .fold-entry.folded .fold-icon {{
-            color: var(--btn-danger);
-        }}
-        .fold-exit {{
-            background-color: rgba(244, 67, 54, 0.05);
-        }}
-        [data-theme="dark"] .fold-exit {{
-            background-color: rgba(239, 83, 80, 0.08);
-        }}
-        .fold-inner {{
-            background-color: rgba(33, 150, 243, 0.03);
-        }}
-        [data-theme="dark"] .fold-inner {{
-            background-color: rgba(33, 150, 243, 0.05);
-        }}
-        .func-name-link {{
-            color: var(--link-color);
-            text-decoration: none;
-            cursor: pointer;
-        }}
-        .func-name-link:hover {{
-            text-decoration: underline;
-        }}
-        .expand-btn {{
-            display: inline-block;
-            width: 16px;
-            height: 16px;
-            background-color: var(--btn-primary);
-            color: white;
-            border-radius: 50%;
-            text-align: center;
-            line-height: 16px;
-            font-size: 12px;
-            margin-left: 5px;
-            cursor: pointer;
-            opacity: 0.5;
-            transition: opacity 0.2s, background-color 0.2s;
-            -webkit-user-select: none;
-            -moz-user-select: none;
-            -ms-user-select: none;
-            user-select: none;
-            vertical-align: middle;
-            flex-shrink: 0;
-            margin-top: 5px;  /* Center align with line content */
-        }}
-        .expand-btn:hover {{
-            opacity: 1;
-            background-color: var(--btn-primary-hover);
-        }}
-        .expanded-content {{
-            display: none;
-            margin-left: 40px;
-            padding: 6px 8px;
-            background-color: var(--expanded-bg);
-            border-left: 2px solid var(--btn-primary);
-            border-radius: 0;
-            white-space: pre;
-            font-family: 'Courier New', monospace;
-            font-size: 12px;
-        }}
-        .location-link {{
-            display: block;
-            padding: 3px 5px;
-            color: var(--link-color);
-            text-decoration: none;
-            margin: 2px 0;
-            border-radius: 3px;
-            white-space: pre;
-        }}
-        .location-link:hover {{
-            background-color: var(--line-hover);
-            text-decoration: underline;
-        }}
-        .source-line {{
-            display: block;
-            padding: 2px 0;
-            white-space: pre;
-            font-family: 'Courier New', monospace;
-            font-size: 12px;
-        }}
-        .current-line {{
-            background-color: var(--line-highlighted);
-        }}
-        .summary {{
-            background-color: var(--summary-bg);
-            border: none;
-            border-bottom: 1px solid var(--border-color);
-            border-radius: 0;
-            padding: 6px 0;
-            margin: 0 0 8px 0;
-            font-size: 11px;
-            color: var(--summary-text);
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            gap: 12px;
-        }}
-        .summary > div:first-child {{
-            flex: 1;
-        }}
-        .summary span {{
-            margin: 0 5px;
-        }}
-        .info-toggle-btn {{
-            display: flex;
-            align-items: center;
-            cursor: pointer;
-            user-select: none;
-            padding: 4px 8px;
-            border-radius: 4px;
-            transition: background-color 0.2s;
-            font-size: 16px;
-            color: var(--text-color);
-            white-space: nowrap;
-        }}
-        .info-toggle-btn:hover {{
-            background-color: rgba(0, 0, 0, 0.05);
-        }}
-        [data-theme="dark"] .info-toggle-btn:hover {{
-            background-color: rgba(255, 255, 255, 0.05);
-        }}
-        .info-toggle-icon {{
-            display: inline-block;
-            margin-right: 6px;
-            transition: transform 0.3s;
-            font-size: 12px;
-        }}
-        .info-toggle-icon.expanded {{
-            transform: rotate(90deg);
-        }}
-        .info-panel {{
-            display: none;
-            margin: 0;
-            padding: 12px;
-            background-color: rgba(0, 0, 0, 0.02);
-            border-radius: 0 0 5px 5px;
-            border: 1px solid var(--border-color);
-            border-top: none;
-            border-left: 3px solid var(--btn-primary);
-            margin-bottom: 15px;
-            font-size: 11px;
-        }}
-        .info-panel.show {{
-            display: block;
-        }}
-        [data-theme="dark"] .info-panel {{
-            background-color: rgba(255, 255, 255, 0.03);
-        }}
-        .info-item {{
-            display: flex;
-            margin-bottom: 6px;
-            font-size: 11px;
-            line-height: 1.5;
-        }}
-        .info-item:last-child {{
-            margin-bottom: 0;
-        }}
-        .info-label {{
-            min-width: 100px;
-            font-weight: 600;
-            color: var(--summary-text);
-            margin-right: 12px;
-        }}
-        .info-value {{
-            flex: 1;
-            color: var(--text-color);
-            word-break: break-all;
-        }}
-        .controls {{
-            position: fixed;
-            bottom: 20px;
-            right: 20px;
-            z-index: 1000;
-            display: flex;
-            gap: 8px;
-            align-items: flex-end; /* Align to bottom */
-        }}
-
-        /* Right buttons - vertical stack */
-        .right-buttons {{
-            display: flex;
-            flex-direction: column;
-            gap: 6px;
-            align-items: flex-end; /* Align to right */
-        }}
-
-        /* Base button style */
-        .control-btn {{
-            padding: 8px 12px;
-            border: none;
-            border-radius: 4px;
-            cursor: pointer;
-            font-size: 12px;
-            transition: all 0.2s;
-            white-space: nowrap;
-            /* Auto width based on content */
-            width: auto;
-            min-width: auto;
-            /* Semi-transparent backgrounds */
-            backdrop-filter: blur(2px);
-        }}
-        .control-btn:hover {{
-            opacity: 0.85;
-            transform: translateY(-1px);
-        }}
-
-        /* Top button - blue */
-        .control-btn:nth-child(1) {{
-            background-color: rgba(59, 130, 246, 0.7); /* Blue */
-            color: white;
-        }}
-        .control-btn:nth-child(1):hover {{
-            background-color: rgba(37, 99, 235, 0.8);
-        }}
-
-        /* Copy button - green */
-        .control-btn:nth-child(2) {{
-            background-color: rgba(34, 197, 94, 0.7); /* Green */
-            color: white;
-        }}
-        .control-btn:nth-child(2):hover {{
-            background-color: rgba(22, 163, 74, 0.8);
-        }}
-
-        /* Expand All button - orange */
-        .control-btn:nth-child(3) {{
-            background-color: rgba(249, 115, 22, 0.7); /* Orange */
-            color: white;
-        }}
-        .control-btn:nth-child(3):hover {{
-            background-color: rgba(234, 88, 12, 0.8);
-        }}
-
-        /* Collapse All button - red */
-        .control-btn.collapse {{
-            background-color: rgba(239, 68, 68, 0.7); /* Red */
-            color: white;
-        }}
-        .control-btn.collapse:hover {{
-            background-color: rgba(220, 38, 38, 0.8);
-        }}
-
-        /* Clear button - gray with trash icon */
-        .clear-btn {{
-            background-color: rgba(107, 114, 128, 0.7); /* Gray */
-            color: white;
-            padding: 8px 10px;
-            font-size: 14px;
-        }}
-        .clear-btn:hover {{
-            background-color: rgba(75, 85, 99, 0.8);
-        }}
-
-        /* Control bar styles */
-        .controls {{
-            display: flex;
-            gap: 15px;
-            align-items: flex-end; /* Align to bottom */
-            margin-bottom: 15px;
-            flex-wrap: wrap;
-        }}
-
-        /* Right buttons - vertical stack */
-        .right-buttons {{
-            display: flex;
-            flex-direction: column;
-            gap: 6px;
-            margin-left: auto; /* Push to right side */
-            align-items: flex-end; /* Align to right */
-        }}
-
-        /* Filter box styles */
-        .filter-box {{
-            display: flex;
-            gap: 8px;
-            align-items: flex-end; /* Align to bottom */
-            padding: 8px;
-            background: var(--bg-secondary);
-            border-radius: 4px;
-            flex-wrap: wrap;
-            margin-bottom: 0;
-            /* Position to align with Collapse All button */
-            margin-top: 24px; /* Offset to align with bottom of right buttons */
-        }}
-        .filter-box .clear-btn {{
-            margin-top: 0; /* Reset margin for clear button */
-        }}
-        .filter-input-group {{
-            position: relative;
-            display: flex;
-            flex-direction: column;
-        }}
-        .filter-box input {{
-            padding: 6px 8px;
-            border: 1px solid var(--border-color);
-            border-radius: 3px;
-            background: rgba(200, 200, 200, 0.3); /* Semi-transparent light gray */
-            color: var(--text-primary);
-            font-size: 12px;
-            width: 140px;
-        }}
-        [data-theme="dark"] .filter-box input {{
-            background: rgba(100, 100, 100, 0.3); /* Darker semi-transparent for dark mode */
-        }}
-        .filter-box input:focus {{
-            outline: none;
-            border-color: var(--btn-primary);
-        }}
-        .filter-box input::placeholder {{
-            color: var(--text-secondary);
-        }}
-
-        /* Hint tooltip */
-        .filter-hint {{
-            position: fixed;
-            background: rgba(0, 0, 0, 0.9);
-            color: white;
-            padding: 8px 12px;
-            border-radius: 4px;
-            font-size: 12px;
-            max-width: 300px;
-            z-index: 2000;
-            pointer-events: none;
-            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
-            line-height: 1.4;
-            display: none;
-        }}
-
-        [data-theme="dark"] .filter-hint {{
-            background: rgba(255, 255, 255, 0.95);
-            color: #000;
-        }}
-
-        /* Suggestions dropdown - pull-up menu */
-        .suggestions {{
-            position: absolute;
-            bottom: 100%; /* Pull up above the input */
-            left: 0;
-            right: 0;
-            background: rgba(220, 220, 220, 0.95); /* Semi-transparent light gray */
-            border: 1px solid var(--border-color);
-            border-radius: 3px;
-            max-height: 150px;
-            overflow-y: auto;
-            z-index: 3000; /* Higher than filter-hint (2000) to avoid overlap */
-            display: none;
-            box-shadow: 0 -2px 8px rgba(0,0,0,0.2); /* Shadow upward */
-            margin-bottom: 4px; /* Space between input and menu */
-        }}
-        [data-theme="dark"] .suggestions {{
-            background: rgba(80, 80, 80, 0.95); /* Darker semi-transparent for dark mode */
-        }}
-        .suggestions.active {{
-            display: block;
-        }}
-        .suggestion-item {{
-            padding: 4px 8px;
-            cursor: pointer;
-            font-size: 11px;
-            border-bottom: 1px solid var(--border-color);
-            color: #333; /* Dark text for light background */
-        }}
-        [data-theme="dark"] .suggestion-item {{
-            color: #eee; /* Light text for dark background */
-        }}
-        .suggestion-item:last-child {{
-            border-bottom: none;
-        }}
-        .suggestion-item:hover {{
-            background: rgba(180, 180, 180, 0.8);
-        }}
-        .suggestion-item.selected {{
-            background: var(--btn-primary);
-            color: white;
-        }}
-
-        /* Control buttons - uniform size */
-        .control-btn {{
-            padding: 8px 12px;
-            background: var(--btn-primary);
-            color: white;
-            border: none;
-            border-radius: 4px;
-            cursor: pointer;
-            font-size: 12px;
-            font-weight: 500;
-            transition: background-color 0.2s;
-            white-space: nowrap;
-            min-width: 80px;
-            text-align: center;
-        }}
-        .control-btn:hover {{
-            background: var(--btn-primary-hover);
-        }}
-        .control-btn.collapse {{
-            background: var(--btn-danger);
-        }}
-        .control-btn.collapse:hover {{
-            background: var(--btn-danger-hover);
-        }}
-
-        /* 浮动控件：默认显示，允许通过 body.hide-floating-controls 隐藏 */
-        .copy-btn, .jump-to-top, .floating-buttons {{
-            display: block;
-        }}
-
-        /* 当 body 带有 hide-floating-controls 时隐藏所有浮动按钮 */
-        body.hide-floating-controls .copy-btn,
-        body.hide-floating-controls .jump-to-top,
-        body.hide-floating-controls .floating-buttons,
-        body.hide-floating-controls .controls {{
-            display: none !important;
-        }}
-
-        /* 小型悬浮切换按钮（不会遮挡正文，默认靠右中间，支持鼠标拖动） */
-        .floating-toggle {{
-            position: fixed;
-            top: 50%;
-            right: 12px;
-            width: 44px;
-            height: 44px;
-            border-radius: 22px;
-            background: var(--container-bg);
-            border: 1px solid var(--border-color);
-            box-shadow: 0 2px 6px rgba(0,0,0,0.12);
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            cursor: grab;
-            z-index: 3000;
-            opacity: 0.95;
-            user-select: none;
-            transition: background-color 0.15s, opacity 0.15s;
-            /* 仅在非拖动状态下使用 transform 和 transition 动画 */
-            transform: translateY(-50%);
-        }}
-        .floating-toggle:hover:not(.dragging) {{
-            background: var(--container-bg-hover, #f3f4f6);
-            transform: translateY(-50%) scale(1.05);
-            box-shadow: 0 4px 8px rgba(0,0,0,0.15);
-        }}
-        .floating-toggle.dragging {{
-            cursor: grabbing;
-            opacity: 0.98;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.2);
-            transition: none;
-            transform: none !important;
-        }}
-        .floating-toggle .ft-icon {{
-            font-size: 18px;
-            color: var(--text-color);
-            user-select: none;
-            pointer-events: none;
-        }}
-        /* 在移动端靠底部放置，避免遮挡阅读区 */
-        @media (max-width: 768px) {{
-            .floating-toggle {{
-                top: auto;
-                bottom: 18px;
-                right: 12px;
-            }}
-        }}
-        .progress-bar {{
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 0%;
-            height: 3px;
-            background-color: var(--btn-primary);
-            z-index: 2000;
-            transition: width 0.3s ease;
-        }}
-        .keyboard-hint {{
-            position: fixed;
-            bottom: 20px;
-            left: 20px;
-            background-color: var(--container-bg);
-            border: 1px solid var(--border-color);
-            border-radius: 4px;
-            padding: 8px 12px;
-            font-size: 12px;
-            color: var(--text-color);
-            z-index: 1000;
-            max-width: 300px;
-            opacity: 0.9;
-            display: none;
-        }}
-        .keyboard-hint h3 {{
-            margin: 0 0 5px 0;
-            font-size: 12px;
-        }}
-        .keyboard-hint ul {{
-            margin: 0;
-            padding-left: 15px;
-        }}
-        .keyboard-hint li {{
-            margin: 2px 0;
-        }}
-        .keyboard-hint strong {{
-            color: var(--btn-primary);
-        }}
-        .keyboard-hint kbd {{
-            background-color: var(--bg-color);
-            border: 1px solid var(--border-color);
-            border-radius: 3px;
-            padding: 1px 4px;
-            font-family: monospace;
-            font-size: 11px;
-        }}
-        .keyboard-hint-close {{
-            position: absolute;
-            top: 5px;
-            right: 5px;
-            background: none;
-            border: none;
-            color: var(--text-color);
-            cursor: pointer;
-            font-size: 14px;
-            padding: 0;
-            width: 20px;
-            height: 20px;
-            line-height: 20px;
-            text-align: center;
-        }}
-        .keyboard-hint-close:hover {{
-            color: var(--btn-danger);
-        }}
-        /* 锚点目标行高亮样式 */
-        .line-container:target {{
-            background-color: var(--line-highlighted);
-            animation: pulse-highlight 1s ease-out;
-        }}
-        @keyframes pulse-highlight {{
-            0% {{
-                background-color: var(--line-highlighted);
-                box-shadow: 0 0 10px rgba(255, 193, 7, 0.5);
-            }}
-            100% {{
-                background-color: transparent;
-                box-shadow: none;
-            }}
-        }}
-        /* Ftrace语法高亮样式 */
-        .hl-cpu {{
-            color: #d73a49;
-            font-weight: bold;
-        }}
-        [data-theme="dark"] .hl-cpu {{
-            color: #f97583;
-            font-weight: bold;
-        }}
-        
-        .hl-time {{
-            color: #005cc5;
-            font-weight: normal;
-        }}
-        [data-theme="dark"] .hl-time {{
-            color: #79b8ff;
-            font-weight: normal;
-        }}
-        
-        .hl-unit {{
-            color: #6f42c1;
-            font-weight: bold;
-        }}
-        [data-theme="dark"] .hl-unit {{
-            color: #b392f0;
-            font-weight: bold;
-        }}
-        
-        .hl-func {{
-            color: #6f42c1;
-            font-weight: bold;
-        }}
-        [data-theme="dark"] .hl-func {{
-            color: #b392f0;
-            font-weight: bold;
-        }}
-
-        .hl-module-func {{
-            color: #0369a1;
-            font-weight: bold;
-        }}
-        [data-theme="dark"] .hl-module-func {{
-            color: #79c0ff;
-            font-weight: bold;
-        }}
-
-        .hl-addr {{
-            color: #032f62;
-            font-family: 'Courier New', monospace;
-        }}
-        [data-theme="dark"] .hl-addr {{
-            color: #79b8ff;
-            font-family: 'Courier New', monospace;
-        }}
-        
-        .hl-comment {{
-            color: #6a737d;
-            font-style: italic;
-        }}
-        [data-theme="dark"] .hl-comment {{
-            color: #8b949e;
-            font-style: italic;
-        }}
-        
-        .hl-symbol {{
-            color: #24292e;
-            font-weight: bold;
-        }}
-        [data-theme="dark"] .hl-symbol {{
-            color: #c9d1d9;
-            font-weight: bold;
-        }}
-
-        .hl-ret-error {{
-            color: #d73a49;
-            font-weight: bold;
-            background-color: rgba(215, 58, 73, 0.1);
-            padding: 1px 3px;
-            border-radius: 2px;
-        }}
-        [data-theme="dark"] .hl-ret-error {{
-            color: #f97583;
-            background-color: rgba(249, 117, 131, 0.15);
-        }}
-
-        .hl-ret-success {{
-            color: #28a745;
-            font-weight: bold;
-            background-color: rgba(40, 167, 69, 0.1);
-            padding: 1px 3px;
-            border-radius: 2px;
-        }}
-        [data-theme="dark"] .hl-ret-success {{
-            color: #3fb950;
-            background-color: rgba(63, 185, 80, 0.15);
-        }}
-
-        .hl-ret-normal {{
-            color: #586069;
-            font-weight: bold;
-        }}
-        [data-theme="dark"] .hl-ret-normal {{
-            color: #8b949e;
-        }}
-
-        /* C代码简洁语法高亮 */
-        .c-keyword {{
-            color: #d73a49;  /* 红色用于关键字 */
-            font-weight: bold;
-        }}
-        [data-theme="dark"] .c-keyword {{
-            color: #f97583;
-            font-weight: bold;
-        }}
-        
-        .c-string {{
-            color: #032f62;  /* 蓝色用于字符串 */
-        }}
-        [data-theme="dark"] .c-string {{
-            color: #79b8ff;
-        }}
-        
-        .c-comment {{
-            color: #6a737d;  /* 灰色用于注释 */
-            font-style: italic;
-        }}
-        [data-theme="dark"] .c-comment {{
-            color: #8b949e;
-            font-style: italic;
-        }}
-        
-        .c-number {{
-            color: #6f42c1;  /* 紫色用于数字 */
-        }}
-        [data-theme="dark"] .c-number {{
-            color: #b392f0;
-        }}
-        
-        /* Linux内核特定类型 */
-        .kernel-type {{
-            color: #0184bc;  /* 青色用于内核类型 */
-            font-weight: bold;
-        }}
-        [data-theme="dark"] .kernel-type {{
-            color: #58a6ff;
-            font-weight: bold;
-        }}
-        
-        /* Linux内核属性修饰符 */
-        .kernel-attr {{
-            color: #9e1a1a;  /* 深红色用于属性 */
-        }}
-        [data-theme="dark"] .kernel-attr {{
-            color: #ff7b72;
-        }}
-        
-        /* Linux内核常用宏常量 */
-        .kernel-macro {{
-            color: #e36209;  /* 橙色用于宏常量 */
-            font-weight: bold;
-        }}
-        [data-theme="dark"] .kernel-macro {{
-            color: #fb8500;
-            font-weight: bold;
-        }}
-        
-        .line-number {{
-            color: #6a737d;
-            margin-right: 8px;
-        }}
-        [data-theme="dark"] .line-number {{
-            color: #8b949e;
-        }}
-        
-        @media (max-width: 768px) {{
-            body {{
-                padding: 4px;
-            }}
-            .container {{
-                padding: 6px 4px;
-            }}
-            h1 {{
-                font-size: 20px;
-                margin-bottom: 8px;
-            }}
-            .summary {{
-                font-size: 10px;
-                gap: 8px;
-            }}
-            .line-container {{
-                font-size: 11px;
-                padding: 0.5px 1px;
-            }}
-            .expanded-content {{
-                margin-left: 25px;
-                padding: 4px 6px;
-                font-size: 10px;
-            }}
-            .controls {{
-                bottom: 10px;
-                right: 10px;
-            }}
-            .copy-btn {{
-                bottom: 50px;
-                right: 10px;
-            }}
-            .jump-to-top {{
-                bottom: 90px;
-                right: 10px;
-            }}
-            .keyboard-hint {{
-                bottom: 10px;
-                left: 10px;
-                font-size: 10px;
-                max-width: 200px;
-            }}
-        }}
-    </style>
+{self._generate_css()}    </style>
 </head>
 <body>
     <div class="progress-bar" id="progressBar"></div>
@@ -3936,310 +2927,310 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
         <div id="content">
 """
 
-    # 添加行号并输出原始ftrace日志
-    for idx, line_data in enumerate(parsed_lines):
-        line_number = idx + 1  # 行号从1开始
-        line_anchor_id = f"L{line_number}"  # 使用L{行号}格式作为锚点
-        line_id = f"line_{idx}"  # 保留用于JavaScript引用
+        # 添加行号并输出原始ftrace日志
+        for idx, line_data in enumerate(parsed_lines):
+            line_number = idx + 1  # 行号从1开始
+            line_anchor_id = f"L{line_number}"  # 使用L{行号}格式作为锚点
+            line_id = f"line_{idx}"  # 保留用于JavaScript引用
 
-        # 处理原始行：去除编译器优化后缀，用于显示
-        raw_line = line_data["raw_line"]
+            # 处理原始行：去除编译器优化后缀，用于显示
+            raw_line = line_data["raw_line"]
 
-        # 优先处理函数调用名称（func_name）- 适用于可展开和不可展开的行
-        if line_data.get('raw_func_name'):
-            raw_func_name = line_data['raw_func_name']
-            display_name = line_data.get('display_func_name', raw_func_name)
+            # 优先处理函数调用名称（func_name）- 适用于可展开和不可展开的行
+            if line_data.get('raw_func_name'):
+                raw_func_name = line_data['raw_func_name']
+                display_name = line_data.get('display_func_name', raw_func_name)
 
-            # 检查函数名是否在注释中（在 /**/ 之间）
-            # 如果是，则不添加超链接
-            in_comment = False
-            comment_start = raw_line.find('/*')
-            comment_end = raw_line.find('*/')
-            if comment_start != -1 and comment_end != -1:
-                # 检查函数名是否在注释范围内
-                func_pos = raw_line.find(raw_func_name)
-                if comment_start < func_pos < comment_end:
-                    in_comment = True
+                # 检查函数名是否在注释中（在 /**/ 之间）
+                # 如果是，则不添加超链接
+                in_comment = False
+                comment_start = raw_line.find('/*')
+                comment_end = raw_line.find('*/')
+                if comment_start != -1 and comment_end != -1:
+                    # 检查函数名是否在注释范围内
+                    func_pos = raw_line.find(raw_func_name)
+                    if comment_start < func_pos < comment_end:
+                        in_comment = True
 
-            # 如果启用了函数名超链接且有解析结果且不在注释中
-            if func_links and line_data.get('func_name_info') and not in_comment:
-                source_file, line_num = line_data['func_name_info']
-                # 获取模块信息（如果适用）
-                module_name = line_data.get('module_name')
-                # 确定使用哪个URL（模块特定URL或默认URL）
-                current_base_url = base_url
-                if module_name:
-                    if module_name in module_url_map:
-                        current_base_url = module_url_map[module_name]
-                    elif default_module_url and default_module_url != base_url:
-                        current_base_url = default_module_url
-                # 生成超链接（使用显示名）
-                link_html = create_source_link(source_file, line_num, display_name, base_url, kernel_src, module_srcs, module_name, current_base_url)
-                # 替换原始行中的原始函数名为显示名
-                if raw_func_name != display_name:
-                    raw_line = raw_line.replace(raw_func_name, display_name)
-                # 然后将显示名替换为超链接
-                raw_line = raw_line.replace(display_name, link_html)
-            else:
-                # 仅替换为显示名
-                if raw_func_name != display_name:
-                    raw_line = raw_line.replace(raw_func_name, display_name)
-
-        # 然后处理返回地址（func_info）- 仅适用于可展开的行
-        elif line_data['expandable'] and line_data.get('func_info'):
-            func_info = line_data['func_info']
-            display_func = remove_compiler_suffix(func_info)
-            if func_info != display_func:
-                raw_line = raw_line.replace(func_info, display_func)
-
-        # 先应用语法高亮，保持原始空格和对齐
-        # 但是我们需要保护已经生成的 HTML 链接不被转义
-        # 使用占位符临时保存 HTML 链接
-        html_links = []
-        def save_html_link(match):
-            idx = len(html_links)
-            html_links.append(match.group(0))
-            return f'___HTML_LINK_{idx}___'
-
-        # 临时替换 HTML 链接为占位符
-        raw_line_with_placeholders = re.sub(r'<a class="func-name-link"[^>]*>.*?</a>', save_html_link, raw_line)
-
-        # 应用语法高亮（会转义 HTML）
-        escaped_line = highlight_ftrace_line(raw_line_with_placeholders)
-
-        # 恢复 HTML 链接
-        for idx, link in enumerate(html_links):
-            escaped_line = escaped_line.replace(f'___HTML_LINK_{idx}___', link)
-
-        # 检查是否可展开
-        is_expandable = line_data['expandable'] and line_data['func_info']
-        expandable_class = "expandable" if is_expandable else ""
-
-        # 获取折叠信息
-        fold_id = line_data.get('fold_id')
-        fold_type = line_data.get('fold_type')
-        call_depth = line_data.get('call_depth')
-
-        # 检查是否是可折叠的函数调用块
-        is_foldable = enable_fold and fold_id is not None and fold_type in ['entry', 'exit', 'inner']
-        fold_class = ""
-        fold_marker = ""
-
-        if is_foldable:
-            if fold_type == 'entry':
-                fold_class = "fold-entry"
-                # 默认展开状态：使用向下箭头表示展开（可通过 CSS/JS 旋转和替换）
-                fold_marker = '<span class="fold-icon" style="transform:rotate(0deg)">▼</span>'  # 折叠标记（默认展开）
-            elif fold_type == 'exit':
-                fold_class = "fold-exit"
-                fold_marker = ""  # 函数返回行不需要折叠图标
-            elif fold_type == 'inner':
-                fold_class = "fold-inner"
-                fold_marker = "  "  # 空白标记，保持对齐
-
-        # 获取CPU、PID、进程名信息，用于过滤
-        cpu = line_data.get('cpu')
-        pid = line_data.get('pid')
-        comm = line_data.get('comm')
-        ret_value = line_data.get('ret_value')
-        params = line_data.get('params')
-        duration = line_data.get('duration')  # 耗时（微秒）- 用于过滤（原始显示值）
-        sort_duration = line_data.get('sort_duration')  # 排序用的实际值
-        duration_raw = line_data.get('duration_raw')  # 原始耗时字符串
-
-        # 构建数据属性用于过滤
-        data_attrs = f' data-cpu="{cpu if cpu is not None else ""}" data-pid="{pid if pid is not None else ""}" data-comm="{comm if comm else ""}"'
-
-        # 添加折叠属性
-        if is_foldable:
-            # fold_ancestors 作为空格分隔的 token 列表，便于在 JS 中使用 ~= 选择器匹配
-            ancestors_attr = ''
-            if line_data.get('fold_ancestors'):
-                ancestors_attr = line_data.get('fold_ancestors')
-            data_attrs += f' data-fold-id="{fold_id}" data-fold-type="{fold_type}"'
-            if ancestors_attr:
-                data_attrs += f' data-fold-ancestors="{ancestors_attr}"'
-
-        # 添加参数属性（用于参数过滤）
-        if params:
-            # 转义特殊字符，避免HTML属性问题
-            # 使用html.escape，但只转义引号、尖括号
-            escaped_params = params.replace('"', '"').replace('<', '<').replace('>', '>')
-            data_attrs += f' data-params="{escaped_params}"'
-
-        # 添加耗时属性（用于耗时过滤和排序）
-        # data-duration 用于过滤（使用原始显示值）
-        # data-sort-duration 用于排序（使用实际值）
-        if duration is not None:
-            data_attrs += f' data-duration="{duration}"'
-            if sort_duration is not None and sort_duration != duration:
-                data_attrs += f' data-sort-duration="{sort_duration}"'
-            if duration_raw:
-                # 显示原始耗时字符串（带单位）
-                escaped_duration = duration_raw.replace('"', '"').replace('<', '<').replace('>', '>')
-                data_attrs += f' data-duration-raw="{escaped_duration}"'
-
-        # 添加返回值属性（用于错误码过滤）
-        if ret_value:
-            # 解析为整数，用于过滤
-            try:
-                if ret_value.startswith('0x') or ret_value.startswith('0X'):
-                    ret_int = int(ret_value, 16)
-                    # 处理64位无符号整数转换为有符号整数
-                    # 但只对明显是负数的值进行转换
-                    if ret_int >= 0x8000000000000000:
-                        converted = ret_int - 0x10000000000000000
-                        if converted < 0:
-                            ret_int = converted
-                else:
-                    ret_int = int(ret_value)
-                # 只对已知错误码添加属性（用于过滤）
-                # 0不添加，未知负数也不添加
-                if ret_int in ERROR_CODE_MAP:
-                    data_attrs += f' data-ret="{ret_int}"'
-            except ValueError:
-                pass
-
-        # 添加折叠类
-        line_container_class = f"line-container {expandable_class} {fold_class}".strip()
-
-        html_str += f'<div class="{line_container_class}" id="{line_anchor_id}" data-line-number="{line_number}" data-line-id="{line_id}"{data_attrs}'
-        if is_expandable:
-            html_str += f' onclick="handleLineClick(event, \'{line_id}\')" ondblclick="handleDoubleClick(event, \'{line_id}\')" tabindex="0"'
-            html_str += '>'
-        else:
-            html_str += '>'
-        html_str += f'<span class="line-number" onclick="updateAnchor(\'{line_anchor_id}\', event)" title="Click to copy anchor link">{line_number}</span>'
-
-        # 添加折叠标记
-        if is_foldable:
-            # 只为fold-icon添加tabindex和键盘事件
-            if fold_type == 'entry':
-                # 判断当前是否折叠，选择图标
-                icon = '▶' if 'folded' in fold_class else '▼'
-                fold_marker = f'<span class="fold-icon" tabindex="0" role="button" aria-label="Toggle fold" aria-expanded="{"false" if icon=="▶" else "true"}" onkeydown="handleFoldIconKeydown(event, this)" onclick="handleFoldIconClick(event, this)">{icon}</span>'
-            html_str += f'<span class="fold-marker">{fold_marker}</span>'
-        else:
-            # 非可折叠行也插入空白fold-marker以保持对齐
-            html_str += '<span class="fold-marker"><span style="display:inline-block; width:20px; height:16px;"></span></span>'
-
-        html_str += f'<span class="line-content">{escaped_line}</span>'
-
-        if is_expandable:
-            html_str += f'<span class="expand-btn">+</span>'
-
-        html_str += '</div>'
-        
-        if is_expandable:
-            # 获取函数信息
-            func_info = line_data['func_info']
-
-            # 为调用fastfaddr2line准备的键（保留后缀，调整偏移）
-            func_info_for_call = adjust_func_info(func_info, remove_suffix=False)
-
-            # 为显示准备的键（移除后缀，调整偏移）
-            func_info_for_display = adjust_func_info(func_info, remove_suffix=True)
-
-            # 从预取的数据中获取位置信息（使用调用时的键）
-            locations = func_locations_map.get(func_info_for_call, {})
-            
-            # 为expanded-content添加内联样式style="display: none;"，确保初始状态
-            html_str += f'<div class="expanded-content" id="{line_id}_content" style="display: none;">' 
-            
-            if locations:
-                # 确定使用哪个URL
-                # 从func_info_for_call中提取模块名，判断返回地址的函数类型
-                # func_info_for_call格式: func+offset/length [module]
-                return_addr_module_name = None
-                if '[' in func_info_for_call and ']' in func_info_for_call:
-                    module_match = re.search(r'\[(.*?)\]', func_info_for_call)
-                    if module_match:
-                        return_addr_module_name = module_match.group(1)
-
-                if return_addr_module_name:
-                    # 返回地址是模块函数
-                    if return_addr_module_name in module_url_map:
-                        current_base_url = module_url_map[return_addr_module_name]
-                    else:
-                        current_base_url = default_module_url if default_module_url else base_url
-                else:
-                    # 返回地址是内核函数
+                # 如果启用了函数名超链接且有解析结果且不在注释中
+                if func_links and line_data.get('func_name_info') and not in_comment:
+                    source_file, line_num = line_data['func_name_info']
+                    # 获取模块信息（如果适用）
+                    module_name = line_data.get('module_name')
+                    # 确定使用哪个URL（模块特定URL或默认URL）
                     current_base_url = base_url
+                    if module_name:
+                        if module_name in module_url_map:
+                            current_base_url = module_url_map[module_name]
+                        elif default_module_url and default_module_url != base_url:
+                            current_base_url = default_module_url
+                    # 生成超链接（使用显示名）
+                    link_html = create_source_link(source_file, line_num, display_name, base_url, kernel_src, module_srcs, module_name, current_base_url)
+                    # 替换原始行中的原始函数名为显示名
+                    if raw_func_name != display_name:
+                        raw_line = raw_line.replace(raw_func_name, display_name)
+                    # 然后将显示名替换为超链接
+                    raw_line = raw_line.replace(display_name, link_html)
+                else:
+                    # 仅替换为显示名
+                    if raw_func_name != display_name:
+                        raw_line = raw_line.replace(raw_func_name, display_name)
 
-                # 检查是结构化数据还是原始输出
-                if isinstance(locations, dict) and 'func' in str(next(iter(locations.values()), {})):
-                    # 结构化数据（标准模式）- 这部分可能不会执行，保留以兼容性
-                    loc_list = locations.get(func_info_for_call, [])
-                    for loc in loc_list:
-                        if current_base_url:
-                            file_path = loc['file']
-                            # 清理文件路径
-                            file_path = clean_file_path(file_path, kernel_src, path_prefix)
+            # 然后处理返回地址（func_info）- 仅适用于可展开的行
+            elif line_data['expandable'] and line_data.get('func_info'):
+                func_info = line_data['func_info']
+                display_func = remove_compiler_suffix(func_info)
+                if func_info != display_func:
+                    raw_line = raw_line.replace(func_info, display_func)
 
-                            # 提取文件路径和行号
-                            clean_path = extract_file_path(file_path, kernel_src, path_prefix)
-                            line_num = loc.get('line')
+            # 先应用语法高亮，保持原始空格和对齐
+            # 但是我们需要保护已经生成的 HTML 链接不被转义
+            # 使用占位符临时保存 HTML 链接
+            html_links = []
+            def save_html_link(match):
+                idx = len(html_links)
+                html_links.append(match.group(0))
+                return f'___HTML_LINK_{idx}___'
 
-                            # 如果行号不在loc中，尝试从file_path中提取
-                            if line_num is None:
-                                line_num = extract_line_number(file_path, kernel_src, path_prefix)
+            # 临时替换 HTML 链接为占位符
+            raw_line_with_placeholders = re.sub(r'<a class="func-name-link"[^>]*>.*?</a>', save_html_link, raw_line)
 
-                            if clean_path and line_num is not None:
-                                # 获取相对于内核源码的路径
-                                relative_path = get_relative_path(clean_path, kernel_src)
+            # 应用语法高亮（会转义 HTML）
+            escaped_line = highlight_ftrace_line(raw_line_with_placeholders)
 
-                                # 构建URL
-                                url = build_source_url(current_base_url, relative_path, line_num)
+            # 恢复 HTML 链接
+            for idx, link in enumerate(html_links):
+                escaped_line = escaped_line.replace(f'___HTML_LINK_{idx}___', link)
 
-                                link_text = f"{loc['func']} at {relative_path}:{line_num}"
-                                if loc.get('inlined'):
-                                    link_text = f"(inlined) {link_text}"
+            # 检查是否可展开
+            is_expandable = line_data['expandable'] and line_data['func_info']
+            expandable_class = "expandable" if is_expandable else ""
 
-                                escaped_link = escape_html_preserve_spaces(link_text)
-                                escaped_url = html.escape(url)
-                                html_str += f'<a class="location-link" href="{escaped_url}" target="_blank">{escaped_link}</a>'
+            # 获取折叠信息
+            fold_id = line_data.get('fold_id')
+            fold_type = line_data.get('fold_type')
+            call_depth = line_data.get('call_depth')
+
+            # 检查是否是可折叠的函数调用块
+            is_foldable = enable_fold and fold_id is not None and fold_type in ['entry', 'exit', 'inner']
+            fold_class = ""
+            fold_marker = ""
+
+            if is_foldable:
+                if fold_type == 'entry':
+                    fold_class = "fold-entry"
+                    # 默认展开状态：使用向下箭头表示展开（可通过 CSS/JS 旋转和替换）
+                    fold_marker = '<span class="fold-icon" style="transform:rotate(0deg)">▼</span>'  # 折叠标记（默认展开）
+                elif fold_type == 'exit':
+                    fold_class = "fold-exit"
+                    fold_marker = ""  # 函数返回行不需要折叠图标
+                elif fold_type == 'inner':
+                    fold_class = "fold-inner"
+                    fold_marker = "  "  # 空白标记，保持对齐
+
+            # 获取CPU、PID、进程名信息，用于过滤
+            cpu = line_data.get('cpu')
+            pid = line_data.get('pid')
+            comm = line_data.get('comm')
+            ret_value = line_data.get('ret_value')
+            params = line_data.get('params')
+            duration = line_data.get('duration')  # 耗时（微秒）- 用于过滤（原始显示值）
+            sort_duration = line_data.get('sort_duration')  # 排序用的实际值
+            duration_raw = line_data.get('duration_raw')  # 原始耗时字符串
+
+            # 构建数据属性用于过滤
+            data_attrs = f' data-cpu="{cpu if cpu is not None else ""}" data-pid="{pid if pid is not None else ""}" data-comm="{comm if comm else ""}"'
+
+            # 添加折叠属性
+            if is_foldable:
+                # fold_ancestors 作为空格分隔的 token 列表，便于在 JS 中使用 ~= 选择器匹配
+                ancestors_attr = ''
+                if line_data.get('fold_ancestors'):
+                    ancestors_attr = line_data.get('fold_ancestors')
+                data_attrs += f' data-fold-id="{fold_id}" data-fold-type="{fold_type}"'
+                if ancestors_attr:
+                    data_attrs += f' data-fold-ancestors="{ancestors_attr}"'
+
+            # 添加参数属性（用于参数过滤）
+            if params:
+                # 转义特殊字符，避免HTML属性问题
+                # 使用html.escape，但只转义引号、尖括号
+                escaped_params = params.replace('"', '"').replace('<', '<').replace('>', '>')
+                data_attrs += f' data-params="{escaped_params}"'
+
+            # 添加耗时属性（用于耗时过滤和排序）
+            # data-duration 用于过滤（使用原始显示值）
+            # data-sort-duration 用于排序（使用实际值）
+            if duration is not None:
+                data_attrs += f' data-duration="{duration}"'
+                if sort_duration is not None and sort_duration != duration:
+                    data_attrs += f' data-sort-duration="{sort_duration}"'
+                if duration_raw:
+                    # 显示原始耗时字符串（带单位）
+                    escaped_duration = duration_raw.replace('"', '"').replace('<', '<').replace('>', '>')
+                    data_attrs += f' data-duration-raw="{escaped_duration}"'
+
+            # 添加返回值属性（用于错误码过滤）
+            if ret_value:
+                # 解析为整数，用于过滤
+                try:
+                    if ret_value.startswith('0x') or ret_value.startswith('0X'):
+                        ret_int = int(ret_value, 16)
+                        # 处理64位无符号整数转换为有符号整数
+                        # 但只对明显是负数的值进行转换
+                        if ret_int >= 0x8000000000000000:
+                            converted = ret_int - 0x10000000000000000
+                            if converted < 0:
+                                ret_int = converted
+                    else:
+                        ret_int = int(ret_value)
+                    # 只对已知错误码添加属性（用于过滤）
+                    # 0不添加，未知负数也不添加
+                    if ret_int in ERROR_CODE_MAP:
+                        data_attrs += f' data-ret="{ret_int}"'
+                except ValueError:
+                    pass
+
+            # 添加折叠类
+            line_container_class = f"line-container {expandable_class} {fold_class}".strip()
+
+            html_str += f'<div class="{line_container_class}" id="{line_anchor_id}" data-line-number="{line_number}" data-line-id="{line_id}"{data_attrs}'
+            if is_expandable:
+                html_str += f' onclick="handleLineClick(event, \'{line_id}\')" ondblclick="handleDoubleClick(event, \'{line_id}\')" tabindex="0"'
+                html_str += '>'
+            else:
+                html_str += '>'
+            html_str += f'<span class="line-number" onclick="updateAnchor(\'{line_anchor_id}\', event)" title="Click to copy anchor link">{line_number}</span>'
+
+            # 添加折叠标记
+            if is_foldable:
+                # 只为fold-icon添加tabindex和键盘事件
+                if fold_type == 'entry':
+                    # 判断当前是否折叠，选择图标
+                    icon = '▶' if 'folded' in fold_class else '▼'
+                    fold_marker = f'<span class="fold-icon" tabindex="0" role="button" aria-label="Toggle fold" aria-expanded="{"false" if icon=="▶" else "true"}" onkeydown="handleFoldIconKeydown(event, this)" onclick="handleFoldIconClick(event, this)">{icon}</span>'
+                html_str += f'<span class="fold-marker">{fold_marker}</span>'
+            else:
+                # 非可折叠行也插入空白fold-marker以保持对齐
+                html_str += '<span class="fold-marker"><span style="display:inline-block; width:20px; height:16px;"></span></span>'
+
+            html_str += f'<span class="line-content">{escaped_line}</span>'
+
+            if is_expandable:
+                html_str += f'<span class="expand-btn">+</span>'
+
+            html_str += '</div>'
+        
+            if is_expandable:
+                # 获取函数信息
+                func_info = line_data['func_info']
+
+                # 为调用fastfaddr2line准备的键（保留后缀，调整偏移）
+                func_info_for_call = adjust_func_info(func_info, remove_suffix=False)
+
+                # 为显示准备的键（移除后缀，调整偏移）
+                func_info_for_display = adjust_func_info(func_info, remove_suffix=True)
+
+                # 从预取的数据中获取位置信息（使用调用时的键）
+                locations = func_locations_map.get(func_info_for_call, {})
+            
+                # 为expanded-content添加内联样式style="display: none;"，确保初始状态
+                html_str += f'<div class="expanded-content" id="{line_id}_content" style="display: none;">' 
+            
+                if locations:
+                    # 确定使用哪个URL
+                    # 从func_info_for_call中提取模块名，判断返回地址的函数类型
+                    # func_info_for_call格式: func+offset/length [module]
+                    return_addr_module_name = None
+                    if '[' in func_info_for_call and ']' in func_info_for_call:
+                        module_match = re.search(r'\[(.*?)\]', func_info_for_call)
+                        if module_match:
+                            return_addr_module_name = module_match.group(1)
+
+                    if return_addr_module_name:
+                        # 返回地址是模块函数
+                        if return_addr_module_name in module_url_map:
+                            current_base_url = module_url_map[return_addr_module_name]
+                        else:
+                            current_base_url = default_module_url if default_module_url else base_url
+                    else:
+                        # 返回地址是内核函数
+                        current_base_url = base_url
+
+                    # 检查是结构化数据还是原始输出
+                    if isinstance(locations, dict) and 'func' in str(next(iter(locations.values()), {})):
+                        # 结构化数据（标准模式）- 这部分可能不会执行，保留以兼容性
+                        loc_list = locations.get(func_info_for_call, [])
+                        for loc in loc_list:
+                            if current_base_url:
+                                file_path = loc['file']
+                                # 清理文件路径
+                                file_path = clean_file_path(file_path, kernel_src, path_prefix)
+
+                                # 提取文件路径和行号
+                                clean_path = extract_file_path(file_path, kernel_src, path_prefix)
+                                line_num = loc.get('line')
+
+                                # 如果行号不在loc中，尝试从file_path中提取
+                                if line_num is None:
+                                    line_num = extract_line_number(file_path, kernel_src, path_prefix)
+
+                                if clean_path and line_num is not None:
+                                    # 获取相对于内核源码的路径
+                                    relative_path = get_relative_path(clean_path, kernel_src)
+
+                                    # 构建URL
+                                    url = build_source_url(current_base_url, relative_path, line_num)
+
+                                    link_text = f"{loc['func']} at {relative_path}:{line_num}"
+                                    if loc.get('inlined'):
+                                        link_text = f"(inlined) {link_text}"
+
+                                    escaped_link = escape_html_preserve_spaces(link_text)
+                                    escaped_url = html.escape(url)
+                                    html_str += f'<a class="location-link" href="{escaped_url}" target="_blank">{escaped_link}</a>'
+                                else:
+                                    # 无法提取有效路径或行号
+                                    link_text = f"{loc['func']} at {file_path}"
+                                    if loc.get('inlined'):
+                                        link_text = f"(inlined) {link_text}"
+                                    escaped_link = escape_html_preserve_spaces(link_text)
+                                    html_str += f'<div class="location-link">{escaped_link}</div>'
                             else:
-                                # 无法提取有效路径或行号
-                                link_text = f"{loc['func']} at {file_path}"
+                                # 没有base_url，只显示文本
+                                file_path = loc['file']
+                                # 清理文件路径
+                                file_path = clean_file_path(file_path, kernel_src, path_prefix)
+
+                                # 提取文件路径
+                                clean_path = extract_file_path(file_path, kernel_src, path_prefix)
+                                line_num = loc.get('line')
+
+                                # 如果行号不在loc中，尝试从file_path中提取
+                                if line_num is None:
+                                    line_num = extract_line_number(file_path, kernel_src, path_prefix)
+
+                                if clean_path and line_num is not None:
+                                    link_text = f"{loc['func']} at {clean_path}:{line_num}"
+                                else:
+                                    link_text = f"{loc['func']} at {file_path}"
+
                                 if loc.get('inlined'):
                                     link_text = f"(inlined) {link_text}"
                                 escaped_link = escape_html_preserve_spaces(link_text)
                                 html_str += f'<div class="location-link">{escaped_link}</div>'
-                        else:
-                            # 没有base_url，只显示文本
-                            file_path = loc['file']
-                            # 清理文件路径
-                            file_path = clean_file_path(file_path, kernel_src, path_prefix)
-
-                            # 提取文件路径
-                            clean_path = extract_file_path(file_path, kernel_src, path_prefix)
-                            line_num = loc.get('line')
-
-                            # 如果行号不在loc中，尝试从file_path中提取
-                            if line_num is None:
-                                line_num = extract_line_number(file_path, kernel_src, path_prefix)
-
-                            if clean_path and line_num is not None:
-                                link_text = f"{loc['func']} at {clean_path}:{line_num}"
-                            else:
-                                link_text = f"{loc['func']} at {file_path}"
-
-                            if loc.get('inlined'):
-                                link_text = f"(inlined) {link_text}"
-                            escaped_link = escape_html_preserve_spaces(link_text)
-                            html_str += f'<div class="location-link">{escaped_link}</div>'
-                elif isinstance(locations, str):
-                    # 原始输出（--list模式）
-                    html_str += parse_list_output(locations, current_base_url, kernel_src, highlight_code, path_prefix, module_src)
+                    elif isinstance(locations, str):
+                        # 原始输出（--list模式）
+                        html_str += parse_list_output(locations, current_base_url, kernel_src, highlight_code, path_prefix, module_src)
+                    else:
+                        # 未知格式
+                        html_str += f'<div class="location-link">Source information unavailable for: {escape_html_preserve_spaces(func_info_for_display)}</div>'
                 else:
-                    # 未知格式
                     html_str += f'<div class="location-link">Source information unavailable for: {escape_html_preserve_spaces(func_info_for_display)}</div>'
-            else:
-                html_str += f'<div class="location-link">Source information unavailable for: {escape_html_preserve_spaces(func_info_for_display)}</div>'
             
-            html_str += '</div>'
+                html_str += '</div>'
 
-    html_str += """
+        html_str += """
         </div>
     </div>
 
@@ -6594,17 +5585,1110 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
 </html>
 """
     
-    elapsed = time.time() - start_time
-    verbose_print(f"HTML generation completed in {elapsed:.2f} seconds", verbose)
+        elapsed = time.time() - start_time
+        verbose_print(f"HTML generation completed in {elapsed:.2f} seconds", verbose)
 
-    # 替换信息面板占位符
-    html_str = html_str.replace('{INFO_CONTENT_PLACEHOLDER}', info_content_html)
+        # 替换信息面板占位符
+        html_str = html_str.replace('{INFO_CONTENT_PLACEHOLDER}', info_content_html)
 
-    # 将过滤窗口插入到 filterPlaceholder 位置
-    if filter_html:
-        html_str = html_str.replace('<div id="filterPlaceholder"></div>', filter_html)
+        # 将过滤窗口插入到 filterPlaceholder 位置
+        if filter_html:
+            html_str = html_str.replace('<div id="filterPlaceholder"></div>', filter_html)
 
-    return html_str, vmlinux_time, module_time
+        return html_str, vmlinux_time, module_time
+
+    def _generate_css(self):
+        """Generate all CSS styles."""
+        return '''\
+        :root {
+            --bg-color: #f5f5f5;
+            --container-bg: white;
+            --text-color: #333;
+            --line-hover: #f0f0f0;
+            --line-selected: #e3f2fd;
+            --line-highlighted: #fff8e1;
+            --line-keyboard-select: #e1f5fe;
+            --border-color: #ddd;
+            --summary-bg: #f8f9fa;
+            --summary-text: #6c757d;
+            --btn-primary: #4CAF50;
+            --btn-primary-hover: #45a049;
+            --btn-danger: #f44336;
+            --btn-danger-hover: #d32f2f;
+            --link-color: #0366d6;
+            --expanded-bg: #f9f9f9;
+        }
+        [data-theme="dark"] {
+            --bg-color: #1a1a1a;
+            --container-bg: #2d2d2d;
+            --text-color: #e0e0e0;
+            --line-hover: #3a3a3a;
+            --line-selected: #2c3e50;
+            --line-highlighted: #5d4037;
+            --line-keyboard-select: #01579b;
+            --border-color: #444;
+            --summary-bg: #2c2c2c;
+            --summary-text: #aaa;
+            --btn-primary: #4CAF50;
+            --btn-primary-hover: #45a049;
+            --btn-danger: #f44336;
+            --btn-danger-hover: #d32f2f;
+            --link-color: #64b5f6;
+            --expanded-bg: #363636;
+        }
+        body {
+            font-family: 'Courier New', monospace;
+            background-color: var(--bg-color);
+            padding: 8px;
+            line-height: 1.5;
+            margin: 0;
+            color: var(--text-color);
+            transition: background-color 0.3s, color 0.3s;
+        }
+        .container {
+            background: var(--container-bg);
+            padding: 12px 8px 12px 8px;
+            border-radius: 4px;
+            box-shadow: none;
+            overflow-x: auto;
+            transition: background-color 0.3s;
+            max-width: 100%;
+        }
+        h1 {
+            text-align: center;
+            color: var(--text-color);
+            margin: 0 0 12px 0;
+            font-size: 28px;
+            font-weight: 700;
+            letter-spacing: 1.5px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 12px;
+            flex-wrap: wrap;
+            position: relative;
+            padding-bottom: 10px;
+        }
+        h1::after {
+            content: '';
+            position: absolute;
+            bottom: 0;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 80px;
+            height: 3px;
+            background: linear-gradient(90deg, transparent, var(--btn-primary), transparent);
+            border-radius: 2px;
+        }
+        .title-main {
+            display: inline;
+            background: linear-gradient(135deg, var(--btn-primary), var(--link-color));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            font-weight: 800;
+            letter-spacing: 2px;
+        }
+        .title-meta {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            white-space: nowrap;
+            font-size: 14px;
+            margin-left: 8px;
+        }
+        .version-badge {
+            display: inline-flex;
+            align-items: center;
+            background: linear-gradient(135deg, var(--btn-primary), #2e7d32);
+            color: white;
+            padding: 4px 10px;
+            font-size: 12px;
+            font-weight: 700;
+            border-radius: 12px;
+            box-shadow: 0 2px 6px rgba(76, 175, 80, 0.3);
+            letter-spacing: 0.5px;
+        }
+        [data-theme="dark"] .version-badge {
+            background: linear-gradient(135deg, #66bb6a, #2e7d32);
+            box-shadow: 0 2px 6px rgba(102, 187, 106, 0.4);
+        }
+        .author-badge {
+            display: inline-flex;
+            align-items: center;
+            background: linear-gradient(135deg, #64b5f6, #1976d2);
+            color: white;
+            padding: 4px 10px;
+            font-size: 12px;
+            font-weight: 600;
+            border-radius: 12px;
+            box-shadow: 0 2px 6px rgba(25, 118, 210, 0.3);
+            letter-spacing: 0.5px;
+        }
+        [data-theme="dark"] .author-badge {
+            background: linear-gradient(135deg, #42a5f5, #1565c0);
+            box-shadow: 0 2px 6px rgba(66, 165, 245, 0.4);
+        }
+        .info-panel {
+            margin-top: 12px;
+            padding: 12px;
+            background-color: rgba(0, 0, 0, 0.02);
+            border-radius: 6px;
+            border-left: 3px solid var(--btn-primary);
+        }
+        [data-theme="dark"] .info-panel {
+            background-color: rgba(255, 255, 255, 0.03);
+        }
+        .info-toggle {
+            display: flex;
+            align-items: center;
+            cursor: pointer;
+            user-select: none;
+            padding: 8px;
+            margin: -8px;
+            font-size: 13px;
+            font-weight: 500;
+            color: var(--text-color);
+            transition: opacity 0.2s;
+        }
+        .info-toggle:hover {
+            opacity: 0.8;
+        }
+        .info-toggle-icon {
+            display: inline-block;
+            margin-right: 8px;
+            transition: transform 0.3s;
+            font-size: 14px;
+        }
+        .info-toggle-icon.expanded {
+            transform: rotate(90deg);
+        }
+        .info-panel {
+            display: none;
+            margin-top: 8px;
+            padding: 12px;
+            background-color: rgba(0, 0, 0, 0.02);
+            border-radius: 4px;
+            border-left: 3px solid var(--btn-primary);
+        }
+        .info-panel.show {
+            display: block;
+        }
+        [data-theme="dark"] .info-panel {
+            background-color: rgba(255, 255, 255, 0.03);
+        }
+        .info-item {
+            display: flex;
+            margin-bottom: 6px;
+            font-size: 11px;
+            line-height: 1.5;
+        }
+        .info-item:last-child {
+            margin-bottom: 0;
+        }
+        .info-label {
+            min-width: 100px;
+            font-weight: 600;
+            color: var(--summary-text);
+            margin-right: 12px;
+        }
+        .info-value {
+            flex: 1;
+            color: var(--text-color);
+            word-break: break-all;
+        }
+        .header-controls {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 15px;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+        .theme-toggle {
+            padding: 8px 12px;
+            background-color: var(--btn-primary);
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+            transition: background-color 0.2s;
+        }
+        .theme-toggle:hover {
+            background-color: var(--btn-primary-hover);
+        }
+        .line-container {
+            display: flex;
+            align-items: center;
+            padding: 1px 2px;
+            border-radius: 2px;
+            transition: background-color 0.2s;
+            white-space: pre;
+            font-family: 'Courier New', monospace;
+            font-size: 13px;
+            cursor: default;
+            -webkit-user-select: none;
+            -moz-user-select: none;
+            -ms-user-select: none;
+            user-select: none;
+        }
+        .line-container.expandable {
+            cursor: pointer;
+        }
+        .line-container.expandable:hover {
+            background-color: var(--line-hover);
+        }
+        .line-container.expandable.selected {
+            background-color: var(--line-selected);
+        }
+        .line-container.expandable.highlighted {
+            background-color: var(--line-highlighted);
+        }
+        .line-container.expandable.keyboard-selected {
+            background-color: var(--line-keyboard-select);
+            outline: 2px solid var(--btn-primary);
+        }
+        .line-number {
+            display: inline-block;
+            width: 40px;
+            text-align: right;
+            padding-right: 10px;
+            color: var(--summary-text);
+            -webkit-user-select: none;
+            -moz-user-select: none;
+            -ms-user-select: none;
+            user-select: none;
+            flex-shrink: 0;
+            cursor: pointer;
+            border-radius: 3px;
+            padding-left: 5px;
+            transition: background-color 0.2s, color 0.2s;
+        }
+        .line-number:hover {
+            background-color: var(--line-hover);
+        }
+        .line-content {
+            flex-grow: 1;
+            padding: 2px 0;
+            -webkit-user-select: text;
+            -moz-user-select: text;
+            -ms-user-select: text;
+            user-select: text;
+            white-space: pre;
+            font-family: 'Courier New', monospace;
+        }
+        .fold-marker {
+            display: inline-block;
+            width: 16px;
+            color: var(--btn-primary);
+            font-weight: bold;
+            font-size: 12px;
+            margin-right: 4px;
+            cursor: pointer;
+            -webkit-user-select: none;
+            -moz-user-select: none;
+            -ms-user-select: none;
+            user-select: none;
+            flex-shrink: 0;
+        }
+        .fold-marker:hover {
+            color: var(--btn-primary-hover);
+        }
+        .fold-entry {
+            background-color: rgba(76, 175, 80, 0.05);
+        }
+        [data-theme="dark"] .fold-entry {
+            background-color: rgba(102, 187, 106, 0.08);
+        }
+        /* 折叠时的高亮样式：更醒目的背景与图标颜色 */
+        .fold-entry.folded {
+            background-color: rgba(244, 67, 54, 0.12);
+            color: var(--text-muted);
+        }
+        [data-theme="dark"] .fold-entry.folded {
+            background-color: rgba(211, 47, 47, 0.18);
+            color: var(--text-muted);
+        }
+        .fold-entry.folded .fold-icon {
+            color: var(--btn-danger);
+        }
+        [data-theme="dark"] .fold-entry.folded .fold-icon {
+            color: var(--btn-danger);
+        }
+        .fold-exit {
+            background-color: rgba(244, 67, 54, 0.05);
+        }
+        [data-theme="dark"] .fold-exit {
+            background-color: rgba(239, 83, 80, 0.08);
+        }
+        .fold-inner {
+            background-color: rgba(33, 150, 243, 0.03);
+        }
+        [data-theme="dark"] .fold-inner {
+            background-color: rgba(33, 150, 243, 0.05);
+        }
+        .func-name-link {
+            color: var(--link-color);
+            text-decoration: none;
+            cursor: pointer;
+        }
+        .func-name-link:hover {
+            text-decoration: underline;
+        }
+        .expand-btn {
+            display: inline-block;
+            width: 16px;
+            height: 16px;
+            background-color: var(--btn-primary);
+            color: white;
+            border-radius: 50%;
+            text-align: center;
+            line-height: 16px;
+            font-size: 12px;
+            margin-left: 5px;
+            cursor: pointer;
+            opacity: 0.5;
+            transition: opacity 0.2s, background-color 0.2s;
+            -webkit-user-select: none;
+            -moz-user-select: none;
+            -ms-user-select: none;
+            user-select: none;
+            vertical-align: middle;
+            flex-shrink: 0;
+            margin-top: 5px;  /* Center align with line content */
+        }
+        .expand-btn:hover {
+            opacity: 1;
+            background-color: var(--btn-primary-hover);
+        }
+        .expanded-content {
+            display: none;
+            margin-left: 40px;
+            padding: 6px 8px;
+            background-color: var(--expanded-bg);
+            border-left: 2px solid var(--btn-primary);
+            border-radius: 0;
+            white-space: pre;
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+        }
+        .location-link {
+            display: block;
+            padding: 3px 5px;
+            color: var(--link-color);
+            text-decoration: none;
+            margin: 2px 0;
+            border-radius: 3px;
+            white-space: pre;
+        }
+        .location-link:hover {
+            background-color: var(--line-hover);
+            text-decoration: underline;
+        }
+        .source-line {
+            display: block;
+            padding: 2px 0;
+            white-space: pre;
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+        }
+        .current-line {
+            background-color: var(--line-highlighted);
+        }
+        .summary {
+            background-color: var(--summary-bg);
+            border: none;
+            border-bottom: 1px solid var(--border-color);
+            border-radius: 0;
+            padding: 6px 0;
+            margin: 0 0 8px 0;
+            font-size: 11px;
+            color: var(--summary-text);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 12px;
+        }
+        .summary > div:first-child {
+            flex: 1;
+        }
+        .summary span {
+            margin: 0 5px;
+        }
+        .info-toggle-btn {
+            display: flex;
+            align-items: center;
+            cursor: pointer;
+            user-select: none;
+            padding: 4px 8px;
+            border-radius: 4px;
+            transition: background-color 0.2s;
+            font-size: 16px;
+            color: var(--text-color);
+            white-space: nowrap;
+        }
+        .info-toggle-btn:hover {
+            background-color: rgba(0, 0, 0, 0.05);
+        }
+        [data-theme="dark"] .info-toggle-btn:hover {
+            background-color: rgba(255, 255, 255, 0.05);
+        }
+        .info-toggle-icon {
+            display: inline-block;
+            margin-right: 6px;
+            transition: transform 0.3s;
+            font-size: 12px;
+        }
+        .info-toggle-icon.expanded {
+            transform: rotate(90deg);
+        }
+        .info-panel {
+            display: none;
+            margin: 0;
+            padding: 12px;
+            background-color: rgba(0, 0, 0, 0.02);
+            border-radius: 0 0 5px 5px;
+            border: 1px solid var(--border-color);
+            border-top: none;
+            border-left: 3px solid var(--btn-primary);
+            margin-bottom: 15px;
+            font-size: 11px;
+        }
+        .info-panel.show {
+            display: block;
+        }
+        [data-theme="dark"] .info-panel {
+            background-color: rgba(255, 255, 255, 0.03);
+        }
+        .info-item {
+            display: flex;
+            margin-bottom: 6px;
+            font-size: 11px;
+            line-height: 1.5;
+        }
+        .info-item:last-child {
+            margin-bottom: 0;
+        }
+        .info-label {
+            min-width: 100px;
+            font-weight: 600;
+            color: var(--summary-text);
+            margin-right: 12px;
+        }
+        .info-value {
+            flex: 1;
+            color: var(--text-color);
+            word-break: break-all;
+        }
+        .controls {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            z-index: 1000;
+            display: flex;
+            gap: 8px;
+            align-items: flex-end; /* Align to bottom */
+        }
+
+        /* Right buttons - vertical stack */
+        .right-buttons {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            align-items: flex-end; /* Align to right */
+        }
+
+        /* Base button style */
+        .control-btn {
+            padding: 8px 12px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+            transition: all 0.2s;
+            white-space: nowrap;
+            /* Auto width based on content */
+            width: auto;
+            min-width: auto;
+            /* Semi-transparent backgrounds */
+            backdrop-filter: blur(2px);
+        }
+        .control-btn:hover {
+            opacity: 0.85;
+            transform: translateY(-1px);
+        }
+
+        /* Top button - blue */
+        .control-btn:nth-child(1) {
+            background-color: rgba(59, 130, 246, 0.7); /* Blue */
+            color: white;
+        }
+        .control-btn:nth-child(1):hover {
+            background-color: rgba(37, 99, 235, 0.8);
+        }
+
+        /* Copy button - green */
+        .control-btn:nth-child(2) {
+            background-color: rgba(34, 197, 94, 0.7); /* Green */
+            color: white;
+        }
+        .control-btn:nth-child(2):hover {
+            background-color: rgba(22, 163, 74, 0.8);
+        }
+
+        /* Expand All button - orange */
+        .control-btn:nth-child(3) {
+            background-color: rgba(249, 115, 22, 0.7); /* Orange */
+            color: white;
+        }
+        .control-btn:nth-child(3):hover {
+            background-color: rgba(234, 88, 12, 0.8);
+        }
+
+        /* Collapse All button - red */
+        .control-btn.collapse {
+            background-color: rgba(239, 68, 68, 0.7); /* Red */
+            color: white;
+        }
+        .control-btn.collapse:hover {
+            background-color: rgba(220, 38, 38, 0.8);
+        }
+
+        /* Clear button - gray with trash icon */
+        .clear-btn {
+            background-color: rgba(107, 114, 128, 0.7); /* Gray */
+            color: white;
+            padding: 8px 10px;
+            font-size: 14px;
+        }
+        .clear-btn:hover {
+            background-color: rgba(75, 85, 99, 0.8);
+        }
+
+        /* Control bar styles */
+        .controls {
+            display: flex;
+            gap: 15px;
+            align-items: flex-end; /* Align to bottom */
+            margin-bottom: 15px;
+            flex-wrap: wrap;
+        }
+
+        /* Right buttons - vertical stack */
+        .right-buttons {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            margin-left: auto; /* Push to right side */
+            align-items: flex-end; /* Align to right */
+        }
+
+        /* Filter box styles */
+        .filter-box {
+            display: flex;
+            gap: 8px;
+            align-items: flex-end; /* Align to bottom */
+            padding: 8px;
+            background: var(--bg-secondary);
+            border-radius: 4px;
+            flex-wrap: wrap;
+            margin-bottom: 0;
+            /* Position to align with Collapse All button */
+            margin-top: 24px; /* Offset to align with bottom of right buttons */
+        }
+        .filter-box .clear-btn {
+            margin-top: 0; /* Reset margin for clear button */
+        }
+        .filter-input-group {
+            position: relative;
+            display: flex;
+            flex-direction: column;
+        }
+        .filter-box input {
+            padding: 6px 8px;
+            border: 1px solid var(--border-color);
+            border-radius: 3px;
+            background: rgba(200, 200, 200, 0.3); /* Semi-transparent light gray */
+            color: var(--text-primary);
+            font-size: 12px;
+            width: 140px;
+        }
+        [data-theme="dark"] .filter-box input {
+            background: rgba(100, 100, 100, 0.3); /* Darker semi-transparent for dark mode */
+        }
+        .filter-box input:focus {
+            outline: none;
+            border-color: var(--btn-primary);
+        }
+        .filter-box input::placeholder {
+            color: var(--text-secondary);
+        }
+
+        /* Hint tooltip */
+        .filter-hint {
+            position: fixed;
+            background: rgba(0, 0, 0, 0.9);
+            color: white;
+            padding: 8px 12px;
+            border-radius: 4px;
+            font-size: 12px;
+            max-width: 300px;
+            z-index: 2000;
+            pointer-events: none;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+            line-height: 1.4;
+            display: none;
+        }
+
+        [data-theme="dark"] .filter-hint {
+            background: rgba(255, 255, 255, 0.95);
+            color: #000;
+        }
+
+        /* Suggestions dropdown - pull-up menu */
+        .suggestions {
+            position: absolute;
+            bottom: 100%; /* Pull up above the input */
+            left: 0;
+            right: 0;
+            background: rgba(220, 220, 220, 0.95); /* Semi-transparent light gray */
+            border: 1px solid var(--border-color);
+            border-radius: 3px;
+            max-height: 150px;
+            overflow-y: auto;
+            z-index: 3000; /* Higher than filter-hint (2000) to avoid overlap */
+            display: none;
+            box-shadow: 0 -2px 8px rgba(0,0,0,0.2); /* Shadow upward */
+            margin-bottom: 4px; /* Space between input and menu */
+        }
+        [data-theme="dark"] .suggestions {
+            background: rgba(80, 80, 80, 0.95); /* Darker semi-transparent for dark mode */
+        }
+        .suggestions.active {
+            display: block;
+        }
+        .suggestion-item {
+            padding: 4px 8px;
+            cursor: pointer;
+            font-size: 11px;
+            border-bottom: 1px solid var(--border-color);
+            color: #333; /* Dark text for light background */
+        }
+        [data-theme="dark"] .suggestion-item {
+            color: #eee; /* Light text for dark background */
+        }
+        .suggestion-item:last-child {
+            border-bottom: none;
+        }
+        .suggestion-item:hover {
+            background: rgba(180, 180, 180, 0.8);
+        }
+        .suggestion-item.selected {
+            background: var(--btn-primary);
+            color: white;
+        }
+
+        /* Control buttons - uniform size */
+        .control-btn {
+            padding: 8px 12px;
+            background: var(--btn-primary);
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+            font-weight: 500;
+            transition: background-color 0.2s;
+            white-space: nowrap;
+            min-width: 80px;
+            text-align: center;
+        }
+        .control-btn:hover {
+            background: var(--btn-primary-hover);
+        }
+        .control-btn.collapse {
+            background: var(--btn-danger);
+        }
+        .control-btn.collapse:hover {
+            background: var(--btn-danger-hover);
+        }
+
+        /* 浮动控件：默认显示，允许通过 body.hide-floating-controls 隐藏 */
+        .copy-btn, .jump-to-top, .floating-buttons {
+            display: block;
+        }
+
+        /* 当 body 带有 hide-floating-controls 时隐藏所有浮动按钮 */
+        body.hide-floating-controls .copy-btn,
+        body.hide-floating-controls .jump-to-top,
+        body.hide-floating-controls .floating-buttons,
+        body.hide-floating-controls .controls {
+            display: none !important;
+        }
+
+        /* 小型悬浮切换按钮（不会遮挡正文，默认靠右中间，支持鼠标拖动） */
+        .floating-toggle {
+            position: fixed;
+            top: 50%;
+            right: 12px;
+            width: 44px;
+            height: 44px;
+            border-radius: 22px;
+            background: var(--container-bg);
+            border: 1px solid var(--border-color);
+            box-shadow: 0 2px 6px rgba(0,0,0,0.12);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: grab;
+            z-index: 3000;
+            opacity: 0.95;
+            user-select: none;
+            transition: background-color 0.15s, opacity 0.15s;
+            /* 仅在非拖动状态下使用 transform 和 transition 动画 */
+            transform: translateY(-50%);
+        }
+        .floating-toggle:hover:not(.dragging) {
+            background: var(--container-bg-hover, #f3f4f6);
+            transform: translateY(-50%) scale(1.05);
+            box-shadow: 0 4px 8px rgba(0,0,0,0.15);
+        }
+        .floating-toggle.dragging {
+            cursor: grabbing;
+            opacity: 0.98;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+            transition: none;
+            transform: none !important;
+        }
+        .floating-toggle .ft-icon {
+            font-size: 18px;
+            color: var(--text-color);
+            user-select: none;
+            pointer-events: none;
+        }
+        /* 在移动端靠底部放置，避免遮挡阅读区 */
+        @media (max-width: 768px) {
+            .floating-toggle {
+                top: auto;
+                bottom: 18px;
+                right: 12px;
+            }
+        }
+        .progress-bar {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 0%;
+            height: 3px;
+            background-color: var(--btn-primary);
+            z-index: 2000;
+            transition: width 0.3s ease;
+        }
+        .keyboard-hint {
+            position: fixed;
+            bottom: 20px;
+            left: 20px;
+            background-color: var(--container-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 4px;
+            padding: 8px 12px;
+            font-size: 12px;
+            color: var(--text-color);
+            z-index: 1000;
+            max-width: 300px;
+            opacity: 0.9;
+            display: none;
+        }
+        .keyboard-hint h3 {
+            margin: 0 0 5px 0;
+            font-size: 12px;
+        }
+        .keyboard-hint ul {
+            margin: 0;
+            padding-left: 15px;
+        }
+        .keyboard-hint li {
+            margin: 2px 0;
+        }
+        .keyboard-hint strong {
+            color: var(--btn-primary);
+        }
+        .keyboard-hint kbd {
+            background-color: var(--bg-color);
+            border: 1px solid var(--border-color);
+            border-radius: 3px;
+            padding: 1px 4px;
+            font-family: monospace;
+            font-size: 11px;
+        }
+        .keyboard-hint-close {
+            position: absolute;
+            top: 5px;
+            right: 5px;
+            background: none;
+            border: none;
+            color: var(--text-color);
+            cursor: pointer;
+            font-size: 14px;
+            padding: 0;
+            width: 20px;
+            height: 20px;
+            line-height: 20px;
+            text-align: center;
+        }
+        .keyboard-hint-close:hover {
+            color: var(--btn-danger);
+        }
+        /* 锚点目标行高亮样式 */
+        .line-container:target {
+            background-color: var(--line-highlighted);
+            animation: pulse-highlight 1s ease-out;
+        }
+        @keyframes pulse-highlight {
+            0% {
+                background-color: var(--line-highlighted);
+                box-shadow: 0 0 10px rgba(255, 193, 7, 0.5);
+            }
+            100% {
+                background-color: transparent;
+                box-shadow: none;
+            }
+        }
+        /* Ftrace语法高亮样式 */
+        .hl-cpu {
+            color: #d73a49;
+            font-weight: bold;
+        }
+        [data-theme="dark"] .hl-cpu {
+            color: #f97583;
+            font-weight: bold;
+        }
+        
+        .hl-time {
+            color: #005cc5;
+            font-weight: normal;
+        }
+        [data-theme="dark"] .hl-time {
+            color: #79b8ff;
+            font-weight: normal;
+        }
+        
+        .hl-unit {
+            color: #6f42c1;
+            font-weight: bold;
+        }
+        [data-theme="dark"] .hl-unit {
+            color: #b392f0;
+            font-weight: bold;
+        }
+        
+        .hl-func {
+            color: #6f42c1;
+            font-weight: bold;
+        }
+        [data-theme="dark"] .hl-func {
+            color: #b392f0;
+            font-weight: bold;
+        }
+
+        .hl-module-func {
+            color: #0369a1;
+            font-weight: bold;
+        }
+        [data-theme="dark"] .hl-module-func {
+            color: #79c0ff;
+            font-weight: bold;
+        }
+
+        .hl-addr {
+            color: #032f62;
+            font-family: 'Courier New', monospace;
+        }
+        [data-theme="dark"] .hl-addr {
+            color: #79b8ff;
+            font-family: 'Courier New', monospace;
+        }
+        
+        .hl-comment {
+            color: #6a737d;
+            font-style: italic;
+        }
+        [data-theme="dark"] .hl-comment {
+            color: #8b949e;
+            font-style: italic;
+        }
+        
+        .hl-symbol {
+            color: #24292e;
+            font-weight: bold;
+        }
+        [data-theme="dark"] .hl-symbol {
+            color: #c9d1d9;
+            font-weight: bold;
+        }
+
+        .hl-ret-error {
+            color: #d73a49;
+            font-weight: bold;
+            background-color: rgba(215, 58, 73, 0.1);
+            padding: 1px 3px;
+            border-radius: 2px;
+        }
+        [data-theme="dark"] .hl-ret-error {
+            color: #f97583;
+            background-color: rgba(249, 117, 131, 0.15);
+        }
+
+        .hl-ret-success {
+            color: #28a745;
+            font-weight: bold;
+            background-color: rgba(40, 167, 69, 0.1);
+            padding: 1px 3px;
+            border-radius: 2px;
+        }
+        [data-theme="dark"] .hl-ret-success {
+            color: #3fb950;
+            background-color: rgba(63, 185, 80, 0.15);
+        }
+
+        .hl-ret-normal {
+            color: #586069;
+            font-weight: bold;
+        }
+        [data-theme="dark"] .hl-ret-normal {
+            color: #8b949e;
+        }
+
+        /* C代码简洁语法高亮 */
+        .c-keyword {
+            color: #d73a49;  /* 红色用于关键字 */
+            font-weight: bold;
+        }
+        [data-theme="dark"] .c-keyword {
+            color: #f97583;
+            font-weight: bold;
+        }
+        
+        .c-string {
+            color: #032f62;  /* 蓝色用于字符串 */
+        }
+        [data-theme="dark"] .c-string {
+            color: #79b8ff;
+        }
+        
+        .c-comment {
+            color: #6a737d;  /* 灰色用于注释 */
+            font-style: italic;
+        }
+        [data-theme="dark"] .c-comment {
+            color: #8b949e;
+            font-style: italic;
+        }
+        
+        .c-number {
+            color: #6f42c1;  /* 紫色用于数字 */
+        }
+        [data-theme="dark"] .c-number {
+            color: #b392f0;
+        }
+        
+        /* Linux内核特定类型 */
+        .kernel-type {
+            color: #0184bc;  /* 青色用于内核类型 */
+            font-weight: bold;
+        }
+        [data-theme="dark"] .kernel-type {
+            color: #58a6ff;
+            font-weight: bold;
+        }
+        
+        /* Linux内核属性修饰符 */
+        .kernel-attr {
+            color: #9e1a1a;  /* 深红色用于属性 */
+        }
+        [data-theme="dark"] .kernel-attr {
+            color: #ff7b72;
+        }
+        
+        /* Linux内核常用宏常量 */
+        .kernel-macro {
+            color: #e36209;  /* 橙色用于宏常量 */
+            font-weight: bold;
+        }
+        [data-theme="dark"] .kernel-macro {
+            color: #fb8500;
+            font-weight: bold;
+        }
+        
+        .line-number {
+            color: #6a737d;
+            margin-right: 8px;
+        }
+        [data-theme="dark"] .line-number {
+            color: #8b949e;
+        }
+        
+        @media (max-width: 768px) {
+            body {
+                padding: 4px;
+            }
+            .container {
+                padding: 6px 4px;
+            }
+            h1 {
+                font-size: 20px;
+                margin-bottom: 8px;
+            }
+            .summary {
+                font-size: 10px;
+                gap: 8px;
+            }
+            .line-container {
+                font-size: 11px;
+                padding: 0.5px 1px;
+            }
+            .expanded-content {
+                margin-left: 25px;
+                padding: 4px 6px;
+                font-size: 10px;
+            }
+            .controls {
+                bottom: 10px;
+                right: 10px;
+            }
+            .copy-btn {
+                bottom: 50px;
+                right: 10px;
+            }
+            .jump-to-top {
+                bottom: 90px;
+                right: 10px;
+            }
+            .keyboard-hint {
+                bottom: 10px;
+                left: 10px;
+                font-size: 10px;
+                max-width: 200px;
+            }
+        }
+'''
+
+
+def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None, base_url=None, module_url=None, kernel_src=None, use_list=False, verbose=False, fast_mode=False, highlight_code=False, path_prefix=None, module_src=None, module_srcs=None, script_args=None, enable_filter=False, parse_time=0, total_time=0, func_links=False, entry_offset=0, enable_fold=False):
+    """Generate interactive HTML page. Wrapper for backward compatibility."""
+    generator = HtmlGenerator(
+        parsed_lines, vmlinux_path, faddr2line_path,
+        module_dirs=module_dirs, base_url=base_url, module_url=module_url,
+        kernel_src=kernel_src, use_list=use_list, verbose=verbose,
+        fast_mode=fast_mode, highlight_code=highlight_code,
+        path_prefix=path_prefix, module_src=module_src, module_srcs=module_srcs,
+        script_args=script_args, enable_filter=enable_filter,
+        parse_time=parse_time, total_time=total_time,
+        func_links=func_links, entry_offset=entry_offset,
+        enable_fold=enable_fold
+    )
+    return generator.generate()
 
 def main():
     parser = argparse.ArgumentParser(description='Convert ftrace output to interactive HTML')
