@@ -1,15 +1,19 @@
 # FuncGraph 重构设计文档
 
+> **状态**: 已完成（2026-03-07）
+
 ## 1. 项目概述
 
-FuncGraph (v0.6) 将 Linux 内核 ftrace `function_graph` 输出转换为交互式、自包含的 HTML 可视化页面。当前由两个 Python 文件组成：
+FuncGraph (v0.6) 将 Linux 内核 ftrace `function_graph` 输出转换为交互式、自包含的 HTML 可视化页面。由两个 Python 文件组成：
 
-| 文件 | 行数 | 职责 |
-|------|------|------|
-| `fastfaddr2line.py` | 1,016 | ELF 符号解析 + addr2line 地址解析引擎 |
-| `funcgraph.py` | 6,948 | ftrace 解析 + 地址解析调度 + HTML/CSS/JS 生成 |
+| 文件 | 重构前行数 | 重构后行数 | 职责 |
+|------|-----------|-----------|------|
+| `fastfaddr2line.py` | 1,016 | 903 | ELF 符号解析 + addr2line 地址解析引擎 |
+| `funcgraph.py` | 6,948 | 7,044 | ftrace 解析 + 地址解析调度 + HTML/CSS/JS 生成 |
 
 **重构目标**：提高代码可读性和可维护性，同时**保持只有 2 个 Python 文件**的使用方式不变，**所有现有功能完整保留**。
+
+**重构成果**: 引入 4 个核心类（`FtraceLine`, `FtraceParser`, `AddressResolver`, `HtmlGenerator`），最长函数从 ~4400 行降至 ~500 行，消除了重复代码，HTML 输出 byte-identical。
 
 ---
 
@@ -250,7 +254,7 @@ main()                   — 入口
 4. 添加基本类型提示
 5. 消除重复的路径搜索逻辑
 
-**预估行数变化**: 1,016 行 → ~800 行（减少约 20%）
+**实际行数变化**: 1,016 行 → 903 行（减少 11%）
 
 #### 4.2.2 `funcgraph.py` 重构
 
@@ -404,18 +408,36 @@ def main()
 
 ---
 
-## 6. 预期成果
+## 6. 实际成果
 
-| 指标 | 重构前 | 重构后 |
-|------|--------|--------|
-| 文件数 | 2 | 2（不变） |
-| funcgraph.py 行数 | ~6,948 | ~5,500（结构更清晰） |
-| fastfaddr2line.py 行数 | ~1,016 | ~800 |
-| 最长函数 | ~4,400 行 | ~500 行 |
-| 重复代码 | 大量 | 基本消除 |
-| 类型提示 | 无 | 关键接口 |
-| 功能 | 全部 | 全部（100% 保留） |
-| CLI 兼容性 | — | 100% 兼容 |
+| 指标 | 重构前 | 重构后 | 说明 |
+|------|--------|--------|------|
+| 文件数 | 2 | 2 | 不变 |
+| funcgraph.py 行数 | 6,948 | 7,044 | +96 行（类定义开销，但结构大幅改善） |
+| fastfaddr2line.py 行数 | 1,016 | 903 | -113 行（-11%，消除重复） |
+| 最长函数 | ~4,400 行 | ~500 行 | `_prepare_data()` 506 行 |
+| 类 | 0 | 4 | FtraceLine, FtraceParser, AddressResolver, HtmlGenerator |
+| 重复 dict 构造 | 7 处 | 0 | 统一为 FtraceLine() |
+| 重复 cmd 构建 | 4 处 | 1 | 统一为 `_build_cmd()` |
+| 重复源码搜索 | 2 处 (~200行) | 1 | 统一为 `_find_source_file()` |
+| `locals()` 检查 | 3 处 | 0 | 改为变量预初始化 |
+| 功能检查 | 21 项 | 21 项 | 100% 通过 |
+| HTML 内容对比 | — | IDENTICAL | 去除动态时间戳后 byte-identical |
+| CLI 兼容性 | — | 100% | 所有原有公共函数保留为 wrapper |
+
+### 提交历史
+
+| # | Commit | 改动 |
+|---|--------|------|
+| 1 | `3b71a74` | 自测脚本 + 设计文档 |
+| 2 | `b93e01d` | fastfaddr2line.py: 消除 ~200 行重复源码搜索 |
+| 3 | `5642295` | FtraceLine 数据类，消除 7 处重复 dict 构造 |
+| 4 | `6d5c173` | FtraceParser 类，拆分解析逻辑为小方法 |
+| 5 | `69ebc4c` | AddressResolver 类，统一 faddr2line 命令构建 |
+| 6 | `2b14401` | HtmlGenerator 类 + CSS 分离 |
+| 7 | `79a1ef8` | JavaScript 分离 |
+| 8 | `87fe0f7` | HTML 结构分离（_prepare_data, _generate_content_lines） |
+| 9 | `aae43f9` | 清理：移除变量别名，添加区块注释 |
 
 ---
 
