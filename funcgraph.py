@@ -5839,6 +5839,7 @@ class HtmlGenerator:
             --btn-danger-hover: #d32f2f;
             --link-color: #0366d6;
             --expanded-bg: #f9f9f9;
+            --guide-color: rgba(76, 175, 80, 0.35);
         }
         [data-theme="dark"] {
             --bg-color: #1a1a1a;
@@ -5861,6 +5862,7 @@ class HtmlGenerator:
             --btn-danger-hover: #d32f2f;
             --link-color: #64b5f6;
             --expanded-bg: #363636;
+            --guide-color: rgba(102, 187, 106, 0.35);
         }
         body {
             font-family: 'Courier New', monospace;
@@ -6055,14 +6057,20 @@ class HtmlGenerator:
         .fold-icon.expanded {
             transform: rotate(90deg);
         }
-        /* Fold guide line — vertical bar in the fold-marker column */
+        /* Fold guide lines — use align-self:stretch so fold-marker spans full line height */
         .fold-guide {
             display: inline-block;
             width: 20px;
-            height: 100%;
-            position: relative;
+            height: 20px;
         }
-        .fold-guide::after {
+        /* Fold-marker stretches to full line-container height for continuous guide lines */
+        .fold-inner .fold-marker,
+        .fold-exit .fold-marker {
+            align-self: stretch;
+            height: auto;
+        }
+        /* Inner lines: full-height vertical bar */
+        .fold-inner .fold-guide::after {
             content: '';
             position: absolute;
             left: 50%;
@@ -6070,26 +6078,46 @@ class HtmlGenerator:
             bottom: 0;
             width: 2px;
             transform: translateX(-50%);
-            background: rgba(76, 175, 80, 0.3);
+            background: var(--guide-color);
+            pointer-events: none;
         }
-        [data-theme="dark"] .fold-guide::after {
-            background: rgba(102, 187, 106, 0.3);
-        }
-        /* Exit line: guide ends with a small horizontal tick */
+        /* Exit line: top-half bar + horizontal tick (└ shape) */
         .fold-exit .fold-guide::after {
-            bottom: 50%;
+            content: '';
+            position: absolute;
+            left: 50%;
+            top: 0;
+            height: 50%;
+            width: 2px;
+            transform: translateX(-50%);
+            background: var(--guide-color);
+            pointer-events: none;
         }
         .fold-exit .fold-guide::before {
             content: '';
             position: absolute;
             left: 50%;
             top: 50%;
-            width: 6px;
+            width: 8px;
             height: 2px;
-            background: rgba(76, 175, 80, 0.3);
+            background: var(--guide-color);
+            pointer-events: none;
         }
-        [data-theme="dark"] .fold-exit .fold-guide::before {
-            background: rgba(102, 187, 106, 0.3);
+        /* Entry line (expanded): downward connector from icon center to bottom edge */
+        .fold-entry:not(.folded) .fold-marker {
+            align-self: stretch;
+            height: auto;
+        }
+        .fold-entry:not(.folded) .fold-marker::after {
+            content: '';
+            position: absolute;
+            left: 50%;
+            top: 65%;
+            bottom: 0;
+            width: 2px;
+            transform: translateX(-50%);
+            background: var(--guide-color);
+            pointer-events: none;
         }
         .fold-entry {
             background-color: rgba(76, 175, 80, 0.05);
