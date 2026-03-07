@@ -188,6 +188,7 @@ class FtraceLine:
         'func_name_info', 'ret_value', 'params', 'duration',
         'sort_duration', 'duration_raw', 'fold_id', 'fold_type',
         'fold_ancestors', 'call_depth',
+        'irqs_off', 'need_resched', 'hardirq_softirq', 'preempt_depth',
     ]
 
     def __init__(self, raw_line='', expandable=False, func_info=None,
@@ -195,7 +196,9 @@ class FtraceLine:
                  cpu=None, pid=None, comm=None, func_name_info=None,
                  ret_value=None, params=None, duration=None,
                  sort_duration=None, duration_raw=None, fold_id=None,
-                 fold_type=None, fold_ancestors='', call_depth=None):
+                 fold_type=None, fold_ancestors='', call_depth=None,
+                 irqs_off=None, need_resched=None, hardirq_softirq=None,
+                 preempt_depth=None):
         self.raw_line = raw_line
         self.expandable = expandable
         self.func_info = func_info
@@ -215,6 +218,10 @@ class FtraceLine:
         self.fold_type = fold_type
         self.fold_ancestors = fold_ancestors
         self.call_depth = call_depth
+        self.irqs_off = irqs_off
+        self.need_resched = need_resched
+        self.hardirq_softirq = hardirq_softirq
+        self.preempt_depth = preempt_depth
 
     def get(self, key, default=None):
         """Dict-compatible get() for gradual migration."""
@@ -823,6 +830,35 @@ class FtraceParser:
                         # 提取 PID/Comm
                         pid, comm = self._parse_pid_comm(search_area)
 
+                        # 提取 latency 字段（irqs-off, need-resched, hardirq/softirq, preempt-depth）
+                        # Latency 模式格式：CPU)  进程-PID  |  d.h2  |  [耗时]  |  函数
+                        # 4 个字符: irqs_off(d/.), need_resched(B/N/n/p/L/b/l/.), hardirq_softirq(Z/z/H/h/s/.), preempt_depth(0-9)
+                        irqs_off = None
+                        need_resched = None
+                        hardirq_softirq = None
+                        preempt_depth = None
+                        if pipe_pos != -1 and second_pipe != -1 and not has_timestamp:
+                            # Latency 模式：状态字段在 pipe_pos 和 second_pipe 之间
+                            latency_area = prefix[pipe_pos+1:second_pipe]
+                            lat_match = re.search(r'([d.])([.BNnpLbl])([.ZzHhs])(\d)', latency_area)
+                            if lat_match:
+                                irqs_off = lat_match.group(1)
+                                need_resched = lat_match.group(2)
+                                hardirq_softirq = lat_match.group(3)
+                                preempt_depth = lat_match.group(4)
+                        elif has_timestamp and pipe_pos != -1:
+                            # 带时间戳格式：时间戳 | CPU) 进程-PID | 状态 | [耗时] | 函数
+                            # 需要找第二、三个 pipe 之间的 latency 区域
+                            third_pipe = prefix.find('|', second_pipe + 1) if second_pipe != -1 else -1
+                            if second_pipe != -1 and third_pipe != -1:
+                                latency_area = prefix[second_pipe+1:third_pipe]
+                                lat_match = re.search(r'([d.])([.BNnpLbl])([.ZzHhs])(\d)', latency_area)
+                                if lat_match:
+                                    irqs_off = lat_match.group(1)
+                                    need_resched = lat_match.group(2)
+                                    hardirq_softirq = lat_match.group(3)
+                                    preempt_depth = lat_match.group(4)
+
                         # 检查是否包含函数信息（支持多种格式）
                         func_info = None
                         raw_func_name = None
@@ -919,6 +955,8 @@ class FtraceParser:
                                 duration=duration,
                                 sort_duration=sort_duration if sort_duration is not None else duration,
                                 duration_raw=duration_raw,
+                                irqs_off=irqs_off, need_resched=need_resched,
+                                hardirq_softirq=hardirq_softirq, preempt_depth=preempt_depth,
                             )
                             parsed_lines.append(line_data)
                             expandable_count += 1
@@ -948,6 +986,8 @@ class FtraceParser:
                                 duration=duration,
                                 sort_duration=sort_duration if sort_duration is not None else duration,
                                 duration_raw=duration_raw,
+                                irqs_off=irqs_off, need_resched=need_resched,
+                                hardirq_softirq=hardirq_softirq, preempt_depth=preempt_depth,
                             )
                             parsed_lines.append(line_data)
 
@@ -966,6 +1006,8 @@ class FtraceParser:
                                 duration=duration,
                                 sort_duration=sort_duration if sort_duration is not None else duration,
                                 duration_raw=duration_raw,
+                                irqs_off=irqs_off, need_resched=need_resched,
+                                hardirq_softirq=hardirq_softirq, preempt_depth=preempt_depth,
                             )
                             parsed_lines.append(line_data)
                             continue
@@ -992,6 +1034,8 @@ class FtraceParser:
                                 duration=duration,
                                 sort_duration=sort_duration if sort_duration is not None else duration,
                                 duration_raw=duration_raw,
+                                irqs_off=irqs_off, need_resched=need_resched,
+                                hardirq_softirq=hardirq_softirq, preempt_depth=preempt_depth,
                             )
                             parsed_lines.append(line_data)
                             continue
@@ -1002,6 +1046,8 @@ class FtraceParser:
                             duration=duration,
                             sort_duration=sort_duration if sort_duration is not None else duration,
                             duration_raw=duration_raw,
+                            irqs_off=irqs_off, need_resched=need_resched,
+                            hardirq_softirq=hardirq_softirq, preempt_depth=preempt_depth,
                         )
                         parsed_lines.append(line_data)
 
@@ -2312,7 +2358,7 @@ class HtmlGenerator:
             <div id="filterPlaceholder"></div>
             <div class="toolbar">
                 <div class="btn-group">
-                    <button class="control-btn btn-nav" onclick="toggleFilterBox()">Filter</button>
+                    <button class="control-btn btn-nav" onclick="toggleFilterBox()">&#x1F50D; Filter</button>
                     <button class="control-btn btn-nav" onclick="scrollToTop()">Top</button>
                 </div>
                 <div class="btn-group">
@@ -2499,14 +2545,21 @@ class HtmlGenerator:
                     if raw_func_name and raw_func_name in func_name_results:
                         line_data['func_name_info'] = func_name_results[raw_func_name]
 
-        # 根据enable_filter参数生成过滤框HTML
+        # 根据enable_filter参数生成统一过滤框HTML
         filter_html = ""
         if self.enable_filter:
-            # 收集所有唯一的CPU、PID、进程名和错误码用于自动补全
+            # 收集所有唯一的CPU、PID、进程名和错误码用于字段按钮
             unique_cpus = set()
             unique_pids = set()
             unique_comms = set()
-            unique_error_codes = set()  # 存储错误码的数字值
+            unique_error_codes = set()
+            unique_irqs = set()
+            unique_resched = set()
+            unique_hirq = set()
+            unique_preempt = set()
+
+            has_params = False
+            has_duration = False
 
             for line_data in self.parsed_lines:
                 cpu = line_data.get('cpu')
@@ -2514,159 +2567,128 @@ class HtmlGenerator:
                 comm = line_data.get('comm')
                 ret_value = line_data.get('ret_value')
 
-                # 只收集合法的值
                 if cpu is not None:
                     cpu_str = str(cpu)
-                    # 确保是有效的数字（过滤掉空字符串、None等）
                     if cpu_str.strip() and cpu_str.isdigit():
                         unique_cpus.add(cpu_str)
 
                 if pid is not None:
                     pid_str = str(pid)
-                    # 确保是有效的数字（过滤掉空字符串、None等）
-                    # 修改：保留 PID=0，但只在过滤器中显示，不用于过滤
                     if pid_str.strip() and pid_str.isdigit():
-                        # 对于过滤器备选关键字，包含 PID=0
                         unique_pids.add(pid_str)
 
                 if comm:
                     comm_str = str(comm).strip()
-                    # 确保进程名不是空字符串
-                    # 修改：去除特殊字符后添加到备选关键字
-                    if comm_str and len(comm_str) > 0:
-                        # 清理进程名：去除特殊字符
+                    if comm_str:
                         cleaned_comm = comm_str
                         if cleaned_comm.startswith('<') and cleaned_comm.endswith('>'):
-                            cleaned_comm = cleaned_comm[1:-1]  # 去除 < >
+                            cleaned_comm = cleaned_comm[1:-1]
                         if cleaned_comm.startswith('(') and cleaned_comm.endswith(')'):
-                            cleaned_comm = cleaned_comm[1:-1]  # 去除 ( )
+                            cleaned_comm = cleaned_comm[1:-1]
                         if '@' in cleaned_comm:
-                            cleaned_comm = cleaned_comm.split('@')[0]  # 去除 @ 后面的部分
-
-                        # 只添加清理后的进程名
-                        if cleaned_comm and len(cleaned_comm) > 0:
+                            cleaned_comm = cleaned_comm.split('@')[0]
+                        if cleaned_comm:
                             unique_comms.add(cleaned_comm)
 
-                # 收集错误码
                 if ret_value:
                     try:
-                        # 解析为整数（支持10进制和16进制）
                         if ret_value.startswith('0x') or ret_value.startswith('0X'):
                             ret_int = int(ret_value, 16)
-                            # 处理64位无符号整数转换为有符号整数
-                            # 但只对明显是负数的值进行转换（避免误判大正数）
                             if ret_int >= 0x8000000000000000:
-                                # 检查是否可能是负数的补码
-                                # 如果转换后是负数，才使用转换后的值
                                 converted = ret_int - 0x10000000000000000
                                 if converted < 0:
                                     ret_int = converted
                         else:
                             ret_int = int(ret_value)
-
-                        # 只收集已知的错误码（在ERROR_CODE_MAP中）
-                        # 0不收集，未知负数也不收集
                         if ret_int in ERROR_CODE_MAP:
                             unique_error_codes.add(ret_int)
                     except ValueError:
                         pass
 
-            # 收集数据类型信息
-            has_cpu = len(unique_cpus) > 0
-            has_pid = len(unique_pids) > 0
-            has_comm = len(unique_comms) > 0
-            has_ret = len(unique_error_codes) > 0
-
-            # 检查是否有参数数据
-            has_params = False
-            has_duration = False
-            for line_data in self.parsed_lines:
                 if not has_params and line_data.get('params'):
                     has_params = True
                 if not has_duration and line_data.get('duration') is not None:
                     has_duration = True
-                if has_params and has_duration:
-                    break
 
-            # 只有当有相关数据时才生成过滤框
-            filter_inputs = []
+                # 收集 latency 字段值
+                if line_data.get('irqs_off') is not None:
+                    unique_irqs.add(line_data.irqs_off)
+                if line_data.get('need_resched') is not None:
+                    unique_resched.add(line_data.need_resched)
+                if line_data.get('hardirq_softirq') is not None:
+                    unique_hirq.add(line_data.hardirq_softirq)
+                if line_data.get('preempt_depth') is not None:
+                    unique_preempt.add(line_data.preempt_depth)
 
-            if has_cpu:
-                cpus_json = ','.join(sorted(unique_cpus))
-                filter_inputs.append(f'''
-            <div class="filter-input-group">
-                <input type="text" id="filterCpu" placeholder="CPU regex (e.g., 0|1|2 or [0-2])" style="width: 140px;" data-suggestions="{cpus_json}" onkeypress="handleFilterKeypress(event)" onmouseenter="showHint(event, 'CPU过滤：支持正则表达式，如 0|1|2 或 [0-2]')" onmouseleave="hideHint()">
-                <div class="suggestions" id="cpuSuggestions"></div>
-            </div>''')
+            # 构建字段按钮 HTML
+            field_buttons = []
 
-            if has_pid:
-                pids_json = ','.join(sorted(unique_pids))
-                filter_inputs.append(f'''
-            <div class="filter-input-group">
-                <input type="text" id="filterPid" placeholder="PID regex (e.g., 1234|5678 or 0-100)" style="width: 140px;" data-suggestions="{pids_json}" onkeypress="handleFilterKeypress(event)" onmouseenter="showHint(event, 'PID过滤：支持正则表达式，如 1234|5678 或 0-100')" onmouseleave="hideHint()">
-                <div class="suggestions" id="pidSuggestions"></div>
-            </div>''')
+            if unique_cpus:
+                vals = ','.join(sorted(unique_cpus, key=lambda x: int(x)))
+                field_buttons.append(f'<button class="field-btn" data-field="cpu" data-values="{vals}">cpu</button>')
 
-            if has_comm:
-                comms_json = ','.join(sorted(unique_comms))
-                filter_inputs.append(f'''
-            <div class="filter-input-group">
-                <input type="text" id="filterComm" placeholder="Comm regex (e.g., bash|python or ^idle)" style="width: 140px;" data-suggestions="{comms_json}" onkeypress="handleFilterKeypress(event)" onmouseenter="showHint(event, '进程名过滤：支持正则表达式，如 bash|python 或 ^idle')" onmouseleave="hideHint()">
-                <div class="suggestions" id="commSuggestions"></div>
-            </div>''')
+            if unique_pids:
+                sorted_pids = sorted(unique_pids, key=lambda x: int(x))
+                vals = ','.join(sorted_pids)
+                field_buttons.append(f'<button class="field-btn" data-field="pid" data-values="{vals}">pid</button>')
 
-            if has_ret:
-                # 转换为显示格式：错误码宏（数字）
-                # 例如：-22 -> EINVAL（-22），-1 -> EPERM（-1）
-                error_display_list = []
-                error_values_list = []  # 用于all过滤的原始值列表
+            if unique_comms:
+                vals = ','.join(sorted(unique_comms))
+                field_buttons.append(f'<button class="field-btn" data-field="comm" data-values="{vals}">comm</button>')
 
+            if unique_error_codes:
+                # 构建 ret 按钮：值为错误码数字，hints 为宏名映射
+                error_vals = []
+                error_hints = []
                 for ret_int in sorted(unique_error_codes):
-                    # 查找错误码宏
-                    error_name = ERROR_CODE_MAP.get(ret_int)
+                    error_vals.append(str(ret_int))
+                    error_name = ERROR_CODE_MAP.get(ret_int, '')
                     if error_name:
-                        # 有宏名，保留负号
-                        display_str = f"{error_name}（{ret_int}）"
-                        error_values_list.append(str(ret_int))
-                    else:
-                        # 没有宏名，只显示数字
-                        display_str = f"ret={ret_int}"
-                    error_display_list.append(display_str)
+                        error_hints.append(f"{ret_int}={error_name}")
+                vals = ','.join(error_vals)
+                hints = ','.join(error_hints)
+                field_buttons.append(f'<button class="field-btn" data-field="ret" data-values="all,{vals}" data-hints="{hints}">ret</button>')
 
-                # 添加特殊选项：all
-                error_display_list.insert(0, "all")
-
-                # 将错误码列表转换为JSON数组，用于JS中的all过滤
-                error_values_json = '[' + ','.join(error_values_list) + ']'
-
-                error_codes_json = ','.join(error_display_list)
-                filter_inputs.append(f'''
-            <div class="filter-input-group">
-                <input type="text" id="filterRet" placeholder="Return value (e.g., -22 or EINVAL)" style="width: 160px;" data-suggestions="{error_codes_json}" data-error-values="{error_values_json}" onkeypress="handleFilterKeypress(event)" onmouseenter="showHint(event, '返回值过滤：输入数字如 -22，或宏名如 EINVAL，或 all 显示所有')" onmouseleave="hideHint()">
-                <div class="suggestions" id="retSuggestions"></div>
-            </div>''')
-
-            # 只有当有参数数据时才添加参数过滤框
             if has_params:
-                filter_inputs.append(f'''
-            <div class="filter-input-group">
-                <input type="text" id="filterParams" placeholder="Function params (e.g., folio=0x... or address=...)" style="width: 200px;" onkeypress="handleFilterKeypress(event)" onmouseenter="showHint(event, '参数过滤：匹配函数参数，如 folio=0x1234 或 address=0x...')" onmouseleave="hideHint()">
-            </div>''')
+                field_buttons.append('<button class="field-btn" data-field="params" data-values="">params</button>')
 
-            # 只有当有耗时数据时才添加耗时过滤框
             if has_duration:
-                filter_inputs.append(f'''
-            <div class="filter-input-group">
-                <input type="text" id="durationFilter" placeholder="Duration filter (e.g., >10, <5&&>2, sort:desc)" style="width: 220px;" onkeypress="handleFilterKeypress(event)" onmouseenter="showHint(event, '耗时过滤：支持 >, <, >=, <=, &&, ||, sort:desc/asc，如 >10 sort:desc')" onmouseleave="hideHint()">
-            </div>''')
+                field_buttons.append('<button class="field-btn" data-field="duration" data-values="">duration</button>')
 
-            # 只有当有至少一个输入框时才生成过滤框
-            if filter_inputs:
+            # latency 字段按钮（仅在 latency trace 时出现）
+            if unique_irqs:
+                vals = ','.join(sorted(unique_irqs))
+                field_buttons.append(f'<button class="field-btn" data-field="irqs" data-values="{vals}" data-hints="d=disabled,.=enabled">irqs</button>')
+
+            if unique_resched:
+                vals = ','.join(sorted(unique_resched))
+                field_buttons.append(f'<button class="field-btn" data-field="resched" data-values="{vals}" data-hints="B=NEED_RESCHED+LAZY,N=NEED_RESCHED,n=NEED_RESCHED_LAZY,p=PREEMPT_NEED,.=none">resched</button>')
+
+            if unique_hirq:
+                vals = ','.join(sorted(unique_hirq))
+                field_buttons.append(f'<button class="field-btn" data-field="hirq" data-values="{vals}" data-hints="H=hardirq,h=hardirq(idle),s=softirq,Z=NMI,z=NMI(idle),.=none">hirq</button>')
+
+            if unique_preempt:
+                vals = ','.join(sorted(unique_preempt))
+                field_buttons.append(f'<button class="field-btn" data-field="preempt" data-values="{vals}">preempt</button>')
+
+            if field_buttons:
+                # 将所有错误码值存储在隐藏属性中（用于 ret:all 过滤）
+                error_values_json = ''
+                if unique_error_codes:
+                    error_values_json = '[' + ','.join(str(v) for v in sorted(unique_error_codes)) + ']'
+
                 filter_html = f'''
             <div class="filter-box" id="filterBox">
-                {''.join(filter_inputs)}
-                <button class="control-btn filter-btn" onclick="applyFilter()">Filter</button>
-                <button class="control-btn clear-btn" onclick="clearFilter()">Clear</button>
+                <div class="filter-tags" id="filterTags"></div>
+                <div class="filter-input-row">
+                    <input type="text" id="filterInput" placeholder="field:value, e.g. cpu:3 AND irqs:d" autocomplete="off" data-error-values="{error_values_json}">
+                    <button class="control-btn filter-btn" onclick="applyFilter()">Apply</button>
+                    <button class="control-btn clear-btn" onclick="clearFilter()">Clear</button>
+                </div>
+                <div class="filter-fields" id="filterFields">
+                    {''.join(field_buttons)}
+                </div>
             </div>
             <div class="filter-hint" id="filterHint"></div>'''
 
@@ -3159,6 +3181,16 @@ class HtmlGenerator:
                 except ValueError:
                     pass
 
+            # 添加 latency 字段属性（irqs-off, need-resched, hardirq/softirq, preempt-depth）
+            if line_data.get('irqs_off') is not None:
+                data_attrs += f' data-irqs="{line_data.irqs_off}"'
+            if line_data.get('need_resched') is not None:
+                data_attrs += f' data-resched="{line_data.need_resched}"'
+            if line_data.get('hardirq_softirq') is not None:
+                data_attrs += f' data-hirq="{line_data.hardirq_softirq}"'
+            if line_data.get('preempt_depth') is not None:
+                data_attrs += f' data-preempt="{line_data.preempt_depth}"'
+
             # 添加耗时 tooltip
             title_attr = ''
             if duration_raw:
@@ -3498,319 +3530,399 @@ class HtmlGenerator:
         function toggleFilterBox() {
             const filterBox = document.getElementById('filterBox');
             if (filterBox) {
-                // 切换显示状态
                 if (filterBox.style.display === 'none') {
                     filterBox.style.display = 'flex';
-                    // 保存状态到localStorage
                     lsSet('filterBoxVisible', 'true');
                 } else {
                     filterBox.style.display = 'none';
-                    // 保存状态到localStorage
                     lsSet('filterBoxVisible', 'false');
                 }
             }
         }
 
-        // 应用过滤器（支持正则表达式）
-        function applyFilter() {
-            const cpuInput = document.getElementById('filterCpu')?.value.trim() || '';
-            const pidInput = document.getElementById('filterPid')?.value.trim() || '';
-            const commInput = document.getElementById('filterComm')?.value.trim() || '';
-            const retInput = document.getElementById('filterRet')?.value.trim() || '';
-            const paramsInput = document.getElementById('filterParams')?.value.trim() || '';
-            const durationFilterInput = document.getElementById('durationFilter')?.value.trim() || '';
+        // ====== Unified Filter Expression Parser ======
 
-            // 编译正则表达式
-            let cpuRegex = null, pidRegex = null, commRegex = null, retRegex = null, paramsRegex = null;
-
-            try {
-                if (cpuInput) cpuRegex = new RegExp(cpuInput);
-            } catch (e) {
-                console.warn('Invalid CPU regex:', cpuInput);
-            }
-
-            try {
-                if (pidInput) pidRegex = new RegExp(pidInput);
-            } catch (e) {
-                console.warn('Invalid PID regex:', pidInput);
-            }
-
-            try {
-                if (commInput) commRegex = new RegExp(commInput);
-            } catch (e) {
-                console.warn('Invalid Comm regex:', commInput);
-            }
-
-            // 处理参数过滤
-            try {
-                if (paramsInput) paramsRegex = new RegExp(paramsInput, 'i');
-            } catch (e) {
-                console.warn('Invalid params regex:', paramsInput);
-            }
-
-            // 处理返回值过滤
-            let retFilterRegex = null;  // 用于正则匹配
-            let filterAllErrors = false;
-            let allErrorValues = null;  // 用于all过滤的错误码列表
-
-            if (retInput) {
-                // 检查是否是 "all"（过滤所有错误码）
-                if (retInput.toLowerCase() === 'all') {
-                    filterAllErrors = true;
-                    // 从data-error-values属性获取错误码列表
-                    const filterRetInput = document.getElementById('filterRet');
-                    if (filterRetInput && filterRetInput.dataset.errorValues) {
-                        try {
-                            allErrorValues = JSON.parse(filterRetInput.dataset.errorValues);
-                        } catch (e) {
-                            console.warn('Failed to parse error values:', e);
-                            allErrorValues = [];
-                        }
-                    }
-                } else {
-                    // 尝试编译为正则表达式
-                    try {
-                        retFilterRegex = new RegExp(retInput, 'i');
-                    } catch (e) {
-                        console.warn('Invalid return value regex:', retInput);
-                    }
+        // Tokenize filter expression into tokens
+        function tokenizeFilter(text) {
+            const tokens = [];
+            let i = 0;
+            while (i < text.length) {
+                // Skip whitespace
+                if (text[i] === ' ' || text[i] === '\\t') { i++; continue; }
+                // Parentheses
+                if (text[i] === '(') { tokens.push({ type: 'LPAREN' }); i++; continue; }
+                if (text[i] === ')') { tokens.push({ type: 'RPAREN' }); i++; continue; }
+                // Keywords: AND, OR, NOT (case-insensitive)
+                const upper3 = text.slice(i, i + 3).toUpperCase();
+                const upper2 = text.slice(i, i + 2).toUpperCase();
+                if (upper3 === 'AND' && (i + 3 >= text.length || /[\\s()]/.test(text[i + 3]))) {
+                    tokens.push({ type: 'AND' }); i += 3; continue;
                 }
-            }
-
-            // 处理耗时过滤表达式（支持排序指令）
-            let durationFilters = [];  // 存储解析后的耗时过滤条件
-            let durationSort = '';  // 排序方向: 'desc' 或 'asc'
-
-            if (durationFilterInput) {
-                // 首先检查是否有排序指令 (sort:desc 或 sort:asc)
-                const sortMatch = durationFilterInput.match(/sort:(desc|asc)/i);
+                if (upper2 === 'OR' && (i + 2 >= text.length || /[\\s()]/.test(text[i + 2]))) {
+                    tokens.push({ type: 'OR' }); i += 2; continue;
+                }
+                if (upper3 === 'NOT' && (i + 3 >= text.length || /[\\s()]/.test(text[i + 3]))) {
+                    tokens.push({ type: 'NOT' }); i += 3; continue;
+                }
+                // && and ||
+                if (text[i] === '&' && text[i + 1] === '&') {
+                    tokens.push({ type: 'AND' }); i += 2; continue;
+                }
+                if (text[i] === '|' && text[i + 1] === '|') {
+                    tokens.push({ type: 'OR' }); i += 2; continue;
+                }
+                if (text[i] === '!') {
+                    tokens.push({ type: 'NOT' }); i++; continue;
+                }
+                // field:value condition (field may contain letters/digits/underscore, value may contain anything except spaces and parens)
+                const condMatch = text.slice(i).match(/^([a-zA-Z_][a-zA-Z0-9_]*):(>=|<=|>|<|=)?([^\\s()]*)/);
+                if (condMatch) {
+                    const field = condMatch[1];
+                    const op = condMatch[2] || '=';
+                    const value = condMatch[3];
+                    tokens.push({ type: 'COND', field: field.toLowerCase(), op, value });
+                    i += condMatch[0].length;
+                    continue;
+                }
+                // Sort directive: sort:desc or sort:asc
+                const sortMatch = text.slice(i).match(/^sort:(desc|asc)/i);
                 if (sortMatch) {
-                    durationSort = sortMatch[1].toLowerCase();
+                    tokens.push({ type: 'SORT', value: sortMatch[1].toLowerCase() });
+                    i += sortMatch[0].length;
+                    continue;
                 }
+                // Unknown character, skip
+                i++;
+            }
+            return tokens;
+        }
 
-                // 移除排序指令，只保留过滤条件
-                let filterExpr = durationFilterInput.replace(/sort:(desc|asc)/gi, '').trim();
+        // Recursive descent parser: expr → orExpr
+        // orExpr → andExpr (OR andExpr)*
+        // andExpr → notExpr (AND notExpr)*
+        // notExpr → NOT notExpr | atom
+        // atom → COND | LPAREN expr RPAREN
+        function parseFilterExpr(text) {
+            const tokens = tokenizeFilter(text);
+            let sortDir = '';
+            // Extract sort directive
+            const remaining = tokens.filter(t => {
+                if (t.type === 'SORT') { sortDir = t.value; return false; }
+                return true;
+            });
+            let pos = 0;
 
-                // 如果还有剩余内容，解析过滤条件
-                if (filterExpr) {
-                    // 支持的运算符: >, >=, <, <=
-                    // 支持的逻辑运算符: &&, ||
-                    // 示例: >10, <5&&>2, >=1||<=0.5
+            function peek() { return remaining[pos] || null; }
+            function advance() { return remaining[pos++]; }
 
-                    // 按 || 分割多个条件组
-                    const orGroups = filterExpr.split('||');
+            function parseOr() {
+                let left = parseAnd();
+                while (peek() && peek().type === 'OR') {
+                    advance();
+                    const right = parseAnd();
+                    left = { type: 'OR', left, right };
+                }
+                return left;
+            }
 
-                    for (const orGroup of orGroups) {
-                        // 按 && 分割条件
-                        const andConditions = orGroup.split('&&');
-                        const groupConditions = [];
+            function parseAnd() {
+                let left = parseNot();
+                while (peek() && peek().type === 'AND') {
+                    advance();
+                    const right = parseNot();
+                    left = { type: 'AND', left, right };
+                }
+                // Implicit AND: two conditions without operator
+                while (peek() && (peek().type === 'COND' || peek().type === 'NOT' || peek().type === 'LPAREN')) {
+                    const right = parseNot();
+                    left = { type: 'AND', left, right };
+                }
+                return left;
+            }
 
-                        for (const condition of andConditions) {
-                            const trimmed = condition.trim();
-                            if (!trimmed) continue;
+            function parseNot() {
+                if (peek() && peek().type === 'NOT') {
+                    advance();
+                    const operand = parseNot();
+                    return { type: 'NOT', operand };
+                }
+                return parseAtom();
+            }
 
-                            // 匹配运算符和值
-                            const match = trimmed.match(/^(>=|<=|>|<)\s*(\d+(?:\.\d+)?)$/);
-                            if (match) {
-                                const operator = match[1];
-                                const value = parseFloat(match[2]);
-                                groupConditions.push({ operator, value });
-                            }
-                        }
+            function parseAtom() {
+                const t = peek();
+                if (!t) return null;
+                if (t.type === 'LPAREN') {
+                    advance();
+                    const expr = parseOr();
+                    if (peek() && peek().type === 'RPAREN') advance();
+                    return expr;
+                }
+                if (t.type === 'COND') {
+                    advance();
+                    return t;
+                }
+                // Skip unexpected token
+                advance();
+                return parseAtom();
+            }
 
-                        if (groupConditions.length > 0) {
-                            durationFilters.push(groupConditions);
-                        }
-                    }
+            const ast = remaining.length > 0 ? parseOr() : null;
+            return { ast, sortDir };
+        }
+
+        // Evaluate a single condition against a line element
+        function evalCondition(line, cond) {
+            if (!cond || cond.type !== 'COND') return true;
+            const { field, op, value } = cond;
+
+            // Map field names to data attributes
+            const fieldAttrMap = {
+                'cpu': 'data-cpu', 'pid': 'data-pid', 'comm': 'data-comm',
+                'ret': 'data-ret', 'params': 'data-params',
+                'duration': 'data-duration',
+                'irqs': 'data-irqs', 'resched': 'data-resched',
+                'hirq': 'data-hirq', 'preempt': 'data-preempt'
+            };
+
+            const attrName = fieldAttrMap[field];
+            if (!attrName) return true; // Unknown field, pass through
+
+            // Special handling for ret:all
+            if (field === 'ret' && value.toLowerCase() === 'all') {
+                const retAttr = line.getAttribute('data-ret');
+                return retAttr !== null && retAttr !== '';
+            }
+
+            // Special handling for duration (comparison operators)
+            if (field === 'duration') {
+                const durationAttr = line.getAttribute('data-duration');
+                if (!durationAttr) return false;
+                const dur = parseFloat(durationAttr);
+                const val = parseFloat(value);
+                if (isNaN(val)) return false;
+                switch (op) {
+                    case '>': return dur > val;
+                    case '>=': return dur >= val;
+                    case '<': return dur < val;
+                    case '<=': return dur <= val;
+                    case '=': return dur === val;
+                    default: return dur === val;
                 }
             }
 
-            // B11: 检查是否有实际有效的过滤条件（用 regex 对象而非 input 字符串判断）
-            const hasFilter = cpuRegex || pidRegex || commRegex ||
-                (retInput && (filterAllErrors || retFilterRegex)) ||
-                paramsRegex || durationFilters.length > 0;
+            // Special handling for preempt (numeric comparison)
+            if (field === 'preempt' && op !== '=') {
+                const pAttr = line.getAttribute('data-preempt');
+                if (!pAttr) return false;
+                const pVal = parseInt(pAttr);
+                const cVal = parseInt(value);
+                if (isNaN(cVal)) return false;
+                switch (op) {
+                    case '>': return pVal > cVal;
+                    case '>=': return pVal >= cVal;
+                    case '<': return pVal < cVal;
+                    case '<=': return pVal <= cVal;
+                    default: return pVal === cVal;
+                }
+            }
 
-            // 获取所有行
-            const allLines = document.querySelectorAll('.line-container');
+            // Default: regex match (op '=')
+            const attrVal = line.getAttribute(attrName);
+            if (attrVal === null || attrVal === '') return false;
+
+            // Special handling for ret: match against data-ret numeric value or error name in raw line
+            if (field === 'ret') {
+                // Try matching numeric value
+                try {
+                    const regex = new RegExp(value, 'i');
+                    if (regex.test(attrVal)) return true;
+                    // Also try matching error code name from raw line
+                    const rawLine = line.querySelector('.line-content')?.textContent || '';
+                    const retMatch = rawLine.match(/ret\\s*=\\s*([0-9a-fA-FxX-]+)/);
+                    if (retMatch && regex.test(retMatch[1])) return true;
+                } catch (e) {
+                    return attrVal === value;
+                }
+                return false;
+            }
+
+            // For params, also check raw line if no data-params
+            if (field === 'params' && !attrVal) {
+                const rawLine = line.querySelector('.line-content')?.textContent || '';
+                const paramsMatch = rawLine.match(/\\(([^)]*)\\)/);
+                if (paramsMatch) {
+                    try {
+                        return new RegExp(value, 'i').test(paramsMatch[1]);
+                    } catch (e) {
+                        return paramsMatch[1].includes(value);
+                    }
+                }
+                return false;
+            }
+
+            // General regex match
+            try {
+                return new RegExp(value, 'i').test(attrVal);
+            } catch (e) {
+                return attrVal === value;
+            }
+        }
+
+        // Evaluate AST against a line element
+        function evalExpr(line, ast) {
+            if (!ast) return true;
+            switch (ast.type) {
+                case 'AND': return evalExpr(line, ast.left) && evalExpr(line, ast.right);
+                case 'OR': return evalExpr(line, ast.left) || evalExpr(line, ast.right);
+                case 'NOT': return !evalExpr(line, ast.operand);
+                case 'COND': return evalCondition(line, ast);
+                default: return true;
+            }
+        }
+
+        // Serialize AST back to text
+        function astToText(ast) {
+            if (!ast) return '';
+            switch (ast.type) {
+                case 'AND': {
+                    const l = astToText(ast.left);
+                    const r = astToText(ast.right);
+                    return l && r ? l + ' AND ' + r : l || r;
+                }
+                case 'OR': {
+                    const l = astToText(ast.left);
+                    const r = astToText(ast.right);
+                    return l && r ? l + ' OR ' + r : l || r;
+                }
+                case 'NOT':
+                    return 'NOT ' + astToText(ast.operand);
+                case 'COND':
+                    return ast.field + ':' + (ast.op !== '=' ? ast.op : '') + ast.value;
+                default:
+                    return '';
+            }
+        }
+
+        // ====== Filter Tags Management ======
+        function updateFilterTags(text) {
+            const tagsDiv = document.getElementById('filterTags');
+            if (!tagsDiv) return;
+            tagsDiv.innerHTML = '';
+
+            const { ast } = parseFilterExpr(text);
+            if (!ast) return;
+
+            // Flatten top-level AND/OR into tag list
+            function flattenExpr(node, items, logicType) {
+                if (!node) return;
+                if (node.type === logicType) {
+                    flattenExpr(node.left, items, logicType);
+                    flattenExpr(node.right, items, logicType);
+                } else {
+                    items.push(node);
+                }
+            }
+
+            // Determine top-level logic
+            let topLogic = 'AND';
+            let parts = [];
+            if (ast.type === 'AND' || ast.type === 'OR') {
+                topLogic = ast.type;
+                flattenExpr(ast, parts, topLogic);
+            } else {
+                parts = [ast];
+            }
+
+            parts.forEach((part, idx) => {
+                if (idx > 0) {
+                    const logicTag = document.createElement('span');
+                    logicTag.className = 'filter-tag-logic';
+                    logicTag.textContent = topLogic;
+                    logicTag.title = 'Click to toggle AND/OR';
+                    logicTag.addEventListener('click', () => {
+                        // Toggle logic in text
+                        const input = document.getElementById('filterInput');
+                        if (input) {
+                            const newLogic = topLogic === 'AND' ? 'OR' : 'AND';
+                            input.value = input.value.replace(new RegExp('\\\\b' + topLogic + '\\\\b', 'gi'), newLogic);
+                            updateFilterTags(input.value);
+                            applyFilter();
+                        }
+                    });
+                    tagsDiv.appendChild(logicTag);
+                }
+
+                const tag = document.createElement('span');
+                tag.className = 'filter-tag';
+                const tagText = astToText(part);
+                tag.innerHTML = tagText + ' <span class="tag-remove" title="Remove">&times;</span>';
+                tag.querySelector('.tag-remove').addEventListener('click', () => {
+                    // Remove this condition from the input
+                    const input = document.getElementById('filterInput');
+                    if (input) {
+                        // Remove the condition text and surrounding logic operator
+                        let newText = input.value;
+                        // Try to remove "COND AND " or " AND COND" or " OR COND" or "COND OR "
+                        const escaped = tagText.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&');
+                        newText = newText.replace(new RegExp('\\\\s*' + topLogic + '\\\\s+' + escaped, 'i'), '');
+                        newText = newText.replace(new RegExp(escaped + '\\\\s+' + topLogic + '\\\\s*', 'i'), '');
+                        newText = newText.replace(new RegExp(escaped, 'i'), '');
+                        newText = newText.replace(/^\\s*(AND|OR)\\s+/i, '').replace(/\\s+(AND|OR)\\s*$/i, '').trim();
+                        input.value = newText;
+                        updateFilterTags(newText);
+                        applyFilter();
+                    }
+                });
+                tagsDiv.appendChild(tag);
+            });
+        }
+
+        // ====== Main Filter Functions ======
+
+        function applyFilter() {
+            const filterInput = document.getElementById('filterInput');
+            const text = filterInput ? filterInput.value.trim() : '';
+
+            // Update tags display
+            updateFilterTags(text);
+
+            // Parse the expression
+            const { ast, sortDir } = parseFilterExpr(text);
+            const hasFilter = ast !== null;
+
+            // Get all lines
+            const allLineElems = document.querySelectorAll('.line-container');
             let visibleCount = 0;
 
-            allLines.forEach(line => {
-                const cpu = line.getAttribute('data-cpu');
-                const pid = line.getAttribute('data-pid');
-                const comm = line.getAttribute('data-comm');
-                const retAttr = line.getAttribute('data-ret');
-                const paramsAttr = line.getAttribute('data-params');
-                const rawLine = line.querySelector('.line-content')?.textContent || '';
-
+            allLineElems.forEach(line => {
                 let show = true;
 
-                // 如果有过滤条件，隐藏无效行（空行、分隔线等）
                 if (hasFilter) {
-                    // 检查是否是空行或分隔线
+                    // Hide empty/separator lines when filtering
+                    const rawLine = line.querySelector('.line-content')?.textContent || '';
                     const trimmed = rawLine.trim();
-                    if (trimmed === '' || trimmed.match(/^[-]+$/)) {
+                    if (trimmed === '' || /^[-]+$/.test(trimmed)) {
                         show = false;
                     }
                 }
 
-                // B5: 检查CPU过滤 — 缺失字段的行应被隐藏
-                if (show && cpuRegex) {
-                    if (!cpu || cpu === '') {
-                        show = false;
-                    } else if (!cpuRegex.test(cpu)) {
-                        show = false;
-                    }
-                }
-
-                // B5: 检查PID过滤
-                if (show && pidRegex) {
-                    if (!pid || pid === '') {
-                        show = false;
-                    } else if (!pidRegex.test(pid)) {
-                        show = false;
-                    }
-                }
-
-                // B5: 检查Comm过滤
-                if (show && commRegex) {
-                    if (!comm || comm === '') {
-                        show = false;
-                    } else if (!commRegex.test(comm)) {
-                        show = false;
-                    }
-                }
-
-                // 检查返回值过滤
-                if (show && retInput) {
-                    if (filterAllErrors) {
-                        // 过滤所有已知错误码
-                        const retMatch = rawLine.match(/ret\s*=\s*([0-9a-fA-FxX-]+)/);
-                        if (!retMatch) {
-                            show = false;
-                        } else {
-                            // B3: 使用 BigInt 解析 64 位 hex，避免精度丢失
-                            let retVal = 0;
-                            try {
-                                const retStr = retMatch[1];
-                                if (retStr.startsWith('0x') || retStr.startsWith('0X')) {
-                                    let big = BigInt(retStr);
-                                    if (big >= 0x8000000000000000n) {
-                                        big = big - 0x10000000000000000n;
-                                    }
-                                    retVal = Number(big);
-                                } else {
-                                    retVal = parseInt(retStr);
-                                }
-                            } catch (e) {
-                                show = false;
-                            }
-
-                            if (allErrorValues && allErrorValues.includes(retVal)) {
-                                // 显示
-                            } else {
-                                show = false;
-                            }
-                        }
-                    } else if (retFilterRegex) {
-                        // 正则表达式匹配
-                        // 匹配原始行中的 ret=xxx 或 ret = xxx
-                        const retMatch = rawLine.match(/ret\s*=\s*([0-9a-fA-FxX-]+)/);
-                        if (!retMatch || !retFilterRegex.test(retMatch[1])) {
-                            show = false;
-                        }
-                    }
-                }
-
-                // 检查参数过滤
-                if (show && paramsRegex) {
-                    // 使用data-params属性或原始行
-                    if (paramsAttr) {
-                        // 有data-params属性，直接匹配
-                        if (!paramsRegex.test(paramsAttr)) {
-                            show = false;
-                        }
-                    } else {
-                        // 没有data-params属性，检查原始行是否包含参数
-                        // 参数格式: func(arg1=val1, arg2=val2, ...)
-                        // 我们需要匹配括号内的内容
-                        const paramsMatch = rawLine.match(/\(([^)]*)\)/);
-                        if (!paramsMatch || !paramsRegex.test(paramsMatch[1])) {
-                            show = false;
-                        }
-                    }
-                }
-
-                // 检查耗时过滤
-                if (show && durationFilters.length > 0) {
-                    const durationAttr = line.getAttribute('data-duration');
-                    if (durationAttr) {
-                        const duration = parseFloat(durationAttr);
-                        let matchesAny = false;
-
-                        // 检查所有OR条件组
-                        for (const orGroup of durationFilters) {
-                            let matchesGroup = true;
-
-                            // 检查AND条件
-                            for (const condition of orGroup) {
-                                const { operator, value } = condition;
-                                let matchesCondition = false;
-
-                                switch (operator) {
-                                    case '>':
-                                        matchesCondition = duration > value;
-                                        break;
-                                    case '>=':
-                                        matchesCondition = duration >= value;
-                                        break;
-                                    case '<':
-                                        matchesCondition = duration < value;
-                                        break;
-                                    case '<=':
-                                        matchesCondition = duration <= value;
-                                        break;
-                                }
-
-                                if (!matchesCondition) {
-                                    matchesGroup = false;
-                                    break;
-                                }
-                            }
-
-                            if (matchesGroup) {
-                                matchesAny = true;
-                                break;
-                            }
-                        }
-
-                        if (!matchesAny) {
-                            show = false;
-                        }
-                    } else {
-                        // 没有耗时信息的行在有过滤条件时隐藏
-                        show = false;
-                    }
+                if (show && hasFilter) {
+                    show = evalExpr(line, ast);
                 }
 
                 line.style.display = show ? '' : 'none';
                 if (show) visibleCount++;
             });
 
-            // 更新展开行列表（只包含可见的）
+            // Update expandable lines
             updateExpandableLines();
 
-            // 应用过滤后，确保所有隐藏行的展开内容都被折叠
-            // 方法1：直接处理所有展开的内容
-            const allExpandedContents = document.querySelectorAll('.expanded-content');
-            allExpandedContents.forEach(content => {
-                // .expanded-content 是 .line-container 的兄弟元素，不是子元素
-                // 需要找到前一个兄弟元素
+            // Collapse hidden expanded content
+            document.querySelectorAll('.expanded-content').forEach(content => {
                 const prevSibling = content.previousElementSibling;
-                const isLineContainer = prevSibling && prevSibling.classList.contains('line-container');
-                const isParentHidden = isLineContainer && prevSibling.style.display === 'none';
-                const isContentVisible = content.style.display === 'block';
-
-                if (isParentHidden && isContentVisible) {
+                if (prevSibling && prevSibling.classList.contains('line-container') &&
+                    prevSibling.style.display === 'none' && content.style.display === 'block') {
                     content.style.display = 'none';
                     const btn = prevSibling.querySelector('.expand-btn');
                     if (btn) btn.textContent = '+';
@@ -3818,124 +3930,72 @@ class HtmlGenerator:
                 }
             });
 
-            // 方法2：同时折叠所有展开的行（双重保险）
-            const expandableLines = document.querySelectorAll('.line-container.expandable');
-            expandableLines.forEach(line => {
-                // 找到下一个兄弟元素作为展开内容
+            // Collapse all expanded rows
+            document.querySelectorAll('.line-container.expandable').forEach(line => {
                 const nextSibling = line.nextElementSibling;
                 const content = nextSibling && nextSibling.classList.contains('expanded-content') ? nextSibling : null;
                 const btn = line.querySelector('.expand-btn');
-                const isExpanded = content && content.style.display === 'block';
-
-                if (isExpanded) {
+                if (content && content.style.display === 'block') {
                     content.style.display = 'none';
-                    btn.textContent = '+';
+                    if (btn) btn.textContent = '+';
                     line.classList.remove('selected');
                 }
             });
 
-            // 应用排序（如果选择了排序）
-            if (durationSort && visibleCount > 0) {
-                // 获取所有可见的行
-                const visibleLines = Array.from(allLines).filter(line => line.style.display !== 'none');
-
-                // 按耗时排序（优先使用data-sort-duration，如果没有则使用data-duration）
+            // Apply duration sort if requested
+            if (sortDir && visibleCount > 0) {
+                const visibleLines = Array.from(allLineElems).filter(l => l.style.display !== 'none');
                 visibleLines.sort((a, b) => {
-                    const durationA = parseFloat(a.getAttribute('data-sort-duration') || a.getAttribute('data-duration') || '0');
-                    const durationB = parseFloat(b.getAttribute('data-sort-duration') || b.getAttribute('data-duration') || '0');
-
-                    if (durationSort === 'desc') {
-                        // 从大到小
-                        return durationB - durationA;
-                    } else if (durationSort === 'asc') {
-                        // 从小到大
-                        return durationA - durationB;
-                    }
-                    return 0;
+                    const dA = parseFloat(a.getAttribute('data-sort-duration') || a.getAttribute('data-duration') || '0');
+                    const dB = parseFloat(b.getAttribute('data-sort-duration') || b.getAttribute('data-duration') || '0');
+                    return sortDir === 'desc' ? dB - dA : dA - dB;
                 });
-
-                // 重新插入排序后的行
                 const container = visibleLines[0]?.parentElement;
                 if (container) {
-                    // 先移除所有可见行
-                    visibleLines.forEach(line => line.remove());
-
-                    // 按排序顺序重新插入
-                    visibleLines.forEach(line => {
-                        // 找到合适的插入位置（在最后一个可见行之后）
-                        const lastVisible = Array.from(container.children).findLast(child =>
-                            child.classList.contains('line-container') && child.style.display !== 'none'
+                    visibleLines.forEach(l => l.remove());
+                    visibleLines.forEach(l => {
+                        const lastVis = Array.from(container.children).findLast(c =>
+                            c.classList.contains('line-container') && c.style.display !== 'none'
                         );
-                        if (lastVisible) {
-                            lastVisible.after(line);
-                        } else {
-                            container.insertBefore(line, container.firstChild);
-                        }
-                    });
-
-                    // 也需要重新排序展开内容
-                    const visibleContents = Array.from(container.querySelectorAll('.expanded-content')).filter(content => {
-                        const prevSibling = content.previousElementSibling;
-                        return prevSibling && prevSibling.style.display !== 'none';
-                    });
-
-                    visibleContents.forEach(content => {
-                        content.remove();
-                        const prevSibling = content.previousElementSibling;
-                        if (prevSibling && prevSibling.style.display !== 'none') {
-                            prevSibling.after(content);
-                        }
+                        if (lastVis) lastVis.after(l);
+                        else container.insertBefore(l, container.firstChild);
                     });
                 }
             }
 
-            // 更新信息面板中的可见行数
-            // 更新摘要中的过滤行数显示（放在 Modules 后面）
+            // Update visible lines count
             const visibleLinesContainer = document.getElementById('visibleLinesContainer');
             const summaryVisibleLines = document.getElementById('summaryVisibleLines');
-
             if (visibleLinesContainer && summaryVisibleLines) {
                 if (visibleCount < total_lines) {
-                    // 显示过滤后的行数
                     visibleLinesContainer.style.display = 'inline';
                     summaryVisibleLines.textContent = visibleCount;
                 } else {
-                    // 隐藏过滤行数（因为没有过滤）
                     visibleLinesContainer.style.display = 'none';
                 }
             }
-
         }
 
-        // 清除过滤器
+        // Clear filter
         function clearFilter() {
-            const cpuInput = document.getElementById('filterCpu');
-            const pidInput = document.getElementById('filterPid');
-            const commInput = document.getElementById('filterComm');
-            const retInput = document.getElementById('filterRet');
-            const paramsInput = document.getElementById('filterParams');
-            const durationFilter = document.getElementById('durationFilter');
+            const filterInput = document.getElementById('filterInput');
+            if (filterInput) filterInput.value = '';
 
-            if (cpuInput) cpuInput.value = '';
-            if (pidInput) pidInput.value = '';
-            if (commInput) commInput.value = '';
-            if (retInput) retInput.value = '';
-            if (paramsInput) paramsInput.value = '';
-            if (durationFilter) durationFilter.value = '';
+            const tagsDiv = document.getElementById('filterTags');
+            if (tagsDiv) tagsDiv.innerHTML = '';
 
-            currentFilter = { cpu: [], pid: [], comm: [], ret: [] };
+            // Close any open dropdowns
+            document.querySelectorAll('.field-dropdown').forEach(d => d.remove());
+            document.querySelectorAll('.field-btn.active').forEach(b => b.classList.remove('active'));
 
-            const allLines = document.querySelectorAll('.line-container');
-            allLines.forEach(line => {
-                line.style.display = ''; // 恢复所有行，包括无效行
-
-                // 恢复展开状态
+            const allLineElems = document.querySelectorAll('.line-container');
+            allLineElems.forEach(line => {
+                line.style.display = '';
                 const lineId = line.getAttribute('data-line-id');
                 if (lineId) {
                     const content = document.getElementById(lineId + '_content');
                     const btn = line.querySelector('.expand-btn');
                     if (content && btn) {
-                        // 检查是否应该展开
                         const isExpanded = localStorage.getItem(`expanded_${lineId}`) === 'true';
                         if (isExpanded) {
                             content.style.display = 'block';
@@ -3950,15 +4010,10 @@ class HtmlGenerator:
                 }
             });
 
-            // 更新展开行列表
             updateExpandableLines();
 
-            // 隐藏可见行数显示
             const visibleLinesContainer = document.getElementById('visibleLinesContainer');
-            if (visibleLinesContainer) {
-                visibleLinesContainer.style.display = 'none';
-            }
-
+            if (visibleLinesContainer) visibleLinesContainer.style.display = 'none';
         }
 
         // 更新展开行列表（只包含可见的）
@@ -3976,288 +4031,164 @@ class HtmlGenerator:
         }
 
         // 自动补全功能
-        function initAutocomplete() {
-            const inputs = [
-                { id: 'filterCpu', suggestionsId: 'cpuSuggestions', type: 'cpu' },
-                { id: 'filterPid', suggestionsId: 'pidSuggestions', type: 'pid' },
-                { id: 'filterComm', suggestionsId: 'commSuggestions', type: 'comm' },
-                { id: 'filterRet', suggestionsId: 'retSuggestions', type: 'ret' }
-            ];
+        // Initialize unified filter field buttons and input
+        function initFilterFields() {
+            const filterInput = document.getElementById('filterInput');
+            if (!filterInput) return;
 
-            inputs.forEach(({ id, suggestionsId, type }) => {
-                const input = document.getElementById(id);
-                const suggestionsDiv = document.getElementById(suggestionsId);
-
-                // 如果输入框不存在，跳过
-                if (!input || !suggestionsDiv) return;
-
-                // 获取建议列表
-                const suggestions = input.getAttribute('data-suggestions') || '';
-                const suggestionList = suggestions ? suggestions.split(',') : [];
-
-                // HTML转义函数
-                function escapeHtml(text) {
-                    const div = document.createElement('div');
-                    div.textContent = text;
-                    return div.innerHTML;
+            // Enter key triggers filter
+            filterInput.addEventListener('keydown', function(e) {
+                if (e.key === 'Enter') {
+                    e.preventDefault();
+                    applyFilter();
                 }
+            });
 
-                // 点击输入框时显示所有建议
-                input.addEventListener('focus', function() {
-                    if (suggestionList.length > 0) {
-                        // 隐藏filter-hint，避免与suggestions重叠
-                        const hint = document.getElementById('filterHint');
-                        if (hint) hint.style.display = 'none';
+            // Helper: position dropdown above a button using fixed positioning
+            function positionDropdown(dropdown, btn) {
+                const rect = btn.getBoundingClientRect();
+                dropdown.style.left = rect.left + 'px';
+                // Temporarily show to measure height
+                dropdown.style.visibility = 'hidden';
+                document.body.appendChild(dropdown);
+                const dh = dropdown.offsetHeight;
+                dropdown.style.visibility = '';
+                // Position above the button
+                dropdown.style.top = (rect.top - dh - 4) + 'px';
+            }
 
-                        suggestionsDiv.innerHTML = suggestionList.slice(0, 10).map(item => {
-                            const escaped = escapeHtml(item);
-                            return `<div class="suggestion-item" data-value="${escaped}">${escaped}</div>`;
-                        }).join('');
-                        suggestionsDiv.classList.add('active');
-                    }
-                });
+            // Helper: close all field dropdowns
+            function closeFieldDropdowns() {
+                document.querySelectorAll('.field-dropdown').forEach(d => d.remove());
+                document.querySelectorAll('.field-btn.active').forEach(b => b.classList.remove('active'));
+            }
 
-                // 点击输入框时也显示建议（即使已经有焦点）
-                input.addEventListener('click', function(e) {
-                    // 阻止事件冒泡，避免触发其他点击事件
+            // Field button click handlers
+            document.querySelectorAll('.field-btn').forEach(btn => {
+                btn.addEventListener('click', function(e) {
                     e.stopPropagation();
-                    if (suggestionList.length > 0) {
-                        // 隐藏filter-hint，避免与suggestions重叠
-                        const hint = document.getElementById('filterHint');
-                        if (hint) hint.style.display = 'none';
-
-                        suggestionsDiv.innerHTML = suggestionList.slice(0, 10).map(item => {
-                            const escaped = escapeHtml(item);
-                            return `<div class="suggestion-item" data-value="${escaped}">${escaped}</div>`;
-                        }).join('');
-                        suggestionsDiv.classList.add('active');
-                    }
-                });
-
-                // 输入时过滤建议
-                input.addEventListener('input', function() {
-                    const value = this.value.toLowerCase().trim();
-
-                    // 如果输入框为空，显示所有建议
-                    if (value.length === 0) {
-                        if (suggestionList.length > 0) {
-                            // 隐藏filter-hint，避免与suggestions重叠
-                            const hint = document.getElementById('filterHint');
-                            if (hint) hint.style.display = 'none';
-
-                            suggestionsDiv.innerHTML = suggestionList.slice(0, 10).map(item => {
-                                const escaped = escapeHtml(item);
-                                return `<div class="suggestion-item" data-value="${escaped}">${escaped}</div>`;
-                            }).join('');
-                            suggestionsDiv.classList.add('active');
-                        } else {
-                            suggestionsDiv.classList.remove('active');
-                            suggestionsDiv.innerHTML = '';
-                        }
-                        return;
+                    const field = this.dataset.field;
+                    const values = this.dataset.values ? this.dataset.values.split(',').filter(Boolean) : [];
+                    const hints = {};
+                    if (this.dataset.hints) {
+                        this.dataset.hints.split(',').forEach(h => {
+                            const [k, v] = h.split('=');
+                            if (k && v) hints[k] = v;
+                        });
                     }
 
-                    // 过滤建议
-                    const filtered = suggestionList.filter(item =>
-                        item.toLowerCase().includes(value)
-                    );
+                    // Close any existing dropdown
+                    closeFieldDropdowns();
 
-                    if (filtered.length > 0) {
-                        // 隐藏filter-hint，避免与suggestions重叠
-                        const hint = document.getElementById('filterHint');
-                        if (hint) hint.style.display = 'none';
+                    // Toggle active state
+                    this.classList.add('active');
 
-                        suggestionsDiv.innerHTML = filtered.slice(0, 10).map(item => {
-                            const escaped = escapeHtml(item);
-                            return `<div class="suggestion-item" data-value="${escaped}">${escaped}</div>`;
-                        }).join('');
-                        suggestionsDiv.classList.add('active');
+                    // Create dropdown (will be appended to document.body, not inside button)
+                    const dropdown = document.createElement('div');
+                    dropdown.className = 'field-dropdown';
+
+                    if (field === 'params' || field === 'duration' || values.length === 0) {
+                        // Text input for free-form fields
+                        const inputDiv = document.createElement('div');
+                        inputDiv.className = 'field-dropdown-input';
+                        const placeholder = field === 'duration' ? 'e.g. >10 or <5' : 'regex pattern';
+                        inputDiv.innerHTML = '<input type="text" placeholder="' + placeholder + '">';
+                        dropdown.appendChild(inputDiv);
+
+                        const actionsDiv = document.createElement('div');
+                        actionsDiv.className = 'field-dropdown-actions';
+                        actionsDiv.innerHTML = '<button class="cancel-btn">Cancel</button><button>Add</button>';
+                        dropdown.appendChild(actionsDiv);
+
+                        actionsDiv.querySelector('.cancel-btn').addEventListener('click', () => {
+                            dropdown.remove();
+                            btn.classList.remove('active');
+                        });
+
+                        actionsDiv.querySelector('button:last-child').addEventListener('click', () => {
+                            const val = inputDiv.querySelector('input').value.trim();
+                            if (val) {
+                                const op = val.match(/^(>=|<=|>|<)/) ? val.match(/^(>=|<=|>|<)/)[1] : '';
+                                const numVal = op ? val.slice(op.length) : val;
+                                appendToFilter(field + ':' + (op || '') + numVal);
+                            }
+                            dropdown.remove();
+                            btn.classList.remove('active');
+                        });
+
+                        // Enter key in text input
+                        inputDiv.querySelector('input').addEventListener('keydown', (ev) => {
+                            if (ev.key === 'Enter') {
+                                ev.preventDefault();
+                                actionsDiv.querySelector('button:last-child').click();
+                            } else if (ev.key === 'Escape') {
+                                dropdown.remove();
+                                btn.classList.remove('active');
+                            }
+                        });
+
+                        positionDropdown(dropdown, this);
+                        setTimeout(() => inputDiv.querySelector('input').focus(), 50);
                     } else {
-                        suggestionsDiv.classList.remove('active');
-                        suggestionsDiv.innerHTML = '';
-                    }
-                });
+                        // Checkbox multi-select for enumerable fields
+                        values.forEach(val => {
+                            const item = document.createElement('label');
+                            item.className = 'field-dropdown-item';
+                            const hintText = hints[val] ? '<span class="hint-text">' + hints[val] + '</span>' : '';
+                            const displayVal = val.replace(/</g, '&lt;').replace(/>/g, '&gt;');
+                            item.innerHTML = '<input type="checkbox" value="' + displayVal + '"> <span>' + displayVal + '</span>' + hintText;
+                            dropdown.appendChild(item);
+                        });
 
-                // 点击建议项 - 智能添加到正则表达式
-                suggestionsDiv.addEventListener('click', function(e) {
-                    const suggestionItem = e.target.closest('.suggestion-item');
-                    if (suggestionItem) {
-                        const value = suggestionItem.getAttribute('data-value');
-                        const current = input.value.trim();
+                        const actionsDiv = document.createElement('div');
+                        actionsDiv.className = 'field-dropdown-actions';
+                        actionsDiv.innerHTML = '<button class="cancel-btn">Cancel</button><button>OK</button>';
+                        dropdown.appendChild(actionsDiv);
 
-                        // 特殊处理错误码过滤框
-                        if (id === 'filterRet') {
-                            // 错误码过滤框：使用"或"关系拼接
-                            // 如果点击的是 "all"，直接设置为 "all"
-                            // 如果点击的是 "EINVAL（-22）"，需要转换为 "-22"
+                        actionsDiv.querySelector('.cancel-btn').addEventListener('click', () => {
+                            dropdown.remove();
+                            btn.classList.remove('active');
+                        });
 
-                            if (value === 'all') {
-                                if (current) {
-                                    // 如果已有内容，用 | 连接
-                                    input.value = current + '|' + 'all';
+                        actionsDiv.querySelector('button:last-child').addEventListener('click', () => {
+                            const checked = Array.from(dropdown.querySelectorAll('input[type="checkbox"]:checked'))
+                                .map(cb => cb.value);
+                            if (checked.length > 0) {
+                                if (checked.length === 1) {
+                                    appendToFilter(field + ':' + checked[0]);
                                 } else {
-                                    input.value = 'all';
-                                }
-                            } else {
-                                // 尝试从格式 "MACRO（num）" 中提取数字
-                                const match = value.match(/（(-?\d+)）/);
-                                let numericValue = value;
-                                if (match) {
-                                    numericValue = match[1];
-                                }
-
-                                if (current) {
-                                    // 如果已有内容，用 | 连接
-                                    // 检查是否已经是正则表达式
-                                    if (current.includes('|') || current.includes('(')) {
-                                        input.value = current + '|' + numericValue;
-                                    } else {
-                                        input.value = current + '|' + numericValue;
-                                    }
-                                } else {
-                                    input.value = numericValue;
+                                    const expr = '(' + checked.map(v => field + ':' + v).join(' OR ') + ')';
+                                    appendToFilter(expr);
                                 }
                             }
-                        } else {
-                            // 其他过滤框：智能拼接
-                            if (current) {
-                                // 如果当前内容已经是正则表达式，智能添加
-                                if (current.includes('|') || current.includes('[') || current.includes('(')) {
-                                    // 已经是复杂正则，添加为备选
-                                    input.value = current + '|' + value;
-                                } else if (current.includes(',')) {
-                                    // 已经是逗号分隔，继续用逗号
-                                    input.value = current + ',' + value;
-                                } else {
-                                    // 简单值，转换为"或"关系
-                                    input.value = current + '|' + value;
-                                }
-                            } else {
-                                input.value = value;
-                            }
-                        }
-                        suggestionsDiv.classList.remove('active');
-                        suggestionsDiv.innerHTML = '';
-                        input.focus();
-                    }
-                });
+                            dropdown.remove();
+                            btn.classList.remove('active');
+                        });
 
-                // 失去焦点时隐藏建议（延迟以允许点击）
-                input.addEventListener('blur', function() {
-                    setTimeout(() => {
-                        suggestionsDiv.classList.remove('active');
-                        // 如果鼠标仍在输入框上，重新显示hint
-                        // (onmouseenter会自动处理)
-                    }, 200);
-                });
-
-                // 键盘导航
-                input.addEventListener('keydown', function(e) {
-                    // 回车键触发过滤
-                    if (e.key === 'Enter') {
-                        e.preventDefault();
-                        // 如果有选中的建议项，先选择它
-                        if (suggestionsDiv.classList.contains('active')) {
-                            const current = suggestionsDiv.querySelector('.suggestion-item.selected');
-                            if (current) {
-                                const value = current.getAttribute('data-value');
-                                const currentVal = this.value.trim();
-
-                                // 特殊处理错误码过滤框
-                                if (id === 'filterRet') {
-                                    // 错误码过滤框：使用"或"关系拼接
-                                    if (value === 'all') {
-                                        if (currentVal) {
-                                            this.value = currentVal + '|' + 'all';
-                                        } else {
-                                            this.value = 'all';
-                                        }
-                                    } else {
-                                        const match = value.match(/（(-?\d+)）/);
-                                        let numericValue = value;
-                                        if (match) {
-                                            numericValue = match[1];
-                                        }
-
-                                        if (currentVal) {
-                                            this.value = currentVal + '|' + numericValue;
-                                        } else {
-                                            this.value = numericValue;
-                                        }
-                                    }
-                                } else {
-                                    // 其他过滤框：智能拼接
-                                    if (currentVal) {
-                                        // 智能添加：如果已经是正则表达式，用|，否则用逗号
-                                        if (currentVal.includes('|') || currentVal.includes('[') || currentVal.includes('(')) {
-                                            this.value = currentVal + '|' + value;
-                                        } else if (currentVal.includes(',')) {
-                                            this.value = currentVal + ',' + value;
-                                        } else {
-                                            this.value = currentVal + '|' + value;
-                                        }
-                                    } else {
-                                        this.value = value;
-                                    }
-                                }
-                                suggestionsDiv.classList.remove('active');
-                                suggestionsDiv.innerHTML = '';
-                                return;
-                            }
-                        }
-                        // 没有选中的建议项，触发过滤
-                        applyFilter();
-                        return;
-                    }
-
-                    if (!suggestionsDiv.classList.contains('active')) return;
-
-                    const items = suggestionsDiv.querySelectorAll('.suggestion-item');
-                    if (items.length === 0) return;
-
-                    if (e.key === 'ArrowDown') {
-                        e.preventDefault();
-                        const current = suggestionsDiv.querySelector('.suggestion-item.selected');
-                        if (current) {
-                            current.classList.remove('selected');
-                            const next = current.nextElementSibling;
-                            if (next) {
-                                next.classList.add('selected');
-                                next.scrollIntoView({ block: 'nearest' });
-                            }
-                        } else {
-                            items[0].classList.add('selected');
-                        }
-                    } else if (e.key === 'ArrowUp') {
-                        e.preventDefault();
-                        const current = suggestionsDiv.querySelector('.suggestion-item.selected');
-                        if (current) {
-                            current.classList.remove('selected');
-                            const prev = current.previousElementSibling;
-                            if (prev) {
-                                prev.classList.add('selected');
-                                prev.scrollIntoView({ block: 'nearest' });
-                            }
-                        }
-                    } else if (e.key === 'Escape') {
-                        suggestionsDiv.classList.remove('active');
-                        suggestionsDiv.innerHTML = '';
+                        positionDropdown(dropdown, this);
                     }
                 });
             });
 
-            // 全局点击事件：点击其他地方时隐藏所有下拉菜单
-            document.addEventListener('click', function(e) {
-                // 检查点击的是否是输入框或建议项
-                const isInput = e.target.closest('input[type="text"]');
-                const isSuggestion = e.target.closest('.suggestions');
+            // Helper: append condition to filter input
+            function appendToFilter(expr) {
+                const input = document.getElementById('filterInput');
+                if (!input) return;
+                const current = input.value.trim();
+                if (current) {
+                    input.value = current + ' AND ' + expr;
+                } else {
+                    input.value = expr;
+                }
+                updateFilterTags(input.value);
+                applyFilter();
+            }
 
-                if (!isInput && !isSuggestion) {
-                    // 隐藏所有下拉菜单
-                    document.querySelectorAll('.suggestions').forEach(div => {
-                        div.classList.remove('active');
-                        div.innerHTML = '';
-                    });
+            // Global click to close dropdowns
+            document.addEventListener('click', function(e) {
+                if (!e.target.closest('.field-btn') && !e.target.closest('.field-dropdown')) {
+                    document.querySelectorAll('.field-dropdown').forEach(d => d.remove());
+                    document.querySelectorAll('.field-btn.active').forEach(b => b.classList.remove('active'));
                 }
             });
         }
@@ -5757,10 +5688,9 @@ class HtmlGenerator:
             // 初始化键盘导航
             initKeyboardNavigation();
 
-            // 初始化自动补全（如果过滤框存在）
-            if (document.getElementById('filterCpu') || document.getElementById('filterPid') ||
-                document.getElementById('filterComm') || document.getElementById('filterRet')) {
-                initAutocomplete();
+            // 初始化统一过滤器（如果过滤框存在）
+            if (document.getElementById('filterInput')) {
+                initFilterFields();
             }
 
             // 处理锚点导航
@@ -6344,44 +6274,187 @@ class HtmlGenerator:
         /* Filter box styles */
         .filter-box {
             display: flex;
-            gap: 8px;
-            align-items: flex-end;
+            flex-direction: column;
+            gap: 6px;
             padding: 8px;
             background: var(--container-bg);
             border: 1px solid var(--border-color);
             border-radius: 8px;
             box-shadow: 0 2px 8px rgba(0,0,0,0.15);
-            flex-wrap: wrap;
         }
         [data-theme="dark"] .filter-box {
             box-shadow: 0 2px 8px rgba(0,0,0,0.4);
         }
-        .filter-box .clear-btn {
-            margin-top: 0; /* Reset margin for clear button */
-        }
-        .filter-input-group {
-            position: relative;
+        .filter-input-row {
             display: flex;
-            flex-direction: column;
+            gap: 6px;
+            align-items: center;
         }
-        .filter-box input {
+        .filter-input-row input {
+            flex: 1;
             padding: 6px 8px;
             border: 1px solid var(--border-color);
             border-radius: 3px;
-            background: rgba(200, 200, 200, 0.3); /* Semi-transparent light gray */
+            background: rgba(200, 200, 200, 0.3);
             color: var(--text-primary);
             font-size: 12px;
-            width: 140px;
+            min-width: 200px;
         }
-        [data-theme="dark"] .filter-box input {
-            background: rgba(100, 100, 100, 0.3); /* Darker semi-transparent for dark mode */
+        [data-theme="dark"] .filter-input-row input {
+            background: rgba(100, 100, 100, 0.3);
         }
-        .filter-box input:focus {
+        .filter-input-row input:focus {
             outline: none;
             border-color: var(--btn-primary);
         }
-        .filter-box input::placeholder {
+        .filter-input-row input::placeholder {
             color: var(--text-secondary);
+        }
+        /* Filter tags */
+        .filter-tags {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 4px;
+            min-height: 0;
+        }
+        .filter-tags:empty {
+            display: none;
+        }
+        .filter-tag {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            padding: 2px 8px;
+            border-radius: 12px;
+            font-size: 11px;
+            background: var(--btn-primary);
+            color: white;
+            cursor: default;
+            white-space: nowrap;
+        }
+        .filter-tag .tag-remove {
+            cursor: pointer;
+            font-size: 13px;
+            line-height: 1;
+            opacity: 0.8;
+        }
+        .filter-tag .tag-remove:hover {
+            opacity: 1;
+        }
+        .filter-tag-logic {
+            background: transparent;
+            color: var(--text-secondary);
+            font-weight: bold;
+            font-size: 11px;
+            padding: 2px 4px;
+            cursor: pointer;
+            border: 1px dashed var(--border-color);
+            border-radius: 4px;
+        }
+        .filter-tag-logic:hover {
+            background: var(--border-color);
+            color: var(--text-primary);
+        }
+        /* Field selector buttons */
+        .filter-fields {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 4px;
+        }
+        .field-btn {
+            padding: 2px 8px;
+            font-size: 11px;
+            border: 1px solid var(--border-color);
+            border-radius: 3px;
+            background: transparent;
+            color: var(--text-secondary);
+            cursor: pointer;
+            position: relative;
+        }
+        .field-btn:hover {
+            background: var(--border-color);
+            color: var(--text-primary);
+        }
+        .field-btn.active {
+            background: var(--btn-primary);
+            color: white;
+            border-color: var(--btn-primary);
+        }
+        /* Field dropdown */
+        .field-dropdown {
+            position: fixed;
+            min-width: 140px;
+            max-height: 200px;
+            overflow-y: auto;
+            background: var(--container-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 4px;
+            box-shadow: 0 -2px 8px rgba(0,0,0,0.2);
+            z-index: 3000;
+            padding: 4px 0;
+        }
+        [data-theme="dark"] .field-dropdown {
+            box-shadow: 0 -2px 8px rgba(0,0,0,0.5);
+        }
+        .field-dropdown-item {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            padding: 4px 8px;
+            font-size: 11px;
+            cursor: pointer;
+            color: var(--text-primary);
+        }
+        .field-dropdown-item:hover {
+            background: rgba(180, 180, 180, 0.3);
+        }
+        .field-dropdown-item input[type="checkbox"] {
+            margin: 0;
+            cursor: pointer;
+        }
+        .field-dropdown-item .hint-text {
+            color: var(--text-secondary);
+            font-size: 10px;
+            margin-left: auto;
+        }
+        .field-dropdown-actions {
+            display: flex;
+            gap: 4px;
+            padding: 4px 8px;
+            border-top: 1px solid var(--border-color);
+            margin-top: 2px;
+        }
+        .field-dropdown-actions button {
+            flex: 1;
+            padding: 2px 6px;
+            font-size: 10px;
+            border: 1px solid var(--border-color);
+            border-radius: 3px;
+            background: var(--btn-primary);
+            color: white;
+            cursor: pointer;
+        }
+        .field-dropdown-actions button.cancel-btn {
+            background: transparent;
+            color: var(--text-secondary);
+        }
+        /* Text input for dropdown (params, duration) */
+        .field-dropdown-input {
+            display: flex;
+            gap: 4px;
+            padding: 4px 8px;
+        }
+        .field-dropdown-input input {
+            flex: 1;
+            padding: 3px 6px;
+            font-size: 11px;
+            border: 1px solid var(--border-color);
+            border-radius: 3px;
+            background: rgba(200, 200, 200, 0.3);
+            color: var(--text-primary);
+        }
+        [data-theme="dark"] .field-dropdown-input input {
+            background: rgba(100, 100, 100, 0.3);
         }
 
         /* Hint tooltip */
@@ -6399,53 +6472,9 @@ class HtmlGenerator:
             line-height: 1.4;
             display: none;
         }
-
         [data-theme="dark"] .filter-hint {
             background: rgba(255, 255, 255, 0.95);
             color: #000;
-        }
-
-        /* Suggestions dropdown - pull-up menu */
-        .suggestions {
-            position: absolute;
-            bottom: 100%; /* Pull up above the input */
-            left: 0;
-            right: 0;
-            background: rgba(220, 220, 220, 0.95); /* Semi-transparent light gray */
-            border: 1px solid var(--border-color);
-            border-radius: 3px;
-            max-height: 150px;
-            overflow-y: auto;
-            z-index: 3000; /* Higher than filter-hint (2000) to avoid overlap */
-            display: none;
-            box-shadow: 0 -2px 8px rgba(0,0,0,0.2); /* Shadow upward */
-            margin-bottom: 4px; /* Space between input and menu */
-        }
-        [data-theme="dark"] .suggestions {
-            background: rgba(80, 80, 80, 0.95); /* Darker semi-transparent for dark mode */
-        }
-        .suggestions.active {
-            display: block;
-        }
-        .suggestion-item {
-            padding: 4px 8px;
-            cursor: pointer;
-            font-size: 11px;
-            border-bottom: 1px solid var(--border-color);
-            color: #333; /* Dark text for light background */
-        }
-        [data-theme="dark"] .suggestion-item {
-            color: #eee; /* Light text for dark background */
-        }
-        .suggestion-item:last-child {
-            border-bottom: none;
-        }
-        .suggestion-item:hover {
-            background: rgba(180, 180, 180, 0.8);
-        }
-        .suggestion-item.selected {
-            background: var(--btn-primary);
-            color: white;
         }
 
         /* Control buttons - base style */

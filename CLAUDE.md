@@ -67,7 +67,7 @@ Key components:
 - `_find_source_file()` — shared file search logic (kernel root, path prefixes, module dirs)
 - `_print_code_context()` — prints source code context around a line
 
-### `funcgraph.py` (7,187 lines) — Main Application
+### `funcgraph.py` (7,216 lines) — Main Application
 
 Organized into 8 sections with 4 core classes:
 
@@ -84,7 +84,7 @@ Organized into 8 sections with 4 core classes:
 
 #### Core Classes
 
-**`FtraceLine`** — Data class (`__slots__`) for parsed ftrace lines. 20 fields: `raw_line`, `expandable`, `func_info`, `raw_func_name`, `display_func_name`, `module_name`, `cpu`, `pid`, `comm`, `func_name_info`, `ret_value`, `params`, `duration`, `sort_duration`, `duration_raw`, `fold_id`, `fold_type`, `fold_ancestors`, `call_depth`. Dict-compatible `get()`/`__setitem__` for backward compatibility.
+**`FtraceLine`** — Data class (`__slots__`) for parsed ftrace lines. 24 fields: `raw_line`, `expandable`, `func_info`, `raw_func_name`, `display_func_name`, `module_name`, `cpu`, `pid`, `comm`, `func_name_info`, `ret_value`, `params`, `duration`, `sort_duration`, `duration_raw`, `fold_id`, `fold_type`, `fold_ancestors`, `call_depth`, `irqs_off`, `need_resched`, `hardirq_softirq`, `preempt_depth`. Dict-compatible `get()`/`__setitem__` for backward compatibility.
 
 **`FtraceParser`** — Parses raw ftrace output. Methods:
 - `parse(file_path, enable_fold)` → `list[FtraceLine]`
@@ -106,7 +106,7 @@ Organized into 8 sections with 4 core classes:
 - `_prepare_data()` — pre-processing: func links, filter data, module URLs
 - `_generate_content_lines()` — main loop: line containers, fold markers, syntax highlighting
 - `_generate_css()` — all CSS styles (~1050 lines) including light/dark themes, heatmap, fold guide lines, fold summary
-- `_generate_javascript()` — all JavaScript (~2400 lines) including keyboard nav, filtering, fold/unfold, heatmap, fold-to-depth, recursive fold, fold summary
+- `_generate_javascript()` — all JavaScript (~2400 lines) including keyboard nav, unified filter system, fold/unfold, heatmap, fold-to-depth, recursive fold, fold summary
 - Static helpers: `_adjust_func_info`, `_extract_line_number`, `_extract_file_path`
 
 #### Backward-Compatible Wrappers
@@ -140,3 +140,5 @@ ftrace.txt → FtraceParser.parse() → AddressResolver.resolve_batch() → Html
 - localStorage keys are namespaced per-file (hash of document title) to prevent cross-file state corruption; `theme` is global.
 - Fold system uses `_setFolded()` as atomic unit — `toggleFold`, `foldToDepth`, `toggleFoldRecursive` all delegate to it, batching localStorage writes.
 - Fold icons use CSS `transform: rotate(90deg)` with transition instead of character switching (GPU-composited).
+- Unified filter uses a single text input with `field:value` syntax, parsed by a recursive descent expression parser (`tokenizeFilter` → `parseFilterExpr` → `evalExpr`) supporting AND/OR/NOT and parentheses. Field buttons generate dropdown selectors (checkboxes for enumerable fields, text input for free-form). Dropdowns are mounted on `document.body` with fixed positioning to avoid interactive-element-nesting issues with `<button>`.
+- Latency fields (`irqs_off`, `need_resched`, `hardirq_softirq`, `preempt_depth`) are parsed from the pipe-delimited area between the two `|` separators in latency-mode ftrace output, and output as `data-irqs`, `data-resched`, `data-hirq`, `data-preempt` HTML attributes. Latency field buttons only appear when the trace contains latency data.
