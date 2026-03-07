@@ -2277,37 +2277,25 @@ class HtmlGenerator:
     </button>
     
     <div class="container">
-        <h1>
+        <div class="page-header">
             <span class="title-main">{APP_TITLE}</span>
-            <span class="title-meta">
-                <span class="version-badge">v{APP_VERSION}</span>
-                <span class="author-badge">{APP_AUTHOR}</span>
-            </span>
-        </h1>
-        
-        <div class="header-controls">
-            <div></div> <!-- 占位元素 -->
-            <button class="theme-toggle" onclick="toggleTheme()">Theme</button>
-        </div>
-        
-        <div class="summary">
-            <div>
-                <span>Lines: {total_lines}</span>
-                <span>•</span>
-                <span>Expandable: {expandable_entries}</span>
-                <span>•</span>
-                <span>Kernel Functions: {len(self.vmlinux_funcs)}</span>
-                <span>•</span>
-                <span>Modules: {len(self.module_funcs)}</span>
+            <span class="header-version">v{APP_VERSION}</span>
+            <span class="header-sep">·</span>
+            <span class="header-stats">
+                <span>{total_lines} lines</span>
+                <span class="header-sep">·</span>
+                <span>{expandable_entries} expandable</span>
+                <span class="header-sep">·</span>
+                <span>{len(self.vmlinux_funcs)} kernel funcs</span>
                 <span id="visibleLinesContainer" style="display: none;">
-                    <span>•</span>
+                    <span class="header-sep">·</span>
                     <span>Filtered: <span id="summaryVisibleLines">{total_lines}</span></span>
                 </span>
-            </div>
-            <div class="info-toggle-btn" onclick="toggleInfoPanel()">
-                <span class="info-toggle-icon">▶</span>
-                <span>ⓘ</span>
-            </div>
+            </span>
+            <span class="header-actions">
+                <button class="header-btn" onclick="toggleTheme()">Theme</button>
+                <button class="header-btn" onclick="toggleInfoPanel()">ⓘ</button>
+            </span>
         </div>
 
         <div class="info-panel" id="infoPanel">
@@ -4707,30 +4695,22 @@ class HtmlGenerator:
         // 切换信息面板展开/折叠
         function toggleInfoPanel() {
             const panel = document.getElementById('infoPanel');
-            const toggleBtn = document.querySelector('.info-toggle-btn');
-            const icon = toggleBtn.querySelector('.info-toggle-icon');
             const isExpanded = panel.classList.contains('show');
-            
             if (isExpanded) {
                 panel.classList.remove('show');
-                icon.classList.remove('expanded');
                 lsSet('infoPanelExpanded', 'false');
             } else {
                 panel.classList.add('show');
-                icon.classList.add('expanded');
                 lsSet('infoPanelExpanded', 'true');
             }
         }
-        
+
         // 初始化信息面板状态
         function initInfoPanel() {
             const expanded = lsGet('infoPanelExpanded') === 'true';
             if (expanded) {
                 const panel = document.getElementById('infoPanel');
-                const toggleBtn = document.querySelector('.info-toggle-btn');
-                const icon = toggleBtn.querySelector('.info-toggle-icon');
                 panel.classList.add('show');
-                icon.classList.add('expanded');
             }
         }
 
@@ -5933,83 +5913,69 @@ class HtmlGenerator:
         }
         .container {
             background: var(--container-bg);
-            padding: 12px 8px 12px 8px;
+            padding: 4px 4px 4px 4px;
             border-radius: 4px;
             box-shadow: none;
             overflow-x: auto;
             transition: background-color 0.3s;
             max-width: 100%;
         }
-        h1 {
-            text-align: center;
-            color: var(--text-color);
-            margin: 0 0 12px 0;
-            font-size: 28px;
-            font-weight: 700;
-            letter-spacing: 1.5px;
+        /* Compact single-line page header */
+        .page-header {
             display: flex;
             align-items: center;
-            justify-content: center;
-            gap: 12px;
+            gap: 6px;
+            padding: 5px 8px;
+            margin-bottom: 4px;
+            border-bottom: 1px solid var(--border-color);
+            font-size: 12px;
+            color: var(--summary-text);
             flex-wrap: wrap;
-            position: relative;
-            padding-bottom: 10px;
         }
-        h1::after {
-            content: '';
-            position: absolute;
-            bottom: 0;
-            left: 50%;
-            transform: translateX(-50%);
-            width: 80px;
-            height: 3px;
-            background: linear-gradient(90deg, transparent, var(--btn-primary), transparent);
-            border-radius: 2px;
-        }
-        .title-main {
-            display: inline;
+        .page-header .title-main {
+            font-size: 13px;
+            font-weight: 700;
             background: linear-gradient(135deg, var(--btn-primary), var(--link-color));
             -webkit-background-clip: text;
             -webkit-text-fill-color: transparent;
             background-clip: text;
-            font-weight: 800;
-            letter-spacing: 2px;
+            letter-spacing: 0.5px;
+            margin-right: 2px;
         }
-        .title-meta {
+        .header-version {
+            font-size: 11px;
+            color: var(--summary-text);
+            opacity: 0.7;
+        }
+        .header-sep {
+            color: var(--border-color);
+            margin: 0 1px;
+        }
+        .header-stats {
+            flex: 1;
             display: flex;
             align-items: center;
-            gap: 10px;
-            white-space: nowrap;
-            font-size: 14px;
-            margin-left: 8px;
+            gap: 4px;
+            flex-wrap: wrap;
         }
-        .version-badge {
-            display: inline-flex;
-            align-items: center;
-            background: linear-gradient(135deg, var(--btn-primary), #2e7d32);
-            color: white;
-            padding: 4px 10px;
-            font-size: 12px;
-            font-weight: 700;
-            border-radius: 12px;
-            box-shadow: 0 2px 6px rgba(76, 175, 80, 0.3);
-            letter-spacing: 0.5px;
+        .header-actions {
+            display: flex;
+            gap: 4px;
+            margin-left: auto;
         }
-        [data-theme="dark"] .version-badge {
-            background: linear-gradient(135deg, #66bb6a, #2e7d32);
-            box-shadow: 0 2px 6px rgba(102, 187, 106, 0.4);
+        .header-btn {
+            padding: 2px 8px;
+            background: transparent;
+            color: var(--summary-text);
+            border: 1px solid var(--border-color);
+            border-radius: 3px;
+            cursor: pointer;
+            font-size: 11px;
+            transition: background-color 0.15s, color 0.15s;
         }
-        .author-badge {
-            display: inline-flex;
-            align-items: center;
-            background: linear-gradient(135deg, #64b5f6, #1976d2);
-            color: white;
-            padding: 4px 10px;
-            font-size: 12px;
-            font-weight: 600;
-            border-radius: 12px;
-            box-shadow: 0 2px 6px rgba(25, 118, 210, 0.3);
-            letter-spacing: 0.5px;
+        .header-btn:hover {
+            background: var(--line-hover);
+            color: var(--text-color);
         }
         [data-theme="dark"] .author-badge {
             background: linear-gradient(135deg, #42a5f5, #1565c0);
@@ -6029,27 +5995,6 @@ class HtmlGenerator:
         }
         .info-toggle:hover {
             opacity: 0.8;
-        }
-        .header-controls {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 15px;
-            gap: 10px;
-            flex-wrap: wrap;
-        }
-        .theme-toggle {
-            padding: 8px 12px;
-            background-color: var(--btn-primary);
-            color: white;
-            border: none;
-            border-radius: 4px;
-            cursor: pointer;
-            font-size: 12px;
-            transition: background-color 0.2s;
-        }
-        .theme-toggle:hover {
-            background-color: var(--btn-primary-hover);
         }
         .line-container {
             display: flex;
@@ -6286,49 +6231,9 @@ class HtmlGenerator:
         .current-line {
             background-color: var(--line-highlighted);
         }
-        .summary {
-            background-color: var(--summary-bg);
-            border: none;
-            border-bottom: 1px solid var(--border-color);
-            border-radius: 0;
-            padding: 6px 0;
-            margin: 0 0 8px 0;
-            font-size: 11px;
-            color: var(--summary-text);
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            gap: 12px;
-        }
-        .summary > div:first-child {
-            flex: 1;
-        }
-        .summary span {
-            margin: 0 5px;
-        }
-        .info-toggle-btn {
-            display: flex;
-            align-items: center;
-            cursor: pointer;
-            user-select: none;
-            padding: 4px 8px;
-            border-radius: 4px;
-            transition: background-color 0.2s;
-            font-size: 16px;
-            color: var(--text-color);
-            white-space: nowrap;
-        }
-        .info-toggle-btn:hover {
-            background-color: rgba(0, 0, 0, 0.05);
-        }
-        [data-theme="dark"] .info-toggle-btn:hover {
-            background-color: rgba(255, 255, 255, 0.05);
-        }
         .info-toggle-icon {
             display: inline-block;
-            margin-right: 6px;
             transition: transform 0.3s;
-            font-size: 12px;
         }
         .info-toggle-icon.expanded {
             transform: rotate(90deg);
@@ -6879,13 +6784,9 @@ class HtmlGenerator:
             .container {
                 padding: 6px 4px;
             }
-            h1 {
-                font-size: 20px;
-                margin-bottom: 8px;
-            }
-            .summary {
-                font-size: 10px;
-                gap: 8px;
+            .page-header {
+                font-size: 11px;
+                padding: 4px 6px;
             }
             .line-container {
                 font-size: 11px;
