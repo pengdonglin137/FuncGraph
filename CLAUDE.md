@@ -67,7 +67,7 @@ Key components:
 - `_find_source_file()` — shared file search logic (kernel root, path prefixes, module dirs)
 - `_print_code_context()` — prints source code context around a line
 
-### `funcgraph.py` (7,298 lines) — Main Application
+### `funcgraph.py` (7,187 lines) — Main Application
 
 Organized into 8 sections with 4 core classes:
 
@@ -105,8 +105,8 @@ Organized into 8 sections with 4 core classes:
 - `generate()` → (html_str, vmlinux_time, module_time) — assembly method (~130 lines)
 - `_prepare_data()` — pre-processing: func links, filter data, module URLs
 - `_generate_content_lines()` — main loop: line containers, fold markers, syntax highlighting
-- `_generate_css()` — all CSS styles (~1100 lines) including light/dark themes, heatmap, fold summary
-- `_generate_javascript()` — all JavaScript (~2500 lines) including keyboard nav, filtering, fold/unfold, heatmap, fold-to-depth, fold summary
+- `_generate_css()` — all CSS styles (~1050 lines) including light/dark themes, heatmap, fold guide lines, fold summary
+- `_generate_javascript()` — all JavaScript (~2400 lines) including keyboard nav, filtering, fold/unfold, heatmap, fold-to-depth, recursive fold, fold summary
 - Static helpers: `_adjust_func_info`, `_extract_line_number`, `_extract_file_path`
 
 #### Backward-Compatible Wrappers
@@ -137,3 +137,6 @@ ftrace.txt → FtraceParser.parse() → AddressResolver.resolve_batch() → Html
 - Environment variables `CROSS_COMPILE` and `LLVM` control toolchain selection for cross-architecture support.
 - File sections are delimited by `# ====` separator comments.
 - `FtraceLine` uses `__slots__` for memory efficiency with dict-compatible accessors for gradual migration.
+- localStorage keys are namespaced per-file (hash of document title) to prevent cross-file state corruption; `theme` is global.
+- Fold system uses `_setFolded()` as atomic unit — `toggleFold`, `foldToDepth`, `toggleFoldRecursive` all delegate to it, batching localStorage writes.
+- Fold icons use CSS `transform: rotate(90deg)` with transition instead of character switching (GPU-composited).

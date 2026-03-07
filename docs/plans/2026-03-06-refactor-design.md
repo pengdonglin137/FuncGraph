@@ -423,7 +423,7 @@ def main()
 | 指标 | 重构前 | 重构后 | 说明 |
 |------|--------|--------|------|
 | 文件数 | 2 | 2 | 不变 |
-| funcgraph.py 行数 | 6,948 | 7,044 | +96 行（类定义开销，但结构大幅改善） |
+| funcgraph.py 行数 | 6,948 | 7,187 | +239 行（类定义 + 可视化优化 + bug 修复） |
 | fastfaddr2line.py 行数 | 1,016 | 903 | -113 行（-11%，消除重复） |
 | 最长函数 | ~4,400 行 | ~500 行 | `_prepare_data()` 506 行 |
 | 类 | 0 | 4 | FtraceLine, FtraceParser, AddressResolver, HtmlGenerator |
@@ -462,9 +462,9 @@ def main()
 | 组件 | 改动 |
 |------|------|
 | CSS | 5 级热力背景色 + 深色主题变体 + `heatmap-off` 关闭态样式 |
-| JS | `applyDurationHeatmap()` 分位数计算 + `toggleHeatmap()` 开关 |
-| HTML | `.right-buttons` 中新增 "Heatmap" 按钮 |
-| 持久化 | `localStorage.heatmapEnabled` |
+| JS | `applyDurationHeatmap()` 分位数计算 + `toggleHeatmap()` 开关 + 图例生成 |
+| HTML | 工具栏中 "Heatmap" 按钮 + 内联图例（显示实际分位数阈值） |
+| 持久化 | `lsGet/lsSet('heatmapEnabled')` — 按文件命名空间 |
 
 ### 7.2 P1: 折叠层级控制
 
@@ -487,8 +487,44 @@ def main()
 | CSS | `.fold-summary` 及子 span（count/time/ret）着色 |
 | JS | `addFoldSummary(foldId)` 统计子调用数、总耗时、返回值 |
 | JS | `removeFoldSummary(foldId)` 展开时移除摘要 |
-| JS | `toggleFold()` 中集成：折叠时添加、展开时移除 |
+| JS | `_setFolded()` 中集成：折叠时添加、展开时移除 |
 | JS | 页面加载时为已持久化的折叠块恢复摘要 |
+
+### 7.4 UI 优化（2026-03-07）
+
+| 改动 | 说明 |
+|------|------|
+| 紧凑页头 | 合并 h1 + summary + theme 按钮为单行 `.page-header`，节省 ~88px 高度 |
+| 悬浮工具栏 | 按钮从竖排改为水平分组（导航 \| 展开/折叠 \| 工具），语义 CSS class |
+| localStorage 命名空间 | 按文件 title hash 前缀，防止跨文件状态污染 |
+| 耗时 tooltip | `title` 属性显示原始耗时值 |
+| `prefers-color-scheme` | 首次访问自动检测系统深色/浅色模式 |
+| 去除 console.log | 移除 21 条 debug 日志，保留 13 条 catch 内 warn |
+| CSS 清理 | 修复 4 个未定义变量，删除 8 处重复声明 |
+
+### 7.5 折叠系统优化（2026-03-07）
+
+| 改动 | 说明 |
+|------|------|
+| `_setFolded()` | 原子折叠操作，不写 localStorage，所有折叠 API 委托给它 |
+| 性能 | 合并重复 DOM 查询，展开后只恢复子 fold，批量 localStorage 写入 |
+| 递归折叠 | Shift+Click 递归折叠/展开含所有子块 |
+| CSS 图标动画 | ▶ + `rotate(90deg)` 替代 ▼/▶ 字符切换，0.15s 过渡 |
+| 折叠引导线 | `.fold-guide` 在 fold-marker 列画竖线 + exit 行 └ 折线 |
+| 图标增大 | 20×20px 居中 + hover 背景，提升点击体验 |
+
+### 7.6 解析与过滤 Bug 修复（2026-03-07）
+
+| Bug | 修复 |
+|-----|------|
+| B1 | `ret_value` 不再被 Format 3/4 无条件覆盖，统一正则含 `true\|false` |
+| B2 | PID/comm 解析优先匹配 `comm-PID`，`tgid/pid` 取第二个数字 |
+| B3 | JS 用 `BigInt` 解析 64 位 hex 返回值，避免精度丢失 |
+| B5 | CPU/PID/comm 为空的行在过滤时被隐藏 |
+| B6 | `ret=true/false` 存为 `data-ret-bool` 属性 |
+| B10 | `comm-PID` 正则限制 comm 必须含非数字字符 |
+| B11 | `hasFilter` 用编译后的 regex 对象判断 |
+| B12 | `duration_raw` 写入 title 属性前 HTML 转义 |
 
 ---
 
