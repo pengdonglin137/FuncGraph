@@ -9,8 +9,8 @@ FuncGraph converts `function_graph` ftrace output into an interactive, filterabl
 ## Cheat Sheet
 
 - Common flags: `--fast`, `--filter`, `--func-links`, `--highlight-code` 🔧
-- Duration filters: `>10`, `<5&&>2`, `sort:desc` ⏱️
-- Parameter filters examples: `skb=...`, `do_xxx(arg=1)` 🔎
+- Filter syntax: `cpu:3 AND duration:>10 sort:desc` ⏱️
+- Latency filter: `irqs:d AND hirq:h` (latency-mode traces only) 🔎
 - Keyboard: Tab focuses fold icon; Enter toggles fold; `Esc` clears selection ⌨️
 
 ## Key features
@@ -18,7 +18,8 @@ FuncGraph converts `function_graph` ftrace output into an interactive, filterabl
 - Interactive ftrace visualization with fold/unfold call blocks
 - Clickable source links (local or online) and optional syntax highlighting
 - High-performance address resolution (`fastfaddr2line.py`)
-- Multi-dimensional filtering (CPU/PID/params/duration) with suggestions
+- **Unified filter** with `field:value` syntax, AND/OR/NOT logic, field-selector buttons with dropdown menus
+- **Latency field support**: parses irqs-off, need-resched, hardirq/softirq, preempt-depth from latency-mode traces
 - Keyboard-friendly navigation and accessible fold controls
 
 ---
@@ -66,7 +67,7 @@ The following table documents each command-line option supported by `funcgraph.p
 | `--use-external` | flag | Force use of external `faddr2line`/`addr2line` (mutually exclusive with `--fast`) | `--use-external` |
 | `--highlight-code` | flag | Enable C source syntax highlighting in HTML (requires Pygments) | `--highlight-code` |
 | `--path-prefix` | paths... | Path prefixes to strip/replace when mapping addr2line paths to kernel-src | `--path-prefix /home/user/build/kernel` |
-| `--filter` | flag | Include the interactive filter box (CPU/PID/params/duration) in the HTML | `--filter` |
+| `--filter` | flag | Include the unified filter UI (supports `field:value` queries with AND/OR/NOT) | `--filter` |
 | `--func-links` | flag | Add clickable source links to function names (adds some processing overhead) | `--func-links` |
 | `--entry-offset` | int (default: `0`) | Offset to add to function entry addresses (useful for patched functions) | `--entry-offset 8` |
 | `--enable-fold` | flag | Enable function call folding UI (collapse/expand call blocks) | `--enable-fold` |
@@ -213,12 +214,29 @@ python3 funcgraph.py ~/ftrace.txt \
 
 ### 3. In the Browser
 
-Open `result.html` and use the filter features:
-- **Find slowest functions**: Enter `sort:desc` in duration
-- **Find outliers**: Enter `>100||<0.1 sort:desc` in duration
-- **Specific process**: Enter `1234|5678` in PID, `nginx|bash` in process name
-- **Combined filtering**: CPU `0|1`, PID `1234`, duration `>5&&<50 sort:desc`
+Open `result.html` and use the unified filter:
+- **Find slowest functions**: `duration:>0 sort:desc`
+- **Find outliers**: `duration:>100 OR duration:<0.1`
+- **Specific process**: `pid:1234 OR pid:5678`, `comm:nginx OR comm:bash`
+- **Combined filtering**: `cpu:0 AND pid:1234 AND duration:>5`
+- **Latency mode**: `irqs:d AND hirq:h` (only for latency-mode traces)
+- **Mouse workflow**: Click field buttons (cpu, pid, irqs...) to open dropdown selectors
 - **Fold calls**: Click the `▶` icon before function entry lines to fold/expand
+
+#### Supported Filter Fields
+
+| Field | Attribute | Operators | Example |
+|-------|-----------|-----------|---------|
+| `cpu` | data-cpu | regex | `cpu:0`, `cpu:0\|1` |
+| `pid` | data-pid | regex | `pid:1234` |
+| `comm` | data-comm | regex | `comm:bash` |
+| `ret` | data-ret | regex, `all` | `ret:all`, `ret:-22` |
+| `params` | data-params | regex | `params:folio` |
+| `duration` | data-duration | `>`, `<`, `>=`, `<=` | `duration:>10` |
+| `irqs` | data-irqs | char | `irqs:d` (disabled) |
+| `resched` | data-resched | char | `resched:N` |
+| `hirq` | data-hirq | char | `hirq:h` (hardirq) |
+| `preempt` | data-preempt | `>`, `<`, `>=`, `<=` | `preempt:>1` |
 
 ## Project Structure
 
@@ -243,6 +261,6 @@ Open source project, contributions welcome!
 
 ---
 
-**Version**: v0.6
-**Last Updated**: 2026-01-30
+**Version**: v0.7
+**Last Updated**: 2026-03-07
 **Status**: ✅ Production Ready

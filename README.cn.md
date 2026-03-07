@@ -9,8 +9,8 @@ FuncGraph 将 `function_graph` 的 ftrace 输出转换为交互式、可过滤�
 ## 速查（Cheat Sheet）
 
 - 常用选项：`--fast`、`--filter`、`--func-links`、`--highlight-code` 🔧
-- 耗时过滤：`>10`、`<5&&>2`、`sort:desc` ⏱️
-- 参数过滤示例：`skb=...`、`do_xxx(arg=1)` 🔎
+- 过滤语法：`cpu:3 AND duration:>10 sort:desc` ⏱️
+- Latency 过滤：`irqs:d AND hirq:h`（仅限 latency 模式 trace）🔎
 - 键盘：Tab 聚焦折叠图标；Enter 切换折叠；Esc 清除选择 ⌨️
 
 ## 主要特性
@@ -18,7 +18,8 @@ FuncGraph 将 `function_graph` 的 ftrace 输出转换为交互式、可过滤�
 - 交互式 ftrace 可视化与折叠/展开
 - 可点击源码链接（在线或本地），支持高亮选项
 - 高性能地址解析（`fastfaddr2line.py`）
-- 多维度过滤（CPU/PID/参数/耗时）与候选建议
+- **统一过滤器**：`field:value` 语法，支持 AND/OR/NOT 逻辑运算，字段按钮下拉选择
+- **Latency 字段支持**：解析 irqs-off、need-resched、hardirq/softirq、preempt-depth
 - 键盘友好导航与可访问折叠控制
 
 ---
@@ -67,7 +68,7 @@ python3 funcgraph.py trace.txt \
 | `--use-external` | 标志 | 强制使用外部 `faddr2line`/`addr2line`（与 `--fast` 互斥） | `--use-external` |
 | `--highlight-code` | 标志 | 启用 HTML 中 C 源码语法高亮（需要 Pygments） | `--highlight-code` |
 | `--path-prefix` | 路径... | 在将 addr2line 路径映射到 kernel-src 时要删除/替换的路径前缀 | `--path-prefix /home/user/build/kernel` |
-| `--filter` | 标志 | 在 HTML 中包含交互式过滤框（CPU/PID/参数/耗时） | `--filter` |
+| `--filter` | 标志 | 在 HTML 中包含统一过滤器（支持 `field:value` 查询与 AND/OR/NOT） | `--filter` |
 | `--func-links` | 标志 | 为函数名添加可点击的源码链接（添加一些处理开销） | `--func-links` |
 | `--entry-offset` | int（默认：`0`） | 要添加到函数入口地址的偏移（对打补丁的函数有用） | `--entry-offset 8` |
 | `--enable-fold` | 标志 | 启用函数调用折叠 UI（折叠/展开调用块） | `--enable-fold` |
@@ -214,12 +215,29 @@ python3 funcgraph.py ~/ftrace.txt \
 
 ### 3. 在浏览器中
 
-打开 `result.html` 并使用过滤功能：
-- **查找最慢的函数**：在耗时输入框输入 `sort:desc`
-- **查找异常**：在耗时输入框输入 `>100||<0.1 sort:desc`
-- **特定进程**：在 PID 输入框输入 `1234|5678`，在进程名输入框输入 `nginx|bash`
-- **组合过滤**：CPU `0|1`，PID `1234`，耗时 `>5&&<50 sort:desc`
+打开 `result.html` 使用统一过滤器：
+- **查找最慢的函数**：`duration:>0 sort:desc`
+- **查找异常**：`duration:>100 OR duration:<0.1`
+- **特定进程**：`pid:1234 OR pid:5678`，`comm:nginx OR comm:bash`
+- **组合过滤**：`cpu:0 AND pid:1234 AND duration:>5`
+- **Latency 模式**：`irqs:d AND hirq:h`（仅限 latency 模式 trace）
+- **鼠标操作**：点击字段按钮（cpu、pid、irqs…）打开下拉选择器
 - **折叠调用**：点击函数入口行前的 `▶` 图标可折叠/展开调用块
+
+#### 支持的过滤字段
+
+| 字段 | 属性 | 运算符 | 示例 |
+|------|------|--------|------|
+| `cpu` | data-cpu | 正则 | `cpu:0`，`cpu:0\|1` |
+| `pid` | data-pid | 正则 | `pid:1234` |
+| `comm` | data-comm | 正则 | `comm:bash` |
+| `ret` | data-ret | 正则，`all` | `ret:all`，`ret:-22` |
+| `params` | data-params | 正则 | `params:folio` |
+| `duration` | data-duration | `>`、`<`、`>=`、`<=` | `duration:>10` |
+| `irqs` | data-irqs | 字符 | `irqs:d`（disabled） |
+| `resched` | data-resched | 字符 | `resched:N` |
+| `hirq` | data-hirq | 字符 | `hirq:h`（hardirq） |
+| `preempt` | data-preempt | `>`、`<`、`>=`、`<=` | `preempt:>1` |
 
 
 ## 项目结构
@@ -246,6 +264,6 @@ funcgraph_visualization/
 
 ---
 
-**版本**: v0.6
-**最后更新**: 2026-02-06
+**版本**: v0.7
+**最后更新**: 2026-03-07
 **状态**: ✅ 生产就绪
