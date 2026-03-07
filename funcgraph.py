@@ -3177,7 +3177,7 @@ class HtmlGenerator:
                 content_html += f'<span class="fold-marker">{fold_marker}</span>'
             else:
                 # 非可折叠行也插入空白fold-marker以保持对齐
-                content_html += '<span class="fold-marker"><span style="display:inline-block; width:20px; height:16px;"></span></span>'
+                content_html += '<span class="fold-marker"><span style="display:inline-block; width:20px; height:20px;"></span></span>'
 
             content_html += f'<span class="line-content">{escaped_line}</span>'
 
@@ -6004,12 +6004,13 @@ class HtmlGenerator:
             font-family: 'Courier New', monospace;
         }
         .fold-marker {
-            display: inline-block;
-            width: 16px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 20px;
+            height: 20px;
             color: var(--btn-primary);
             font-weight: bold;
-            font-size: 12px;
-            margin-right: 4px;
             cursor: pointer;
             -webkit-user-select: none;
             -moz-user-select: none;
@@ -6021,12 +6022,34 @@ class HtmlGenerator:
             color: var(--btn-primary-hover);
         }
         .fold-icon {
-            display: inline-block;
-            transition: transform 0.15s ease;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 20px;
+            height: 20px;
+            font-size: 11px;
+            border-radius: 3px;
+            transition: transform 0.15s ease, background-color 0.1s;
             transform: rotate(0deg);
+        }
+        .fold-icon:hover {
+            background-color: rgba(0, 0, 0, 0.08);
+        }
+        [data-theme="dark"] .fold-icon:hover {
+            background-color: rgba(255, 255, 255, 0.1);
         }
         .fold-icon.expanded {
             transform: rotate(90deg);
+        }
+        /* Fold guide lines — vertical indent guides for nested calls */
+        .fold-inner[data-call-depth],
+        .fold-exit[data-call-depth] {
+            border-left: 1px solid rgba(0, 0, 0, 0.08);
+            margin-left: 0;
+        }
+        [data-theme="dark"] .fold-inner[data-call-depth],
+        [data-theme="dark"] .fold-exit[data-call-depth] {
+            border-left: 1px solid rgba(255, 255, 255, 0.06);
         }
         .fold-entry {
             background-color: rgba(76, 175, 80, 0.05);
