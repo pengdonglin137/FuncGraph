@@ -3125,16 +3125,17 @@ class HtmlGenerator:
                 data_attrs += f' data-params="{escaped_params}"'
 
             # 添加耗时属性（用于耗时过滤和排序）
-            # data-duration 用于过滤（使用原始显示值）
-            # data-sort-duration 用于排序（使用实际值）
             if duration is not None:
                 data_attrs += f' data-duration="{duration}"'
                 if sort_duration is not None and sort_duration != duration:
                     data_attrs += f' data-sort-duration="{sort_duration}"'
                 if duration_raw:
-                    # 显示原始耗时字符串（带单位）
                     escaped_duration = duration_raw.replace('"', '&quot;').replace('<', '&lt;').replace('>', '&gt;')
                     data_attrs += f' data-duration-raw="{escaped_duration}"'
+                    # Heatmap level based on ftrace duration prefix character
+                    prefix_char = duration_raw.lstrip()[0] if duration_raw.lstrip() and duration_raw.lstrip()[0] in '$@*#!+' else ' '
+                    heat_map = {'$': '7', '@': '6', '*': '5', '#': '4', '!': '3', '+': '2', ' ': '1'}
+                    data_attrs += f' data-heat="{heat_map.get(prefix_char, "1")}"'
 
             # 添加返回值属性（用于错误码过滤）
             if ret_value:
@@ -5539,59 +5540,25 @@ class HtmlGenerator:
         // ============================================================
         let heatmapEnabled = lsGet('heatmapEnabled') !== 'false';
 
+        // Heatmap: data-heat is pre-computed in Python based on ftrace prefix markers.
+        // This function only builds the legend and applies visibility.
         function applyDurationHeatmap() {
-            const lines = document.querySelectorAll('.line-container[data-duration]');
-            if (lines.length === 0) return;
-
-            // Collect all duration values
-            const durations = [];
-            lines.forEach(line => {
-                const val = parseFloat(line.getAttribute('data-sort-duration') || line.getAttribute('data-duration'));
-                if (!isNaN(val) && val > 0) durations.push(val);
-            });
-            if (durations.length === 0) return;
-
-            // Sort and compute percentile thresholds
-            durations.sort((a, b) => a - b);
-            const p = (pct) => durations[Math.min(Math.floor(durations.length * pct), durations.length - 1)];
-            const thresholds = [p(0.20), p(0.40), p(0.60), p(0.80)];
-
-            lines.forEach(line => {
-                const val = parseFloat(line.getAttribute('data-sort-duration') || line.getAttribute('data-duration'));
-                if (isNaN(val) || val <= 0) return;
-                let heat;
-                if (val <= thresholds[0]) heat = '1';
-                else if (val <= thresholds[1]) heat = '2';
-                else if (val <= thresholds[2]) heat = '3';
-                else if (val <= thresholds[3]) heat = '4';
-                else heat = '5';
-                line.setAttribute('data-heat', heat);
-            });
-
-            // Build legend
-            const fmtDur = (v) => {
-                if (v >= 1000000) return (v / 1000000).toFixed(1) + 's';
-                if (v >= 1000) return (v / 1000).toFixed(1) + 'ms';
-                return v.toFixed(1) + 'us';
-            };
-            const colors = [
-                'rgba(76,175,80,0.35)', 'rgba(139,195,74,0.4)',
-                'rgba(255,235,59,0.5)', 'rgba(255,152,0,0.55)', 'rgba(244,67,54,0.6)'
-            ];
-            const labels = [
-                '≤' + fmtDur(thresholds[0]), '≤' + fmtDur(thresholds[1]),
-                '≤' + fmtDur(thresholds[2]), '≤' + fmtDur(thresholds[3]),
-                '>' + fmtDur(thresholds[3])
-            ];
             const legend = document.getElementById('heatmapLegend');
             if (legend) {
-                legend.innerHTML = colors.map((c, i) =>
-                    '<span class="heatmap-legend-item" style="background:' + c + '"></span>' +
-                    '<span class="heatmap-legend-label">' + labels[i] + '</span>'
+                const levels = [
+                    { color: 'rgba(76,175,80,0.35)',  label: '≤10us' },
+                    { color: 'rgba(139,195,74,0.4)',  label: '>10us' },
+                    { color: 'rgba(255,235,59,0.5)',  label: '>100us' },
+                    { color: 'rgba(255,193,7,0.55)',  label: '>1ms' },
+                    { color: 'rgba(255,152,0,0.6)',   label: '>10ms' },
+                    { color: 'rgba(244,67,54,0.65)',  label: '>100ms' },
+                    { color: 'rgba(183,28,28,0.7)',   label: '>1s' }
+                ];
+                legend.innerHTML = levels.map(l =>
+                    '<span class="heatmap-legend-item" style="background:' + l.color + '"></span>' +
+                    '<span class="heatmap-legend-label">' + l.label + '</span>'
                 ).join('');
             }
-
-            // Apply visibility
             updateHeatmapVisibility();
         }
 
@@ -6152,17 +6119,22 @@ class HtmlGenerator:
         [data-theme="dark"] .fold-inner {
             background-color: rgba(33, 150, 243, 0.05);
         }
-        /* Duration heatmap colors (P0) */
-        .line-container[data-heat="1"] { background-color: rgba(76, 175, 80, 0.08); }
-        .line-container[data-heat="2"] { background-color: rgba(139, 195, 74, 0.10); }
-        .line-container[data-heat="3"] { background-color: rgba(255, 235, 59, 0.12); }
-        .line-container[data-heat="4"] { background-color: rgba(255, 152, 0, 0.15); }
-        .line-container[data-heat="5"] { background-color: rgba(244, 67, 54, 0.18); }
-        [data-theme="dark"] .line-container[data-heat="1"] { background-color: rgba(76, 175, 80, 0.12); }
-        [data-theme="dark"] .line-container[data-heat="2"] { background-color: rgba(139, 195, 74, 0.14); }
-        [data-theme="dark"] .line-container[data-heat="3"] { background-color: rgba(255, 235, 59, 0.16); }
-        [data-theme="dark"] .line-container[data-heat="4"] { background-color: rgba(255, 152, 0, 0.20); }
-        [data-theme="dark"] .line-container[data-heat="5"] { background-color: rgba(244, 67, 54, 0.24); }
+        /* Duration heatmap colors — based on ftrace prefix markers */
+        /* 1: ≤10us(space)  2: >10us(+)  3: >100us(!)  4: >1ms(#)  5: >10ms(*)  6: >100ms(@)  7: >1s($) */
+        .line-container[data-heat="1"] { background-color: rgba(76, 175, 80, 0.06); }   /* green - fast */
+        .line-container[data-heat="2"] { background-color: rgba(139, 195, 74, 0.08); }  /* light green */
+        .line-container[data-heat="3"] { background-color: rgba(255, 235, 59, 0.10); }  /* yellow */
+        .line-container[data-heat="4"] { background-color: rgba(255, 193, 7, 0.12); }   /* amber */
+        .line-container[data-heat="5"] { background-color: rgba(255, 152, 0, 0.15); }   /* orange */
+        .line-container[data-heat="6"] { background-color: rgba(244, 67, 54, 0.18); }   /* red */
+        .line-container[data-heat="7"] { background-color: rgba(183, 28, 28, 0.22); }   /* dark red - slowest */
+        [data-theme="dark"] .line-container[data-heat="1"] { background-color: rgba(76, 175, 80, 0.10); }
+        [data-theme="dark"] .line-container[data-heat="2"] { background-color: rgba(139, 195, 74, 0.12); }
+        [data-theme="dark"] .line-container[data-heat="3"] { background-color: rgba(255, 235, 59, 0.14); }
+        [data-theme="dark"] .line-container[data-heat="4"] { background-color: rgba(255, 193, 7, 0.16); }
+        [data-theme="dark"] .line-container[data-heat="5"] { background-color: rgba(255, 152, 0, 0.20); }
+        [data-theme="dark"] .line-container[data-heat="6"] { background-color: rgba(244, 67, 54, 0.24); }
+        [data-theme="dark"] .line-container[data-heat="7"] { background-color: rgba(183, 28, 28, 0.28); }
         /* Hide heatmap colors when disabled */
         .heatmap-off .line-container[data-heat] {
             background-color: transparent !important;
