@@ -2324,6 +2324,7 @@ class HtmlGenerator:
                 <button class="control-btn" onclick="copyVisibleContent(event)">Copy</button>
                 <button class="control-btn" onclick="expandAll()">Expand All</button>
                 <button class="control-btn collapse" onclick="collapseAll()">Collapse All</button>
+                <button class="control-btn" id="heatmapBtn" onclick="toggleHeatmap()">Heatmap</button>
             </div>
         </div>
 
@@ -2350,7 +2351,9 @@ class HtmlGenerator:
         <h3>Function Call Folding</h3>
         <ul>
             <li>Click the marker (<strong>▼</strong>/<strong>▶</strong>) to fold/unfold a function call block</li>
-            <li>Folds all lines between function entry and exit (including sub-functions)</li>
+            <li><kbd>1</kbd>-<kbd>9</kbd>: Fold to depth N (hide calls deeper than N)</li>
+            <li><kbd>0</kbd>: Unfold all fold blocks</li>
+            <li>Folded blocks show summary: call count, total time, return value</li>
             <li>Folded blocks are saved in browser storage</li>
         </ul>
     </div>
@@ -3110,6 +3113,8 @@ class HtmlGenerator:
                 if line_data.get('fold_ancestors'):
                     ancestors_attr = line_data.get('fold_ancestors')
                 data_attrs += f' data-fold-id="{fold_id}" data-fold-type="{fold_type}"'
+                if call_depth is not None:
+                    data_attrs += f' data-call-depth="{call_depth}"'
                 if ancestors_attr:
                     data_attrs += f' data-fold-ancestors="{ancestors_attr}"'
 
@@ -4558,6 +4563,8 @@ class HtmlGenerator:
                 // 展开
                 console.log(`Expanding foldId: ${foldId}`);
                 delete foldedBlocks[foldId];
+                // P2: Remove fold summary on expand
+                removeFoldSummary(foldId);
                 // 显示所有属于这个foldId的行
                 const lines = document.querySelectorAll(`[data-fold-id="${foldId}"]`);
                 console.log(`Found ${lines.length} lines to show`);
@@ -4635,6 +4642,8 @@ class HtmlGenerator:
                 } catch (e) {
                     console.warn('Failed to add folded class on collapse', e);
                 }
+                // P2: Add fold summary on collapse
+                addFoldSummary(foldId);
             }
 
             // 保存折叠状态
@@ -5210,6 +5219,17 @@ class HtmlGenerator:
                         showKeyboardHint();
                         break;
                 }
+
+                // P1: Number keys 0-9 for fold depth control
+                if (event.key >= '0' && event.key <= '9' && !event.ctrlKey && !event.metaKey && !event.altKey) {
+                    event.preventDefault();
+                    const depth = parseInt(event.key);
+                    if (depth === 0) {
+                        unfoldAllBlocks();
+                    } else {
+                        foldToDepth(depth);
+                    }
+                }
             }
             
             
@@ -5572,6 +5592,195 @@ class HtmlGenerator:
         }
         
         // 初始加载时
+        // ============================================================
+        // P0: Duration Heatmap
+        // ============================================================
+        let heatmapEnabled = localStorage.getItem('heatmapEnabled') !== 'false';
+
+        function applyDurationHeatmap() {
+            const lines = document.querySelectorAll('.line-container[data-duration]');
+            if (lines.length === 0) return;
+
+            // Collect all duration values
+            const durations = [];
+            lines.forEach(line => {
+                const val = parseFloat(line.getAttribute('data-sort-duration') || line.getAttribute('data-duration'));
+                if (!isNaN(val) && val > 0) durations.push(val);
+            });
+            if (durations.length === 0) return;
+
+            // Sort and compute percentile thresholds
+            durations.sort((a, b) => a - b);
+            const p = (pct) => durations[Math.min(Math.floor(durations.length * pct), durations.length - 1)];
+            const thresholds = [p(0.20), p(0.40), p(0.60), p(0.80)];
+
+            lines.forEach(line => {
+                const val = parseFloat(line.getAttribute('data-sort-duration') || line.getAttribute('data-duration'));
+                if (isNaN(val) || val <= 0) return;
+                let heat;
+                if (val <= thresholds[0]) heat = '1';
+                else if (val <= thresholds[1]) heat = '2';
+                else if (val <= thresholds[2]) heat = '3';
+                else if (val <= thresholds[3]) heat = '4';
+                else heat = '5';
+                line.setAttribute('data-heat', heat);
+            });
+
+            // Apply visibility
+            updateHeatmapVisibility();
+        }
+
+        function updateHeatmapVisibility() {
+            const btn = document.getElementById('heatmapBtn');
+            if (btn) btn.textContent = heatmapEnabled ? 'Heatmap ●' : 'Heatmap ○';
+            // Toggle a class on body to control heatmap visibility via CSS
+            if (heatmapEnabled) {
+                document.body.classList.add('heatmap-on');
+                document.body.classList.remove('heatmap-off');
+            } else {
+                document.body.classList.remove('heatmap-on');
+                document.body.classList.add('heatmap-off');
+            }
+        }
+
+        function toggleHeatmap() {
+            heatmapEnabled = !heatmapEnabled;
+            localStorage.setItem('heatmapEnabled', heatmapEnabled);
+            updateHeatmapVisibility();
+        }
+
+        // ============================================================
+        // P1: Fold to Depth
+        // ============================================================
+        function foldToDepth(maxDepth) {
+            const entries = document.querySelectorAll('[data-fold-type="entry"]');
+            entries.forEach(entry => {
+                const depth = parseInt(entry.getAttribute('data-call-depth'));
+                if (isNaN(depth)) return;
+                const foldId = entry.getAttribute('data-fold-id');
+                if (!foldId) return;
+
+                if (depth >= maxDepth) {
+                    // Fold this block if not already folded
+                    if (!foldedBlocks[foldId]) {
+                        toggleFold(foldId, 'entry');
+                    }
+                } else {
+                    // Unfold this block if folded
+                    if (foldedBlocks[foldId]) {
+                        toggleFold(foldId, 'entry');
+                    }
+                }
+            });
+        }
+
+        function unfoldAllBlocks() {
+            const foldIds = Object.keys(foldedBlocks);
+            foldIds.forEach(foldId => {
+                toggleFold(foldId, 'entry');
+            });
+        }
+
+        // ============================================================
+        // P2: Fold Summary
+        // ============================================================
+        function addFoldSummary(foldId) {
+            let entryEl = null;
+            try {
+                entryEl = document.querySelector('[data-fold-id="' + foldId + '"][data-fold-type="entry"]');
+            } catch(e) { return; }
+            if (!entryEl) return;
+
+            // Remove existing summary if any
+            const existing = entryEl.querySelector('.fold-summary');
+            if (existing) existing.remove();
+
+            // Find all inner/exit lines belonging to this fold
+            const innerLines = document.querySelectorAll('[data-fold-id="' + foldId + '"], [data-fold-ancestors~="' + foldId + '"]');
+
+            let childCalls = 0;
+            let totalDuration = 0;
+            let hasDuration = false;
+            let retValue = null;
+
+            innerLines.forEach(line => {
+                const thisId = line.getAttribute('data-fold-id');
+                const thisType = line.getAttribute('data-fold-type');
+
+                // Count direct child entry calls (fold-ancestors contains our foldId)
+                if (thisType === 'entry' && thisId !== foldId) {
+                    childCalls++;
+                }
+
+                // Get return value from exit line of this fold
+                if (thisType === 'exit' && thisId === foldId) {
+                    const ret = line.getAttribute('data-ret');
+                    if (ret) retValue = ret;
+                    // Get duration from exit line
+                    const dur = line.getAttribute('data-sort-duration') || line.getAttribute('data-duration');
+                    if (dur) {
+                        totalDuration = parseFloat(dur);
+                        hasDuration = true;
+                    }
+                }
+            });
+
+            // If no duration from exit, try from entry itself
+            if (!hasDuration) {
+                const dur = entryEl.getAttribute('data-sort-duration') || entryEl.getAttribute('data-duration');
+                if (dur) {
+                    totalDuration = parseFloat(dur);
+                    hasDuration = true;
+                }
+            }
+
+            // Build summary text
+            const parts = [];
+            if (childCalls > 0) {
+                parts.push('<span class="summary-count">' + childCalls + ' call' + (childCalls > 1 ? 's' : '') + '</span>');
+            }
+            if (hasDuration && totalDuration > 0) {
+                let timeStr;
+                if (totalDuration >= 1000000) timeStr = (totalDuration / 1000000).toFixed(1) + ' s';
+                else if (totalDuration >= 1000) timeStr = (totalDuration / 1000).toFixed(1) + ' ms';
+                else timeStr = totalDuration.toFixed(1) + ' us';
+                parts.push('<span class="summary-time">' + timeStr + '</span>');
+            }
+            if (retValue) {
+                // Look up error code name from the ERROR_CODE_MAP if embedded
+                let retDisplay = 'ret=' + retValue;
+                const errSpan = entryEl.closest('.line-container');
+                // Try to find error name from sibling exit line
+                const exitEl = document.querySelector('[data-fold-id="' + foldId + '"][data-fold-type="exit"]');
+                if (exitEl) {
+                    const exitContent = exitEl.querySelector('.line-content');
+                    if (exitContent) {
+                        const errMatch = exitContent.textContent.match(/\/\*\s*(-?\d+\s*=\s*\w+)\s*\*\//);
+                        if (errMatch) retDisplay = errMatch[1].trim();
+                    }
+                }
+                parts.push('<span class="summary-ret">' + retDisplay + '</span>');
+            }
+
+            if (parts.length > 0) {
+                const summary = document.createElement('span');
+                summary.className = 'fold-summary';
+                summary.innerHTML = ' [' + parts.join(', ') + ']';
+                const lineContent = entryEl.querySelector('.line-content');
+                if (lineContent) lineContent.appendChild(summary);
+            }
+        }
+
+        function removeFoldSummary(foldId) {
+            let entryEl = null;
+            try {
+                entryEl = document.querySelector('[data-fold-id="' + foldId + '"][data-fold-type="entry"]');
+            } catch(e) { return; }
+            if (!entryEl) return;
+            const summary = entryEl.querySelector('.fold-summary');
+            if (summary) summary.remove();
+        }
+
         window.addEventListener('load', function() {
             // 恢复主题
             document.documentElement.setAttribute('data-theme', currentTheme);
@@ -5619,6 +5828,14 @@ class HtmlGenerator:
 
             // 处理锚点导航
             handleAnchorNavigation();
+
+            // P0: Apply duration heatmap
+            applyDurationHeatmap();
+
+            // P2: Add summaries for initially folded blocks
+            Object.keys(foldedBlocks).forEach(foldId => {
+                addFoldSummary(foldId);
+            });
         });
         
         // 监听hash变化，支持动态锚点导航
@@ -5959,6 +6176,43 @@ class HtmlGenerator:
         [data-theme="dark"] .fold-inner {
             background-color: rgba(33, 150, 243, 0.05);
         }
+        /* Duration heatmap colors (P0) */
+        .line-container[data-heat="1"] { background-color: rgba(76, 175, 80, 0.08); }
+        .line-container[data-heat="2"] { background-color: rgba(139, 195, 74, 0.10); }
+        .line-container[data-heat="3"] { background-color: rgba(255, 235, 59, 0.12); }
+        .line-container[data-heat="4"] { background-color: rgba(255, 152, 0, 0.15); }
+        .line-container[data-heat="5"] { background-color: rgba(244, 67, 54, 0.18); }
+        [data-theme="dark"] .line-container[data-heat="1"] { background-color: rgba(76, 175, 80, 0.12); }
+        [data-theme="dark"] .line-container[data-heat="2"] { background-color: rgba(139, 195, 74, 0.14); }
+        [data-theme="dark"] .line-container[data-heat="3"] { background-color: rgba(255, 235, 59, 0.16); }
+        [data-theme="dark"] .line-container[data-heat="4"] { background-color: rgba(255, 152, 0, 0.20); }
+        [data-theme="dark"] .line-container[data-heat="5"] { background-color: rgba(244, 67, 54, 0.24); }
+        /* Hide heatmap colors when disabled */
+        .heatmap-off .line-container[data-heat] {
+            background-color: transparent !important;
+        }
+        /* Restore fold entry/exit/inner colors even when heatmap is off */
+        .heatmap-off .fold-entry[data-heat] { background-color: rgba(76, 175, 80, 0.05) !important; }
+        .heatmap-off .fold-exit[data-heat] { background-color: rgba(244, 67, 54, 0.05) !important; }
+        .heatmap-off .fold-inner[data-heat] { background-color: rgba(33, 150, 243, 0.03) !important; }
+        .heatmap-off .fold-entry.folded[data-heat] { background-color: rgba(244, 67, 54, 0.12) !important; }
+        [data-theme="dark"] .heatmap-off .fold-entry[data-heat] { background-color: rgba(102, 187, 106, 0.08) !important; }
+        [data-theme="dark"] .heatmap-off .fold-exit[data-heat] { background-color: rgba(239, 83, 80, 0.08) !important; }
+        [data-theme="dark"] .heatmap-off .fold-inner[data-heat] { background-color: rgba(33, 150, 243, 0.05) !important; }
+        [data-theme="dark"] .heatmap-off .fold-entry.folded[data-heat] { background-color: rgba(211, 47, 47, 0.18) !important; }
+        /* Fold summary (P2) */
+        .fold-summary {
+            color: var(--summary-text);
+            font-size: 0.85em;
+            margin-left: 8px;
+            opacity: 0.8;
+        }
+        .fold-summary .summary-count { color: #2196F3; }
+        .fold-summary .summary-time { color: #FF9800; }
+        .fold-summary .summary-ret { color: #f44336; }
+        [data-theme="dark"] .fold-summary .summary-count { color: #64B5F6; }
+        [data-theme="dark"] .fold-summary .summary-time { color: #FFB74D; }
+        [data-theme="dark"] .fold-summary .summary-ret { color: #EF5350; }
         .func-name-link {
             color: var(--link-color);
             text-decoration: none;

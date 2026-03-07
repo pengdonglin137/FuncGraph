@@ -36,7 +36,7 @@ Key flags: `--enable-fold` (collapsible call blocks), `--func-links` (resolve al
 
 ```bash
 # Self-test: compares refactored output against reference HTML
-# Checks 21 HTML features + byte-level content diff
+# Checks 24 HTML features + byte-level content diff
 bash test_refactor.sh
 ```
 
@@ -67,7 +67,7 @@ Key components:
 - `_find_source_file()` — shared file search logic (kernel root, path prefixes, module dirs)
 - `_print_code_context()` — prints source code context around a line
 
-### `funcgraph.py` (7,044 lines) — Main Application
+### `funcgraph.py` (7,298 lines) — Main Application
 
 Organized into 8 sections with 4 core classes:
 
@@ -78,7 +78,7 @@ Organized into 8 sections with 4 core classes:
 # Syntax Highlighting             (~200 lines)  ftrace + C code highlighting
 # Ftrace Parser                   (~560 lines)  FtraceParser class
 # Address Resolver                (~530 lines)  AddressResolver class
-# HTML Generator                  (~5000 lines) HtmlGenerator class
+# HTML Generator                  (~5200 lines) HtmlGenerator class
 # Main Entry Point                (~300 lines)  CLI argument parsing, main()
 ```
 
@@ -105,8 +105,8 @@ Organized into 8 sections with 4 core classes:
 - `generate()` → (html_str, vmlinux_time, module_time) — assembly method (~130 lines)
 - `_prepare_data()` — pre-processing: func links, filter data, module URLs
 - `_generate_content_lines()` — main loop: line containers, fold markers, syntax highlighting
-- `_generate_css()` — all CSS styles (~1070 lines) including light/dark themes
-- `_generate_javascript()` — all JavaScript (~2330 lines) including keyboard nav, filtering, fold/unfold
+- `_generate_css()` — all CSS styles (~1100 lines) including light/dark themes, heatmap, fold summary
+- `_generate_javascript()` — all JavaScript (~2500 lines) including keyboard nav, filtering, fold/unfold, heatmap, fold-to-depth, fold summary
 - Static helpers: `_adjust_func_info`, `_extract_line_number`, `_extract_file_path`
 
 #### Backward-Compatible Wrappers
