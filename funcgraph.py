@@ -6541,9 +6541,9 @@ class HtmlGenerator:
         }
         .control-btn:hover { opacity: 0.85; }
         .control-btn:active { opacity: 0.7; }
-        /* Navigation buttons - slate blue */
-        .btn-nav { background: #4a5568; }
-        .btn-nav:hover { background: #2d3748; }
+        /* Navigation buttons - blue */
+        .btn-nav { background: #2563eb; }
+        .btn-nav:hover { background: #1d4ed8; }
         /* Expand - green */
         .btn-expand { background: #2f9e58; }
         .btn-expand:hover { background: #22834a; }
