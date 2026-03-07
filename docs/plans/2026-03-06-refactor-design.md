@@ -4,7 +4,7 @@
 
 ## 1. 项目概述
 
-FuncGraph (v0.6) 将 Linux 内核 ftrace `function_graph` 输出转换为交互式、自包含的 HTML 可视化页面。由两个 Python 文件组成：
+FuncGraph (v0.7) 将 Linux 内核 ftrace `function_graph` 输出转换为交互式、自包含的 HTML 可视化页面。由两个 Python 文件组成：
 
 | 文件 | 重构前行数 | 重构后行数 | 职责 |
 |------|-----------|-----------|------|

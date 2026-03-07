@@ -13,7 +13,7 @@ import time
 # ============================================================
 # Constants and Configuration
 # ============================================================
-APP_VERSION = "0.6"      # 应用版本号
+APP_VERSION = "0.7"      # 应用版本号
 APP_AUTHOR = "@dolinux"  # 作者信息
 APP_TITLE = "FuncGraph"  # 应用标题
 
