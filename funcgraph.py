@@ -6542,17 +6542,17 @@ class HtmlGenerator:
         .control-btn:hover { opacity: 0.85; }
         .control-btn:active { opacity: 0.7; }
         /* Navigation buttons - slate blue */
-        .btn-nav { background: rgba(100, 116, 139, 0.75); }
-        .btn-nav:hover { background: rgba(71, 85, 105, 0.85); }
+        .btn-nav { background: #4a5568; }
+        .btn-nav:hover { background: #2d3748; }
         /* Expand - green */
-        .btn-expand { background: rgba(34, 197, 94, 0.75); }
-        .btn-expand:hover { background: rgba(22, 163, 74, 0.85); }
+        .btn-expand { background: #2f9e58; }
+        .btn-expand:hover { background: #22834a; }
         /* Collapse - warm red */
-        .btn-collapse { background: rgba(239, 68, 68, 0.75); }
-        .btn-collapse:hover { background: rgba(220, 38, 38, 0.85); }
+        .btn-collapse { background: #dc2626; }
+        .btn-collapse:hover { background: #b91c1c; }
         /* Tool buttons - indigo */
-        .btn-tool { background: rgba(99, 102, 241, 0.75); }
-        .btn-tool:hover { background: rgba(79, 70, 229, 0.85); }
+        .btn-tool { background: #4f46e5; }
+        .btn-tool:hover { background: #4338ca; }
 
         /* 浮动控件：默认显示，允许通过 body.hide-floating-controls 隐藏 */
         .copy-btn, .jump-to-top, .floating-buttons {
