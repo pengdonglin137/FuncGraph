@@ -6044,12 +6044,11 @@ class HtmlGenerator:
         /* Fold guide lines — vertical indent guides for nested calls */
         .fold-inner[data-call-depth],
         .fold-exit[data-call-depth] {
-            border-left: 1px solid rgba(0, 0, 0, 0.08);
-            margin-left: 0;
+            border-left: 2px solid rgba(76, 175, 80, 0.3);
         }
         [data-theme="dark"] .fold-inner[data-call-depth],
         [data-theme="dark"] .fold-exit[data-call-depth] {
-            border-left: 1px solid rgba(255, 255, 255, 0.06);
+            border-left: 2px solid rgba(102, 187, 106, 0.3);
         }
         .fold-entry {
             background-color: rgba(76, 175, 80, 0.05);
