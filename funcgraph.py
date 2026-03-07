@@ -2344,7 +2344,7 @@ class HtmlGenerator:
         </ul>
         <h3>Function Call Folding</h3>
         <ul>
-            <li>Click the marker (<strong>▼</strong>/<strong>▶</strong>) to fold/unfold a function call block</li>
+            <li>Click <strong>▶</strong> to fold/unfold; <kbd>Shift</kbd>+Click for recursive fold/unfold</li>
             <li><kbd>1</kbd>-<kbd>9</kbd>: Fold to depth N (hide calls deeper than N)</li>
             <li><kbd>0</kbd>: Unfold all fold blocks</li>
             <li>Folded blocks show summary: call count, total time, return value</li>
@@ -3079,7 +3079,7 @@ class HtmlGenerator:
                 if fold_type == 'entry':
                     fold_class = "fold-entry"
                     # 默认展开状态：使用向下箭头表示展开（可通过 CSS/JS 旋转和替换）
-                    fold_marker = '<span class="fold-icon" style="transform:rotate(0deg)">▼</span>'  # 折叠标记（默认展开）
+                    fold_marker = '<span class="fold-icon expanded">▶</span>'  # 折叠标记（默认展开）
                 elif fold_type == 'exit':
                     fold_class = "fold-exit"
                     fold_marker = ""  # 函数返回行不需要折叠图标
@@ -3170,11 +3170,10 @@ class HtmlGenerator:
 
             # 添加折叠标记
             if is_foldable:
-                # 只为fold-icon添加tabindex和键盘事件
                 if fold_type == 'entry':
-                    # 判断当前是否折叠，选择图标
-                    icon = '▶' if 'folded' in fold_class else '▼'
-                    fold_marker = f'<span class="fold-icon" tabindex="0" role="button" aria-label="Toggle fold" aria-expanded="{"false" if icon=="▶" else "true"}" onkeydown="handleFoldIconKeydown(event, this)" onclick="handleFoldIconClick(event, this)">{icon}</span>'
+                    # V2: Always use ▶, CSS rotate(90deg) for expanded state
+                    expanded_class = '' if 'folded' in fold_class else ' expanded'
+                    fold_marker = f'<span class="fold-icon{expanded_class}" tabindex="0" role="button" aria-label="Toggle fold" aria-expanded="{"false" if "folded" in fold_class else "true"}" onkeydown="handleFoldIconKeydown(event, this)" onclick="handleFoldIconClick(event, this)">▶</span>'
                 content_html += f'<span class="fold-marker">{fold_marker}</span>'
             else:
                 # 非可折叠行也插入空白fold-marker以保持对齐
@@ -3356,15 +3355,17 @@ class HtmlGenerator:
         // 折叠图标键盘事件处理
                 // 折叠图标点击事件处理
                 function handleFoldIconClick(event, icon) {
-                    // 阻止事件冒泡，防止多次触发
                     event.stopPropagation();
-                    // 找到最近的 .line-container
                     const lineContainer = icon.closest('.line-container');
                     if (lineContainer) {
                         const foldId = lineContainer.getAttribute('data-fold-id');
-                        const foldType = lineContainer.getAttribute('data-fold-type');
-                        if (foldId && foldType) {
-                            toggleFold(foldId, foldType);
+                        if (foldId) {
+                            // F1: Shift+Click for recursive fold/unfold
+                            if (event.shiftKey) {
+                                toggleFoldRecursive(foldId);
+                            } else {
+                                toggleFold(foldId, 'entry');
+                            }
                         }
                     }
                 }
@@ -3396,47 +3397,10 @@ class HtmlGenerator:
         }
 
         // 恢复折叠状态
+        // Restore all folded states on page load — uses _setFolded for consistency
         function restoreFoldedState() {
             for (const [foldId, isFolded] of Object.entries(foldedBlocks)) {
-                // 折叠/展开对应的内容行（entry 行始终显示，但图标需要更新）
-                const lines = document.querySelectorAll(`[data-fold-id="${foldId}"], [data-fold-ancestors~="${foldId}"]`);
-                if (isFolded) {
-                    // 折叠：隐藏所有属于该 foldId 或其后代的行（但保留本入口行）
-                    lines.forEach(line => {
-                        const type = line.getAttribute('data-fold-type');
-                        const thisId = line.getAttribute('data-fold-id');
-                        if (!(type === 'entry' && thisId === foldId)) {
-                            line.style.display = 'none';
-                        }
-                    });
-
-                    // 更新入口图标为折叠状态
-                    const entryEl = document.querySelector(`[data-fold-id="${foldId}"][data-fold-type="entry"]`);
-                    if (entryEl) {
-                        const icon = entryEl.querySelector('.fold-icon');
-                        if (icon) {
-                            icon.textContent = '▶';
-                            icon.style.transform = 'rotate(0deg)';
-                        }
-                        // 同步 folded 类
-                        entryEl.classList.add('folded');
-                    }
-                } else {
-                    // 展开：确保所有相关行显示
-                    lines.forEach(line => {
-                        line.style.display = '';
-                    });
-
-                    // 更新入口图标为展开状态
-                    const entryEl = document.querySelector(`[data-fold-id="${foldId}"][data-fold-type="entry"]`);
-                    if (entryEl) {
-                        const icon = entryEl.querySelector('.fold-icon');
-                        if (icon) {
-                            icon.textContent = '▼';
-                            icon.style.transform = 'rotate(0deg)';
-                        }
-                    }
-                }
+                if (isFolded) _setFolded(foldId, true);
             }
         }
 
@@ -4565,90 +4529,70 @@ class HtmlGenerator:
         
         // 切换展开/收起状态 - 只影响当前行，不滚动
         // 切换折叠状态
-        function toggleFold(foldId, foldType) {
-
-            // 检查是否已折叠
+        // Core fold/unfold logic — does NOT write localStorage (P3 optimization)
+        function _setFolded(foldId, shouldFold) {
             const isFolded = foldedBlocks[foldId] === true;
+            if (shouldFold === isFolded) return; // no-op
 
-            if (isFolded) {
-                // 展开
-                delete foldedBlocks[foldId];
-                // P2: Remove fold summary on expand
-                removeFoldSummary(foldId);
-                // 显示所有属于这个foldId的行
-                const lines = document.querySelectorAll(`[data-fold-id="${foldId}"]`);
-                lines.forEach(line => {
-                    line.style.display = '';
-                });
-                // 更新折叠图标为展开状态（更鲁棒的查找，处理选择器异常并提供回退）
-                let icon = null;
-                try {
-                    icon = document.querySelector(`[data-fold-id="${foldId}"][data-fold-type="entry"] .fold-icon`);
-                } catch (e) {
-                    console.warn('Selector failed for expand icon, trying fallback lookup', e);
-                    const entryEl = document.querySelector('[data-fold-type="entry"][data-fold-id="' + foldId + '"]') || document.querySelector('[data-fold-id="' + foldId + '"][data-fold-type="entry"]');
-                    if (entryEl) icon = entryEl.querySelector('.fold-icon');
+            // P1: single DOM query for all related lines
+            const lines = document.querySelectorAll('[data-fold-id="' + foldId + '"], [data-fold-ancestors~="' + foldId + '"]');
+            // Find entry element from the query results (avoid extra querySelector)
+            let entryEl = null;
+            for (let i = 0; i < lines.length; i++) {
+                if (lines[i].getAttribute('data-fold-type') === 'entry' && lines[i].getAttribute('data-fold-id') === foldId) {
+                    entryEl = lines[i]; break;
                 }
-                if (icon) {
-                    icon.textContent = '▼';
-                    icon.style.transform = 'rotate(0deg)';
-                }
+            }
 
-                // 移除入口行的 folded 类，恢复颜色
-                try {
-                    const entryEl = document.querySelector(`[data-fold-id="${foldId}"][data-fold-type="entry"]`);
-                    if (entryEl) entryEl.classList.remove('folded');
-                } catch (e) {
-                    console.warn('Failed to remove folded class on expand', e);
-                }
-
-                // 展开：显示所有属于这个 foldId 的行或包含该 foldId 的祖先的行
-                const linesToShow = document.querySelectorAll(`[data-fold-id="${foldId}"], [data-fold-ancestors~="${foldId}"]`);
-                linesToShow.forEach(line => {
-                    line.style.display = '';
-                });
-
-                // 在展开后重新应用其他已保存的折叠状态（例如子折叠）
-                restoreFoldedState();
-            } else {
-                // 折叠
+            if (shouldFold) {
+                // Collapse
                 foldedBlocks[foldId] = true;
-                // 隐藏所有属于这个 foldId 的行或祖先中包含该 foldId 的行（但保留本入口行）
-                const lines = document.querySelectorAll(`[data-fold-id="${foldId}"], [data-fold-ancestors~="${foldId}"]`);
                 lines.forEach(line => {
                     const type = line.getAttribute('data-fold-type');
                     const thisId = line.getAttribute('data-fold-id');
-                    // 保留当前折叠入口行（与 foldId 相同且类型为 entry）
                     if (!(type === 'entry' && thisId === foldId)) {
                         line.style.display = 'none';
                     }
                 });
-                // 更新折叠图标为折叠状态（更鲁棒的查找，处理选择器异常并提供回退）
-                let icon = null;
-                try {
-                    icon = document.querySelector(`[data-fold-id="${foldId}"][data-fold-type="entry"] .fold-icon`);
-                } catch (e) {
-                    console.warn('Selector failed for collapse icon, trying fallback lookup', e);
-                    const entryEl = document.querySelector('[data-fold-type="entry"][data-fold-id="' + foldId + '"]') || document.querySelector('[data-fold-id="' + foldId + '"][data-fold-type="entry"]');
-                    if (entryEl) icon = entryEl.querySelector('.fold-icon');
+                if (entryEl) {
+                    entryEl.classList.add('folded');
+                    const icon = entryEl.querySelector('.fold-icon');
+                    if (icon) icon.classList.remove('expanded');
                 }
-                if (icon) {
-                    icon.textContent = '▶';
-                    icon.style.transform = 'rotate(0deg)';
-                }
-
-                // 添加 folded 类，使入口行在折叠时颜色更醒目
-                try {
-                    const entryEl = document.querySelector(`[data-fold-id="${foldId}"][data-fold-type="entry"]`);
-                    if (entryEl) entryEl.classList.add('folded');
-                } catch (e) {
-                    console.warn('Failed to add folded class on collapse', e);
-                }
-                // P2: Add fold summary on collapse
                 addFoldSummary(foldId);
+            } else {
+                // Expand
+                delete foldedBlocks[foldId];
+                removeFoldSummary(foldId);
+                lines.forEach(line => { line.style.display = ''; });
+                if (entryEl) {
+                    entryEl.classList.remove('folded');
+                    const icon = entryEl.querySelector('.fold-icon');
+                    if (icon) icon.classList.add('expanded');
+                }
+                // P2: only restore child folds (not all foldedBlocks)
+                _restoreChildFolds(foldId);
             }
+        }
 
-            // 保存折叠状态
+        // P2: restore only folds that are children of the given foldId
+        function _restoreChildFolds(parentFoldId) {
+            for (const childId of Object.keys(foldedBlocks)) {
+                if (!foldedBlocks[childId]) continue;
+                // Check if childId's entry has parentFoldId in its ancestors
+                const childEntry = document.querySelector('[data-fold-id="' + childId + '"][data-fold-type="entry"]');
+                if (!childEntry) continue;
+                const ancestors = childEntry.getAttribute('data-fold-ancestors') || '';
+                if (ancestors.split(' ').includes(parentFoldId)) {
+                    _setFolded(childId, true);
+                }
+            }
+        }
+
+        // Public API: toggle a single fold block + save state
+        function toggleFold(foldId, foldType) {
+            const shouldFold = !foldedBlocks[foldId];
+            _setFolded(foldId, shouldFold);
             lsSet('foldedBlocks', JSON.stringify(foldedBlocks));
         }
 
@@ -5662,6 +5606,7 @@ class HtmlGenerator:
         // ============================================================
         // P1: Fold to Depth
         // ============================================================
+        // P3: batch operations — write localStorage once at the end
         function foldToDepth(maxDepth) {
             const entries = document.querySelectorAll('[data-fold-type="entry"]');
             entries.forEach(entry => {
@@ -5669,26 +5614,28 @@ class HtmlGenerator:
                 if (isNaN(depth)) return;
                 const foldId = entry.getAttribute('data-fold-id');
                 if (!foldId) return;
-
-                if (depth >= maxDepth) {
-                    // Fold this block if not already folded
-                    if (!foldedBlocks[foldId]) {
-                        toggleFold(foldId, 'entry');
-                    }
-                } else {
-                    // Unfold this block if folded
-                    if (foldedBlocks[foldId]) {
-                        toggleFold(foldId, 'entry');
-                    }
-                }
+                _setFolded(foldId, depth >= maxDepth);
             });
+            lsSet('foldedBlocks', JSON.stringify(foldedBlocks));
         }
 
         function unfoldAllBlocks() {
             const foldIds = Object.keys(foldedBlocks);
-            foldIds.forEach(foldId => {
-                toggleFold(foldId, 'entry');
+            foldIds.forEach(foldId => _setFolded(foldId, false));
+            lsSet('foldedBlocks', JSON.stringify(foldedBlocks));
+        }
+
+        // F1: Recursive fold — fold/unfold block and all its child blocks
+        function toggleFoldRecursive(foldId) {
+            const shouldFold = !foldedBlocks[foldId];
+            _setFolded(foldId, shouldFold);
+            // Find all child entry blocks whose ancestors include this foldId
+            const childEntries = document.querySelectorAll('[data-fold-type="entry"][data-fold-ancestors~="' + foldId + '"]');
+            childEntries.forEach(child => {
+                const childId = child.getAttribute('data-fold-id');
+                if (childId) _setFolded(childId, shouldFold);
             });
+            lsSet('foldedBlocks', JSON.stringify(foldedBlocks));
         }
 
         // ============================================================
@@ -6072,6 +6019,14 @@ class HtmlGenerator:
         }
         .fold-marker:hover {
             color: var(--btn-primary-hover);
+        }
+        .fold-icon {
+            display: inline-block;
+            transition: transform 0.15s ease;
+            transform: rotate(0deg);
+        }
+        .fold-icon.expanded {
+            transform: rotate(90deg);
         }
         .fold-entry {
             background-color: rgba(76, 175, 80, 0.05);
