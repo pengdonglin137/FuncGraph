@@ -2314,17 +2314,22 @@ class HtmlGenerator:
             {{INFO_CONTENT_PLACEHOLDER}}
         </div>
 
-        <!-- 控制按钮 - 立即显示，不用等待内容加载 -->
+        <!-- 控制按钮 - 水平工具栏 -->
         <div class="controls">
-            <!-- 过滤窗口占位符，稍后插入 -->
             <div id="filterPlaceholder"></div>
-            <div class="right-buttons">
-                <button class="control-btn" onclick="toggleFilterBox()">Toggle Filter</button>
-                <button class="control-btn" onclick="scrollToTop()">Top</button>
-                <button class="control-btn" onclick="copyVisibleContent(event)">Copy</button>
-                <button class="control-btn" onclick="expandAll()">Expand All</button>
-                <button class="control-btn collapse" onclick="collapseAll()">Collapse All</button>
-                <button class="control-btn" id="heatmapBtn" onclick="toggleHeatmap()">Heatmap</button>
+            <div class="toolbar">
+                <div class="btn-group">
+                    <button class="control-btn btn-nav" onclick="toggleFilterBox()">Filter</button>
+                    <button class="control-btn btn-nav" onclick="scrollToTop()">Top</button>
+                </div>
+                <div class="btn-group">
+                    <button class="control-btn btn-expand" onclick="expandAll()">Expand All</button>
+                    <button class="control-btn btn-collapse" onclick="collapseAll()">Collapse All</button>
+                </div>
+                <div class="btn-group">
+                    <button class="control-btn btn-tool" onclick="copyVisibleContent(event)">Copy</button>
+                    <button class="control-btn btn-tool" id="heatmapBtn" onclick="toggleHeatmap()">Heatmap</button>
+                </div>
                 <span class="heatmap-legend" id="heatmapLegend"></span>
             </div>
         </div>
@@ -6366,45 +6371,9 @@ class HtmlGenerator:
             color: var(--text-color);
             word-break: break-all;
         }
-        /* Button color variants by position */
-        .control-btn:nth-child(1) {
-            background-color: rgba(59, 130, 246, 0.7); /* Blue */
-            color: white;
-        }
-        .control-btn:nth-child(1):hover {
-            background-color: rgba(37, 99, 235, 0.8);
-        }
-
-        /* Copy button - green */
-        .control-btn:nth-child(2) {
-            background-color: rgba(34, 197, 94, 0.7); /* Green */
-            color: white;
-        }
-        .control-btn:nth-child(2):hover {
-            background-color: rgba(22, 163, 74, 0.8);
-        }
-
-        /* Expand All button - orange */
-        .control-btn:nth-child(3) {
-            background-color: rgba(249, 115, 22, 0.7); /* Orange */
-            color: white;
-        }
-        .control-btn:nth-child(3):hover {
-            background-color: rgba(234, 88, 12, 0.8);
-        }
-
-        /* Collapse All button - red */
-        .control-btn.collapse {
-            background-color: rgba(239, 68, 68, 0.7); /* Red */
-            color: white;
-        }
-        .control-btn.collapse:hover {
-            background-color: rgba(220, 38, 38, 0.8);
-        }
-
         /* Clear button - gray with trash icon */
         .clear-btn {
-            background-color: rgba(107, 114, 128, 0.7); /* Gray */
+            background-color: rgba(107, 114, 128, 0.7);
             color: white;
             padding: 8px 10px;
             font-size: 14px;
@@ -6413,36 +6382,56 @@ class HtmlGenerator:
             background-color: rgba(75, 85, 99, 0.8);
         }
 
-        /* Control bar styles */
+        /* Control bar - horizontal toolbar */
+        /* .controls 保持悬浮在右下角，内含水平工具栏 */
         .controls {
-            display: flex;
-            gap: 15px;
-            align-items: flex-end; /* Align to bottom */
-            margin-bottom: 15px;
-            flex-wrap: wrap;
-        }
-
-        /* Right buttons - vertical stack */
-        .right-buttons {
+            position: fixed;
+            bottom: 16px;
+            right: 16px;
+            z-index: 1000;
             display: flex;
             flex-direction: column;
+            align-items: flex-end;
             gap: 6px;
-            margin-left: auto; /* Push to right side */
-            align-items: flex-end; /* Align to right */
+        }
+        .toolbar {
+            display: flex;
+            gap: 4px;
+            align-items: center;
+            background: var(--container-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 5px 8px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+            flex-wrap: wrap;
+        }
+        [data-theme="dark"] .toolbar {
+            box-shadow: 0 2px 8px rgba(0,0,0,0.4);
+        }
+        .btn-group {
+            display: inline-flex;
+            gap: 3px;
+        }
+        .btn-group + .btn-group {
+            margin-left: 3px;
+            padding-left: 6px;
+            border-left: 1px solid var(--border-color);
         }
 
         /* Filter box styles */
         .filter-box {
             display: flex;
             gap: 8px;
-            align-items: flex-end; /* Align to bottom */
+            align-items: flex-end;
             padding: 8px;
-            background: var(--bg-secondary);
-            border-radius: 4px;
+            background: var(--container-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.15);
             flex-wrap: wrap;
-            margin-bottom: 0;
-            /* Position to align with Collapse All button */
-            margin-top: 24px; /* Offset to align with bottom of right buttons */
+        }
+        [data-theme="dark"] .filter-box {
+            box-shadow: 0 2px 8px rgba(0,0,0,0.4);
         }
         .filter-box .clear-btn {
             margin-top: 0; /* Reset margin for clear button */
@@ -6536,30 +6525,34 @@ class HtmlGenerator:
             color: white;
         }
 
-        /* Control buttons - uniform size */
+        /* Control buttons - base style */
         .control-btn {
-            padding: 8px 12px;
-            background: var(--btn-primary);
+            padding: 6px 12px;
             color: white;
             border: none;
             border-radius: 4px;
             cursor: pointer;
             font-size: 12px;
             font-weight: 500;
-            transition: background-color 0.2s;
+            transition: background-color 0.15s, opacity 0.15s;
             white-space: nowrap;
-            min-width: 80px;
             text-align: center;
+            line-height: 1.4;
         }
-        .control-btn:hover {
-            background: var(--btn-primary-hover);
-        }
-        .control-btn.collapse {
-            background: var(--btn-danger);
-        }
-        .control-btn.collapse:hover {
-            background: var(--btn-danger-hover);
-        }
+        .control-btn:hover { opacity: 0.85; }
+        .control-btn:active { opacity: 0.7; }
+        /* Navigation buttons - slate blue */
+        .btn-nav { background: rgba(100, 116, 139, 0.75); }
+        .btn-nav:hover { background: rgba(71, 85, 105, 0.85); }
+        /* Expand - green */
+        .btn-expand { background: rgba(34, 197, 94, 0.75); }
+        .btn-expand:hover { background: rgba(22, 163, 74, 0.85); }
+        /* Collapse - warm red */
+        .btn-collapse { background: rgba(239, 68, 68, 0.75); }
+        .btn-collapse:hover { background: rgba(220, 38, 38, 0.85); }
+        /* Tool buttons - indigo */
+        .btn-tool { background: rgba(99, 102, 241, 0.75); }
+        .btn-tool:hover { background: rgba(79, 70, 229, 0.85); }
 
         /* 浮动控件：默认显示，允许通过 body.hide-floating-controls 隐藏 */
         .copy-btn, .jump-to-top, .floating-buttons {
@@ -6903,6 +6896,18 @@ class HtmlGenerator:
             .controls {
                 bottom: 10px;
                 right: 10px;
+            }
+            .toolbar {
+                padding: 4px 6px;
+                gap: 3px;
+            }
+            .btn-group + .btn-group {
+                margin-left: 2px;
+                padding-left: 5px;
+            }
+            .control-btn {
+                padding: 5px 8px;
+                font-size: 11px;
             }
             .copy-btn {
                 bottom: 50px;
