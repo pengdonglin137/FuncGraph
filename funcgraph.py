@@ -888,22 +888,22 @@ class FtraceParser:
                                 func_info = comment_match.group(1)
                                 if comment_match.group(2):
                                     module_name = comment_match.group(2)
-                            # 提取返回值
-                            ret_value = None
-                            ret_match = re.search(r'ret\s*=\s*([0-9a-fA-FxX-]+)', line)
-                            if ret_match:
-                                ret_value = ret_match.group(1)
+                            # 提取返回值（仅当 Format 1 未解析时）
+                            if ret_value is None:
+                                ret_match = re.search(r'ret\s*=\s*([0-9a-fA-FxX-]+|true|false)', line)
+                                if ret_match:
+                                    ret_value = ret_match.group(1)
 
                         # 格式4: 直接在行中 func+offset/length (没有注释)
                         if func_info is None:
                             direct_match = re.search(r'([a-zA-Z_][a-zA-Z0-9_.]*\+[0-9a-fA-FxX]+/[0-9a-fA-FxX]+)', line)
                             if direct_match:
                                 func_info = direct_match.group(1)
-                            # 提取返回值
-                            ret_value = None
-                            ret_match = re.search(r'ret\s*=\s*([0-9a-fA-FxX-]+)', line)
-                            if ret_match:
-                                ret_value = ret_match.group(1)
+                            # 提取返回值（仅当之前未解析时）
+                            if ret_value is None:
+                                ret_match = re.search(r'ret\s*=\s*([0-9a-fA-FxX-]+|true|false)', line)
+                                if ret_match:
+                                    ret_value = ret_match.group(1)
 
                         # 如果找到函数信息，添加到解析结果
                         if func_info or raw_func_name:
@@ -1065,23 +1065,28 @@ class FtraceParser:
         comm = None
 
         # 在清理后的区域中查找 PID/Comm
-        pid_comm_match = re.search(r'\s+(\d+)/(\d+)', search_area)
-        if pid_comm_match:
-            pid = int(pid_comm_match.group(1))
-        else:
-            # 尝试匹配 "comm/PID" 格式
-            comm_pid_match = re.search(r'\s+([a-zA-Z_][a-zA-Z0-9_-]*)/(\d+)', search_area)
+        # Format 1: "comm-PID" (最常见: bash-430, <idle>-0, kworker/0:1-123)
+        # 限制 comm 必须包含至少一个字母或 < 或 /（避免匹配纯数字或管道符）
+        comm_pid_dash_match = re.search(r'([\w<>/:.+\[\]-]+)-(\d+)', search_area)
+        if comm_pid_dash_match:
+            candidate_comm = comm_pid_dash_match.group(1)
+            # 确保 comm 不是纯数字（纯数字可能是 CPU 残留）
+            if not candidate_comm.isdigit():
+                comm = candidate_comm
+                pid = int(comm_pid_dash_match.group(2))
+
+        # Format 2: "comm/PID" (如: bash/430)
+        if pid is None:
+            comm_pid_match = re.search(r'([a-zA-Z_<][\w<>.-]*)/(\d+)', search_area)
             if comm_pid_match:
                 comm = comm_pid_match.group(1)
                 pid = int(comm_pid_match.group(2))
-            else:
-                # 尝试匹配 "comm-PID" 格式（用连字符分隔）
-                # 支持特殊字符如 <idle>，也支持行首格式如 bash-430
-                # 支持连字符前后有空格的情况：idle -0
-                comm_pid_dash_match = re.search(r'([^\s]+)\s*-\s*(\d+)', search_area)
-                if comm_pid_dash_match:
-                    comm = comm_pid_dash_match.group(1)
-                    pid = int(comm_pid_dash_match.group(2))
+
+        # Format 3: "tgid/pid" (纯数字，两个数字用 / 分隔 — 取第二个作为 PID)
+        if pid is None:
+            pid_comm_match = re.search(r'\s+(\d+)/(\d+)', search_area)
+            if pid_comm_match:
+                pid = int(pid_comm_match.group(2))
 
         # 方法3: 查找 prev= 或 next= 参数中的进程信息（只在搜索区域中查找）
         if comm is None:
@@ -3133,29 +3138,31 @@ class HtmlGenerator:
 
             # 添加返回值属性（用于错误码过滤）
             if ret_value:
-                # 解析为整数，用于过滤
                 try:
-                    if ret_value.startswith('0x') or ret_value.startswith('0X'):
+                    ret_lower = ret_value.lower()
+                    if ret_lower == 'true' or ret_lower == 'false':
+                        # B6: Store boolean return values as data-ret-bool
+                        data_attrs += f' data-ret-bool="{ret_lower}"'
+                    elif ret_value.startswith('0x') or ret_value.startswith('0X'):
                         ret_int = int(ret_value, 16)
-                        # 处理64位无符号整数转换为有符号整数
-                        # 但只对明显是负数的值进行转换
                         if ret_int >= 0x8000000000000000:
                             converted = ret_int - 0x10000000000000000
                             if converted < 0:
                                 ret_int = converted
+                        if ret_int in ERROR_CODE_MAP:
+                            data_attrs += f' data-ret="{ret_int}"'
                     else:
                         ret_int = int(ret_value)
-                    # 只对已知错误码添加属性（用于过滤）
-                    # 0不添加，未知负数也不添加
-                    if ret_int in ERROR_CODE_MAP:
-                        data_attrs += f' data-ret="{ret_int}"'
+                        if ret_int in ERROR_CODE_MAP:
+                            data_attrs += f' data-ret="{ret_int}"'
                 except ValueError:
                     pass
 
             # 添加耗时 tooltip
             title_attr = ''
             if duration_raw:
-                title_attr = f' title="{duration_raw.strip()}"'
+                escaped_title = duration_raw.strip().replace('&', '&amp;').replace('"', '&quot;').replace('<', '&lt;').replace('>', '&gt;')
+                title_attr = f' title="{escaped_title}"'
 
             # 添加折叠类
             line_container_class = f"line-container {expandable_class} {fold_class}".strip()
@@ -3617,8 +3624,10 @@ class HtmlGenerator:
                 }
             }
 
-            // 检查是否有任何过滤条件
-            const hasFilter = cpuRegex || pidRegex || commRegex || retInput || paramsInput || durationFilters.length > 0;
+            // B11: 检查是否有实际有效的过滤条件（用 regex 对象而非 input 字符串判断）
+            const hasFilter = cpuRegex || pidRegex || commRegex ||
+                (retInput && (filterAllErrors || retFilterRegex)) ||
+                paramsRegex || durationFilters.length > 0;
 
             // 获取所有行
             const allLines = document.querySelectorAll('.line-container');
@@ -3643,23 +3652,29 @@ class HtmlGenerator:
                     }
                 }
 
-                // 检查CPU过滤（正则表达式）
-                if (show && cpuRegex && cpu !== null && cpu !== '') {
-                    if (!cpuRegex.test(cpu)) {
+                // B5: 检查CPU过滤 — 缺失字段的行应被隐藏
+                if (show && cpuRegex) {
+                    if (!cpu || cpu === '') {
+                        show = false;
+                    } else if (!cpuRegex.test(cpu)) {
                         show = false;
                     }
                 }
 
-                // 检查PID过滤（正则表达式）
-                if (show && pidRegex && pid !== null && pid !== '') {
-                    if (!pidRegex.test(pid)) {
+                // B5: 检查PID过滤
+                if (show && pidRegex) {
+                    if (!pid || pid === '') {
+                        show = false;
+                    } else if (!pidRegex.test(pid)) {
                         show = false;
                     }
                 }
 
-                // 检查Comm过滤（正则表达式）
-                if (show && commRegex && comm) {
-                    if (!commRegex.test(comm)) {
+                // B5: 检查Comm过滤
+                if (show && commRegex) {
+                    if (!comm || comm === '') {
+                        show = false;
+                    } else if (!commRegex.test(comm)) {
                         show = false;
                     }
                 }
@@ -3667,22 +3682,21 @@ class HtmlGenerator:
                 // 检查返回值过滤
                 if (show && retInput) {
                     if (filterAllErrors) {
-                        // 过滤所有已知错误码：显示所有在allErrorValues中的行
-                        // 需要解析原始行中的 ret=xxx 或 ret = xxx
+                        // 过滤所有已知错误码
                         const retMatch = rawLine.match(/ret\s*=\s*([0-9a-fA-FxX-]+)/);
                         if (!retMatch) {
                             show = false;
                         } else {
-                            // 解析返回值
+                            // B3: 使用 BigInt 解析 64 位 hex，避免精度丢失
                             let retVal = 0;
                             try {
                                 const retStr = retMatch[1];
                                 if (retStr.startsWith('0x') || retStr.startsWith('0X')) {
-                                    retVal = parseInt(retStr, 16);
-                                    if (retVal >= 0x8000000000000000) {
-                                        const converted = retVal - 0x10000000000000000;
-                                        if (converted < 0) retVal = converted;
+                                    let big = BigInt(retStr);
+                                    if (big >= 0x8000000000000000n) {
+                                        big = big - 0x10000000000000000n;
                                     }
+                                    retVal = Number(big);
                                 } else {
                                     retVal = parseInt(retStr);
                                 }
@@ -3690,7 +3704,6 @@ class HtmlGenerator:
                                 show = false;
                             }
 
-                            // 检查是否在allErrorValues列表中
                             if (allErrorValues && allErrorValues.includes(retVal)) {
                                 // 显示
                             } else {
