@@ -3082,10 +3082,10 @@ class HtmlGenerator:
                     fold_marker = '<span class="fold-icon expanded">▶</span>'  # 折叠标记（默认展开）
                 elif fold_type == 'exit':
                     fold_class = "fold-exit"
-                    fold_marker = ""  # 函数返回行不需要折叠图标
+                    fold_marker = '<span class="fold-guide"></span>'
                 elif fold_type == 'inner':
                     fold_class = "fold-inner"
-                    fold_marker = "  "  # 空白标记，保持对齐
+                    fold_marker = '<span class="fold-guide"></span>'
 
             # 获取CPU、PID、进程名信息，用于过滤
             cpu = line_data.get('cpu')
@@ -6007,6 +6007,7 @@ class HtmlGenerator:
             display: inline-flex;
             align-items: center;
             justify-content: center;
+            position: relative;
             width: 20px;
             height: 20px;
             color: var(--btn-primary);
@@ -6041,14 +6042,41 @@ class HtmlGenerator:
         .fold-icon.expanded {
             transform: rotate(90deg);
         }
-        /* Fold guide lines — vertical indent guides for nested calls */
-        .fold-inner[data-call-depth],
-        .fold-exit[data-call-depth] {
-            border-left: 2px solid rgba(76, 175, 80, 0.3);
+        /* Fold guide line — vertical bar in the fold-marker column */
+        .fold-guide {
+            display: inline-block;
+            width: 20px;
+            height: 100%;
+            position: relative;
         }
-        [data-theme="dark"] .fold-inner[data-call-depth],
-        [data-theme="dark"] .fold-exit[data-call-depth] {
-            border-left: 2px solid rgba(102, 187, 106, 0.3);
+        .fold-guide::after {
+            content: '';
+            position: absolute;
+            left: 50%;
+            top: 0;
+            bottom: 0;
+            width: 2px;
+            transform: translateX(-50%);
+            background: rgba(76, 175, 80, 0.3);
+        }
+        [data-theme="dark"] .fold-guide::after {
+            background: rgba(102, 187, 106, 0.3);
+        }
+        /* Exit line: guide ends with a small horizontal tick */
+        .fold-exit .fold-guide::after {
+            bottom: 50%;
+        }
+        .fold-exit .fold-guide::before {
+            content: '';
+            position: absolute;
+            left: 50%;
+            top: 50%;
+            width: 6px;
+            height: 2px;
+            background: rgba(76, 175, 80, 0.3);
+        }
+        [data-theme="dark"] .fold-exit .fold-guide::before {
+            background: rgba(102, 187, 106, 0.3);
         }
         .fold-entry {
             background-color: rgba(76, 175, 80, 0.05);
