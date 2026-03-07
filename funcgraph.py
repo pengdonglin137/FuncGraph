@@ -6553,6 +6553,9 @@ class HtmlGenerator:
         /* Tool buttons - indigo */
         .btn-tool { background: #4f46e5; }
         .btn-tool:hover { background: #4338ca; }
+        /* Filter-box apply button - blue, same family as btn-nav */
+        .filter-btn { background: #2563eb; }
+        .filter-btn:hover { background: #1d4ed8; }
 
         /* 浮动控件：默认显示，允许通过 body.hide-floating-controls 隐藏 */
         .copy-btn, .jump-to-top, .floating-buttons {
