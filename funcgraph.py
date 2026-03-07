@@ -2325,6 +2325,7 @@ class HtmlGenerator:
                 <button class="control-btn" onclick="expandAll()">Expand All</button>
                 <button class="control-btn collapse" onclick="collapseAll()">Collapse All</button>
                 <button class="control-btn" id="heatmapBtn" onclick="toggleHeatmap()">Heatmap</button>
+                <span class="heatmap-legend" id="heatmapLegend"></span>
             </div>
         </div>
 
@@ -3158,10 +3159,15 @@ class HtmlGenerator:
                 except ValueError:
                     pass
 
+            # 添加耗时 tooltip
+            title_attr = ''
+            if duration_raw:
+                title_attr = f' title="{duration_raw.strip()}"'
+
             # 添加折叠类
             line_container_class = f"line-container {expandable_class} {fold_class}".strip()
 
-            content_html += f'<div class="{line_container_class}" id="{line_anchor_id}" data-line-number="{line_number}" data-line-id="{line_id}"{data_attrs}'
+            content_html += f'<div class="{line_container_class}" id="{line_anchor_id}" data-line-number="{line_number}" data-line-id="{line_id}"{data_attrs}{title_attr}'
             if is_expandable:
                 content_html += f' onclick="handleLineClick(event, \'{line_id}\')" ondblclick="handleDoubleClick(event, \'{line_id}\')" tabindex="0"'
                 content_html += '>'
@@ -3303,18 +3309,34 @@ class HtmlGenerator:
         """Generate all JavaScript code."""
         return """
     <script>
+        // localStorage namespace: per-file keys use a hash of the document title
+        const _lsPrefix = (function() {
+            let h = 0;
+            const s = document.title || '';
+            for (let i = 0; i < s.length; i++) { h = ((h << 5) - h + s.charCodeAt(i)) | 0; }
+            return 'fg_' + (h >>> 0).toString(36) + '_';
+        })();
+        // Global keys (shared across files): theme
+        // Per-file keys: expandedLines, foldedBlocks, filterBoxVisible, keyboardHintShown,
+        //   infoPanelExpanded, floatingControlsHidden, floatingTogglePos, viewState, heatmapEnabled
+        function lsGet(key) { return localStorage.getItem(_lsPrefix + key); }
+        function lsSet(key, val) { localStorage.setItem(_lsPrefix + key, val); }
+        function lsRemove(key) { localStorage.removeItem(_lsPrefix + key); }
+
         // 标记是否正在进行文本选择
         let isSelectingText = false;
         // 记录鼠标按下时的位置和时间
         let mouseDownInfo = { x: 0, y: 0, time: 0 };
         // 记录当前高亮行
         let highlightedLine = null;
-        // 当前主题
-        let currentTheme = localStorage.getItem('theme') || 'light';
+        // 当前主题 (global, not per-file)
+        // Auto-detect system preference for first-time visitors
+        let currentTheme = localStorage.getItem('theme') ||
+            (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
         // 记录展开状态
-        let expandedLines = JSON.parse(localStorage.getItem('expandedLines')) || {};
+        let expandedLines = JSON.parse(lsGet('expandedLines')) || {};
         // 记录折叠状态
-        let foldedBlocks = JSON.parse(localStorage.getItem('foldedBlocks')) || {};
+        let foldedBlocks = JSON.parse(lsGet('foldedBlocks')) || {};
         // 双击选择相关变量
         let lastClickTime = 0;
         let lastClickTarget = null;
@@ -3331,7 +3353,7 @@ class HtmlGenerator:
         // 记录当前滚动位置
         let scrollPositionBeforeClick = { x: 0, y: 0 };
         // 是否显示过键盘提示
-        let keyboardHintShown = localStorage.getItem('keyboardHintShown') === 'true';
+        let keyboardHintShown = lsGet('keyboardHintShown') === 'true';
         // 总行数（从summary中获取）
         let total_lines = 0;
 
@@ -3401,7 +3423,7 @@ class HtmlGenerator:
                         const icon = entryEl.querySelector('.fold-icon');
                         if (icon) {
                             icon.textContent = '▶';
-                            icon.style.transform = 'rotate(90deg)';
+                            icon.style.transform = 'rotate(0deg)';
                         }
                         // 同步 folded 类
                         entryEl.classList.add('folded');
@@ -3428,7 +3450,7 @@ class HtmlGenerator:
         // 保存展开状态
         function saveExpandedState(lineId, isExpanded) {
             expandedLines[lineId] = isExpanded;
-            localStorage.setItem('expandedLines', JSON.stringify(expandedLines));
+            lsSet('expandedLines', JSON.stringify(expandedLines));
         }
         
         // 初始化键盘导航
@@ -3447,7 +3469,7 @@ class HtmlGenerator:
             // 初始显示键盘提示，但只在第一次加载页面时
             if (!keyboardHintShown) {
                 showKeyboardHint();
-                localStorage.setItem('keyboardHintShown', 'true');
+                lsSet('keyboardHintShown', 'true');
                 keyboardHintShown = true;
             }
         }
@@ -3515,11 +3537,11 @@ class HtmlGenerator:
                 if (filterBox.style.display === 'none') {
                     filterBox.style.display = 'flex';
                     // 保存状态到localStorage
-                    localStorage.setItem('filterBoxVisible', 'true');
+                    lsSet('filterBoxVisible', 'true');
                 } else {
                     filterBox.style.display = 'none';
                     // 保存状态到localStorage
-                    localStorage.setItem('filterBoxVisible', 'false');
+                    lsSet('filterBoxVisible', 'false');
                 }
             }
         }
@@ -3912,7 +3934,6 @@ class HtmlGenerator:
                 }
             }
 
-            console.log(`Filter applied: ${visibleCount} lines visible`);
         }
 
         // 清除过滤器
@@ -3967,7 +3988,6 @@ class HtmlGenerator:
                 visibleLinesContainer.style.display = 'none';
             }
 
-            console.log('Filter cleared');
         }
 
         // 更新展开行列表（只包含可见的）
@@ -4553,21 +4573,17 @@ class HtmlGenerator:
         // 切换展开/收起状态 - 只影响当前行，不滚动
         // 切换折叠状态
         function toggleFold(foldId, foldType) {
-            console.log(`toggleFold called: foldId=${foldId}, foldType=${foldType}`);
 
             // 检查是否已折叠
             const isFolded = foldedBlocks[foldId] === true;
-            console.log(`Current folded state: ${isFolded}`);
 
             if (isFolded) {
                 // 展开
-                console.log(`Expanding foldId: ${foldId}`);
                 delete foldedBlocks[foldId];
                 // P2: Remove fold summary on expand
                 removeFoldSummary(foldId);
                 // 显示所有属于这个foldId的行
                 const lines = document.querySelectorAll(`[data-fold-id="${foldId}"]`);
-                console.log(`Found ${lines.length} lines to show`);
                 lines.forEach(line => {
                     line.style.display = '';
                 });
@@ -4580,9 +4596,7 @@ class HtmlGenerator:
                     const entryEl = document.querySelector('[data-fold-type="entry"][data-fold-id="' + foldId + '"]') || document.querySelector('[data-fold-id="' + foldId + '"][data-fold-type="entry"]');
                     if (entryEl) icon = entryEl.querySelector('.fold-icon');
                 }
-                console.log(`Found icon: ${icon ? 'yes' : 'no'}`);
                 if (icon) {
-                    console.log(`Updating icon to expanded state: ${icon.textContent} -> ▼`);
                     icon.textContent = '▼';
                     icon.style.transform = 'rotate(0deg)';
                 }
@@ -4597,7 +4611,6 @@ class HtmlGenerator:
 
                 // 展开：显示所有属于这个 foldId 的行或包含该 foldId 的祖先的行
                 const linesToShow = document.querySelectorAll(`[data-fold-id="${foldId}"], [data-fold-ancestors~="${foldId}"]`);
-                console.log(`Found ${linesToShow.length} lines to show (including descendants)`);
                 linesToShow.forEach(line => {
                     line.style.display = '';
                 });
@@ -4606,11 +4619,9 @@ class HtmlGenerator:
                 restoreFoldedState();
             } else {
                 // 折叠
-                console.log(`Collapsing foldId: ${foldId}`);
                 foldedBlocks[foldId] = true;
                 // 隐藏所有属于这个 foldId 的行或祖先中包含该 foldId 的行（但保留本入口行）
                 const lines = document.querySelectorAll(`[data-fold-id="${foldId}"], [data-fold-ancestors~="${foldId}"]`);
-                console.log(`Found ${lines.length} lines to hide (including descendants)`);
                 lines.forEach(line => {
                     const type = line.getAttribute('data-fold-type');
                     const thisId = line.getAttribute('data-fold-id');
@@ -4628,11 +4639,9 @@ class HtmlGenerator:
                     const entryEl = document.querySelector('[data-fold-type="entry"][data-fold-id="' + foldId + '"]') || document.querySelector('[data-fold-id="' + foldId + '"][data-fold-type="entry"]');
                     if (entryEl) icon = entryEl.querySelector('.fold-icon');
                 }
-                console.log(`Found icon: ${icon ? 'yes' : 'no'}`);
                 if (icon) {
-                    console.log(`Updating icon to collapsed state: ${icon.textContent} -> ▶`);
                     icon.textContent = '▶';
-                    icon.style.transform = 'rotate(90deg)';
+                    icon.style.transform = 'rotate(0deg)';
                 }
 
                 // 添加 folded 类，使入口行在折叠时颜色更醒目
@@ -4647,8 +4656,7 @@ class HtmlGenerator:
             }
 
             // 保存折叠状态
-            localStorage.setItem('foldedBlocks', JSON.stringify(foldedBlocks));
-            console.log(`Fold state saved: ${JSON.stringify(foldedBlocks)}`);
+            lsSet('foldedBlocks', JSON.stringify(foldedBlocks));
         }
 
         function toggleExpand(lineId, event) {
@@ -4701,17 +4709,17 @@ class HtmlGenerator:
             if (isExpanded) {
                 panel.classList.remove('show');
                 icon.classList.remove('expanded');
-                localStorage.setItem('infoPanelExpanded', 'false');
+                lsSet('infoPanelExpanded', 'false');
             } else {
                 panel.classList.add('show');
                 icon.classList.add('expanded');
-                localStorage.setItem('infoPanelExpanded', 'true');
+                lsSet('infoPanelExpanded', 'true');
             }
         }
         
         // 初始化信息面板状态
         function initInfoPanel() {
-            const expanded = localStorage.getItem('infoPanelExpanded') === 'true';
+            const expanded = lsGet('infoPanelExpanded') === 'true';
             if (expanded) {
                 const panel = document.getElementById('infoPanel');
                 const toggleBtn = document.querySelector('.info-toggle-btn');
@@ -4727,16 +4735,16 @@ class HtmlGenerator:
             const icon = document.getElementById('floatingToggleIcon');
             if (hidden) {
                 icon.textContent = '✕';
-                localStorage.setItem('floatingControlsHidden', 'true');
+                lsSet('floatingControlsHidden', 'true');
             } else {
                 icon.textContent = '☰';
-                localStorage.setItem('floatingControlsHidden', 'false');
+                lsSet('floatingControlsHidden', 'false');
             }
         }
 
         // 初始化浮动控件的显示状态（从 localStorage 读取）
         function initFloatingControls() {
-            const hidden = localStorage.getItem('floatingControlsHidden') === 'true';
+            const hidden = lsGet('floatingControlsHidden') === 'true';
             const icon = document.getElementById('floatingToggleIcon');
             if (hidden) {
                 document.body.classList.add('hide-floating-controls');
@@ -4771,7 +4779,7 @@ class HtmlGenerator:
             if (!toggle) return;
 
             // 从 localStorage 恢复之前保存的位置
-            const savedPos = localStorage.getItem('floatingTogglePos');
+            const savedPos = lsGet('floatingTogglePos');
             if (savedPos) {
                 try {
                     const pos = JSON.parse(savedPos);
@@ -4834,7 +4842,7 @@ class HtmlGenerator:
                     left: toggle.offsetLeft,
                     top: toggle.offsetTop
                 };
-                localStorage.setItem('floatingTogglePos', JSON.stringify(pos));
+                lsSet('floatingTogglePos', JSON.stringify(pos));
             });
 
             // 防止文本选中干扰拖动
@@ -4988,7 +4996,7 @@ class HtmlGenerator:
         // 页面初始化：恢复filter窗口状态
         document.addEventListener('DOMContentLoaded', function() {
             // 从localStorage读取filter窗口的显示状态
-            const filterBoxVisible = localStorage.getItem('filterBoxVisible');
+            const filterBoxVisible = lsGet('filterBoxVisible');
             const filterBox = document.getElementById('filterBox');
 
             if (filterBox) {
@@ -5007,16 +5015,12 @@ class HtmlGenerator:
 
         // 添加键盘快捷键支持
         document.addEventListener('keydown', function(event) {
-            console.log('🔑 Keydown event:', 'key=', event.key, 'keyCode=', event.keyCode, 'code=', event.code);
             
             // 检查是否在输入框中
             if (event.target.matches('input, textarea, select')) {
-                console.log('⏸ 在输入框中，跳过处理');
                 return;
             }
             
-            // DEBUG: 记录所有按键（可以注释掉）
-            // console.log('Keydown:', event.key, 'keyCode:', event.keyCode);
 
             
             // Enter键特殊处理：在链接上按Enter时，允许打开链接；在行上按Enter时，展开/收起
@@ -5130,24 +5134,20 @@ class HtmlGenerator:
             // 处理水平滚动（h/l 键）
             // 支持大小写，Shift+h 和 Shift+l 也有效
             if (keyLower === 'h') {
-                console.log('👈 检测到 h 键，执行左滚动');
                 event.preventDefault();
                 handled = true;
                 // 向左滚动容器
                 var container = document.querySelector('.container');
                 if (container) {
                     container.scrollBy({ left: -100, behavior: 'smooth' });
-                    console.log('✓ 容器已左滚，当前 scrollLeft:', container.scrollLeft);
                 }
             } else if (keyLower === 'l') {
-                console.log('👉 检测到 l 键，执行右滚动');
                 event.preventDefault();
                 handled = true;
                 // 向右滚动容器
                 var container = document.querySelector('.container');
                 if (container) {
                     container.scrollBy({ left: 100, behavior: 'smooth' });
-                    console.log('✓ 容器已右滚，当前 scrollLeft:', container.scrollLeft);
                 }
             }
             
@@ -5281,7 +5281,7 @@ class HtmlGenerator:
         
         // 恢复视图状态
         function restoreViewState() {
-            const savedState = localStorage.getItem('viewState');
+            const savedState = lsGet('viewState');
             if (savedState) {
                 const state = JSON.parse(savedState);
                 window.scrollTo(0, state.scrollPosition);
@@ -5595,7 +5595,7 @@ class HtmlGenerator:
         // ============================================================
         // P0: Duration Heatmap
         // ============================================================
-        let heatmapEnabled = localStorage.getItem('heatmapEnabled') !== 'false';
+        let heatmapEnabled = lsGet('heatmapEnabled') !== 'false';
 
         function applyDurationHeatmap() {
             const lines = document.querySelectorAll('.line-container[data-duration]');
@@ -5626,6 +5626,29 @@ class HtmlGenerator:
                 line.setAttribute('data-heat', heat);
             });
 
+            // Build legend
+            const fmtDur = (v) => {
+                if (v >= 1000000) return (v / 1000000).toFixed(1) + 's';
+                if (v >= 1000) return (v / 1000).toFixed(1) + 'ms';
+                return v.toFixed(1) + 'us';
+            };
+            const colors = [
+                'rgba(76,175,80,0.35)', 'rgba(139,195,74,0.4)',
+                'rgba(255,235,59,0.5)', 'rgba(255,152,0,0.55)', 'rgba(244,67,54,0.6)'
+            ];
+            const labels = [
+                '≤' + fmtDur(thresholds[0]), '≤' + fmtDur(thresholds[1]),
+                '≤' + fmtDur(thresholds[2]), '≤' + fmtDur(thresholds[3]),
+                '>' + fmtDur(thresholds[3])
+            ];
+            const legend = document.getElementById('heatmapLegend');
+            if (legend) {
+                legend.innerHTML = colors.map((c, i) =>
+                    '<span class="heatmap-legend-item" style="background:' + c + '"></span>' +
+                    '<span class="heatmap-legend-label">' + labels[i] + '</span>'
+                ).join('');
+            }
+
             // Apply visibility
             updateHeatmapVisibility();
         }
@@ -5633,6 +5656,8 @@ class HtmlGenerator:
         function updateHeatmapVisibility() {
             const btn = document.getElementById('heatmapBtn');
             if (btn) btn.textContent = heatmapEnabled ? 'Heatmap ●' : 'Heatmap ○';
+            const legend = document.getElementById('heatmapLegend');
+            if (legend) legend.classList.toggle('visible', heatmapEnabled);
             // Toggle a class on body to control heatmap visibility via CSS
             if (heatmapEnabled) {
                 document.body.classList.add('heatmap-on');
@@ -5645,7 +5670,7 @@ class HtmlGenerator:
 
         function toggleHeatmap() {
             heatmapEnabled = !heatmapEnabled;
-            localStorage.setItem('heatmapEnabled', heatmapEnabled);
+            lsSet('heatmapEnabled', heatmapEnabled);
             updateHeatmapVisibility();
         }
 
@@ -5852,6 +5877,10 @@ class HtmlGenerator:
             --bg-color: #f5f5f5;
             --container-bg: white;
             --text-color: #333;
+            --text-primary: #333;
+            --text-secondary: #999;
+            --text-muted: #888;
+            --bg-secondary: #f0f0f0;
             --line-hover: #f0f0f0;
             --line-selected: #e3f2fd;
             --line-highlighted: #fff8e1;
@@ -5870,6 +5899,10 @@ class HtmlGenerator:
             --bg-color: #1a1a1a;
             --container-bg: #2d2d2d;
             --text-color: #e0e0e0;
+            --text-primary: #e0e0e0;
+            --text-secondary: #777;
+            --text-muted: #888;
+            --bg-secondary: #363636;
             --line-hover: #3a3a3a;
             --line-selected: #2c3e50;
             --line-highlighted: #5d4037;
@@ -5977,16 +6010,6 @@ class HtmlGenerator:
             background: linear-gradient(135deg, #42a5f5, #1565c0);
             box-shadow: 0 2px 6px rgba(66, 165, 245, 0.4);
         }
-        .info-panel {
-            margin-top: 12px;
-            padding: 12px;
-            background-color: rgba(0, 0, 0, 0.02);
-            border-radius: 6px;
-            border-left: 3px solid var(--btn-primary);
-        }
-        [data-theme="dark"] .info-panel {
-            background-color: rgba(255, 255, 255, 0.03);
-        }
         .info-toggle {
             display: flex;
             align-items: center;
@@ -6001,49 +6024,6 @@ class HtmlGenerator:
         }
         .info-toggle:hover {
             opacity: 0.8;
-        }
-        .info-toggle-icon {
-            display: inline-block;
-            margin-right: 8px;
-            transition: transform 0.3s;
-            font-size: 14px;
-        }
-        .info-toggle-icon.expanded {
-            transform: rotate(90deg);
-        }
-        .info-panel {
-            display: none;
-            margin-top: 8px;
-            padding: 12px;
-            background-color: rgba(0, 0, 0, 0.02);
-            border-radius: 4px;
-            border-left: 3px solid var(--btn-primary);
-        }
-        .info-panel.show {
-            display: block;
-        }
-        [data-theme="dark"] .info-panel {
-            background-color: rgba(255, 255, 255, 0.03);
-        }
-        .info-item {
-            display: flex;
-            margin-bottom: 6px;
-            font-size: 11px;
-            line-height: 1.5;
-        }
-        .info-item:last-child {
-            margin-bottom: 0;
-        }
-        .info-label {
-            min-width: 100px;
-            font-weight: 600;
-            color: var(--summary-text);
-            margin-right: 12px;
-        }
-        .info-value {
-            flex: 1;
-            color: var(--text-color);
-            word-break: break-all;
         }
         .header-controls {
             display: flex;
@@ -6213,6 +6193,26 @@ class HtmlGenerator:
         [data-theme="dark"] .fold-summary .summary-count { color: #64B5F6; }
         [data-theme="dark"] .fold-summary .summary-time { color: #FFB74D; }
         [data-theme="dark"] .fold-summary .summary-ret { color: #EF5350; }
+        /* Heatmap legend */
+        .heatmap-legend {
+            display: none;
+            font-size: 11px;
+            gap: 2px;
+            align-items: center;
+            color: var(--text-color);
+        }
+        .heatmap-legend.visible { display: inline-flex; }
+        .heatmap-legend-item {
+            display: inline-block;
+            width: 12px;
+            height: 12px;
+            border-radius: 2px;
+            vertical-align: middle;
+        }
+        .heatmap-legend-label {
+            margin: 0 4px 0 1px;
+            white-space: nowrap;
+        }
         .func-name-link {
             color: var(--link-color);
             text-decoration: none;
@@ -6366,45 +6366,7 @@ class HtmlGenerator:
             color: var(--text-color);
             word-break: break-all;
         }
-        .controls {
-            position: fixed;
-            bottom: 20px;
-            right: 20px;
-            z-index: 1000;
-            display: flex;
-            gap: 8px;
-            align-items: flex-end; /* Align to bottom */
-        }
-
-        /* Right buttons - vertical stack */
-        .right-buttons {
-            display: flex;
-            flex-direction: column;
-            gap: 6px;
-            align-items: flex-end; /* Align to right */
-        }
-
-        /* Base button style */
-        .control-btn {
-            padding: 8px 12px;
-            border: none;
-            border-radius: 4px;
-            cursor: pointer;
-            font-size: 12px;
-            transition: all 0.2s;
-            white-space: nowrap;
-            /* Auto width based on content */
-            width: auto;
-            min-width: auto;
-            /* Semi-transparent backgrounds */
-            backdrop-filter: blur(2px);
-        }
-        .control-btn:hover {
-            opacity: 0.85;
-            transform: translateY(-1px);
-        }
-
-        /* Top button - blue */
+        /* Button color variants by position */
         .control-btn:nth-child(1) {
             background-color: rgba(59, 130, 246, 0.7); /* Blue */
             color: white;
