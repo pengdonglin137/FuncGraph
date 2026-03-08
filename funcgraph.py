@@ -2279,14 +2279,14 @@ class HtmlGenerator:
 
         # 添加环境信息部分
         if env_items:
-            info_content_html += '                <div style="font-weight: 600; color: var(--text-color); margin-bottom: 8px; font-size: 11px;">Environment</div>\n'
+            info_content_html += '                <div class="info-section-title">Environment</div>\n'
             for label, value in env_items:
                 info_content_html += f'                <div class="info-item"><div class="info-label">{label}:</div><div class="info-value">{html.escape(str(value))}</div></div>\n'
-            info_content_html += '                <div style="border-top: 1px solid var(--border-color); margin: 8px 0;"></div>\n'
+            info_content_html += '                <div class="info-section-divider"></div>\n'
 
         # 添加处理统计信息
         if self.parse_time > 0 or self.total_time > 0 or self.vmlinux_time > 0 or self.module_time > 0:
-            info_content_html += '                <div style="font-weight: 600; color: var(--text-color); margin-bottom: 8px; font-size: 11px;">Processing Stats</div>\n'
+            info_content_html += '                <div class="info-section-title">Processing Stats</div>\n'
             if self.parse_time > 0:
                 info_content_html += f'                <div class="info-item"><div class="info-label">Parse Time:</div><div class="info-value">{self.parse_time:.2f}s</div></div>\n'
             if self.vmlinux_time > 0:
@@ -2303,7 +2303,7 @@ class HtmlGenerator:
 
         # 添加脚本参数部分
         if info_items:
-            info_content_html += '                <div style="font-weight: 600; color: var(--text-color); margin-bottom: 8px; font-size: 11px;">Parameters</div>\n'
+            info_content_html += '                <div class="info-section-title">Parameters</div>\n'
             for label, value in info_items:
                 info_content_html += f'                <div class="info-item"><div class="info-label">{label}:</div><div class="info-value">{html.escape(str(value))}</div></div>\n'
 
@@ -3046,7 +3046,7 @@ class HtmlGenerator:
 
         Returns a string of all line-container divs.
         """
-        content_html = ""
+        content_parts = []
 
         # 添加行号并输出原始ftrace日志
         for idx, line_data in enumerate(self.parsed_lines):
@@ -3235,13 +3235,13 @@ class HtmlGenerator:
             # 添加折叠类
             line_container_class = f"line-container {expandable_class} {fold_class}".strip()
 
-            content_html += f'<div class="{line_container_class}" id="{line_anchor_id}" data-line-number="{line_number}" data-line-id="{line_id}"{data_attrs}{title_attr}'
+            content_parts.append(f'<div class="{line_container_class}" id="{line_anchor_id}" data-line-number="{line_number}" data-line-id="{line_id}"{data_attrs}{title_attr}')
             if is_expandable:
-                content_html += f' onclick="handleLineClick(event, \'{line_id}\')" ondblclick="handleDoubleClick(event, \'{line_id}\')" tabindex="0"'
-                content_html += '>'
+                content_parts.append(f' onclick="handleLineClick(event, \'{line_id}\')" ondblclick="handleDoubleClick(event, \'{line_id}\')" tabindex="0"')
+                content_parts.append('>')
             else:
-                content_html += '>'
-            content_html += f'<span class="line-number" onclick="updateAnchor(\'{line_anchor_id}\', event)" title="Click to copy anchor link">{line_number}</span>'
+                content_parts.append('>')
+            content_parts.append(f'<span class="line-number" onclick="updateAnchor(\'{line_anchor_id}\', event)" title="Click to copy anchor link">{line_number}</span>')
 
             # 添加折叠标记
             if is_foldable:
@@ -3249,17 +3249,17 @@ class HtmlGenerator:
                     # V2: Always use ▶, CSS rotate(90deg) for expanded state
                     expanded_class = '' if 'folded' in fold_class else ' expanded'
                     fold_marker = f'<span class="fold-icon{expanded_class}" tabindex="0" role="button" aria-label="Toggle fold" aria-expanded="{"false" if "folded" in fold_class else "true"}" onkeydown="handleFoldIconKeydown(event, this)" onclick="handleFoldIconClick(event, this)">▶</span>'
-                content_html += f'<span class="fold-marker">{fold_marker}</span>'
+                content_parts.append(f'<span class="fold-marker">{fold_marker}</span>')
             else:
                 # 非可折叠行也插入空白fold-marker以保持对齐
-                content_html += '<span class="fold-marker"><span style="display:inline-block; width:20px; height:20px;"></span></span>'
+                content_parts.append('<span class="fold-marker"><span style="display:inline-block; width:20px; height:20px;"></span></span>')
 
-            content_html += f'<span class="line-content">{escaped_line}</span>'
+            content_parts.append(f'<span class="line-content">{escaped_line}</span>')
 
             if is_expandable:
-                content_html += f'<span class="expand-btn">+</span>'
+                content_parts.append(f'<span class="expand-btn">+</span>')
 
-            content_html += '</div>'
+            content_parts.append('</div>')
 
             if is_expandable:
                 # 获取函数信息
@@ -3275,7 +3275,7 @@ class HtmlGenerator:
                 locations = self.func_locations_map.get(func_info_for_call, {})
 
                 # 为expanded-content添加内联样式style="display: none;"，确保初始状态
-                content_html += f'<div class="expanded-content" id="{line_id}_content" style="display: none;">'
+                content_parts.append(f'<div class="expanded-content" id="{line_id}_content" style="display: none;">')
 
                 if locations:
                     # 确定使用哪个URL
@@ -3328,14 +3328,14 @@ class HtmlGenerator:
 
                                     escaped_link = escape_html_preserve_spaces(link_text)
                                     escaped_url = html.escape(url)
-                                    content_html += f'<a class="location-link" href="{escaped_url}" target="_blank">{escaped_link}</a>'
+                                    content_parts.append(f'<a class="location-link" href="{escaped_url}" target="_blank">{escaped_link}</a>')
                                 else:
                                     # 无法提取有效路径或行号
                                     link_text = f"{loc['func']} at {file_path}"
                                     if loc.get('inlined'):
                                         link_text = f"(inlined) {link_text}"
                                     escaped_link = escape_html_preserve_spaces(link_text)
-                                    content_html += f'<div class="location-link">{escaped_link}</div>'
+                                    content_parts.append(f'<div class="location-link">{escaped_link}</div>')
                             else:
                                 # 没有base_url，只显示文本
                                 file_path = loc['file']
@@ -3358,19 +3358,19 @@ class HtmlGenerator:
                                 if loc.get('inlined'):
                                     link_text = f"(inlined) {link_text}"
                                 escaped_link = escape_html_preserve_spaces(link_text)
-                                content_html += f'<div class="location-link">{escaped_link}</div>'
+                                content_parts.append(f'<div class="location-link">{escaped_link}</div>')
                     elif isinstance(locations, str):
                         # 原始输出（--list模式）
-                        content_html += parse_list_output(locations, current_base_url, self.kernel_src, self.highlight_code, self.path_prefix, self.module_src)
+                        content_parts.append(parse_list_output(locations, current_base_url, self.kernel_src, self.highlight_code, self.path_prefix, self.module_src))
                     else:
                         # 未知格式
-                        content_html += f'<div class="location-link">Source information unavailable for: {escape_html_preserve_spaces(func_info_for_display)}</div>'
+                        content_parts.append(f'<div class="location-link">Source information unavailable for: {escape_html_preserve_spaces(func_info_for_display)}</div>')
                 else:
-                    content_html += f'<div class="location-link">Source information unavailable for: {escape_html_preserve_spaces(func_info_for_display)}</div>'
+                    content_parts.append(f'<div class="location-link">Source information unavailable for: {escape_html_preserve_spaces(func_info_for_display)}</div>')
 
-                content_html += '</div>'
+                content_parts.append('</div>')
 
-        return content_html
+        return ''.join(content_parts)
 
     def _generate_javascript(self):
         """Generate all JavaScript code."""
@@ -3480,9 +3480,23 @@ class HtmlGenerator:
         }
 
         // 保存展开状态
+        let _expandedStateDirty = false;
+        let _expandedFlushTimer = null;
         function saveExpandedState(lineId, isExpanded) {
             expandedLines[lineId] = isExpanded;
-            lsSet('expandedLines', JSON.stringify(expandedLines));
+            // Batch writes: defer localStorage flush to avoid O(n) serialization per line
+            if (!_expandedStateDirty) {
+                _expandedStateDirty = true;
+                if (_expandedFlushTimer) cancelAnimationFrame(_expandedFlushTimer);
+                _expandedFlushTimer = requestAnimationFrame(flushExpandedState);
+            }
+        }
+        function flushExpandedState() {
+            if (_expandedStateDirty) {
+                lsSet('expandedLines', JSON.stringify(expandedLines));
+                _expandedStateDirty = false;
+                _expandedFlushTimer = null;
+            }
         }
         
         // 初始化键盘导航
@@ -3936,11 +3950,11 @@ class HtmlGenerator:
             const allLineElems = document.querySelectorAll('.line-container');
             let visibleCount = 0;
 
+            // Single-pass: filter lines + collapse expanded content
             allLineElems.forEach(line => {
                 let show = true;
 
                 if (hasFilter) {
-                    // Hide empty/separator lines when filtering
                     const rawLine = line.querySelector('.line-content')?.textContent || '';
                     const trimmed = rawLine.trim();
                     if (trimmed === '' || /^[-]+$/.test(trimmed)) {
@@ -3954,34 +3968,22 @@ class HtmlGenerator:
 
                 line.style.display = show ? '' : 'none';
                 if (show) visibleCount++;
+
+                // Collapse expanded content for hidden or all filtered lines (single pass)
+                if (hasFilter && line.classList.contains('expandable')) {
+                    const nextSib = line.nextElementSibling;
+                    const content = nextSib && nextSib.classList.contains('expanded-content') ? nextSib : null;
+                    if (content && content.style.display === 'block') {
+                        content.style.display = 'none';
+                        const btn = line.querySelector('.expand-btn');
+                        if (btn) btn.textContent = '+';
+                        line.classList.remove('selected');
+                    }
+                }
             });
 
             // Update expandable lines
             updateExpandableLines();
-
-            // Collapse hidden expanded content
-            document.querySelectorAll('.expanded-content').forEach(content => {
-                const prevSibling = content.previousElementSibling;
-                if (prevSibling && prevSibling.classList.contains('line-container') &&
-                    prevSibling.style.display === 'none' && content.style.display === 'block') {
-                    content.style.display = 'none';
-                    const btn = prevSibling.querySelector('.expand-btn');
-                    if (btn) btn.textContent = '+';
-                    prevSibling.classList.remove('selected');
-                }
-            });
-
-            // Collapse all expanded rows
-            document.querySelectorAll('.line-container.expandable').forEach(line => {
-                const nextSibling = line.nextElementSibling;
-                const content = nextSibling && nextSibling.classList.contains('expanded-content') ? nextSibling : null;
-                const btn = line.querySelector('.expand-btn');
-                if (content && content.style.display === 'block') {
-                    content.style.display = 'none';
-                    if (btn) btn.textContent = '+';
-                    line.classList.remove('selected');
-                }
-            });
 
             // Apply duration sort if requested
             if (sortDir && visibleCount > 0) {
@@ -5759,6 +5761,7 @@ class HtmlGenerator:
         :root {
             --bg-color: #f5f5f5;
             --container-bg: white;
+            --container-bg-hover: #f3f4f6;
             --text-color: #333;
             --text-primary: #333;
             --text-secondary: #999;
@@ -5782,6 +5785,7 @@ class HtmlGenerator:
         [data-theme="dark"] {
             --bg-color: #1a1a1a;
             --container-bg: #2d2d2d;
+            --container-bg-hover: #3a3a3a;
             --text-color: #e0e0e0;
             --text-primary: #e0e0e0;
             --text-secondary: #777;
@@ -5803,7 +5807,7 @@ class HtmlGenerator:
             --guide-color: rgba(102, 187, 106, 0.35);
         }
         body {
-            font-family: 'Courier New', monospace;
+            font-family: 'SF Mono', Menlo, Consolas, 'DejaVu Sans Mono', 'Courier New', monospace;
             background-color: var(--bg-color);
             padding: 8px;
             line-height: 1.5;
@@ -5877,33 +5881,13 @@ class HtmlGenerator:
             background: var(--line-hover);
             color: var(--text-color);
         }
-        [data-theme="dark"] .author-badge {
-            background: linear-gradient(135deg, #42a5f5, #1565c0);
-            box-shadow: 0 2px 6px rgba(66, 165, 245, 0.4);
-        }
-        .info-toggle {
-            display: flex;
-            align-items: center;
-            cursor: pointer;
-            user-select: none;
-            padding: 8px;
-            margin: -8px;
-            font-size: 13px;
-            font-weight: 500;
-            color: var(--text-color);
-            transition: opacity 0.2s;
-        }
-        .info-toggle:hover {
-            opacity: 0.8;
-        }
         .line-container {
             display: flex;
             align-items: center;
             padding: 1px 2px;
             border-radius: 2px;
-            transition: background-color 0.2s;
             white-space: pre;
-            font-family: 'Courier New', monospace;
+            font-family: 'SF Mono', Menlo, Consolas, 'DejaVu Sans Mono', 'Courier New', monospace;
             font-size: 13px;
             cursor: default;
             -webkit-user-select: none;
@@ -5929,7 +5913,8 @@ class HtmlGenerator:
         }
         .line-number {
             display: inline-block;
-            width: 40px;
+            min-width: 3ch;
+            width: auto;
             text-align: right;
             padding-right: 10px;
             color: var(--summary-text);
@@ -5941,7 +5926,6 @@ class HtmlGenerator:
             cursor: pointer;
             border-radius: 3px;
             padding-left: 5px;
-            transition: background-color 0.2s, color 0.2s;
         }
         .line-number:hover {
             background-color: var(--line-hover);
@@ -5954,7 +5938,7 @@ class HtmlGenerator:
             -ms-user-select: text;
             user-select: text;
             white-space: pre;
-            font-family: 'Courier New', monospace;
+            font-family: 'SF Mono', Menlo, Consolas, 'DejaVu Sans Mono', 'Courier New', monospace;
         }
         .fold-marker {
             display: inline-flex;
@@ -6194,7 +6178,7 @@ class HtmlGenerator:
             border-left: 2px solid var(--btn-primary);
             border-radius: 0;
             white-space: pre;
-            font-family: 'Courier New', monospace;
+            font-family: 'SF Mono', Menlo, Consolas, 'DejaVu Sans Mono', 'Courier New', monospace;
             font-size: 12px;
         }
         .location-link {
@@ -6214,18 +6198,11 @@ class HtmlGenerator:
             display: block;
             padding: 2px 0;
             white-space: pre;
-            font-family: 'Courier New', monospace;
+            font-family: 'SF Mono', Menlo, Consolas, 'DejaVu Sans Mono', 'Courier New', monospace;
             font-size: 12px;
         }
         .current-line {
             background-color: var(--line-highlighted);
-        }
-        .info-toggle-icon {
-            display: inline-block;
-            transition: transform 0.3s;
-        }
-        .info-toggle-icon.expanded {
-            transform: rotate(90deg);
         }
         .info-panel {
             display: none;
@@ -6244,6 +6221,16 @@ class HtmlGenerator:
         }
         [data-theme="dark"] .info-panel {
             background-color: rgba(255, 255, 255, 0.03);
+        }
+        .info-section-title {
+            font-weight: 600;
+            color: var(--text-color);
+            margin-bottom: 8px;
+            font-size: 11px;
+        }
+        .info-section-divider {
+            border-top: 1px solid var(--border-color);
+            margin: 8px 0;
         }
         .info-item {
             display: flex;
@@ -6631,14 +6618,7 @@ class HtmlGenerator:
         .filter-btn { background: #2563eb; }
         .filter-btn:hover { background: #1d4ed8; }
 
-        /* 浮动控件：默认显示，允许通过 body.hide-floating-controls 隐藏 */
-        .copy-btn, .jump-to-top, .floating-buttons {
-            display: block;
-        }
-
         /* 当 body 带有 hide-floating-controls 时隐藏所有浮动按钮 */
-        body.hide-floating-controls .copy-btn,
-        body.hide-floating-controls .jump-to-top,
         body.hide-floating-controls .floating-buttons,
         body.hide-floating-controls .controls {
             display: none !important;
@@ -6820,11 +6800,11 @@ class HtmlGenerator:
 
         .hl-addr {
             color: #032f62;
-            font-family: 'Courier New', monospace;
+            font-family: 'SF Mono', Menlo, Consolas, 'DejaVu Sans Mono', 'Courier New', monospace;
         }
         [data-theme="dark"] .hl-addr {
             color: #79b8ff;
-            font-family: 'Courier New', monospace;
+            font-family: 'SF Mono', Menlo, Consolas, 'DejaVu Sans Mono', 'Courier New', monospace;
         }
         
         .hl-comment {
@@ -6938,14 +6918,6 @@ class HtmlGenerator:
             font-weight: bold;
         }
         
-        .line-number {
-            color: #6a737d;
-            margin-right: 8px;
-        }
-        [data-theme="dark"] .line-number {
-            color: #8b949e;
-        }
-        
         @media (max-width: 768px) {
             body {
                 padding: 4px;
@@ -6981,14 +6953,6 @@ class HtmlGenerator:
             .control-btn {
                 padding: 5px 8px;
                 font-size: 11px;
-            }
-            .copy-btn {
-                bottom: 50px;
-                right: 10px;
-            }
-            .jump-to-top {
-                bottom: 90px;
-                right: 10px;
             }
             .keyboard-hint {
                 bottom: 10px;
