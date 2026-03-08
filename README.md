@@ -10,6 +10,7 @@ FuncGraph converts `function_graph` ftrace output into an interactive, filterabl
 
 - Common flags: `--fast`, `--filter`, `--func-links`, `--highlight-code` 🔧
 - Filter syntax: `cpu:3 AND duration:>10 sort:desc` ⏱️
+- Graph filter: `graph:funcname` (show call tree), `notrace:funcname` (hide call tree) 🌲
 - Latency filter: `irqs:d AND hirq:h` (latency-mode traces only) 🔎
 - Keyboard: Tab focuses fold icon; Enter toggles fold; `Esc` clears selection ⌨️
 
@@ -19,6 +20,7 @@ FuncGraph converts `function_graph` ftrace output into an interactive, filterabl
 - Clickable source links (local or online) and optional syntax highlighting
 - High-performance address resolution (`fastfaddr2line.py`)
 - **Unified filter** with `field:value` syntax, AND/OR/NOT logic, field-selector buttons with dropdown menus
+- **Graph filtering**: `graph:func` / `notrace:func` to show/hide entire call trees (like ftrace's `set_graph_function` / `set_graph_notrace`)
 - **Latency field support**: parses irqs-off, need-resched, hardirq/softirq, preempt-depth from latency-mode traces
 - Keyboard-friendly navigation and accessible fold controls
 
@@ -219,8 +221,11 @@ Open `result.html` and use the unified filter:
 - **Find outliers**: `duration:>100 OR duration:<0.1`
 - **Specific process**: `pid:1234 OR pid:5678`, `comm:nginx OR comm:bash`
 - **Combined filtering**: `cpu:0 AND pid:1234 AND duration:>5`
+- **Graph filter**: `graph:schedule` (show schedule's call tree), `notrace:rcu_read_lock` (hide rcu call trees)
+- **Function match**: `func:mutex` (match function name only, no subtree)
+- **Combined graph**: `graph:vfs_read AND cpu:0` (graph filter + other conditions)
 - **Latency mode**: `irqs:d AND hirq:h` (only for latency-mode traces)
-- **Mouse workflow**: Click field buttons (cpu, pid, irqs...) to open dropdown selectors
+- **Mouse workflow**: Click field buttons (cpu, pid, graph, notrace...) to open dropdown selectors
 - **Fold calls**: Click the `▶` icon before function entry lines to fold/expand
 
 #### Supported Filter Fields
@@ -233,6 +238,9 @@ Open `result.html` and use the unified filter:
 | `ret` | data-ret | regex, `all` | `ret:all`, `ret:-22` |
 | `params` | data-params | regex | `params:folio` |
 | `duration` | data-duration | `>`, `<`, `>=`, `<=` | `duration:>10` |
+| `func` | data-func | regex | `func:schedule` |
+| `graph` | data-func + fold hierarchy | regex | `graph:vfs_read` (show call tree) |
+| `notrace` | data-func + fold hierarchy | regex | `notrace:rcu_read_lock` (hide call tree) |
 | `irqs` | data-irqs | char | `irqs:d` (disabled) |
 | `resched` | data-resched | char | `resched:N` |
 | `hirq` | data-hirq | char | `hirq:h` (hardirq) |
@@ -262,5 +270,5 @@ Open source project, contributions welcome!
 ---
 
 **Version**: v0.7
-**Last Updated**: 2026-03-07
+**Last Updated**: 2026-03-08
 **Status**: ✅ Production Ready

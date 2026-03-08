@@ -10,6 +10,7 @@ FuncGraph 将 `function_graph` 的 ftrace 输出转换为交互式、可过滤�
 
 - 常用选项：`--fast`、`--filter`、`--func-links`、`--highlight-code` 🔧
 - 过滤语法：`cpu:3 AND duration:>10 sort:desc` ⏱️
+- 调用树过滤：`graph:funcname`（显示调用树）、`notrace:funcname`（隐藏调用树）🌲
 - Latency 过滤：`irqs:d AND hirq:h`（仅限 latency 模式 trace）🔎
 - 键盘：Tab 聚焦折叠图标；Enter 切换折叠；Esc 清除选择 ⌨️
 
@@ -19,6 +20,7 @@ FuncGraph 将 `function_graph` 的 ftrace 输出转换为交互式、可过滤�
 - 可点击源码链接（在线或本地），支持高亮选项
 - 高性能地址解析（`fastfaddr2line.py`）
 - **统一过滤器**：`field:value` 语法，支持 AND/OR/NOT 逻辑运算，字段按钮下拉选择
+- **调用树过滤**：`graph:func` / `notrace:func` 显示/隐藏完整调用树（等效 ftrace 的 `set_graph_function` / `set_graph_notrace`）
 - **Latency 字段支持**：解析 irqs-off、need-resched、hardirq/softirq、preempt-depth
 - 键盘友好导航与可访问折叠控制
 
@@ -220,8 +222,11 @@ python3 funcgraph.py ~/ftrace.txt \
 - **查找异常**：`duration:>100 OR duration:<0.1`
 - **特定进程**：`pid:1234 OR pid:5678`，`comm:nginx OR comm:bash`
 - **组合过滤**：`cpu:0 AND pid:1234 AND duration:>5`
+- **调用树过滤**：`graph:schedule`（显示 schedule 的调用树）、`notrace:rcu_read_lock`（隐藏 rcu 调用树）
+- **函数名匹配**：`func:mutex`（仅匹配函数名，不含子调用树）
+- **组合过滤**：`graph:vfs_read AND cpu:0`（调用树过滤 + 其他条件）
 - **Latency 模式**：`irqs:d AND hirq:h`（仅限 latency 模式 trace）
-- **鼠标操作**：点击字段按钮（cpu、pid、irqs…）打开下拉选择器
+- **鼠标操作**：点击字段按钮（cpu、pid、graph、notrace…）打开下拉选择器
 - **折叠调用**：点击函数入口行前的 `▶` 图标可折叠/展开调用块
 
 #### 支持的过滤字段
@@ -234,6 +239,9 @@ python3 funcgraph.py ~/ftrace.txt \
 | `ret` | data-ret | 正则，`all` | `ret:all`，`ret:-22` |
 | `params` | data-params | 正则 | `params:folio` |
 | `duration` | data-duration | `>`、`<`、`>=`、`<=` | `duration:>10` |
+| `func` | data-func | 正则 | `func:schedule` |
+| `graph` | data-func + fold 层次 | 正则 | `graph:vfs_read`（显示调用树） |
+| `notrace` | data-func + fold 层次 | 正则 | `notrace:rcu_read_lock`（隐藏调用树） |
 | `irqs` | data-irqs | 字符 | `irqs:d`（disabled） |
 | `resched` | data-resched | 字符 | `resched:N` |
 | `hirq` | data-hirq | 字符 | `hirq:h`（hardirq） |
@@ -265,5 +273,5 @@ funcgraph_visualization/
 ---
 
 **版本**: v0.7
-**最后更新**: 2026-03-07
+**最后更新**: 2026-03-08
 **状态**: ✅ 生产就绪
