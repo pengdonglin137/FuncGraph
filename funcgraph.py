@@ -5973,9 +5973,9 @@ class HtmlGenerator:
             padding: 4px 4px 4px 4px;
             border-radius: 4px;
             box-shadow: none;
-            overflow-x: auto;
             transition: background-color 0.3s;
-            max-width: 100%;
+            width: fit-content;
+            min-width: 100%;
         }
         /* Compact single-line page header */
         .page-header {
