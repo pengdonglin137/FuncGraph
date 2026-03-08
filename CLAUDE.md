@@ -67,7 +67,7 @@ Key components:
 - `_find_source_file()` — shared file search logic (kernel root, path prefixes, module dirs)
 - `_print_code_context()` — prints source code context around a line
 
-### `funcgraph.py` (7,216 lines) — Main Application
+### `funcgraph.py` (7,455 lines) — Main Application
 
 Organized into 8 sections with 4 core classes:
 
@@ -106,7 +106,7 @@ Organized into 8 sections with 4 core classes:
 - `_prepare_data()` — pre-processing: func links, filter data, module URLs
 - `_generate_content_lines()` — main loop: line containers, fold markers, syntax highlighting
 - `_generate_css()` — all CSS styles (~1050 lines) including light/dark themes, heatmap, fold guide lines, fold summary
-- `_generate_javascript()` — all JavaScript (~2400 lines) including keyboard nav, unified filter system, fold/unfold, heatmap, fold-to-depth, recursive fold, fold summary
+- `_generate_javascript()` — all JavaScript (~2500 lines) including keyboard nav, unified filter system, fold/unfold, heatmap, fold-to-depth, recursive fold, fold summary, graph/notrace precomputation
 - Static helpers: `_adjust_func_info`, `_extract_line_number`, `_extract_file_path`
 
 #### Backward-Compatible Wrappers
@@ -140,5 +140,7 @@ ftrace.txt → FtraceParser.parse() → AddressResolver.resolve_batch() → Html
 - localStorage keys are namespaced per-file (hash of document title) to prevent cross-file state corruption; `theme` is global.
 - Fold system uses `_setFolded()` as atomic unit — `toggleFold`, `foldToDepth`, `toggleFoldRecursive` all delegate to it, batching localStorage writes.
 - Fold icons use CSS `transform: rotate(90deg)` with transition instead of character switching (GPU-composited).
-- Unified filter uses a single text input with `field:value` syntax, parsed by a recursive descent expression parser (`tokenizeFilter` → `parseFilterExpr` → `evalExpr`) supporting AND/OR/NOT and parentheses. Field buttons generate dropdown selectors (checkboxes for enumerable fields, text input for free-form). Dropdowns are mounted on `document.body` with fixed positioning to avoid interactive-element-nesting issues with `<button>`.
+- Unified filter uses a single text input with `field:value` syntax, parsed by a recursive descent expression parser (`tokenizeFilter` → `parseFilterExpr` → `evalExpr`) supporting AND/OR/NOT and parentheses. Field buttons generate dropdown selectors (checkboxes for enumerable fields, text input for free-form). Dropdowns are mounted on `document.body` with fixed positioning (viewport-clamped) to avoid interactive-element-nesting issues with `<button>`.
 - Latency fields (`irqs_off`, `need_resched`, `hardirq_softirq`, `preempt_depth`) are parsed from the pipe-delimited area between the two `|` separators in latency-mode ftrace output, and output as `data-irqs`, `data-resched`, `data-hirq`, `data-preempt` HTML attributes. Latency field buttons only appear when the trace contains latency data.
+- Graph filter fields (`func:`, `graph:`, `notrace:`) leverage the fold system's hierarchy data. `data-func` attribute is added to every line with a function name. `graph:funcname` matches the target function's entire call tree by precomputing matching fold-ids from entry lines (`precomputeGraphSets`), then checking each line's `data-fold-id` or `data-fold-ancestors` against the set. `notrace:funcname` inverts the logic. `func:funcname` does simple regex match on `data-func` only.
+- Container uses `width: fit-content; min-width: 100%` to allow long trace lines to expand beyond the viewport, triggering the browser's native horizontal scrollbar.
