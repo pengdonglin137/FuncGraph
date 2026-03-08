@@ -2560,6 +2560,7 @@ class HtmlGenerator:
 
             has_params = False
             has_duration = False
+            has_funcs = False
 
             for line_data in self.parsed_lines:
                 cpu = line_data.get('cpu')
@@ -2609,6 +2610,8 @@ class HtmlGenerator:
                     has_params = True
                 if not has_duration and line_data.get('duration') is not None:
                     has_duration = True
+                if not has_funcs and line_data.get('display_func_name'):
+                    has_funcs = True
 
                 # 收集 latency 字段值
                 if line_data.get('irqs_off') is not None:
@@ -2672,6 +2675,12 @@ class HtmlGenerator:
                 vals = ','.join(sorted(unique_preempt))
                 field_buttons.append(f'<button class="field-btn" data-field="preempt" data-values="{vals}">preempt</button>')
 
+            # func/graph/notrace 字段按钮（文本输入模式，不带 data-values）
+            if has_funcs:
+                field_buttons.append('<button class="field-btn" data-field="func" data-values="">func</button>')
+                field_buttons.append('<button class="field-btn" data-field="graph" data-values="">graph</button>')
+                field_buttons.append('<button class="field-btn" data-field="notrace" data-values="">notrace</button>')
+
             if field_buttons:
                 # 将所有错误码值存储在隐藏属性中（用于 ret:all 过滤）
                 error_values_json = ''
@@ -2682,7 +2691,7 @@ class HtmlGenerator:
             <div class="filter-box" id="filterBox">
                 <div class="filter-tags" id="filterTags"></div>
                 <div class="filter-input-row">
-                    <input type="text" id="filterInput" placeholder="field:value, e.g. cpu:3 AND duration:>10 sort:desc" autocomplete="off" data-error-values="{error_values_json}">
+                    <input type="text" id="filterInput" placeholder="field:value, e.g. cpu:3 AND duration:>10 graph:funcname sort:desc" autocomplete="off" data-error-values="{error_values_json}">
                     <button class="control-btn filter-btn" onclick="applyFilter()">Apply</button>
                     <button class="control-btn clear-btn" onclick="clearFilter()">Clear</button>
                     <button class="control-btn filter-help-btn" onclick="toggleFilterHelp()" title="Filter syntax help">?</button>
@@ -2712,6 +2721,11 @@ class HtmlGenerator:
                             <div class="syntax-desc">Operators: <code>&gt;</code> <code>&lt;</code> <code>&gt;=</code> <code>&lt;=</code> (for duration and preempt)</div>
                         </div>
                         <div class="syntax-section">
+                            <div class="syntax-title">Graph</div>
+                            <div class="syntax-example">graph:func &nbsp; notrace:func &nbsp; func:name</div>
+                            <div class="syntax-desc"><code>graph:</code> show function call tree; <code>notrace:</code> hide call tree; <code>func:</code> match function name only</div>
+                        </div>
+                        <div class="syntax-section">
                             <div class="syntax-title">Special</div>
                             <div class="syntax-example">ret:all &nbsp; sort:desc &nbsp; sort:asc</div>
                             <div class="syntax-desc"><code>ret:all</code> matches all error codes; <code>sort:desc/asc</code> sorts by duration</div>
@@ -2719,7 +2733,7 @@ class HtmlGenerator:
                         <div class="syntax-section">
                             <div class="syntax-title">Fields</div>
                             <div class="syntax-desc syntax-fields-list">
-                                <code>cpu</code> <code>pid</code> <code>comm</code> <code>ret</code> <code>params</code> <code>duration</code> <code>irqs</code> <code>resched</code> <code>hirq</code> <code>preempt</code>
+                                <code>cpu</code> <code>pid</code> <code>comm</code> <code>ret</code> <code>params</code> <code>duration</code> <code>func</code> <code>graph</code> <code>notrace</code> <code>irqs</code> <code>resched</code> <code>hirq</code> <code>preempt</code>
                             </div>
                         </div>
                     </div>
@@ -3173,6 +3187,12 @@ class HtmlGenerator:
                     data_attrs += f' data-call-depth="{call_depth}"'
                 if ancestors_attr:
                     data_attrs += f' data-fold-ancestors="{ancestors_attr}"'
+
+            # 添加函数名属性（用于 func/graph/notrace 过滤）
+            display_func = line_data.get('display_func_name')
+            if display_func:
+                escaped_func = display_func.replace('"', '&quot;').replace('<', '&lt;').replace('>', '&gt;')
+                data_attrs += f' data-func="{escaped_func}"'
 
             # 添加参数属性（用于参数过滤）
             if params:
@@ -3740,6 +3760,53 @@ class HtmlGenerator:
                 'hirq': 'data-hirq', 'preempt': 'data-preempt'
             };
 
+            // func: simple function name match
+            if (field === 'func') {
+                const funcAttr = line.getAttribute('data-func');
+                if (!funcAttr) return false;
+                try { return new RegExp(value, 'i').test(funcAttr); }
+                catch(e) { return funcAttr.includes(value); }
+            }
+
+            // graph: show function's complete call tree
+            if (field === 'graph') {
+                const key = 'graph:' + value;
+                const targetIds = _graphFoldIds[key];
+                if (!targetIds || targetIds.size === 0) return false;
+
+                const foldId = line.getAttribute('data-fold-id');
+                const ancestorsStr = line.getAttribute('data-fold-ancestors') || '';
+
+                // Line's own fold-id matches, or an ancestor matches
+                if (foldId && targetIds.has(foldId)) return true;
+                if (ancestorsStr) {
+                    const ancestors = ancestorsStr.split(' ');
+                    for (let i = 0; i < ancestors.length; i++) {
+                        if (targetIds.has(ancestors[i])) return true;
+                    }
+                }
+                return false;
+            }
+
+            // notrace: hide function's complete call tree
+            if (field === 'notrace') {
+                const key = 'notrace:' + value;
+                const targetIds = _graphFoldIds[key];
+                if (!targetIds || targetIds.size === 0) return true; // no match = show all
+
+                const foldId = line.getAttribute('data-fold-id');
+                const ancestorsStr = line.getAttribute('data-fold-ancestors') || '';
+
+                if (foldId && targetIds.has(foldId)) return false;
+                if (ancestorsStr) {
+                    const ancestors = ancestorsStr.split(' ');
+                    for (let i = 0; i < ancestors.length; i++) {
+                        if (targetIds.has(ancestors[i])) return false;
+                    }
+                }
+                return true;
+            }
+
             const attrName = fieldAttrMap[field];
             if (!attrName) return true; // Unknown field, pass through
 
@@ -3933,6 +4000,59 @@ class HtmlGenerator:
             });
         }
 
+        // ====== Graph/Notrace Precomputation ======
+
+        // Module-level cache for graph/notrace fold-id sets
+        let _graphFoldIds = {};
+
+        // Collect all graph:/notrace: conditions from AST
+        function collectGraphConditions(ast) {
+            if (!ast) return [];
+            if (ast.type === 'COND' && (ast.field === 'graph' || ast.field === 'notrace')) return [ast];
+            const results = [];
+            if (ast.left) results.push(...collectGraphConditions(ast.left));
+            if (ast.right) results.push(...collectGraphConditions(ast.right));
+            if (ast.operand) results.push(...collectGraphConditions(ast.operand));
+            return results;
+        }
+
+        // Build funcName→[foldId] map and resolve graph/notrace targets
+        function precomputeGraphSets(graphConds, allLines) {
+            const result = {};
+            if (graphConds.length === 0) return result;
+
+            // Build entry map: funcName → [foldId, ...]
+            const entryMap = new Map();
+            for (let i = 0; i < allLines.length; i++) {
+                const line = allLines[i];
+                if (line.getAttribute('data-fold-type') === 'entry') {
+                    const func = line.getAttribute('data-func');
+                    const foldId = line.getAttribute('data-fold-id');
+                    if (func && foldId) {
+                        let arr = entryMap.get(func);
+                        if (!arr) { arr = []; entryMap.set(func, arr); }
+                        arr.push(foldId);
+                    }
+                }
+            }
+
+            // For each condition, find matching fold-ids
+            graphConds.forEach(cond => {
+                const key = cond.field + ':' + cond.value;
+                if (result[key]) return; // already computed
+                const matchedIds = new Set();
+                let regex;
+                try { regex = new RegExp(cond.value, 'i'); } catch(e) { regex = null; }
+                entryMap.forEach((ids, func) => {
+                    const match = regex ? regex.test(func) : func.includes(cond.value);
+                    if (match) ids.forEach(id => matchedIds.add(id));
+                });
+                result[key] = matchedIds;
+            });
+
+            return result;
+        }
+
         // ====== Main Filter Functions ======
 
         function applyFilter() {
@@ -3949,6 +4069,14 @@ class HtmlGenerator:
             // Get all lines
             const allLineElems = document.querySelectorAll('.line-container');
             let visibleCount = 0;
+
+            // Precompute graph/notrace fold-id sets
+            if (hasFilter) {
+                const graphConds = collectGraphConditions(ast);
+                _graphFoldIds = precomputeGraphSets(graphConds, allLineElems);
+            } else {
+                _graphFoldIds = {};
+            }
 
             // Single-pass: filter lines + collapse expanded content
             allLineElems.forEach(line => {
