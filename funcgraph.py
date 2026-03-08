@@ -4215,17 +4215,42 @@ class HtmlGenerator:
                 }
             });
 
-            // Helper: position dropdown above a button using fixed positioning
+            // Helper: position dropdown near a button using fixed positioning, clamped to viewport
             function positionDropdown(dropdown, btn) {
                 const rect = btn.getBoundingClientRect();
-                dropdown.style.left = rect.left + 'px';
-                // Temporarily show to measure height
+                // Temporarily show off-screen to measure dimensions
                 dropdown.style.visibility = 'hidden';
+                dropdown.style.left = '0px';
+                dropdown.style.top = '0px';
                 document.body.appendChild(dropdown);
+                const dw = dropdown.offsetWidth;
                 const dh = dropdown.offsetHeight;
                 dropdown.style.visibility = '';
-                // Position above the button
-                dropdown.style.top = (rect.top - dh - 4) + 'px';
+
+                const vw = window.innerWidth;
+                const vh = window.innerHeight;
+                const margin = 4;
+
+                // Horizontal: align left edge to button, clamp to viewport
+                let left = rect.left;
+                if (left + dw > vw - margin) {
+                    left = vw - dw - margin;
+                }
+                if (left < margin) left = margin;
+
+                // Vertical: prefer above button, fall back to below if no room
+                let top = rect.top - dh - margin;
+                if (top < margin) {
+                    top = rect.bottom + margin;
+                }
+                // Clamp bottom edge
+                if (top + dh > vh - margin) {
+                    top = vh - dh - margin;
+                }
+                if (top < margin) top = margin;
+
+                dropdown.style.left = left + 'px';
+                dropdown.style.top = top + 'px';
             }
 
             // Helper: close all field dropdowns
