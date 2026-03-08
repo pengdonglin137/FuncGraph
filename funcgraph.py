@@ -2682,12 +2682,47 @@ class HtmlGenerator:
             <div class="filter-box" id="filterBox">
                 <div class="filter-tags" id="filterTags"></div>
                 <div class="filter-input-row">
-                    <input type="text" id="filterInput" placeholder="field:value, e.g. cpu:3 AND irqs:d" autocomplete="off" data-error-values="{error_values_json}">
+                    <input type="text" id="filterInput" placeholder="field:value, e.g. cpu:3 AND duration:>10 sort:desc" autocomplete="off" data-error-values="{error_values_json}">
                     <button class="control-btn filter-btn" onclick="applyFilter()">Apply</button>
                     <button class="control-btn clear-btn" onclick="clearFilter()">Clear</button>
+                    <button class="control-btn filter-help-btn" onclick="toggleFilterHelp()" title="Filter syntax help">?</button>
                 </div>
                 <div class="filter-fields" id="filterFields">
                     {''.join(field_buttons)}
+                </div>
+                <div class="filter-syntax-help" id="filterSyntaxHelp">
+                    <div class="syntax-help-header">
+                        <span>Filter Syntax</span>
+                        <span class="syntax-help-close" onclick="toggleFilterHelp()">&times;</span>
+                    </div>
+                    <div class="syntax-help-body">
+                        <div class="syntax-section">
+                            <div class="syntax-title">Basic</div>
+                            <div class="syntax-example">field:value</div>
+                            <div class="syntax-desc">e.g. <code>cpu:3</code> <code>comm:bash</code> <code>pid:1234</code></div>
+                        </div>
+                        <div class="syntax-section">
+                            <div class="syntax-title">Logic</div>
+                            <div class="syntax-example">expr AND expr &nbsp; expr OR expr &nbsp; NOT expr &nbsp; (expr)</div>
+                            <div class="syntax-desc">e.g. <code>cpu:0 AND pid:431</code> &nbsp; <code>irqs:d OR hirq:h</code> &nbsp; <code>NOT comm:idle</code></div>
+                        </div>
+                        <div class="syntax-section">
+                            <div class="syntax-title">Comparison</div>
+                            <div class="syntax-example">duration:&gt;10 &nbsp; duration:&lt;=5 &nbsp; preempt:&gt;1</div>
+                            <div class="syntax-desc">Operators: <code>&gt;</code> <code>&lt;</code> <code>&gt;=</code> <code>&lt;=</code> (for duration and preempt)</div>
+                        </div>
+                        <div class="syntax-section">
+                            <div class="syntax-title">Special</div>
+                            <div class="syntax-example">ret:all &nbsp; sort:desc &nbsp; sort:asc</div>
+                            <div class="syntax-desc"><code>ret:all</code> matches all error codes; <code>sort:desc/asc</code> sorts by duration</div>
+                        </div>
+                        <div class="syntax-section">
+                            <div class="syntax-title">Fields</div>
+                            <div class="syntax-desc syntax-fields-list">
+                                <code>cpu</code> <code>pid</code> <code>comm</code> <code>ret</code> <code>params</code> <code>duration</code> <code>irqs</code> <code>resched</code> <code>hirq</code> <code>preempt</code>
+                            </div>
+                        </div>
+                    </div>
                 </div>
             </div>
             <div class="filter-hint" id="filterHint"></div>'''
@@ -3493,6 +3528,12 @@ class HtmlGenerator:
                 clearTimeout(keyboardHintTimer);
                 keyboardHintTimer = null;
             }
+        }
+
+        // 切换过滤语法帮助面板
+        function toggleFilterHelp() {
+            const help = document.getElementById('filterSyntaxHelp');
+            if (help) help.classList.toggle('visible');
         }
 
         // 显示过滤提示
@@ -6455,6 +6496,87 @@ class HtmlGenerator:
         }
         [data-theme="dark"] .field-dropdown-input input {
             background: rgba(100, 100, 100, 0.3);
+        }
+
+        /* Filter help button */
+        .filter-help-btn {
+            width: 26px;
+            height: 26px;
+            padding: 0;
+            font-size: 14px;
+            font-weight: bold;
+            line-height: 26px;
+            text-align: center;
+            border-radius: 50%;
+            background: var(--border-color);
+            color: var(--text-secondary);
+            flex-shrink: 0;
+        }
+        .filter-help-btn:hover {
+            background: var(--btn-primary);
+            color: white;
+        }
+        /* Filter syntax help panel */
+        .filter-syntax-help {
+            display: none;
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            background: var(--container-bg);
+            overflow: hidden;
+        }
+        .filter-syntax-help.visible {
+            display: block;
+        }
+        .syntax-help-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 4px 10px;
+            background: var(--border-color);
+            font-size: 12px;
+            font-weight: bold;
+            color: var(--text-primary);
+        }
+        .syntax-help-close {
+            cursor: pointer;
+            font-size: 16px;
+            line-height: 1;
+            opacity: 0.6;
+        }
+        .syntax-help-close:hover {
+            opacity: 1;
+        }
+        .syntax-help-body {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 6px;
+            padding: 8px 10px;
+        }
+        .syntax-section {
+            font-size: 11px;
+            line-height: 1.5;
+        }
+        .syntax-title {
+            font-weight: bold;
+            color: var(--text-primary);
+            margin-bottom: 1px;
+        }
+        .syntax-example {
+            color: var(--btn-primary);
+            font-family: monospace;
+            font-size: 11px;
+        }
+        .syntax-desc {
+            color: var(--text-secondary);
+        }
+        .syntax-desc code {
+            background: rgba(128, 128, 128, 0.15);
+            padding: 0 3px;
+            border-radius: 2px;
+            font-size: 10px;
+        }
+        .syntax-fields-list code {
+            margin-right: 2px;
         }
 
         /* Hint tooltip */
