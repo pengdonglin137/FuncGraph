@@ -121,7 +121,7 @@ class BrowserSmokeTest(unittest.TestCase):
 
     def test_breakdown_sections_slowfast(self):
         self.open_timeline()
-        self.page.fill('.tl-search', '^do_el0_svc$')
+        self.page.fill('.tl-search', '^__arm64_sys_openat$')
         self.page.press('.tl-search', 'Enter')
         self.page.wait_for_timeout(200)
         self.ev('document.activeElement.blur()')
@@ -130,7 +130,7 @@ class BrowserSmokeTest(unittest.TestCase):
         self.page.wait_for_timeout(200)
         self.page.click('[data-act=slowfast]')
         self.page.wait_for_timeout(300)
-        self.assertIn('Slow vs fast', self.ev("document.querySelector('.tl-detail').innerText"))
+        self.assertRegex(self.ev("document.querySelector('.tl-detail').innerText"), r'Slow vs fast')
         self.page.click('[data-act=an-sec]')
         self.page.wait_for_timeout(200)
         self.assertGreater(self.ev("document.querySelectorAll('tr[data-sec]').length"), 0)
