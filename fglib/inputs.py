@@ -58,10 +58,10 @@ def read_lines(paths):
     if len(paths) == 1:
         return split_lines(read_text(paths[0])), None
     parts = [_chunks(split_lines(read_text(p))) for p in paths]
-    head = parts[0][0]
+    head = max((p[0] for p in parts), key=len)     # per-CPU files repeat the header: keep one
     if not all(p[2] for p in parts):
         out = list(head)
-        for h, ch, _ in parts:
+        for _h, ch, _ in parts:
             for _, c in ch:
                 out.extend(c)
         return out, 'inputs without funcgraph-abstime: concatenated in the given order'
