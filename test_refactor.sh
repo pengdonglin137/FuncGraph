@@ -60,6 +60,8 @@ echo "[3/4] Comparing key content sections..."
 extract_content() {
     grep -v "Generated At" "$1" | \
     grep -v "processing time" | \
+    grep -v "Parse Time" | \
+    grep -v "Total Time" | \
     grep -v "Trace file parsing" | \
     grep -v "Vmlinux resolution" | \
     grep -v "Modules resolution" | \
