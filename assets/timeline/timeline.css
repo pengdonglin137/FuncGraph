@@ -232,3 +232,15 @@ table.tl-sum td.err { color: #c62828; }
 .tl-filterbar.on .tl-ftext { border-color: #3b6fd8; box-shadow: 0 0 0 2px rgba(59, 111, 216, .15); }
 .tl-fcount { color: var(--text-muted); font-size: 11px; }
 .tl-btn.on { background: #3b6fd8; color: #fff; border-color: #3b6fd8; }
+
+/* analysis panels */
+.an-tbl th[data-esort], .an-tbl th[data-lsort] { cursor: pointer; }
+.an-tbl th.on { color: var(--text-color); text-decoration: underline; }
+.an-tbl tr[data-chains] td, .an-tbl tr[data-win] td { cursor: pointer; }
+.an-tbl td .d { color: var(--text-muted); }
+.an-hint { color: var(--text-muted); font-size: 11px; padding: 4px 12px 8px; }
+.an-dist { display: grid; grid-template-columns: 200px 1fr; gap: 8px 24px; padding: 10px 12px 4px; }
+.an-hist { width: 100%; cursor: pointer; display: block; }
+.an-blame { display: flex; flex-wrap: wrap; gap: 6px; padding: 6px 12px 8px; }
+.an-chip { border: 1px solid var(--border-color); border-radius: 12px; padding: 2px 9px; font-size: 11.5px; }
+.an-chip .k { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; margin-right: 6px; }

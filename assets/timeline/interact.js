@@ -360,6 +360,7 @@ window.addEventListener('keydown', ev => {
         case ']': if (sel >= 0) { const c = sibling(sel, 1); if (c >= 0) select(c, { reveal: true }); } break;
         case 'Enter': if (sel >= 0) gotoText(sLine[sel]); break;
         case '/': elSearch.focus(); elSearch.select(); break;
+        case 'h': case 'H': if (sel >= 0) showDist(sName[sel]); break;
         case '?': elHelp.classList.toggle('show'); break;
         case 'Escape':
             if (elHelp.classList.contains('show')) elHelp.classList.remove('show');

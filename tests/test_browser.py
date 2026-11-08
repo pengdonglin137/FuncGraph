@@ -91,6 +91,24 @@ class BrowserSmokeTest(unittest.TestCase):
         self.page.wait_for_timeout(300)
         self.assertEqual(self.ev("document.querySelector('.tl-fcount').textContent"), '')
 
+    def test_analysis_panels(self):
+        self.open_timeline()
+        self.page.click('[data-act=an-errors]')
+        self.page.wait_for_timeout(200)
+        self.assertGreater(self.ev("document.querySelectorAll('.an-tbl tbody tr[data-chains]').length"), 0)
+        self.page.click('.an-tbl tbody tr[data-chains]')
+        self.page.wait_for_timeout(200)
+        self.assertIn('occurrence 1', self.ev("document.querySelector('.tl-toast').textContent"))
+        self.page.click('[data-act=an-lat]')
+        self.page.wait_for_timeout(200)
+        self.assertIn('Scheduling latency', self.ev("document.querySelector('.tl-detail-title').textContent"))
+        self.page.keyboard.press('e')
+        self.page.wait_for_timeout(200)
+        self.page.keyboard.press('h')
+        self.page.wait_for_timeout(300)
+        self.assertTrue(self.ev("!!document.querySelector('.an-hist')"))
+        self.assertGreater(self.ev("document.querySelectorAll('.an-list tr').length"), 0)
+
     def test_range_summary_and_theme(self):
         self.open_timeline()
         box = self.page.query_selector('.tl-canvas').bounding_box()

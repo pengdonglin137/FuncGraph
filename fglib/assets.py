@@ -16,7 +16,7 @@ VIEWS_CSS = 'views/views.css'
 VIEWS_BOOT_JS = 'views/boot.js'
 TIMELINE_CSS = 'timeline/timeline.css'
 # Concatenated in this order inside `function __tlBoot() { ... }` (shared scope)
-TIMELINE_JS_PARTS = ('timeline/model.js', 'timeline/render.js', 'timeline/interact.js', 'timeline/panels.js')
+TIMELINE_JS_PARTS = ('timeline/model.js', 'timeline/render.js', 'timeline/interact.js', 'timeline/analysis.js', 'timeline/panels.js')
 COMPARE_CSS = 'compare/compare.css'
 COMPARE_JS = 'compare/compare.js'
 

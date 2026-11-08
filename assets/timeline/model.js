@@ -247,6 +247,8 @@ tlRoot.innerHTML = `
   <span class="tl-group">
     <button class="tl-btn" data-act="fit" title="Show the whole trace (0)">Fit</button>
     <button class="tl-btn" data-act="expand" title="Expand / collapse all tracks">Tracks</button>
+    <button class="tl-btn" data-act="an-errors" title="Error summary by syscall / origin / errno">Errors</button>
+    <button class="tl-btn" data-act="an-lat" title="Scheduling latency: need-resched windows and what delayed them">Sched latency</button>
     <button class="tl-btn" data-act="help" title="Help (?)">?</button>
   </span>
 </div>

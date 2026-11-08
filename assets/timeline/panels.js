@@ -5,6 +5,7 @@ function lineLink(n, label) { return '<a class="tl-link" data-line="' + n + '">'
 
 function showDetail(i) {
     range = null;
+    AN.kind = null;
     const f = sFlags[i], d = sEnd[i] - sStart[i], t = TRACKS[sTask[i]];
     let pills = pill('ctx' + (f & FL.CTX), CTX_NAMES[f & FL.CTX] + (f & FL.CTXINF ? '?' : ''));
     if (f & FL.IRQOFF) pills += pill('warn', 'irqs off');
@@ -16,6 +17,7 @@ function showDetail(i) {
     if (f & FL.EST) pills += pill('mute', 'estimated');
     let h = '<div class="tl-detail-head"><span class="tl-detail-title">' + esc(nameOf(i)) +
         (modOf(i) ? ' [' + esc(modOf(i)) + ']' : '') + '</span>' + pills + '<span class="sp"></span>' +
+        '<a class="tl-link" data-dist="' + sName[i] + '">Duration distribution (H)</a>&nbsp;&nbsp;' +
         lineLink(sLine[i], 'Open in text view ↵') + '<button class="tl-close" title="Close (Esc)">×</button></div>';
     h += '<div class="tl-detail-body"><div class="tl-kv">';
     h += kv('duration', fmtDur(d) + (f & FL.EST ? ' (estimated)' : ''));
@@ -77,6 +79,10 @@ function openDetail(html) {
     const was = elDetail.classList.contains('show');
     elDetail.innerHTML = html;
     elDetail.classList.add('show');
+    // sticky table headers sit right below the (sticky) panel head
+    const head = elDetail.querySelector('.tl-detail-head');
+    const hh = head ? head.offsetHeight : 0;
+    elDetail.querySelectorAll('table.tl-sum th').forEach(th => { th.style.top = hh + 'px'; });
     if (!was) resize();
 }
 function hideDetail() {
@@ -85,6 +91,8 @@ function hideDetail() {
     resize();
 }
 elDetail.addEventListener('click', ev => {
+    const dl = ev.target.closest('[data-dist]');
+    if (dl) { showDist(+dl.dataset.dist); return; }
     const a = ev.target.closest('[data-line]');
     if (a) { gotoText(+a.dataset.line); return; }
     const s = ev.target.closest('[data-slice]');
@@ -205,6 +213,11 @@ function applyTextFilter() {
     rebuildErrList();
     layout();
     draw();
+    if (elDetail.classList.contains('show')) {
+        if (AN.kind === 'errors') showErrors();
+        else if (AN.kind === 'lat') showLatency();
+        else if (AN.kind === 'dist') showDist(AN.func);
+    }
 }
 window.fgOnFilter = applyTextFilter;
 elFtext.addEventListener('keydown', ev => {
@@ -250,6 +263,8 @@ tlRoot.querySelector('.tl-toolbar').addEventListener('click', ev => {
         case 'errmode': errFilter = errFilter ? 0 : 1; rebuildErrList(); draw(); break;
         case 'fit': fitAll(); break;
         case 'help': elHelp.classList.toggle('show'); break;
+        case 'an-errors': showErrors(); break;
+        case 'an-lat': showLatency(); break;
         case 'expand': {
             const any = ORDER.some(t => t.collapsed);
             for (const t of ORDER) t.collapsed = !any;
@@ -287,6 +302,7 @@ elHelp.innerHTML = `
 <h4>Select</h4><ul>
 <li><kbd>↑</kbd> parent · <kbd>↓</kbd> first child · <kbd>[</kbd>/<kbd>]</kbd> siblings</li>
 <li><kbd>E</kbd>/<kbd>Shift+E</kbd> next/prev error · <kbd>/</kbd> search, <kbd>N</kbd> next match</li>
+<li><kbd>H</kbd>: duration distribution of the selected function · toolbar <b>Errors</b> / <b>Sched latency</b>: summaries</li>
 <li><kbd>Enter</kbd>: open in text view · <kbd>Alt</kbd>+click a text line: show it here</li></ul>
 <h4>Legend</h4><div class="tl-legend">
 <i style="background:hsl(214,55%,70%)"></i><span>task context</span>
