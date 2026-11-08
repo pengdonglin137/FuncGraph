@@ -306,18 +306,26 @@ python3 funcgraph.py ~/ftrace.txt \
 ## 项目结构
 
 ```
-funcgraph_visualization/
-├── README.md                    # 英文说明文档
-├── README.cn.md                 # 中文说明文档
-├── funcgraph.py                 # 主程序
-├── fastfaddr2line.py            # 地址解析工具
-├── timeline.py                  # 时间轴模型（按任务重建调用切片、错误路径分析）
-├── btf.py                       # BTF 解析（函数返回类型）
-├── assets/                      # 时间轴 JS/CSS，生成时内联进 HTML
-├── tests/test_timeline.py       # 时间轴不变量测试
-├── ftrace.txt                   # 示例数据
-└── sample.html                  # 示例截图
+funcgraph.py          # 入口
+fastfaddr2line.py     # 地址解析工具（可单独使用）
+fglib/                # 实现：parser、resolver、report、timeline、btf、cli 等
+assets/report/        # 文本视图的 JS/CSS（生成时内联进 HTML）
+assets/timeline/      # 时间轴标签页的 JS/CSS
+tests/                # 自测（tests/run.sh）和树莓派 4 采集的样例
+docs/design.md        # 设计文档
+ftrace.txt            # 示例数据
+sample.png            # 截图
 ```
+
+## 测试
+
+```bash
+tests/run.sh                       # 单元、端到端和浏览器冒烟测试，不需要内核树
+python3 tests/golden.py --update   # 为真实内核记录报告基线
+tests/run.sh --golden              # 修改后与基线比较
+```
+
+浏览器测试需要 Playwright 和 Chromium，JS 语法检查需要 `node`，缺少时自动跳过。详见 docs/design.md 第 9 节。
 
 ## 参考资料
 

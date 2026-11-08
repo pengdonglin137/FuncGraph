@@ -1,5 +1,7 @@
 # FuncGraph 重构实施计划
 
+> **历史文档**：这是 2026-03-06 那次重构的计划，内容已过时（例如 `test_refactor.sh` 已被 `tests/run.sh` 取代，代码已拆分到 `fglib/`）。当前设计见 [docs/design.md](../design.md)。
+
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
 **Goal:** 重构 funcgraph.py 和 fastfaddr2line.py 的内部结构，保持 2 文件形态和 100% 功能/输出兼容。

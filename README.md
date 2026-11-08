@@ -304,17 +304,26 @@ Open `result.html` and use the unified filter:
 ## Project Structure
 
 ```
-funcgraph_visualization/
-├── README.md                    # This file
-├── funcgraph.py                 # Main program
-├── fastfaddr2line.py            # Address resolution tool
-├── timeline.py                  # Timeline model (per-task call slices, error paths)
-├── btf.py                       # BTF reader (function return types)
-├── assets/                      # Timeline JS/CSS, inlined into the HTML
-├── tests/test_timeline.py       # Timeline invariant tests
-├── ftrace.txt                   # Example data
-└── sample.png                   # Screenshot
+funcgraph.py          # Entry point
+fastfaddr2line.py     # Address resolution tool (standalone)
+fglib/                # Implementation: parser, resolver, report, timeline, btf, cli ...
+assets/report/        # Text view JS/CSS (inlined into the HTML)
+assets/timeline/      # Timeline tab JS/CSS
+tests/                # Self-tests (tests/run.sh) and fixtures from a Raspberry Pi 4
+docs/design.md        # Design document
+ftrace.txt            # Example data
+sample.png            # Screenshot
 ```
+
+## Tests
+
+```bash
+tests/run.sh                       # unit + end-to-end + browser smoke tests, no kernel tree needed
+python3 tests/golden.py --update   # record report baselines for real kernels
+tests/run.sh --golden              # compare against them after a change
+```
+
+Browser tests need Playwright with Chromium, JS syntax checks need `node`; both are skipped when missing. See docs/design.md §9.
 
 ## References
 

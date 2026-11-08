@@ -35,123 +35,52 @@ Key flags: `--enable-fold` (collapsible call blocks), `--func-links` (resolve al
 ## Testing
 
 ```bash
-# Self-test: compares refactored output against reference HTML
-# Checks 24 HTML features + byte-level content diff
-bash test_refactor.sh
-
-# Timeline invariant tests (synthetic format variants + given traces)
-FG_VMLINUX=/vol_1t/raspi/linux/vmlinux python3 tests/test_timeline.py [trace files...]
+tests/run.sh                         # unit + end-to-end + browser smoke (hermetic, ~8 s)
+python3 tests/golden.py --update     # BEFORE changing output-affecting code: record baseline
+tests/run.sh --golden                # afterwards: byte-for-byte comparison on real kernels
 ```
 
-Without `--timeline` the output must stay byte-identical to the reference (regenerate `/tmp/funcgraph_reference.html` from the current code before changing anything); timeline CLI options are hidden from the info panel when unused.
-
-Requires a pre-generated reference file at `/tmp/funcgraph_reference.html`. Generate it before any code changes with the same parameters as in `test_refactor.sh`.
+- The unittest suite needs no kernel tree: `tests/helpers.FakeKernel` provides an empty vmlinux and a stub `scripts/faddr2line`. Fixtures in `tests/data/` are real Raspberry Pi 4 traces captured with different ftrace option sets.
+- Optional env: `FG_VMLINUX`/`FG_KERNEL_SRC` (real BTF + agreement with the kernel's faddr2line), `FG_TRACES` (extra traces for timeline invariants). Browser tests need Playwright + Chromium and are skipped otherwise; JS syntax tests need `node`.
+- `golden.py` configs use `/vol_1t/Qemu/x86_64/linux-6.18` and `/vol_1t/raspi/linux` (override with `FG_X86_KERNEL`/`FG_PI4_KERNEL`); `FG_ROOT` runs another checkout (e.g. a `git worktree` of the old version) to record the baseline.
+- Refactors must keep golden output identical; intended output changes must be explained in the commit.
 
 ## Dependencies
 
-- **Python 3.6+** (standard library only for `funcgraph.py`)
-- **pyelftools** (`pip install pyelftools`) — required by `fastfaddr2line.py`
-- **addr2line** (from binutils) — required for address resolution
-- **pygments** — optional, for C source syntax highlighting (`--highlight-code`)
+- **Python 3.6+** (standard library only for the main program, including the BTF reader)
+- **pyelftools** — required by `fastfaddr2line.py` (`--fast`)
+- **addr2line** (binutils, or `llvm-addr2line` with `LLVM=1`)
+- **pygments** — optional, `--highlight-code`
 
 ## Architecture
 
-Two Python files with a pipeline architecture:
-
-### `fastfaddr2line.py` (903 lines) — Address Resolution Engine
-
-Reimplements the kernel's `scripts/faddr2line` in Python. Parses ELF symbol tables via pyelftools, resolves `func+offset/length` notation to source file:line using a persistent `addr2line` subprocess. Supports fuzzy matching for compiler-mangled names (`.isra`, `.constprop`, `.llvm` suffixes).
-
-Key components:
-- `Symbol`, `Section` — data classes for ELF symbols
-- `load_elf_data()` — parses `.symtab`, builds per-section sorted symbol index
-- `find_matching_symbol()` — binary search + fuzzy matching for symbol lookup
-- `start_addr2line()` — launches persistent addr2line subprocess
-- `get_kernel_src_root()` — auto-detects kernel source root from `start_kernel`
-- `resolve_addresses()` — resolves addresses via addr2line sentinel protocol
-- `_find_source_file()` — shared file search logic (kernel root, path prefixes, module dirs)
-- `_print_code_context()` — prints source code context around a line
-
-### `funcgraph.py` (7,455 lines) — Main Application
-
-Organized into 8 sections with 4 core classes:
+Full design: **docs/design.md** (module layout, ftrace grammar, timeline model, data format, tests, extension guide).
 
 ```
-# Constants and Configuration     (~180 lines)  APP_VERSION, ERROR_CODE_MAP
-# Data Model                      (~50 lines)   FtraceLine
-# Utility Functions               (~200 lines)  path cleanup, URL building, module search
-# Syntax Highlighting             (~200 lines)  ftrace + C code highlighting
-# Ftrace Parser                   (~560 lines)  FtraceParser class
-# Address Resolver                (~530 lines)  AddressResolver class
-# HTML Generator                  (~5200 lines) HtmlGenerator class
-# Main Entry Point                (~300 lines)  CLI argument parsing, main()
+funcgraph.py          entry point (re-exports fglib)
+fastfaddr2line.py     standalone resolver, run as a subprocess (pyelftools + persistent addr2line)
+fglib/constants.py    PROJECT_DIR, APP_*, ERROR_CODE_MAP
+fglib/model.py        FtraceLine (__slots__, dict-compatible accessors)
+fglib/util.py         paths, URLs, module lookup, info-panel data
+fglib/highlight.py    ftrace line + C source highlighting
+fglib/parser.py       FtraceParser: text -> list[FtraceLine], fold pairing
+fglib/resolver.py     AddressResolver: func+off/len -> source via (fast)faddr2line
+fglib/report.py       HtmlGenerator: content lines, info panel, embedded data
+fglib/assets.py       reads assets/ (report + timeline JS/CSS)
+fglib/timeline.py     TimelineBuilder: per-task slices, off-CPU, windows, error chains -> tlData
+fglib/btf.py          BTF reader: function return-type classes
+fglib/cli.py          build_parser / validate_args / collect_module_dirs / find_faddr2line / main
 ```
 
-#### Core Classes
-
-**`FtraceLine`** — Data class (`__slots__`) for parsed ftrace lines. 24 fields: `raw_line`, `expandable`, `func_info`, `raw_func_name`, `display_func_name`, `module_name`, `cpu`, `pid`, `comm`, `func_name_info`, `ret_value`, `params`, `duration`, `sort_duration`, `duration_raw`, `fold_id`, `fold_type`, `fold_ancestors`, `call_depth`, `irqs_off`, `need_resched`, `hardirq_softirq`, `preempt_depth`. Dict-compatible `get()`/`__setitem__` for backward compatibility.
-
-**`FtraceParser`** — Parses raw ftrace output. Methods:
-- `parse(file_path, enable_fold)` → `list[FtraceLine]`
-- `_parse_cpu(line)` → CPU number
-- `_parse_pid_comm(search_area)` → (pid, comm)
-- `_parse_duration(prefix)` → (duration, sort_duration, duration_raw)
-- `_identify_fold_blocks(parsed_lines)` — pairs `{`/`}` for fold/unfold
-
-**`AddressResolver`** — Batch-resolves addresses to source locations. Methods:
-- `resolve_batch(func_infos, target, use_list)` — batch addr→source via faddr2line
-- `resolve_func_names(func_names, func_module_map, module_paths)` — function name→source
-- `_build_cmd(target, use_list, extra_args)` — unified faddr2line command construction
-- `_resolve_func_list(target_path, func_names, include_module_srcs)` — per-target resolution
-- `adjust_offset(func_info)` — offset adjustment (static)
-- `parse_list_output(output, ...)` — faddr2line `--list` output to HTML (static)
-
-**`HtmlGenerator`** — Generates self-contained HTML. Methods:
-- `generate()` → (html_str, vmlinux_time, module_time) — assembly method (~130 lines)
-- `_prepare_data()` — pre-processing: func links, filter data, module URLs
-- `_generate_content_lines()` — main loop: line containers, fold markers, syntax highlighting
-- `_generate_css()` — all CSS styles (~1050 lines) including light/dark themes, heatmap, fold guide lines, fold summary
-- `_generate_javascript()` — all JavaScript (~2500 lines) including keyboard nav, unified filter system, fold/unfold, heatmap, fold-to-depth, recursive fold, fold summary, graph/notrace precomputation
-- Static helpers: `_adjust_func_info`, `_extract_line_number`, `_extract_file_path`
-
-#### Backward-Compatible Wrappers
-
-All original public functions are preserved as thin wrappers delegating to the classes:
-- `parse_ftrace_file()` → `FtraceParser.parse()`
-- `identify_fold_blocks()` → `FtraceParser._identify_fold_blocks()`
-- `call_faddr2line_batch()` → `AddressResolver.resolve_batch()`
-- `call_faddr2line_for_func_names()` → `AddressResolver.resolve_func_names()`
-- `adjust_function_offset()` → `AddressResolver.adjust_offset()`
-- `parse_list_output()` → `AddressResolver.parse_list_output()`
-- `generate_html()` → `HtmlGenerator.generate()`
-
-### Timeline (`--timeline`)
-
-Optional, added on top of the pipeline above:
-
-- `btf.py` (stdlib only): reads `.BTF` from ELF (vmlinux, .ko, split BTF) or raw `/sys/kernel/btf/*` blobs and classifies each function's return type (`void`/`ptr`/`sint`/`uint`/`bool`/`enum`). `build_return_db()` → `ReturnTypeDB.lookup(name)` strips `.isra.0`-style suffixes.
-- `timeline.py`: `TimelineBuilder` re-parses the raw lines with a grammar that follows `kernel/trace/trace_functions_graph.c`, where every prologue column (abstime/rel-time, cpu, proc, latency, duration) is optional. It rebuilds call stacks **per task** (idle is per CPU), pairs exits by `funcgraph-tail` names, handles orphans/truncated calls, context-switch markers (off-CPU periods), `==========>` irq markers, sched events, need-resched windows, irqs-off windows, and error chains (origin → propagation, fate: handled / reaches `*_sys_*` / leaves window). Timing mode: `abs` > `rel` > `compressed` (durations only) > `count`. `to_data()` emits a column-oriented JSON (delta-encoded starts, string table).
-- `assets/timeline.css`, `assets/timeline_boot.js` (global: `fgSwitchView`, Alt+click on text lines), `assets/timeline_1..4.js` (concatenated into `function __tlBoot(){...}`: model, canvas renderer with LOD merging, interaction, detail/range summary). `HtmlGenerator._timeline_*` inline them; nothing is emitted without `timeline_json`.
-- Text-view filter → timeline: `applyFilter`/`clearFilter` call `fgNotifyFilter(text, Set<lineNumber>|null)`, which stores `window.fgFilterState` and calls `window.fgOnFilter` (set by the timeline). Slices match by entry or exit line number.
-- CPU tracks are a synthetic track (`kind: 9`) built from per-task `runs` (split at switch-in, extended to slice ends) and top-level irq/softirq slices.
-- The timeline jumps to the text view via `#L{line}` anchors and unfolds ancestors with the existing global `_setFolded`/`foldedBlocks`. Its keydown handler runs in the capture phase and stops propagation while the tab is active.
-
-### Data Flow
-
-```
-ftrace.txt → FtraceParser.parse() → AddressResolver.resolve_batch() → HtmlGenerator.generate() → output.html
-```
-
-### Key Constants
-
-- `ERROR_CODE_MAP` (top of `funcgraph.py`): Maps Linux errno values (-1 to -531, 140+ entries) to symbolic names (e.g., `-22 → EINVAL`), used for annotating return values in the visualization.
+Data flow: `FtraceParser.parse()` → `AddressResolver.resolve_batch()` → (optional `build_timeline_data()`) → `HtmlGenerator.generate()` → HTML.
 
 ## Code Conventions
 
-- All HTML/CSS/JS is generated inline within `HtmlGenerator` methods — there are no separate template files.
+- Front-end code lives in `assets/` (`report/` for the text view, `timeline/` for the Timeline tab) and is inlined by `fglib/assets.py` (read with `newline=''` so output stays byte-stable). `HtmlGenerator` only emits markup and data.
 - The generated HTML is fully self-contained with zero external dependencies.
 - Environment variables `CROSS_COMPILE` and `LLVM` control toolchain selection for cross-architecture support.
-- File sections are delimited by `# ====` separator comments.
+- Python code lives in the `fglib` package; `funcgraph.py` is a thin entry point that re-exports the public names. Dependencies between modules are one-way (see docs/design.md §2).
+- Use `PROJECT_DIR` (fglib/constants.py) for repo-relative paths, never `__file__` of a module.
 - `FtraceLine` uses `__slots__` for memory efficiency with dict-compatible accessors for gradual migration.
 - localStorage keys are namespaced per-file (hash of document title) to prevent cross-file state corruption; `theme` is global.
 - Fold system uses `_setFolded()` as atomic unit — `toggleFold`, `foldToDepth`, `toggleFoldRecursive` all delegate to it, batching localStorage writes.
@@ -162,3 +91,6 @@ ftrace.txt → FtraceParser.parse() → AddressResolver.resolve_batch() → Html
 - Source blocks are de-duplicated: each `.expanded-content` div is empty with `data-src="N"`, the HTML lives in `<script id="fgSrc">` (JSON array) and `fgFill(el)` fills it before any `content.style.display = 'block'`. Any new code that shows an expanded block must call `fgFill` first.
 - Fold ids are `f<base36 entry line index>`; `data-fold-ancestors` is a space-separated list of them.
 - Container uses `width: fit-content; min-width: 100%` to allow long trace lines to expand beyond the viewport, triggering the browser's native horizontal scrollbar.
+- Timeline `flags` bit layout is shared by `fglib/timeline.py` (`F_*`) and `assets/timeline/model.js` (`FL`); change both together.
+- Timeline JS files `model/render/interact/panels.js` are concatenated into one closure `__tlBoot()` (order in `fglib/assets.py`); `boot.js` is global.
+- Text-view filter → timeline: `applyFilter`/`clearFilter` call `fgNotifyFilter(text, Set<lineNumber>|null)`; the timeline registers `window.fgOnFilter`.

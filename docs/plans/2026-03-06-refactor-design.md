@@ -1,5 +1,7 @@
 # FuncGraph 重构设计文档
 
+> **历史文档**：这是 2026-03-06 那次重构的计划，内容已过时（例如 `test_refactor.sh` 已被 `tests/run.sh` 取代，代码已拆分到 `fglib/`）。当前设计见 [docs/design.md](../design.md)。
+
 > **状态**: 已完成（2026-03-07）— 含 P0/P1/P2 网页优化
 
 ## 1. 项目概述
