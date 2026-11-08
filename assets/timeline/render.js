@@ -1,4 +1,4 @@
-/* FuncGraph Timeline, part 2: rendering */
+/* FuncGraph Timeline: canvas rendering */
 let W = 0, H = 0, DPR = 1, dark = false, P = null;
 const ctx = elCv.getContext('2d'), hctx = elHead.getContext('2d');
 const FONT = '11px ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace';

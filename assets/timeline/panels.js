@@ -1,4 +1,4 @@
-/* FuncGraph Timeline, part 4: detail panel, range summary, wiring, init */
+/* FuncGraph Timeline: detail panel, range summary, wiring, init */
 function pill(cls, txt) { return '<span class="tl-pill ' + cls + '">' + esc(txt) + '</span>'; }
 function kv(k, v, cls) { return '<span class="k">' + k + '</span><span class="v' + (cls ? ' ' + cls : '') + '">' + v + '</span>'; }
 function lineLink(n, label) { return '<a class="tl-link" data-line="' + n + '">' + (label || 'line ' + n) + '</a>'; }

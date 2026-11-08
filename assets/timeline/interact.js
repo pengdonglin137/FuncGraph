@@ -1,4 +1,4 @@
-/* FuncGraph Timeline, part 3: interaction */
+/* FuncGraph Timeline: interaction */
 function hitTest(mx, my) {
     // returns {track, slice, off, header}
     const yy = my + elScroll.scrollTop;

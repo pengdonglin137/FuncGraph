@@ -9,6 +9,7 @@ import time
 import json
 from collections import defaultdict
 
+from .assets import REPORT_CSS, REPORT_JS, TIMELINE_CSS, read_asset, timeline_script
 from .constants import APP_AUTHOR, APP_TITLE, APP_VERSION, ERROR_CODE_MAP, PROJECT_DIR
 from .highlight import highlight_ftrace_line
 from .resolver import call_faddr2line_batch, call_faddr2line_for_func_names, create_source_link, parse_list_output, parse_module_url
@@ -232,16 +233,10 @@ class HtmlGenerator:
         return '    <script type="application/json" id="fgSrc">' + data + '</script>\n'
 
     # ---- Timeline view (optional, --timeline) ----
-    @staticmethod
-    def _timeline_asset(name):
-        path = os.path.join(PROJECT_DIR, 'assets', name)
-        with open(path, 'r', encoding='utf-8', newline='') as f:
-            return f.read()
-
     def _timeline_css(self):
         if not self.timeline_json:
             return ''
-        return self._timeline_asset('timeline.css') + '\n'
+        return read_asset(TIMELINE_CSS) + '\n'
 
     def _timeline_tabs(self):
         if not self.timeline_json:
@@ -257,10 +252,8 @@ class HtmlGenerator:
         if not self.timeline_json:
             return ''
         data = json.dumps(self.timeline_json, separators=(',', ':')).replace('<', '\\u003c')
-        parts = ''.join(self._timeline_asset(f'timeline_{i}.js') for i in range(1, 5))
         return ('    <script type="application/json" id="tlData">' + data + '</script>\n'
-                '    <script>\n' + self._timeline_asset('timeline_boot.js') +
-                '\nfunction __tlBoot() {\n' + parts + '\n}\n    </script>\n')
+                '    <script>\n' + timeline_script() + '    </script>\n')
 
     def _prepare_data(self):
         """Pre-process data: resolve func names, collect filter data, parse module URLs.
@@ -1244,11 +1237,11 @@ class HtmlGenerator:
 
     def _generate_javascript(self):
         """Main report JavaScript (assets/report/report.js)."""
-        return '\n    <script>\n' + self._timeline_asset('report/report.js') + '    </script>\n'
+        return '\n    <script>\n' + read_asset(REPORT_JS) + '    </script>\n'
 
     def _generate_css(self):
         """Main report CSS (assets/report/report.css)."""
-        return self._timeline_asset('report/report.css')
+        return read_asset(REPORT_CSS)
 
 
 def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None, base_url=None, module_url=None, kernel_src=None, use_list=False, verbose=False, fast_mode=False, highlight_code=False, path_prefix=None, module_src=None, module_srcs=None, script_args=None, enable_filter=False, parse_time=0, total_time=0, func_links=False, entry_offset=0, enable_fold=False, timeline_json=None):

@@ -1,5 +1,5 @@
-/* FuncGraph Timeline, part 1: data model + DOM skeleton.
- * Parts 1-4 are concatenated inside function __tlBoot() and share its scope. */
+/* FuncGraph Timeline: data model + DOM skeleton.
+ * model/render/interact/panels.js are concatenated (in that order) inside function __tlBoot() and share its scope. */
 const tlRoot = document.getElementById('timelineView');
 const D = JSON.parse(document.getElementById('tlData').textContent);
 const N = D.n, C = D.cols, S = D.strings;
