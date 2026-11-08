@@ -71,6 +71,11 @@ fglib/timeline.py     TimelineBuilder: per-task slices, off-CPU, windows, error 
 fglib/btf.py          BTF reader: function return-type classes
 fglib/prefilter.py    --pid/--comm/--cpu/--time-range/--graph/--notrace on raw lines (KEEP/DROP/PENDING stack)
 fglib/compare.py      --compare BASE: per-function stats and deltas (cmpData)
+fglib/inline.py       inline chains from faddr2line output -> tlData.inline
+fglib/sources.py      --source-url / --source-rev providers, context regeneration, version check
+fglib/config.py       funcgraph.ini defaults + presets (applied as argparse defaults)
+fglib/inputs.py       stdin / compressed / multi-file (merged by timestamp) input
+fglib/export.py       --export JSON/CSV of the analyses
 fgcapture.sh          target-side capture helper (--sched, --args, --calibrate, -- CMD)
 fglib/cli.py          build_parser / validate_args / collect_module_dirs / find_faddr2line / main
 ```
@@ -97,6 +102,8 @@ Data flow: `FtraceParser.parse()` → `AddressResolver.resolve_batch()` → (opt
 - Timeline `flags` bit layout is shared by `fglib/timeline.py` (`F_*`) and `assets/timeline/model.js` (`FL`); change both together.
 - Timeline JS files `model/render/interact/analysis/panels.js` are concatenated into one closure `__tlBoot()` (order in `fglib/assets.py`). Extra tabs register in `window.fgViews` and are wired by the global `assets/views/boot.js`; add a view in `HtmlGenerator._views()`.
 - Sections/atomic checks live in `TimelineBuilder._track_lat` / `_on_call` (task context only, preempt baseline from `_preempt_baseline`); breakdown and slow-vs-fast are computed in the browser from slices (`analysis.js`: `subtree`, `breakdown`, `slowFast`).
+- Timeline inline frames are synthetic slices with index >= N (`FL.INL`); use `rowOf(i)` for vertical position and `rowsT`/`sDepth` for navigation, subtrees and statistics. Loops `for (i < N)` must stay over real slices only.
+- Test environments: Pi 4 (6.18 arm64, `ssh pi4`, sources /vol_1t/raspi/linux) and a QEMU x86_64 VM with the 7.2 BTF-aware retval kernel (`ssh pengdl@localhost -p 8766`, sources /vol_1t/Qemu/trim_retval, vmlinux in x86_64/); both sudo passwords are a single space.
 - In timeline JS, displayed durations go through `durOf(i)` (measured or overhead-corrected, toggled by `setAdjusted`); geometry always uses `sStart/sEnd`.
 - New CLI options that change nothing when unused must be added to the hidden-when-default list in `util.format_args_info` to keep golden output stable.
 - Text-view filter → timeline: `applyFilter`/`clearFilter` call `fgNotifyFilter(text, Set<lineNumber>|null)`; the timeline registers `window.fgOnFilter`.

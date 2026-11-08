@@ -342,7 +342,7 @@ def format_args_info(args):
         if key in hidden_params:
             continue
         # Timeline options are only listed when used (keeps output identical otherwise)
-        if key in ('timeline', 'btf', 'no_btf', 'pid', 'comm', 'cpu', 'time_range', 'graph', 'notrace', 'compare', 'overhead', 'no_text_view', 'config', 'preset', 'no_config', 'source_url', 'source_rev', 'source_cache') and not value:
+        if key in ('timeline', 'btf', 'no_btf', 'pid', 'comm', 'cpu', 'time_range', 'graph', 'notrace', 'compare', 'overhead', 'no_text_view', 'config', 'preset', 'no_config', 'source_url', 'source_rev', 'source_cache', 'export') and not value:
             continue
 
         # 格式化参数显示

@@ -66,6 +66,22 @@ class FlexTest(unittest.TestCase):
         self.assertEqual(vals, sorted(vals))
         self.assertEqual(len(merged), len(lines))
 
+    def test_export_json_and_csv(self):
+        import csv as _csv
+        import json as _json
+        j, c = os.path.join(self.tmp, 'a.json'), os.path.join(self.tmp, 'a.csv')
+        run(['--export', j, '--output', self.out(), helpers.fixture('vm72_full')])
+        d = _json.load(open(j))
+        self.assertEqual(set(d), {'meta', 'functions', 'errors', 'sections', 'sched_latency', 'atomic_sleep', 'off_cpu'})
+        self.assertTrue(d['meta']['caps']['retval_btf'])
+        self.assertTrue(any(e['name'] == 'ENOENT' and e['fate'] == 'user' for e in d['errors']))
+        f = d['functions'][0]
+        self.assertLessEqual(f['p50'], f['p99'])
+        self.assertLessEqual(f['p99'], f['max'])
+        run(['--export', c, '--output', self.out(), helpers.fixture('vm72_full')])
+        rows = list(_csv.DictReader(open(c)))
+        self.assertEqual(len(rows), len(d['functions']))
+
     def test_config_and_preset(self):
         cfg = os.path.join(self.tmp, 'funcgraph.ini')
         open(cfg, 'w').write('[default]\nenable-fold = true\n\n[preset t]\ntimeline = true\npid = 131108\n')

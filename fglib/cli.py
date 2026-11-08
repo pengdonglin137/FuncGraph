@@ -162,6 +162,9 @@ def build_parser():
     src.add_argument('--source-rev', metavar='REV',
                      help='revision for {rev}; without --source-url: read files with `git show REV:path` from --kernel-src')
     src.add_argument('--source-cache', metavar='DIR', help='cache for fetched files (default ~/.cache/funcgraph/src)')
+    parser.add_argument('--export', metavar='FILE',
+                        help='also write the analysis results: FILE.json (functions, errors, critical sections, '
+                             'scheduling latency, atomic sleeps, off-CPU) or FILE.csv (per-function statistics)')
     parser.add_argument('--compare', metavar='BASE_TRACE',
                         help='Add a Compare tab: per-function calls/self/inclusive time vs. this base trace')
     parser.add_argument('--no-text-view', action='store_true',
@@ -474,6 +477,16 @@ def main():
     timeline_json = None
     if args.timeline:
         timeline_json = build_timeline_data(parsed_lines, vmlinux_path, module_dirs, args)
+
+    if args.export:
+        from . import export, timeline as tlmod
+        data = timeline_json or tlmod.build_timeline([l.raw_line for l in parsed_lines],
+                                                     rettypes=load_rettypes(parsed_lines, vmlinux_path, module_dirs, args),
+                                                     errno_map=ERROR_CODE_MAP,
+                                                     overhead=parse_overhead(args.overhead)).to_data()
+        ex = export.write(args.export, data, ERROR_CODE_MAP, input_name(args))
+        print(f"Export: {args.export} ({len(ex['functions'])} functions, {len(ex['errors'])} error chains, "
+              f"{len(ex['sections'])} critical sections)")
 
     compare_json = None
     if args.compare:

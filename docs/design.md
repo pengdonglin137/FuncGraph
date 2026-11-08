@@ -237,6 +237,14 @@ lost[]    [cpu, count, line]
 - **耗时去向**（前端 `breakdown()`）：对切片的子树分类，结果是实测耗时的精确划分：自身 self、被跟踪子调用的 self 之和、子树中进入更高上下文的中断切片、与该切片重叠的 off-CPU 段（阻塞/抢占，从它所在帧的 self 中扣除）。有开销估计时另外给出其中的跟踪开销。
 - **快慢对比**：同名（可限定调用点）调用按耗时排序，取最快一半与最慢 10%，比较两组每次调用在子树中各函数的平均调用次数和 self 时间，以及中断和 off-CPU 时间，按差值排序。
 
+## 7c. 内联、源码来源与新内核
+
+- **内联链**（`inline.py`）：解析 faddr2line 的 `(inlined by)` 输出，得到每个调用点由外到内的帧 `[[函数, 文件, 行], ...]`，`chain[0]` 是包含调用点的被跟踪函数。`HtmlGenerator._attach_inline()` 在地址解析之后把 `调用点字符串索引 → chain` 写入 `tlData.inline`（只保留带内联帧的调用点）。
+- **时间轴内联视图**（`model.js` 的 `buildInline`）：同一父切片下连续、内联链前缀相同的子调用合并为一个内联帧，追加为合成切片（下标 ≥ N，`FL.INL`），范围是第一个到最后一个子调用。逻辑深度 `sLd = 父的 sLd + 1 + 内联层数`，两套行索引 `rowsT`（只有被跟踪帧）和 `rowsI`（含内联帧）通过 `applyView()` 切换；所有绘制和命中用 `rowOf(i)`，导航、子树和统计始终用 `rowsT` 和 `sDepth`，合成切片不参与任何统计（循环只到 N）。
+- **源码来源**（`sources.py`）：`GitProvider`（`git show REV:path`）和 `UrlProvider`（URL 模板，本地缓存）重新生成 faddr2line 输出中每个位置的上下文行。版本检查：内联链里外层帧的那一行就是调用（内联）内层函数的地方，所以内层函数名必须出现在该行 ±1 行；比例低于 75% 时警告。实测：正确版本 86–94%，错误版本 26–59%。
+- **BTF 感知 retval 的内核**（7.2 `trim_retval`）：内核用 BTF 判断返回类型，void 不打印、截断到类型宽度、bool 打印为 true/false、无符号用十进制、超宽类型加 `(trunc)`、ERR_PTR 打印为负 errno。出现 `true/false/(trunc)` 时设置 `caps.retval_btf`，没有主机 BTF 时把负的十进制返回值直接视为已验证的 errno。该内核上 `funcgraph-args` 与 `funcgraph-retaddr` 可以同时输出，读取 11.7 万行仅约 1.1 秒（6.18 上约 36ms/行）。
+- **采集辅助的探测**：`fgcapture.sh --args` 先用 `set_ftrace_filter=vfs_read` 做一次小探测，测每行读取耗时和参数是否与 retaddr 共存，再决定保留 retaddr/latency-format 还是关掉，以及是否必须指定 `-g/-p`。
+
 ## 8. 性能数据
 
 | 场景 | 数据 |
@@ -268,6 +276,9 @@ python3 tests/golden.py --update   # 修改代码前先记录基线
 | `test_browser.py` | Playwright：展开源码块、折叠、错误导航和跳到文本、过滤联动、范围汇总、主题和配色切换，同时检查页面没有 JS 错误 |
 | `test_prefilter.py` | 各过滤条件、保留完整调用树、时间窗口语义、过滤后的实测数据仍满足不变量 |
 | `test_compare.py` | 按函数统计与差值、错误计数、修正行需要两份都有估计值 |
+| `test_inline.py` | 内联链解析（有无 --list、多候选、无输出）与调用点映射 |
+| `test_sources.py` | git 正确/错误版本、URL 获取与缓存、缺失文件、路径归一化 |
+| `test_flex.py` | 无 vmlinux、stdin/gzip 与普通文件结果一致、多文件按时间合并、配置文件与预设、导出 JSON/CSV |
 | `test_fgcapture.py` | 脚本语法、帮助、非 root 拒绝运行（实际采集在树莓派 4 上手工验证） |
 | `golden.py` | 6 种配置（x86 完整/最少/时间轴，pi4 完整/默认选项/sched 且不用 BTF），去掉耗时等动态字段后逐字节比较 |
 

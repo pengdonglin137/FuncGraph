@@ -57,8 +57,8 @@ The following table documents each command-line option supported by `funcgraph.p
 
 | Parameter | Type / Default | Description | Example |
 |-----------|----------------|-------------|---------|
-| `ftrace_file` | path (required) | Path to ftrace output file to parse and visualize | `trace.txt` |
-| `--vmlinux` | path (required) | Path to the vmlinux binary (used for address -> source resolution) | `--vmlinux /path/to/vmlinux` |
+| `ftrace_file` | paths (required) | Trace file(s); `-` reads stdin, `.gz`/`.xz`/`.bz2` are decompressed, several files are merged by timestamp | `trace.txt`, `- `, `cpu*.txt.gz` |
+| `--vmlinux` | path (optional) | vmlinux for address -> source resolution, source links and BTF; without it the trace views, timeline and analyses still work | `--vmlinux /path/to/vmlinux` |
 | `--kernel-src` | path | Kernel source tree root (used for local source linking and syntax highlighting) | `--kernel-src /usr/src/linux` |
 | `--module-dirs` | paths... | Directories to search for kernel modules (can specify multiple) | `--module-dirs /lib/modules /usr/lib/modules` |
 | `--module-srcs` | paths... | Module source directories for module-specific source linking | `--module-srcs /path/to/module/src` |
@@ -80,6 +80,9 @@ The following table documents each command-line option supported by `funcgraph.p
 | `--no-btf` | flag | Do not use BTF for error-path detection | `--no-btf` |
 | `--compare` | path | Add a Compare tab: per-function calls / self / inclusive / max / error differences against this base trace | `--compare before.txt` |
 | `--overhead` | `CHILD[,SELF]` ns | Tracing overhead estimate for corrected durations (default: read from the `fgcapture.sh --calibrate` header) | `--overhead 1115,463` |
+| `--config` / `--preset` | path / name | Option defaults from an INI file (`./funcgraph.ini` or `~/.config/funcgraph/config.ini`); `[default]` plus `[preset NAME]`; `--no-config` ignores it | `--preset pi4` |
+| `--source-url` / `--source-rev` | template / rev | Source blocks from a URL (`{path}`, `{rev}`; cached in `~/.cache/funcgraph/src`) or from `git show REV:path` in `--kernel-src`; a version check is reported | `--source-rev v6.18` |
+| `--export` | path | Also write the analyses as JSON (functions, errors, critical sections, latency, atomic sleeps, off-CPU) or CSV (function statistics) | `--export result.json` |
 | `--no-text-view` | flag | Only build Timeline/Compare (no per-line text view, no address resolution), for very large traces | `--timeline --no-text-view` |
 | `--pid` / `--comm` / `--cpu` | lists | Pre-filter: keep only these tasks / comm regexes / CPUs (comma separated) | `--pid 1234,1235` |
 | `--time-range` | `START:END` | Pre-filter: keep calls starting in this window; absolute seconds or `+offset` with units | `--time-range +2ms:+5ms` |
@@ -210,6 +213,8 @@ fgcapture.sh --args -g vfs_read,vfs_write -d 1       # arguments (no retaddr; re
 - **Sleeping in atomic context**: calls of sleeping functions (`mutex_lock`, `__might_sleep`, `wait_for_completion`, ...) with irqs off, preemption disabled or from an interrupt are flagged on the slice and listed in *Errors*.
 - **Wakeups and wait chains** (with `sched_waking`/`sched_wakeup`): arrows from the waker to the woken task; clicking an off-CPU segment shows who woke it, from which function, the wake latency, and what the waker itself was waiting for.
 - **Overhead correction**: with an estimate, `O` (or the *Overhead* button) switches tooltips, panels and summaries to durations with the overhead subtracted. Slice positions always stay as measured. Compare offers the same switch when both traces have an estimate.
+- **Inline frames**: call sites inside inlined code get their inline chain. The timeline's *Inline* button (`I`) switches between traced frames only and traced + inline frames (dashed; their extent is the first to last traced call inside, the real inlined code may start earlier and end later). Call stacks always list the inline frames; source blocks can be shown as a collapsible inline chain or flat (*Source* button).
+- **Kernels with BTF-aware funcgraph-retval** (e.g. the 7.2 `trim_retval` patches): `ret=true/false`, unsigned and `(trunc)` values, no `ret=` for void functions and ERR_PTRs as errnos are understood; error paths are then verified from the kernel's own typing, without host BTF. `fgcapture.sh --args` probes whether args can be printed together with retaddr and how fast, and keeps all timeline options when they can.
 - **Large traces**: above ~150k lines the text view becomes too heavy for browsers; use a pre-filter or `--timeline --no-text-view` (362k lines: 15.7 MB, opens in about a second).
 
 ## Capturing Trace
