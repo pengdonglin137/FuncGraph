@@ -58,8 +58,8 @@ python3 funcgraph.py trace.txt \
 
 | 参数 | 类型 / 默认值 | 说明 | 示例 |
 |------|----------------|------|------|
-| `ftrace_file` | 路径（必需） | 要解析和可视化的 ftrace 输出文件路径 | `trace.txt` |
-| `--vmlinux` | 路径（必需） | vmlinux 二进制文件路径（用于地址 -> 源码解析） | `--vmlinux /path/to/vmlinux` |
+| `ftrace_file` | 路径（必需，可多个） | trace 文件；`-` 表示 stdin，`.gz`/`.xz`/`.bz2` 自动解压，多个文件按时间戳合并 | `trace.txt`、`-`、`cpu*.txt.gz` |
+| `--vmlinux` | 路径（可选） | 用于地址 -> 源码解析、源码链接和 BTF；不提供时仍可使用文本视图、时间轴和各种分析 | `--vmlinux /path/to/vmlinux` |
 | `--kernel-src` | 路径 | 内核源码树根目录（用于本地源码链接和语法高亮） | `--kernel-src /usr/src/linux` |
 | `--module-dirs` | 路径... | 搜索内核模块的目录（可指定多个） | `--module-dirs /lib/modules /usr/lib/modules` |
 | `--module-srcs` | 路径... | 模块源码目录用于模块特定的源码链接 | `--module-srcs /path/to/module/src` |
@@ -81,6 +81,9 @@ python3 funcgraph.py trace.txt \
 | `--no-btf` | 标志 | 判断错误路径时不使用 BTF | `--no-btf` |
 | `--compare` | 路径 | 增加 Compare 标签页：与这份基准 trace 按函数比较调用次数、自身耗时、总耗时、最大值和错误数 | `--compare before.txt` |
 | `--overhead` | `CHILD[,SELF]` 纳秒 | 跟踪开销估计值，用于显示修正后的耗时（默认读取 `fgcapture.sh --calibrate` 写入的文件头） | `--overhead 1115,463` |
+| `--config` / `--preset` | 路径 / 名称 | 从 INI 文件读取默认参数（`./funcgraph.ini` 或 `~/.config/funcgraph/config.ini`）；`[default]` 加 `[preset NAME]`；`--no-config` 忽略 | `--preset pi4` |
+| `--source-url` / `--source-rev` | 模板 / 版本 | 源码块来自 URL（`{path}`、`{rev}`，缓存在 `~/.cache/funcgraph/src`）或 `--kernel-src` 中的 `git show REV:path`，并报告版本一致性 | `--source-rev v6.18` |
+| `--export` | 路径 | 另外把分析结果写成 JSON（函数统计、错误、临界区、调度延迟、原子睡眠、off-CPU）或 CSV（函数统计） | `--export result.json` |
 | `--no-text-view` | 标志 | 只生成 Timeline/Compare，不生成逐行文本视图、不解析地址，用于很大的 trace | `--timeline --no-text-view` |
 | `--pid` / `--comm` / `--cpu` | 列表 | 预过滤：只保留这些任务 / comm 正则 / CPU（逗号分隔） | `--pid 1234,1235` |
 | `--time-range` | `START:END` | 预过滤：保留在此时间窗口内开始的调用；绝对秒数，或带单位的 `+偏移` | `--time-range +2ms:+5ms` |
