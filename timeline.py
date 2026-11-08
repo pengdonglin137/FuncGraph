@@ -41,7 +41,7 @@ RE_CPU = re.compile(r' *(\d+)\) ')
 RE_PROC = re.compile(r' *(.+?)-(\d+) *\| ')
 RE_LAT = re.compile(r' ([.dDb][.BNLbnpl][.ZzHhs][.0-9a-f][.0-9a-f]?) \| ')
 RE_DUR = re.compile(r'([ +!#*@$]) (\d+(?:\.\d+)?) us *\|  ')
-RE_DUR_NOMARK = re.compile(r'  (\d+(?:\.\d+)?) us *\|  ')
+RE_DUR_NOMARK = re.compile(r' {1,2}(\d+(?:\.\d+)?) us *\|  ')
 RE_FILL = re.compile(r' {14}\|  ')
 
 RE_SWITCH = re.compile(r'^\s*(?:(\d+)\)\s+)?(.+?)-(\d+)\s+=>\s+(.+?)-(\d+)\s*$')
@@ -692,8 +692,19 @@ class TimelineBuilder:
                 m = max(self.s_end[k] for k in children[i])
                 if m > self.s_end[i]:
                     self.s_end[i] = m
-        # Clamp children into parents and remove sibling overlap (timestamp rounding)
         drift_fix = 0
+        # Parentless slices in the same row: trim the earlier one (timestamp rounding / lost events)
+        roots = {}
+        for i in range(n):
+            if self.s_parent[i] < 0:
+                roots.setdefault((self.s_task[i], self.s_depth[i]), []).append(i)
+        for idx in roots.values():
+            idx.sort(key=lambda i: (self.s_start[i], self.s_end[i]))
+            for a, b in zip(idx, idx[1:]):
+                if self.s_end[a] > self.s_start[b]:
+                    self.s_end[a] = max(self.s_start[a], self.s_start[b])
+                    drift_fix += 1
+        # Clamp children into parents and remove sibling overlap (timestamp rounding)
         for i in sorted(range(n), key=lambda i: self.s_depth[i]):
             kids = children[i]
             if not kids:
