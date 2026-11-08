@@ -355,9 +355,10 @@ function refreshPanel() {
     if (!c.latency) note('No latency columns: context is inferred from IRQ/softirq entry function names. Enable <code>options/latency-format</code> for exact irqs-off / need-resched / hardirq / softirq / preempt flags.');
     if (!c.proc && !c.switch_markers) note('No task info: tracks are per CPU. Enable <code>options/funcgraph-proc</code>.');
     if (!c.retval) note('No return values: error paths need <code>options/funcgraph-retval</code>.');
+    else if (!D.btf && c.retval_btf) note('The kernel printed type-aware return values (BTF-aware funcgraph-retval): void functions have no ret=, errnos and ERR_PTRs are signed.', true);
     else if (!D.btf) note('No BTF: errors are guessed from the value alone (void functions may show false positives). Use a vmlinux with <code>CONFIG_DEBUG_INFO_BTF</code> or pass <code>--btf</code>.');
     if (!c.retaddr) note('No call sites: enable <code>options/funcgraph-retaddr</code> to see where each call came from.', true);
-    else if (!c.args) note('Arguments are not printed while <code>funcgraph-retaddr</code> is on (kernel limitation).', true);
+    else if (!c.args && !c.retval_btf) note('Arguments are not printed while <code>funcgraph-retaddr</code> is on (kernel limitation, e.g. 6.18).', true);
     if (TIMED && !c.switch_markers && c.proc) note('No context-switch markers seen: off-CPU periods cannot be shown.', true);
     if (D.overhead) note('Tracing overhead estimate (' + esc(D.overhead.source) + '): ' + fmtDur(D.overhead.child) +
         ' per traced child call, ' + fmtDur(D.overhead.self) + ' per call. Toggle <b>Overhead</b> to subtract it; slice positions stay as measured.', true);

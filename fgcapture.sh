@@ -8,8 +8,10 @@
 #
 # Scenarios:
 #   (default)      timeline: abstime + latency-format + proc + retval + retaddr + tail
-#   --args         arguments: args + retval, no retaddr (they cannot be combined on 6.18).
-#                  Requires -g or -p: formatting arguments is slow (~36 ms/line on a Pi 4 / 6.18).
+#   --args         arguments too. The kernel is probed first: where args and retaddr can be
+#                  printed together (BTF print optimizations) all timeline options stay on;
+#                  otherwise (e.g. 6.18) retaddr is turned off, and -g/-p/a command is required
+#                  because formatting arguments is slow there (~36 ms/line on a Pi 4).
 #
 # Options:
 #   -o FILE        output file (default ./ftrace.txt)
@@ -62,9 +64,6 @@ done
 [ "$(id -u)" = 0 ] || die "must run as root (tracefs)"
 [ -w $T/current_tracer ] || die "tracefs not found at $T"
 grep -qw function_graph $T/available_tracers || die "function_graph tracer not available (CONFIG_FUNCTION_GRAPH_TRACER)"
-if [ $ARGS = 1 ] && [ -z "$GRAPH$PIDS" ] && [ ${#CMD[@]} = 0 ]; then
-    die "--args needs -g, -p or a command: formatting arguments is very slow on kernels without the BTF print optimizations"
-fi
 
 # ---- save current state ----
 SAVE=$(mktemp -d /tmp/fgcapture.XXXXXX)
@@ -74,7 +73,7 @@ save() {
     cat $T/current_tracer > $SAVE/tracer
     cat $T/tracing_on > $SAVE/on
     cat $T/buffer_size_kb > $SAVE/buf
-    for f in set_ftrace_pid set_graph_function set_graph_notrace; do
+    for f in set_ftrace_pid set_graph_function set_graph_notrace set_ftrace_filter; do
         [ -e $T/$f ] && grep -v '^#' $T/$f > $SAVE/$f 2>/dev/null
     done
     for o in $OPTS; do [ -e $T/options/$o ] && cat $T/options/$o > "$SAVE/opt_$o"; done
@@ -87,7 +86,7 @@ restore() {
     echo 0 > $T/tracing_on
     echo nop > $T/current_tracer
     for o in $OPTS; do [ -e "$SAVE/opt_$o" ] && cat "$SAVE/opt_$o" > $T/options/$o 2>/dev/null; done
-    for f in set_ftrace_pid set_graph_function set_graph_notrace; do
+    for f in set_ftrace_pid set_graph_function set_graph_notrace set_ftrace_filter; do
         [ -e $T/$f ] || continue
         echo > $T/$f
         [ -s $SAVE/$f ] && while read -r v; do echo "$v" >> $T/$f; done < $SAVE/$f 2>/dev/null
@@ -123,9 +122,30 @@ setlist set_graph_function "$GRAPH"
 [ -e $T/set_graph_notrace ] && setlist set_graph_notrace "$NOTRACE"
 setlist set_ftrace_pid "$PIDS"
 for o in funcgraph-duration funcgraph-cpu funcgraph-overhead funcgraph-irqs; do setopt $o 1; done
+# Probe what this kernel can do with funcgraph-args: on kernels without the BTF print
+# optimizations (e.g. 6.18) reading args is ~36 ms/line and args vanish when retaddr is on.
+ARGS_RETADDR=0 ARGS_SLOW=1
+if [ $ARGS = 1 ]; then
+    echo nop > $T/current_tracer; echo > $T/trace
+    echo vfs_read > $T/set_ftrace_filter          # one function only: cheap even where args are slow
+    for o in funcgraph-args funcgraph-retaddr funcgraph-proc; do setopt $o 1; done
+    echo function_graph > $T/current_tracer
+    echo 1 > $T/tracing_on; cat /proc/version > /dev/null; head -c 1 /etc/hostname > /dev/null; echo 0 > $T/tracing_on
+    t0=$(date +%s%N); cat $T/trace > $SAVE/probe; t1=$(date +%s%N)
+    n=$(grep -vc '^#' $SAVE/probe); [ "$n" -gt 0 ] || n=1
+    per_us=$(( (t1 - t0) / 1000 / n ))
+    grep -q 'vfs_read(file=.*<-' $SAVE/probe && ARGS_RETADDR=1
+    [ $per_us -lt 1000 ] && ARGS_SLOW=0
+    echo "fgcapture: funcgraph-args probe: ${per_us} us/line, args with retaddr: $([ $ARGS_RETADDR = 1 ] && echo yes || echo no)"
+    echo nop > $T/current_tracer; echo > $T/trace; echo > $T/set_ftrace_filter
+    if [ $ARGS_SLOW = 1 ] && [ -z "$GRAPH$PIDS" ] && [ ${#CMD[@]} = 0 ]; then
+        die "--args needs -g, -p or a command on this kernel: reading the trace would take ${per_us} us per line"
+    fi
+fi
 if [ $ARGS = 1 ]; then
     for o in funcgraph-abstime funcgraph-proc funcgraph-retval funcgraph-args funcgraph-tail; do setopt $o 1; done
-    setopt funcgraph-retaddr 0; setopt latency-format 0
+    setopt funcgraph-retaddr $ARGS_RETADDR
+    if [ $ARGS_RETADDR = 1 ]; then setopt latency-format 1; else setopt latency-format 0; fi
 else
     for o in funcgraph-abstime funcgraph-proc funcgraph-retval funcgraph-retaddr funcgraph-tail latency-format; do setopt $o 1; done
     setopt funcgraph-args 0

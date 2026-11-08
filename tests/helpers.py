@@ -19,6 +19,9 @@ FIXTURES = {
     'pi4_noproc': 'abstime + latency-format + retval, no funcgraph-proc',
     'pi4_nodur': 'abstime + proc + retval, no funcgraph-duration',
     'pi4_args': 'abstime + proc + retval + args, no retaddr',
+    # QEMU x86_64, 7.2 with BTF-aware funcgraph-retval (type-aware ret=, no ret= for void,
+    # ERR_PTR as errno) and fast args printing: args + retaddr together
+    'vm72_full': 'fgcapture --args --sched --calibrate on 7.2 (trim_retval): all options incl. args + retaddr',
 }
 
 FAKE_FADDR2LINE = """#!/bin/sh

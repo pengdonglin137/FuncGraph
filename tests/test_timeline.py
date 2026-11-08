@@ -235,6 +235,21 @@ class SyntheticTest(unittest.TestCase):
         at = {names[a[0]]: a[1] for a in d['atomic']}
         self.assertEqual(at, {'mutex_lock': 1 | 2})               # irqs off + preemption disabled
 
+    def test_btf_aware_kernel_retval_formats(self):
+        t = ("1000.000100 |   0)   sh-7     |  ...1. |   1.000 us    |  is_ok(); /* <-x+0x1/0x2 ret=false */\n"
+             "1000.000102 |   0)   sh-7     |  ...1. |   1.000 us    |  get_time(); /* <-x+0x1/0x2 ret=1764235(trunc) */\n"
+             "1000.000104 |   0)   sh-7     |  ...1. |   1.000 us    |  lookup(); /* <-x+0x1/0x2 ret=-2 */\n"
+             "1000.000106 |   0)   sh-7     |  ...1. |   1.000 us    |  count(); /* <-x+0x1/0x2 ret=4294967295 */\n"
+             "1000.000108 |   0)   sh-7     |  ...1. |   1.000 us    |  void_fn(); /* <-x+0x1/0x2 */\n")
+        d = build(t)
+        self.assertTrue(d['caps']['retval_btf'])
+        errs = {self.name(d, r[0]): (r[1], r[4]) for r in d['errs']}
+        self.assertEqual(errs, {'lookup': (-2, 1)})            # kernel-typed: verified without host BTF
+        rets = {self.name(d, i): d['strings'][x] for i, x in enumerate(d['cols']['ret']) if x >= 0}
+        self.assertEqual(rets['get_time'], '1764235(trunc)')
+        self.assertEqual(rets['is_ok'], 'false')
+        self.assertNotIn('void_fn', rets)
+
     def test_btf_filters_void_comparator_and_null(self):
         db = ReturnTypeDB()
         db.funcs.update({'do_raw_spin_unlock': ('void', 0), 'search_cmp_ftr_reg': ('sint', 4),
@@ -261,6 +276,7 @@ class FixtureTest(unittest.TestCase):
         'pi4_noproc': ('abs', {'latency', 'retval'}, {'proc'}),
         'pi4_nodur': ('abs', {'proc', 'retval'}, {'duration', 'latency'}),
         'pi4_args': ('abs', {'args', 'retval'}, {'retaddr'}),
+        'vm72_full': ('abs', {'args', 'retaddr', 'retval', 'retval_btf', 'latency'}, set()),
         'x86': ('compressed', {'latency', 'retval', 'retaddr', 'args'}, {'abs'}),
     }
 

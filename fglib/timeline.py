@@ -49,7 +49,8 @@ RE_LOST = re.compile(r'^CPU:(\d+) \[LOST (\d+) EVENTS\]')
 
 RE_FUNC_HEAD = re.compile(r'([A-Za-z_$][\w.$]*)(?: \[([\w-]+)\])?\(')
 RE_CALLER = re.compile(r'<-([A-Za-z_$][\w.$]*)\+(0x[0-9a-fA-F]+)/(0x[0-9a-fA-F]+)(?: \[([\w-]+)\])?')
-RE_RET = re.compile(r' ret=(-?\d+|0x[0-9a-fA-F]+)')
+# kernels with BTF-aware funcgraph-retval also print ret=true/false, unsigned decimals and '(trunc)'
+RE_RET = re.compile(r' ret=(-?\d+|0x[0-9a-fA-F]+|true|false)(\(trunc\))?')
 RE_EXIT_NAME = re.compile(r'^ ([A-Za-z_$][\w.$]*)(?: \[([\w-]+)\])?')
 # preempt-depth digit of task-context lines (for the baseline of the trace)
 RE_LAT_TASK = re.compile(r' [.dDb][.BNLbnpl]\.([.0-9a-f])[.0-9a-f]? \| ')
@@ -194,7 +195,7 @@ class TimelineBuilder:
 
         self.caps = dict(abs=False, rel=False, cpu=False, proc=False, latency=False, duration=False,
                          retval=False, retaddr=False, tail=False, args=False, irq_markers=False,
-                         sched_events=False, sched_waking=False, switch_markers=False)
+                         sched_events=False, sched_waking=False, switch_markers=False, retval_btf=False)
         self.mode = None
         self.overhead_source = 'option' if overhead else None
         self.stats = {}
@@ -442,8 +443,7 @@ class TimelineBuilder:
                     self.caps['retaddr'] = True
                 mr = RE_RET.search(comment)
                 if mr:
-                    ret = mr.group(1)
-                    self.caps['retval'] = True
+                    ret = self._ret_value(mr)
             if args:
                 self.caps['args'] = True
             self._on_call(kind, task, depth, name, module, args or None, caller, ret, ts, dur, lineno, lflags, lctx, cpu)
@@ -546,8 +546,7 @@ class TimelineBuilder:
                 self.caps['tail'] = True
             mr = RE_RET.search(comment)
             if mr:
-                ret = mr.group(1)
-                self.caps['retval'] = True
+                ret = self._ret_value(mr)
         st = task.stack
         target = None
         if st and st[-1].depth == depth and (name is None or st[-1].name == name):
@@ -614,6 +613,15 @@ class TimelineBuilder:
         task.loose = [i for i in task.loose if self.s_parent[i] < 0]
         if parent < 0:
             task.loose.append(idx)
+
+    def _ret_value(self, m):
+        self.caps['retval'] = True
+        v = m.group(1)
+        if v in ('true', 'false') or m.group(2):
+            # only the BTF-aware formatter prints booleans and '(trunc)': the kernel already used the
+            # return type (void functions print nothing, values are truncated/sign-extended to the type)
+            self.caps['retval_btf'] = True
+        return v + (m.group(2) or '')
 
     def _on_comment(self, stripped, task, ts, cpu, lctx=None):
         m = RE_SCHED_SWITCH.search(stripped)
@@ -808,11 +816,16 @@ class TimelineBuilder:
             if self.s_parent[i] < 0:
                 roots.setdefault((self.s_task[i], self.s_depth[i]), []).append(i)
         for idx in roots.values():
-            idx.sort(key=lambda i: (self.s_start[i], self.s_end[i]))
-            for a, b in zip(idx, idx[1:]):
-                if self.s_end[a] > self.s_start[b]:
-                    self.s_end[a] = max(self.s_start[a], self.s_start[b])
+            # trace order decides between equal (us-rounded) timestamps; the later call is shifted
+            idx.sort(key=lambda i: (self.s_start[i], self.s_line[i]))
+            prev_end = None
+            for i in idx:
+                s0, e0 = self.s_start[i], self.s_end[i]
+                if prev_end is not None and s0 < prev_end:
+                    self.s_start[i] = prev_end
+                    self.s_end[i] = prev_end + (e0 - s0)
                     drift_fix += 1
+                prev_end = self.s_end[i]
         # Clamp children into parents and remove sibling overlap (timestamp rounding)
         for i in sorted(range(n), key=lambda i: self.s_depth[i]):
             kids = children[i]
@@ -847,10 +860,18 @@ class TimelineBuilder:
         r = self.s_ret[i]
         if r is None:
             return None, False, False
+        if r in ('true', 'false') or r.endswith('(trunc)'):
+            return None, True, False
         try:
             v = int(r, 0)
         except ValueError:
             return None, False, False
+        if self.caps.get('retval_btf') and self.rettypes is None:
+            # type-aware kernel formatting: errnos (signed types, ERR_PTR) are printed as negative
+            # decimals, everything else (pointers, unsigned) as hex or unsigned decimal
+            if r.startswith('-') and -4095 <= v <= -1:
+                return v, True, False
+            return None, True, False
         if v < 0:
             v &= (1 << 64) - 1
         name = self.strings[self.s_name[i]]

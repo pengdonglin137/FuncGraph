@@ -25,6 +25,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PROG = os.path.join(os.environ.get('FG_ROOT', ROOT), 'funcgraph.py')
 X86 = os.environ.get('FG_X86_KERNEL', '/vol_1t/Qemu/x86_64/linux-6.18')
 PI4 = os.environ.get('FG_PI4_KERNEL', '/vol_1t/raspi/linux')
+VM72 = os.environ.get('FG_VM72_KERNEL', '/vol_1t/Qemu/trim_retval')
 X86_MODS = os.environ.get('FG_X86_MODULES', '/vol_1t/Qemu/x86_64/modules_')
 GOLDEN = os.environ.get('FG_GOLDEN_DIR', '/tmp/fg_golden')
 DATA = os.path.join(ROOT, 'tests', 'data')
@@ -50,6 +51,9 @@ CONFIGS = {
     'pi4_default': ({'CROSS_COMPILE': 'aarch64-linux-gnu-'}, [f'{PI4}/vmlinux'], [
         '--timeline', '--enable-fold', '--fast', '--filter', '--vmlinux', f'{PI4}/vmlinux',
         os.path.join(DATA, 'pi4_default.txt')]),
+    'vm72_full': ({}, [f'{VM72}/x86_64/vmlinux'], [
+        '--timeline', '--enable-fold', '--func-links', '--fast', '--filter', '--vmlinux', f'{VM72}/x86_64/vmlinux',
+        '--kernel-src', VM72, '--base-url', BOOTLIN, os.path.join(DATA, 'vm72_full.txt')]),
     'pi4_sched_nobtf': ({'CROSS_COMPILE': 'aarch64-linux-gnu-'}, [f'{PI4}/vmlinux'], [
         '--timeline', '--no-btf', '--fast', '--vmlinux', f'{PI4}/vmlinux',
         os.path.join(DATA, 'pi4_sched.txt')]),
