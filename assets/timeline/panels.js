@@ -313,6 +313,6 @@ if (!D.offcpu.length) tlRoot.querySelector('[data-ov=off]').classList.add('na');
 if (!D.caps.retval) tlRoot.querySelector('[data-ov=err]').classList.add('na');
 new MutationObserver(() => { palette(); ovDirty = true; draw(); })
     .observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
-window.addEventListener('resize', () => { if (document.body.classList.contains('tl-active')) resize(); });
+window.addEventListener('resize', () => { if (window.fgCurrentView() === 'timeline') resize(); });
 
 return { resize: resize, revealLine: revealLine, draw: draw };

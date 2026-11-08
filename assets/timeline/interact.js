@@ -185,7 +185,7 @@ elCv.addEventListener('mousedown', ev => {
     ev.preventDefault();
 });
 window.addEventListener('mousemove', ev => {
-    if (!document.body.classList.contains('tl-active')) return;
+    if (window.fgCurrentView() !== 'timeline') return;
     if (drag) {
         const [mx] = localXY(ev, drag.mode === 'ov' ? elHead : elCv);
         if (Math.abs(mx - drag.x0) > 3) drag.moved = true;
@@ -337,7 +337,7 @@ elSearch.addEventListener('keydown', ev => {
 
 // ---- keyboard (capture phase: keeps the text view's shortcuts from firing) ----
 window.addEventListener('keydown', ev => {
-    if (!document.body.classList.contains('tl-active')) return;
+    if (window.fgCurrentView() !== 'timeline') return;
     if (ev.target.matches && ev.target.matches('input, textarea, select')) return;
     ev.stopPropagation();
     if (ev.ctrlKey || ev.metaKey || ev.altKey) return;

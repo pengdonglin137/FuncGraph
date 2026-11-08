@@ -1,0 +1,45 @@
+/* Shared by all non-text views (tabs, page chrome hiding). */
+.view-tabs {
+    display: flex;
+    gap: 2px;
+    margin: 0 0 10px 0;
+    border-bottom: 1px solid var(--border-color);
+}
+.view-tab {
+    appearance: none;
+    border: 1px solid transparent;
+    border-bottom: none;
+    background: transparent;
+    color: var(--text-muted);
+    font: 600 13px system-ui, -apple-system, "Segoe UI", sans-serif;
+    padding: 7px 16px 6px;
+    border-radius: 6px 6px 0 0;
+    cursor: pointer;
+    position: relative;
+    top: 1px;
+}
+.view-tab:hover { color: var(--text-color); background: var(--container-bg-hover); }
+.view-tab.active {
+    color: var(--text-color);
+    background: var(--container-bg);
+    border-color: var(--border-color);
+}
+.view-tab .tab-badge {
+    font-weight: 500;
+    font-size: 11px;
+    margin-left: 6px;
+    padding: 1px 6px;
+    border-radius: 9px;
+    background: var(--bg-color);
+    color: var(--text-muted);
+}
+
+body.tl-active .controls,
+body.tl-active #content,
+body.tl-active .progress-bar,
+body.tl-active #floatingToggle,
+body.tl-active .keyboard-hint { display: none !important; }
+body.tl-active .container { width: auto !important; min-width: 0 !important; }
+.fg-view { display: none; }
+.fg-view.fg-view-on { display: flex; }
+

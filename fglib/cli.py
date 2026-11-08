@@ -13,29 +13,60 @@ from .report import generate_html
 from .util import check_gawk_available, find_module_path, verbose_print
 
 
+def build_compare_data(args, raw_lines, parsed_lines, timeline_json, vmlinux_path, module_dirs):
+    """Compare tab data: per-function statistics of --compare BASE vs. this trace."""
+    from . import compare, timeline as tlmod
+    t0 = time.time()
+    with open(args.compare, 'r', errors='replace') as f:
+        base_lines = f.read().split('\n')
+    pre = prefilter.Filter(pids=args.pid, comms=args.comm, cpus=args.cpu, time_range=args.time_range,
+                           graph=args.graph, notrace=args.notrace)
+    if pre.active():
+        base_lines, _ = prefilter.apply(base_lines, pre)     # same filter on both sides
+    rettypes = load_rettypes(parsed_lines, vmlinux_path, module_dirs, args)
+    if timeline_json is not None:
+        cur = timeline_json
+    else:
+        cur = tlmod.build_timeline([l.raw_line for l in parsed_lines], rettypes=rettypes, errno_map=ERROR_CODE_MAP).to_data()
+    data = compare.compare(cur, base_lines, rettypes=rettypes, base_name=os.path.basename(args.compare),
+                           cur_name=os.path.basename(args.ftrace_file))
+    print(f"Compare: {len(data['rows'])} functions vs {args.compare}, {time.time() - t0:.2f}s")
+    return data
+
+
+_RETTYPES = {}
+
+
+def load_rettypes(parsed_lines, vmlinux_path, module_dirs, args):
+    """BTF return-type database (cached per run); None with --no-btf or when no BTF exists."""
+    if args.no_btf:
+        return None
+    if 'db' in _RETTYPES:
+        return _RETTYPES['db']
+    from . import btf as btfmod
+    modules = sorted({l.get('module_name') for l in parsed_lines if l.get('module_name')})
+    mod_paths = []
+    for m in modules:
+        mp = find_module_path(m, module_dirs, args.verbose)
+        if mp:
+            mod_paths.append(mp)
+    rettypes = btfmod.build_return_db(vmlinux_path, extra_paths=args.btf or [], module_paths=mod_paths)
+    for err in rettypes.errors:
+        verbose_print(f"BTF: {err}", args.verbose)
+    if len(rettypes) == 0:
+        print("Note: no BTF found (vmlinux lacks .BTF); error paths will be unverified", file=sys.stderr)
+        rettypes = None
+    else:
+        verbose_print(f"BTF: {len(rettypes)} function return types from {rettypes.sources}", args.verbose)
+    _RETTYPES['db'] = rettypes
+    return rettypes
+
+
 def build_timeline_data(parsed_lines, vmlinux_path, module_dirs, args):
     """Build the Timeline tab data set. Returns a JSON-serializable dict or None on failure."""
     from . import timeline as tlmod
-    from . import btf as btfmod
     t0 = time.time()
-    rettypes = None
-    if not args.no_btf:
-        modules = sorted({l.get('module_name') for l in parsed_lines if l.get('module_name')})
-        mod_paths = []
-        for m in modules:
-            mp = find_module_path(m, module_dirs, args.verbose)
-            if mp:
-                mod_paths.append(mp)
-        extra = args.btf or []
-        rettypes = btfmod.build_return_db(vmlinux_path,
-                                          extra_paths=extra, module_paths=mod_paths)
-        for err in rettypes.errors:
-            verbose_print(f"BTF: {err}", args.verbose)
-        if len(rettypes) == 0:
-            print("Note: no BTF found (vmlinux lacks .BTF); timeline error paths will be unverified", file=sys.stderr)
-            rettypes = None
-        else:
-            verbose_print(f"BTF: {len(rettypes)} function return types from {rettypes.sources}", args.verbose)
+    rettypes = load_rettypes(parsed_lines, vmlinux_path, module_dirs, args)
     lines = [l.raw_line for l in parsed_lines]
     builder = tlmod.build_timeline(lines, rettypes=rettypes, errno_map=ERROR_CODE_MAP, verbose=args.verbose)
     data = builder.to_data()
@@ -98,6 +129,8 @@ def build_parser():
                           'timestamp with units, e.g. +2ms:+5ms')
     flt.add_argument('--graph', type=csv(str), metavar='RE[,RE]', help='keep only the call trees of matching functions')
     flt.add_argument('--notrace', type=csv(str), metavar='RE[,RE]', help='drop the call trees of matching functions')
+    parser.add_argument('--compare', metavar='BASE_TRACE',
+                        help='Add a Compare tab: per-function calls/self/inclusive time vs. this base trace')
     parser.add_argument('--timeline', action='store_true',
                         help='Add a Timeline tab: per-task flame chart over time with context/error-path coloring')
     parser.add_argument('--btf', nargs='*', default=None, metavar='FILE',
@@ -118,6 +151,9 @@ def validate_args(args):
             sys.exit(1)
     # 参数健壮性检查
     # 检查ftrace文件是否存在
+    if args.compare and not os.path.isfile(args.compare):
+        print(f"Error: --compare file '{args.compare}' does not exist", file=sys.stderr)
+        sys.exit(1)
     if not os.path.exists(args.ftrace_file):
         print(f"Error: ftrace file '{args.ftrace_file}' does not exist", file=sys.stderr)
         sys.exit(1)
@@ -366,6 +402,10 @@ def main():
     if args.timeline:
         timeline_json = build_timeline_data(parsed_lines, vmlinux_path, module_dirs, args)
 
+    compare_json = None
+    if args.compare:
+        compare_json = build_compare_data(args, raw_lines, parsed_lines, timeline_json, vmlinux_path, module_dirs)
+
     # 计算统计信息
     expandable_count = sum(1 for l in parsed_lines if l['expandable'])
     module_count = sum(1 for l in parsed_lines if l['expandable'] and l['module_name'])
@@ -394,7 +434,8 @@ def main():
         func_links=args.func_links,  # 传递函数名超链接开关
         entry_offset=args.entry_offset,  # 传递函数入口地址偏移量
         enable_fold=args.enable_fold,  # 传递折叠功能开关
-        timeline_json=timeline_json
+        timeline_json=timeline_json,
+        compare_json=compare_json
     )
 
     # 计算总时间

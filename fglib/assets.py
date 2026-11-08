@@ -12,10 +12,13 @@ ASSET_DIR = os.path.join(PROJECT_DIR, 'assets')
 
 REPORT_CSS = 'report/report.css'
 REPORT_JS = 'report/report.js'
+VIEWS_CSS = 'views/views.css'
+VIEWS_BOOT_JS = 'views/boot.js'
 TIMELINE_CSS = 'timeline/timeline.css'
-TIMELINE_BOOT_JS = 'timeline/boot.js'
 # Concatenated in this order inside `function __tlBoot() { ... }` (shared scope)
 TIMELINE_JS_PARTS = ('timeline/model.js', 'timeline/render.js', 'timeline/interact.js', 'timeline/panels.js')
+COMPARE_CSS = 'compare/compare.css'
+COMPARE_JS = 'compare/compare.js'
 
 
 @lru_cache(maxsize=None)
@@ -25,10 +28,10 @@ def read_asset(rel):
 
 
 def timeline_script():
-    """Boot code (global scope) followed by the timeline closure."""
+    """The timeline closure (registered as a view by views/boot.js)."""
     parts = ''.join(read_asset(p) for p in TIMELINE_JS_PARTS)
-    return read_asset(TIMELINE_BOOT_JS) + '\nfunction __tlBoot() {\n' + parts + '\n}\n'
+    return 'function __tlBoot() {\n' + parts + '\n}\n'
 
 
 def all_asset_paths():
-    return (REPORT_CSS, REPORT_JS, TIMELINE_CSS, TIMELINE_BOOT_JS) + TIMELINE_JS_PARTS
+    return (REPORT_CSS, REPORT_JS, VIEWS_CSS, VIEWS_BOOT_JS, TIMELINE_CSS, COMPARE_CSS, COMPARE_JS) + TIMELINE_JS_PARTS

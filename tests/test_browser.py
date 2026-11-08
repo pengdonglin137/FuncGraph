@@ -67,7 +67,7 @@ class BrowserSmokeTest(unittest.TestCase):
     def open_timeline(self):
         self.page.click('.view-tab[data-view=timeline]')
         self.page.wait_for_timeout(400)
-        self.assertTrue(self.ev("document.body.classList.contains('tl-active')"))
+        self.assertTrue(self.ev("document.body.dataset.view === 'timeline'"))
 
     def test_timeline_error_navigation_and_jump_to_text(self):
         self.open_timeline()
@@ -77,7 +77,7 @@ class BrowserSmokeTest(unittest.TestCase):
         self.assertIn('error', self.ev("document.querySelector('.tl-detail-head').textContent"))
         self.page.keyboard.press('Enter')
         self.page.wait_for_timeout(300)
-        self.assertFalse(self.ev("document.body.classList.contains('tl-active')"))
+        self.assertFalse(self.ev("document.body.dataset.view === 'timeline'"))
         self.assertTrue(self.ev("!!document.querySelector('.line-container.tl-flash')"))
 
     def test_timeline_follows_text_filter(self):

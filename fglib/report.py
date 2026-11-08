@@ -10,7 +10,7 @@ import time
 import json
 from collections import defaultdict
 
-from .assets import REPORT_CSS, REPORT_JS, TIMELINE_CSS, read_asset, timeline_script
+from .assets import COMPARE_CSS, COMPARE_JS, REPORT_CSS, REPORT_JS, TIMELINE_CSS, VIEWS_BOOT_JS, VIEWS_CSS, read_asset, timeline_script
 from .constants import APP_AUTHOR, APP_TITLE, APP_VERSION, ERROR_CODE_MAP, PROJECT_DIR
 from .highlight import highlight_ftrace_line
 from .resolver import call_faddr2line_batch, call_faddr2line_for_func_names, create_source_link, parse_list_output, parse_module_url
@@ -48,10 +48,11 @@ class HtmlGenerator:
                  module_src=None, module_srcs=None, script_args=None,
                  enable_filter=False, parse_time=0, total_time=0,
                  func_links=False, entry_offset=0, enable_fold=False,
-                 timeline_json=None):
+                 timeline_json=None, compare_json=None):
         # Store all parameters as instance attributes
         self.parsed_lines = parsed_lines
         self.timeline_json = timeline_json
+        self.compare_json = compare_json
         self._src_pool = []
         self._src_index = {}
         self._list_cache = {}
@@ -208,8 +209,7 @@ class HtmlGenerator:
         html_str += self._generate_content_lines()
 
         html_str += """
-        </div>""" + ("""
-        <div id="timelineView"></div>""" if self.timeline_json else "") + """
+        </div>""" + self._view_containers() + """
     </div>
 
     <div class="keyboard-hint" id="keyboardHint">
@@ -255,28 +255,48 @@ class HtmlGenerator:
         data = json.dumps(self._src_pool, ensure_ascii=False, separators=(',', ':')).replace('<', '\\u003c')
         return '    <script type="application/json" id="fgSrc">' + data + '</script>\n'
 
-    # ---- Timeline view (optional, --timeline) ----
+    # ---- Optional views (Timeline, Compare): tabs, containers, CSS, data, scripts ----
+    def _views(self):
+        """[(name, label, badge, container_id, css, data_id, data, js)] for the enabled views."""
+        v = []
+        if self.timeline_json:
+            v.append(('timeline', 'Timeline', f"{self.timeline_json.get('n', 0)} calls", 'timelineView',
+                      read_asset(TIMELINE_CSS), 'tlData', self.timeline_json, timeline_script()))
+        if self.compare_json:
+            v.append(('compare', 'Compare', f"vs {self.compare_json['names'][0]}", 'compareView',
+                      read_asset(COMPARE_CSS), 'cmpData', self.compare_json, read_asset(COMPARE_JS)))
+        return v
+
     def _timeline_css(self):
-        if not self.timeline_json:
+        views = self._views()
+        if not views:
             return ''
-        return read_asset(TIMELINE_CSS) + '\n'
+        return read_asset(VIEWS_CSS) + ''.join(x[4] for x in views) + '\n'
 
     def _timeline_tabs(self):
-        if not self.timeline_json:
+        views = self._views()
+        if not views:
             return ''
-        n = self.timeline_json.get('n', 0)
-        return ('        <div class="view-tabs">\n'
-                '            <button class="view-tab active" data-view="text" onclick="fgSwitchView(\'text\')">Text</button>\n'
-                '            <button class="view-tab" data-view="timeline" onclick="fgSwitchView(\'timeline\')">'
-                f'Timeline<span class="tab-badge">{n} calls</span></button>\n'
-                '        </div>\n')
+        h = ('        <div class="view-tabs">\n'
+             '            <button class="view-tab active" data-view="text" onclick="fgSwitchView(\'text\')">Text</button>\n')
+        for name, label, badge, *_ in views:
+            h += (f'            <button class="view-tab" data-view="{name}" onclick="fgSwitchView(\'{name}\')">'
+                  f'{label}<span class="tab-badge">{html.escape(badge)}</span></button>\n')
+        return h + '        </div>\n'
+
+    def _view_containers(self):
+        return ''.join(f'\n        <div id="{x[3]}" class="fg-view"></div>' for x in self._views())
 
     def _timeline_scripts(self):
-        if not self.timeline_json:
+        views = self._views()
+        if not views:
             return ''
-        data = json.dumps(self.timeline_json, separators=(',', ':')).replace('<', '\\u003c')
-        return ('    <script type="application/json" id="tlData">' + data + '</script>\n'
-                '    <script>\n' + timeline_script() + '    </script>\n')
+        out = ''
+        for x in views:
+            data = json.dumps(x[6], separators=(',', ':')).replace('<', '\\u003c')
+            out += f'    <script type="application/json" id="{x[5]}">' + data + '</script>\n'
+        # view code first (function declarations / registrations), then the boot code that wires tabs
+        return out + '    <script>\n' + ''.join(x[7] for x in views) + read_asset(VIEWS_BOOT_JS) + '    </script>\n'
 
     def _prepare_data(self):
         """Pre-process data: resolve func names, collect filter data, parse module URLs.
@@ -1277,7 +1297,7 @@ class HtmlGenerator:
         return read_asset(REPORT_CSS)
 
 
-def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None, base_url=None, module_url=None, kernel_src=None, use_list=False, verbose=False, fast_mode=False, highlight_code=False, path_prefix=None, module_src=None, module_srcs=None, script_args=None, enable_filter=False, parse_time=0, total_time=0, func_links=False, entry_offset=0, enable_fold=False, timeline_json=None):
+def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None, base_url=None, module_url=None, kernel_src=None, use_list=False, verbose=False, fast_mode=False, highlight_code=False, path_prefix=None, module_src=None, module_srcs=None, script_args=None, enable_filter=False, parse_time=0, total_time=0, func_links=False, entry_offset=0, enable_fold=False, timeline_json=None, compare_json=None):
     """Generate interactive HTML page. Wrapper for backward compatibility."""
     generator = HtmlGenerator(
         parsed_lines, vmlinux_path, faddr2line_path,
@@ -1288,6 +1308,6 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
         script_args=script_args, enable_filter=enable_filter,
         parse_time=parse_time, total_time=total_time,
         func_links=func_links, entry_offset=entry_offset,
-        enable_fold=enable_fold, timeline_json=timeline_json
+        enable_fold=enable_fold, timeline_json=timeline_json, compare_json=compare_json
     )
     return generator.generate()

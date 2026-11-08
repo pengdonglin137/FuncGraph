@@ -75,7 +75,7 @@ class ReportTest(unittest.TestCase):
         d = helpers.json_script(self.html_tl, 'tlData')
         self.assertEqual(d['n'], 336)
         self.assertEqual(d['mode'], 'compressed')
-        for marker in ('class="view-tabs"', '<div id="timelineView"></div>', 'function __tlBoot() {',
+        for marker in ('class="view-tabs"', '<div id="timelineView" class="fg-view"></div>', 'function __tlBoot() {',
                        'Timeline:</div><div class="info-value">Yes'):
             self.assertTrue(marker in self.html_tl, f'marker {marker!r} missing')
 
