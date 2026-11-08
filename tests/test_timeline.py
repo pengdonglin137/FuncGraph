@@ -190,6 +190,22 @@ class SyntheticTest(unittest.TestCase):
         self.assertEqual(d['strings'][r[5]], 'S')
         self.assertEqual(r[9], waker)
 
+    def test_overhead_correction(self):
+        d = timeline.build_timeline(SYNTH_FULL.split('\n'), overhead=(1000, 100)).to_data()
+        names = [d['strings'][x] for x in d['cols']['name']]
+        adj = dict(zip(names, d['cols']['adj']))
+        dur = dict(zip(names, d['cols']['dur']))
+        self.assertEqual(adj['path_openat'], dur['path_openat'] - 100)            # leaf: self overhead only
+        self.assertEqual(adj['__arm64_sys_openat'], dur['__arm64_sys_openat'] - 3 * 1000 - 100)  # 3 descendants
+        self.assertEqual(d['overhead']['source'], 'option')
+
+    def test_overhead_from_header_and_absent(self):
+        hdr = '# fgcapture: overhead child=500ns self=50ns (x)\n' + SYNTH_FULL
+        d = build(hdr)
+        self.assertEqual((d['overhead']['child'], d['overhead']['self'], d['overhead']['source']), (500, 50, 'trace header'))
+        self.assertIsNone(build(SYNTH_FULL)['cols']['adj'])
+        self.assertTrue(all(a >= 0 for a in build(hdr)['cols']['adj']))
+
     def test_btf_filters_void_comparator_and_null(self):
         db = ReturnTypeDB()
         db.funcs.update({'do_raw_spin_unlock': ('void', 0), 'search_cmp_ftr_reg': ('sint', 4),

@@ -18,6 +18,7 @@ window.fgViews.compare = { el: 'compareView', init: function () {
         return typeof x === 'function' ? x(r) : r[x];
     };
     let sortKey = 'self', sortBy = 'absdiff', query = null, onlyChanged = true, limit = 400;
+    let ROWS = D.rows;
     const fmt = ns => {
         const a = Math.abs(ns);
         if (a < 1000) return ns.toFixed(0) + ' ns';
@@ -44,6 +45,7 @@ window.fgViews.compare = { el: 'compareView', init: function () {
           <button data-v="absdiff" class="on">|Δ|</button><button data-v="diff">Δ</button>
           <button data-v="pct">Δ%</button><button data-v="cur">current</button><button data-v="base">base</button>
         </span>
+        <label class="cmp-adj" style="display:none"><input type="checkbox"> subtract tracing overhead</label>
         <span class="cmp-count"></span>
       </div>
       <div class="cmp-note">Durations include tracing overhead; compare traces captured with the same options. Self time = inclusive minus traced children.</div>
@@ -71,7 +73,7 @@ window.fgViews.compare = { el: 'compareView', init: function () {
     function render() {
         header();
         const col = COLS.find(c => c.k === sortKey) || COLS[2];
-        let rows = D.rows;
+        let rows = ROWS;
         if (query) rows = rows.filter(r => query.test(r[0]));
         if (onlyChanged) rows = rows.filter(r => r[1] !== r[6] || r[3] !== r[8]);
         const key = r => {
@@ -102,7 +104,7 @@ window.fgViews.compare = { el: 'compareView', init: function () {
         }
         if (rows.length > limit) h += `<tr><td class="l more" colspan="${1 + 3 * (COLS.length - 1)}">… ${rows.length - limit} more (click to show)</td></tr>`;
         tbody.innerHTML = h;
-        root.querySelector('.cmp-count').textContent = rows.length + ' of ' + D.rows.length + ' functions';
+        root.querySelector('.cmp-count').textContent = rows.length + ' of ' + ROWS.length + ' functions';
     }
     thead.addEventListener('click', ev => {
         const th = ev.target.closest('th[data-k]');
@@ -118,6 +120,12 @@ window.fgViews.compare = { el: 'compareView', init: function () {
         root.querySelectorAll('.cmp-sortby button').forEach(x => x.classList.toggle('on', x === b));
         render();
     });
+    if (D.rows_adj) {
+        const l = root.querySelector('.cmp-adj');
+        l.style.display = '';
+        l.title = 'overhead estimates: ' + D.overhead.map(o => o ? o.child + ' ns/child, ' + o.self + ' ns/call' : 'none').join(' | ');
+        l.querySelector('input').addEventListener('change', ev => { ROWS = ev.target.checked ? D.rows_adj : D.rows; render(); });
+    }
     root.querySelector('.cmp-changed').addEventListener('change', ev => { onlyChanged = ev.target.checked; render(); });
     let t = 0;
     root.querySelector('.cmp-q').addEventListener('input', ev => {

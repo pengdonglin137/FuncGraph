@@ -51,6 +51,7 @@ RE_FUNC_HEAD = re.compile(r'([A-Za-z_$][\w.$]*)(?: \[([\w-]+)\])?\(')
 RE_CALLER = re.compile(r'<-([A-Za-z_$][\w.$]*)\+(0x[0-9a-fA-F]+)/(0x[0-9a-fA-F]+)(?: \[([\w-]+)\])?')
 RE_RET = re.compile(r' ret=(-?\d+|0x[0-9a-fA-F]+)')
 RE_EXIT_NAME = re.compile(r'^ ([A-Za-z_$][\w.$]*)(?: \[([\w-]+)\])?')
+RE_OVERHEAD = re.compile(r'^# fgcapture: overhead child=(\d+)ns self=(\d+)ns')
 RE_SCHED_SWITCH = re.compile(r'sched_switch: prev_comm=(.*?) prev_pid=(\d+) .*?prev_state=(\S+) ==> next_comm=(.*?) next_pid=(\d+)')
 # sched_waking fires in the waker's context; sched_wakeup may fire on the target CPU (TTWU_QUEUE IPI)
 RE_SCHED_WAKEUP = re.compile(r'sched_(waking|wakeup|wakeup_new): comm=(.*?) pid=(\d+)')
@@ -145,8 +146,10 @@ class _Task:
 class TimelineBuilder:
     """Build the timeline model from a list of raw trace lines."""
 
-    def __init__(self, lines, rettypes=None, errno_map=None, verbose=False):
+    def __init__(self, lines, rettypes=None, errno_map=None, verbose=False, overhead=None):
+        """overhead: (child_ns, self_ns) or None to read it from a '# fgcapture: overhead' header."""
         self.lines = lines
+        self.overhead = overhead
         self.rettypes = rettypes
         self.errno_map = errno_map or {}
         self.verbose = verbose
@@ -179,6 +182,7 @@ class TimelineBuilder:
                          retval=False, retaddr=False, tail=False, args=False, irq_markers=False,
                          sched_events=False, sched_waking=False, switch_markers=False)
         self.mode = None
+        self.overhead_source = 'option' if overhead else None
         self.stats = {}
         self._cur_cpu = -1
 
@@ -311,6 +315,11 @@ class TimelineBuilder:
         ts_seen = False
         for lineno0, raw in enumerate(lines):
             if not raw or raw[0] == '#':
+                if raw and self.overhead is None and raw.startswith('# fgcapture: overhead'):
+                    m = RE_OVERHEAD.match(raw)
+                    if m:
+                        self.overhead = (int(m.group(1)), int(m.group(2)))
+                        self.overhead_source = 'trace header'
                 continue
             lineno = lineno0 + 1
             st = raw.lstrip()
@@ -880,7 +889,19 @@ class TimelineBuilder:
             'args': [self.s_args[o] for o in order],
             'module': mod_col,
             'cpu': [self.s_cpu[o] for o in order],
+            'adj': None,
         }
+        ovh = self.overhead if self.overhead and any(self.overhead) else None
+        if ovh:
+            # corrected duration = measured - child_ns per traced descendant - self_ns, never below 0
+            desc = [0] * n
+            par = cols['parent']
+            for i in sorted(range(n), key=lambda i: -cols['depth'][i]):
+                p = par[i]
+                if p >= 0:
+                    desc[p] += 1 + desc[i]
+            child_ns, self_ns = ovh
+            cols['adj'] = [max(0, d - child_ns * k - self_ns) for d, k in zip(cols['dur'], desc)]
         # sparse columns are dropped when empty
         for k in ('ret', 'caller', 'args', 'module', 'eline', 'cpu'):
             if all(v in (-1, 0) for v in cols[k]):
@@ -929,12 +950,13 @@ class TimelineBuilder:
             'irqoff': [[r[0], rel(r[1]), rel(r[2])] for r in self.irqoff] if timed else [],
             'lost': [[r[0], r[2], r[3]] for r in self.lost],
             'stats': {k: (round(v, 3) if isinstance(v, float) else v) for k, v in self.stats.items()},
+            'overhead': {'child': ovh[0], 'self': ovh[1], 'source': self.overhead_source} if ovh else None,
         }
         return data
 
 
-def build_timeline(lines, rettypes=None, errno_map=None, verbose=False):
-    b = TimelineBuilder(lines, rettypes=rettypes, errno_map=errno_map, verbose=verbose)
+def build_timeline(lines, rettypes=None, errno_map=None, verbose=False, overhead=None):
+    b = TimelineBuilder(lines, rettypes=rettypes, errno_map=errno_map, verbose=verbose, overhead=overhead)
     b.build()
     return b
 

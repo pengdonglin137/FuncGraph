@@ -12,12 +12,12 @@ differences remain meaningful (see docs/design.md).
 from . import timeline
 
 
-def function_stats(data):
+def function_stats(data, adjusted=False):
     """data: TimelineBuilder.to_data() -> {name: [calls, incl, self, max, errors]}."""
     c = data['cols']
     n = data['n']
     S = data['strings']
-    dur = c['dur']
+    dur = c['adj'] if adjusted and c.get('adj') else c['dur']
     parent = c['parent']
     self_t = list(dur)
     for i in range(n):
@@ -48,18 +48,23 @@ def window(data):
     return sum(d for d, p in zip(c['dur'], c['parent']) if p < 0)
 
 
-def compare(cur_data, base_lines, rettypes=None, base_name='base', cur_name='current'):
-    base = timeline.build_timeline(base_lines, rettypes=rettypes).to_data()
-    a = function_stats(base)
-    b = function_stats(cur_data)
+def _rows(a, b):
     rows = []
     for name in set(a) | set(b):
-        x = a.get(name, [0, 0, 0, 0, 0])
-        y = b.get(name, [0, 0, 0, 0, 0])
-        rows.append([name] + x + y)
-    # default order: largest absolute change of self time
-    rows.sort(key=lambda r: -abs(r[8] - r[3]))
+        rows.append([name] + a.get(name, [0, 0, 0, 0, 0]) + b.get(name, [0, 0, 0, 0, 0]))
+    rows.sort(key=lambda r: -abs(r[8] - r[3]))     # default order: largest change of self time
+    return rows
+
+
+def compare(cur_data, base_lines, rettypes=None, overhead=None, base_name='base', cur_name='current'):
+    """overhead: applied to both traces (read from each trace's header when None)."""
+    base = timeline.build_timeline(base_lines, rettypes=rettypes, overhead=overhead).to_data()
+    rows = _rows(function_stats(base), function_stats(cur_data))
+    both_adj = bool(base['cols'].get('adj') and cur_data['cols'].get('adj'))
+    rows_adj = _rows(function_stats(base, True), function_stats(cur_data, True)) if both_adj else None
     return {
+        'rows_adj': rows_adj,
+        'overhead': [base.get('overhead'), cur_data.get('overhead')],
         'v': 1,
         'names': [base_name, cur_name],
         'modes': [base['mode'], cur_data['mode']],

@@ -30,12 +30,27 @@ const sRet = C.ret, sCaller = C.caller, sArgs = C.args, sMod = C.module, sCpu = 
         sEnd[i] = acc + C.dur[i];
     }
 })();
+// Durations shown in tooltips, panels and summaries. Geometry always uses the measured
+// sStart/sEnd (wall clock); with an overhead estimate the user can switch to corrected values.
+const sDurRaw = Float64Array.from(C.dur);
+const sDurAdj = C.adj ? Float64Array.from(C.adj) : null;
+let sDur = sDurRaw;
+let adjOn = false;
+function durOf(i) { return sDur[i]; }
 const sSelf = new Float64Array(N);
-for (let i = 0; i < N; i++) sSelf[i] = sEnd[i] - sStart[i];
-for (let i = 0; i < N; i++) { const p = sParent[i]; if (p >= 0) sSelf[p] -= sEnd[i] - sStart[i]; }
-for (let i = 0; i < N; i++) if (sSelf[i] < 0) sSelf[i] = 0;
 let maxSelf = 1;
-for (let i = 0; i < N; i++) if (sSelf[i] > maxSelf) maxSelf = sSelf[i];
+function computeSelf() {
+    for (let i = 0; i < N; i++) sSelf[i] = sDur[i];
+    for (let i = 0; i < N; i++) { const p = sParent[i]; if (p >= 0) sSelf[p] -= sDur[i]; }
+    maxSelf = 1;
+    for (let i = 0; i < N; i++) { if (sSelf[i] < 0) sSelf[i] = 0; if (sSelf[i] > maxSelf) maxSelf = sSelf[i]; }
+}
+computeSelf();
+function setAdjusted(on) {
+    adjOn = !!(on && sDurAdj);
+    sDur = adjOn ? sDurAdj : sDurRaw;
+    computeSelf();
+}
 
 // ---- error path data ----
 // eRole: -1 none, 0 origin, 1 propagation.  eFate: 0 handled by caller, 1 reaches user space, 2 leaves window
@@ -253,6 +268,7 @@ tlRoot.innerHTML = `
   <span class="tl-group">
     <button class="tl-btn" data-act="fit" title="Show the whole trace (0)">Fit</button>
     <button class="tl-btn" data-act="expand" title="Expand / collapse all tracks">Tracks</button>
+    <button class="tl-btn" data-act="adj" title="Subtract the estimated tracing overhead from durations (O)">Overhead: measured</button>
     <button class="tl-btn" data-act="an-errors" title="Error summary by syscall / origin / errno">Errors</button>
     <button class="tl-btn" data-act="an-lat" title="Scheduling latency: need-resched windows and what delayed them">Sched latency</button>
     <button class="tl-btn" data-act="help" title="Help (?)">?</button>

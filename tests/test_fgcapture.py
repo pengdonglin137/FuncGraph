@@ -16,7 +16,7 @@ class FgcaptureTest(unittest.TestCase):
     def test_help(self):
         p = subprocess.run(['bash', SCRIPT, '--help'], capture_output=True, text=True)
         self.assertEqual(p.returncode, 0)
-        for word in ('--args', '--sched', 'set_graph_function', 'Examples'):
+        for word in ('--args', '--sched', '--calibrate', 'set_graph_function', 'Examples'):
             self.assertIn(word, p.stdout)
 
     def test_refuses_without_root(self):

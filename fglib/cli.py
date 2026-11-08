@@ -27,11 +27,23 @@ def build_compare_data(args, raw_lines, parsed_lines, timeline_json, vmlinux_pat
     if timeline_json is not None:
         cur = timeline_json
     else:
-        cur = tlmod.build_timeline([l.raw_line for l in parsed_lines], rettypes=rettypes, errno_map=ERROR_CODE_MAP).to_data()
-    data = compare.compare(cur, base_lines, rettypes=rettypes, base_name=os.path.basename(args.compare),
+        cur = tlmod.build_timeline([l.raw_line for l in parsed_lines], rettypes=rettypes, errno_map=ERROR_CODE_MAP,
+                                   overhead=parse_overhead(args.overhead)).to_data()
+    data = compare.compare(cur, base_lines, rettypes=rettypes, overhead=parse_overhead(args.overhead), base_name=os.path.basename(args.compare),
                            cur_name=os.path.basename(args.ftrace_file))
     print(f"Compare: {len(data['rows'])} functions vs {args.compare}, {time.time() - t0:.2f}s")
     return data
+
+
+def parse_overhead(text):
+    if not text:
+        return None
+    try:
+        parts = [int(float(x)) for x in text.split(',')]
+    except ValueError:
+        print(f"Error: --overhead expects CHILD_NS[,SELF_NS], got {text!r}", file=sys.stderr)
+        sys.exit(1)
+    return (parts[0], parts[1] if len(parts) > 1 else 0)
 
 
 _RETTYPES = {}
@@ -68,7 +80,8 @@ def build_timeline_data(parsed_lines, vmlinux_path, module_dirs, args):
     t0 = time.time()
     rettypes = load_rettypes(parsed_lines, vmlinux_path, module_dirs, args)
     lines = [l.raw_line for l in parsed_lines]
-    builder = tlmod.build_timeline(lines, rettypes=rettypes, errno_map=ERROR_CODE_MAP, verbose=args.verbose)
+    builder = tlmod.build_timeline(lines, rettypes=rettypes, errno_map=ERROR_CODE_MAP, verbose=args.verbose,
+                                   overhead=parse_overhead(args.overhead))
     data = builder.to_data()
     st = data['stats']
     print(f"Timeline: {st['slices']} slices, {st['tasks']} tasks, mode={data['mode']}, "
@@ -129,6 +142,9 @@ def build_parser():
                           'timestamp with units, e.g. +2ms:+5ms')
     flt.add_argument('--graph', type=csv(str), metavar='RE[,RE]', help='keep only the call trees of matching functions')
     flt.add_argument('--notrace', type=csv(str), metavar='RE[,RE]', help='drop the call trees of matching functions')
+    parser.add_argument('--overhead', metavar='CHILD_NS[,SELF_NS]',
+                        help='tracing overhead per traced child call (and per call) to offer corrected durations; '
+                             "default: read from a '# fgcapture: overhead' header (fgcapture.sh --calibrate)")
     parser.add_argument('--compare', metavar='BASE_TRACE',
                         help='Add a Compare tab: per-function calls/self/inclusive time vs. this base trace')
     parser.add_argument('--timeline', action='store_true',

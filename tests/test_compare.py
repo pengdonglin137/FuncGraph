@@ -46,6 +46,14 @@ class CompareTest(unittest.TestCase):
         for row in r.values():
             self.assertEqual(row[1:6], row[6:11])
 
+    def test_adjusted_rows_need_both_estimates(self):
+        cur = timeline.build_timeline(CUR.split('\n'), overhead=(500, 0)).to_data()
+        d = compare.compare(cur, BASE.split('\n'), overhead=(500, 0))
+        r = {x[0]: x for x in d['rows_adj']}
+        self.assertEqual(r['outer'][2], 4000 - 500)       # base: one descendant
+        self.assertEqual(r['outer'][7], 10000 - 3 * 500)
+        self.assertIsNone(compare.compare(timeline.build_timeline(CUR.split('\n')).to_data(), BASE.split('\n'))['rows_adj'])
+
     def test_cli(self):
         k = helpers.FakeKernel()
         try:

@@ -73,7 +73,7 @@ function showDist(nameIdx) {
     AN.func = nameIdx;
     const ids = [];
     for (let i = 0; i < N; i++) if (sName[i] === nameIdx && matchOk(i)) ids.push(i);
-    const durs = ids.map(i => sEnd[i] - sStart[i]).sort((a, b) => a - b);
+    const durs = ids.map(i => durOf(i)).sort((a, b) => a - b);
     const q = p => durs.length ? durs[Math.min(durs.length - 1, Math.floor(p * (durs.length - 1) + 0.5))] : 0;
     const sum = durs.reduce((s, x) => s + x, 0);
     let h = '<div class="tl-detail-head"><span class="tl-detail-title">' + esc(S[nameIdx]) + '</span>' +
@@ -85,17 +85,17 @@ function showDist(nameIdx) {
         kv('max', fmtDur(durs[durs.length - 1])) + kv('mean', fmtDur(sum / durs.length)) +
         '</div><div><canvas class="an-hist" height="150"></canvas><div class="an-hint">Log-scale buckets; click a bar to list its calls. ' +
         'Slowest calls are listed below.</div></div></div>';
-    const slow = ids.slice().sort((a, b) => (sEnd[b] - sStart[b]) - (sEnd[a] - sStart[a])).slice(0, 15);
+    const slow = ids.slice().sort((a, b) => durOf(b) - durOf(a)).slice(0, 15);
     h += '<table class="tl-sum an-tbl"><thead><tr><th>duration</th><th>self</th><th style="text-align:left">task</th><th>start</th><th style="text-align:left">caller</th><th>×p50</th></tr></thead><tbody class="an-list">' +
         slowRows(slow, q(0.5)) + '</tbody></table>';
     openDetail(h);
     drawHist(elDetail.querySelector('.an-hist'), ids, durs, q(0.5), q(0.99));
 }
 function slowRows(list, p50) {
-    return list.map(i => `<tr data-slice="${i}"><td>${fmtDur(sEnd[i] - sStart[i])}</td><td>${fmtDur(sSelf[i])}</td>` +
+    return list.map(i => `<tr data-slice="${i}"><td>${fmtDur(durOf(i))}</td><td>${fmtDur(sSelf[i])}</td>` +
         `<td style="text-align:left">${esc(trackLabel(TRACKS[sTask[i]]))}</td><td>${fmtDur(sStart[i])}</td>` +
         `<td style="text-align:left">${esc(callerOf(i) || (sParent[i] >= 0 ? nameOf(sParent[i]) : ''))}</td>` +
-        `<td>${p50 ? ((sEnd[i] - sStart[i]) / p50).toFixed(1) : ''}</td></tr>`).join('');
+        `<td>${p50 ? (durOf(i) / p50).toFixed(1) : ''}</td></tr>`).join('');
 }
 function drawHist(cv, ids, durs, p50, p99) {
     const w = cv.parentElement.clientWidth || 500, hh = 150, dpr = window.devicePixelRatio || 1;
@@ -107,7 +107,7 @@ function drawHist(cv, ids, durs, p50, p99) {
     const bw = (hi - lo) / NB || 1;
     const buckets = Array.from({ length: NB }, () => []);
     for (const i of ids) {
-        const d = Math.max(1, sEnd[i] - sStart[i]);
+        const d = Math.max(1, durOf(i));
         buckets[Math.min(NB - 1, Math.floor((Math.log10(d) - lo) / bw))].push(i);
     }
     const mx = Math.max(...buckets.map(b => b.length));
@@ -138,7 +138,7 @@ function drawHist(cv, ids, durs, p50, p99) {
         const r = cv.getBoundingClientRect();
         const k = Math.floor((ev.clientX - r.left - L) / (PW / NB));
         if (k < 0 || k >= NB || !buckets[k].length) return;
-        const list = buckets[k].slice().sort((a, b) => (sEnd[b] - sStart[b]) - (sEnd[a] - sStart[a])).slice(0, 50);
+        const list = buckets[k].slice().sort((a, b) => durOf(b) - durOf(a)).slice(0, 50);
         elDetail.querySelector('.an-list').innerHTML = slowRows(list, p50);
     };
 }
@@ -158,8 +158,8 @@ function showLatency() {
         let irqT = 0;
         for (let i = t.lo; i >= 0 && i < t.hi; i++) {
             if (sEnd[i] <= r[1] || sStart[i] >= r[2]) continue;
-            const d = sEnd[i] - sStart[i];
-            const part = d > 0 ? sSelf[i] * (Math.min(sEnd[i], r[2]) - Math.max(sStart[i], r[1])) / d : 0;
+            const g = sEnd[i] - sStart[i];
+            const part = g > 0 ? sSelf[i] * (Math.min(sEnd[i], r[2]) - Math.max(sStart[i], r[1])) / g : 0;
             blame.set(sName[i], (blame.get(sName[i]) || 0) + part);
             if (sFlags[i] & FL.IRQOFF) irqT += part;
         }

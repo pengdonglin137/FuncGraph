@@ -20,6 +20,9 @@
 #   -b KB          per-CPU buffer size in KB (default 16384)
 #   --sched        also record sched_switch / sched_waking / sched_wakeup events
 #   --keep         do not restore the previous tracefs settings
+#   --calibrate    measure the tracing overhead with the same options first (vfs_read with and
+#                  without traced children, 3000 calls) and record it in the output header;
+#                  funcgraph.py then offers durations with the overhead subtracted
 #   -- CMD ...     run CMD and trace only it (and its children): the command starts
 #                  stopped, its pid is written to set_ftrace_pid, then it continues
 #
@@ -32,7 +35,7 @@ set -u
 
 T=/sys/kernel/tracing
 [ -d $T/options ] || T=/sys/kernel/debug/tracing
-OUT=./ftrace.txt DUR=1 PIDS= GRAPH= NOTRACE= BUF=16384 ARGS=0 SCHED=0 KEEP=0
+OUT=./ftrace.txt DUR=1 PIDS= GRAPH= NOTRACE= BUF=16384 ARGS=0 SCHED=0 KEEP=0 CAL=0
 CMD=()
 
 die() { echo "fgcapture: $*" >&2; exit 1; }
@@ -49,6 +52,7 @@ while [ $# -gt 0 ]; do
         --args) ARGS=1; shift ;;
         --sched) SCHED=1; shift ;;
         --keep) KEEP=1; shift ;;
+        --calibrate) CAL=1; shift ;;
         -h|--help) usage 0 ;;
         --) shift; CMD=("$@"); break ;;
         *) echo "unknown option $1" >&2; usage 1 ;;
@@ -129,6 +133,52 @@ fi
 for e in sched_switch sched_wakeup sched_waking; do
     [ -e $T/events/sched/$e/enable ] && echo $SCHED > $T/events/sched/$e/enable
 done
+
+# ---- optional overhead calibration (same options as the capture) ----
+CALLINE=
+calib_run() {   # $1 = set_graph_function | set_ftrace_filter ; prints "<median top duration ns> <entries per call>"
+    echo nop > $T/current_tracer; echo > $T/trace
+    echo > $T/set_graph_function; echo > $T/set_ftrace_filter; echo > $T/set_ftrace_pid
+    echo vfs_read > $T/$1
+    echo function_graph > $T/current_tracer
+    ( kill -STOP $BASHPID; exec dd if=/dev/zero of=/dev/null bs=1 count=3000 status=none ) &
+    local p=$!
+    while [ "$(awk '{print $3}' /proc/$p/stat 2>/dev/null)" != "T" ]; do sleep 0.01; done
+    echo $p > $T/set_ftrace_pid
+    echo 1 > $T/tracing_on; kill -CONT $p; wait $p; echo 0 > $T/tracing_on
+    # one line per vfs_read: "<duration ns>"; plus a trailing "calls <entries>" line
+    awk -F'|' '
+        /^#/ || NF < 4 { next }
+        { body = $NF; dur = "" ; for (i = 2; i < NF; i++) if ($i ~ /[0-9.]+ us/) { d = $i; gsub(/[^0-9.]/, "", d); dur = d } }
+        body ~ /^  vfs_read\(/ && body ~ /\);/ { print dur * 1000; n++ }
+        body ~ /^  } \/\* vfs_read/ { print dur * 1000; n++ }
+        body ~ /[(].*[)] *[{;]/ { calls++ }
+        END { printf "calls %.3f\n", n ? calls / n : 0 }
+    ' $T/trace > $SAVE/cal_$1
+    local per; per=$(awk '/^calls/{print $2}' $SAVE/cal_$1)
+    echo "$(grep -v '^calls' $SAVE/cal_$1 | sort -n | awk '{v[NR]=$1} END{print NR ? int(v[int((NR+1)/2)]) : 0}') $per"
+}
+leaf_p1() {
+    awk -F'|' '/^#/ || NF < 4 { next } $NF ~ /\);/ { for (i = 2; i < NF; i++) if ($i ~ /[0-9.]+ us/) { d=$i; gsub(/[^0-9.]/,"",d); print int(d*1000) } }' $T/trace |
+        sort -n | awk '{v[NR]=$1} END{print NR ? v[int(NR/100)+1] : 0}'
+}
+if [ $CAL = 1 ]; then
+    echo "fgcapture: calibrating tracing overhead..."
+    read -r A_MED A_CALLS < <(calib_run set_graph_function)
+    SELF=$(leaf_p1)
+    read -r B_MED B_CALLS < <(calib_run set_ftrace_filter)
+    DESC=$(awk "BEGIN{print $A_CALLS - 1}")
+    if awk "BEGIN{exit !($DESC > 0.5 && $A_MED > $B_MED)}"; then
+        CHILD=$(awk "BEGIN{printf \"%d\", ($A_MED - $B_MED) / $DESC}")
+        CALLINE="# fgcapture: overhead child=${CHILD}ns self=${SELF}ns (vfs_read: ${A_MED}ns with ${DESC} traced descendants, ${B_MED}ns without)"
+        echo "fgcapture: overhead per traced child ${CHILD} ns, per call ${SELF} ns"
+    else
+        echo "fgcapture: calibration inconclusive (A=${A_MED}ns B=${B_MED}ns desc=${DESC}), skipped" >&2
+    fi
+    echo nop > $T/current_tracer; echo > $T/trace; echo > $T/set_ftrace_filter
+    setlist set_graph_function "$GRAPH"
+    setlist set_ftrace_pid "$PIDS"
+fi
 echo function_graph > $T/current_tracer
 
 # ---- capture ----
@@ -154,7 +204,7 @@ fi
 
 # ---- save output ----
 echo "fgcapture: reading trace buffer..."
-cat $T/trace > "$OUT" || die "cannot write $OUT"
+{ [ -n "$CALLINE" ] && echo "$CALLINE"; cat $T/trace; } > "$OUT" || die "cannot write $OUT"
 END=$(date +%s.%N)
 LINES=$(grep -vc '^#' "$OUT")
 LOST=$(grep -c 'LOST.*EVENTS' "$OUT")

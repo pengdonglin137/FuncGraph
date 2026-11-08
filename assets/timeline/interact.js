@@ -88,7 +88,7 @@ function select(i, opts) {
 
 // ---- tooltip ----
 function tipSlice(i) {
-    const d = sEnd[i] - sStart[i], f = sFlags[i];
+    const d = durOf(i), f = sFlags[i];
     let h = '<div class="t-name">' + esc(nameOf(i)) + (modOf(i) ? ' [' + esc(modOf(i)) + ']' : '') + '</div>';
     h += '<div><span class="t-dur">' + fmtDur(d) + '</span>' + (f & FL.EST ? ' <span class="t-warn">(estimated)</span>' : '') +
         ' &nbsp;self ' + fmtDur(sSelf[i]) + '</div><div class="t-sep"></div>';
@@ -362,6 +362,7 @@ window.addEventListener('keydown', ev => {
         case 'Enter': if (sel >= 0) gotoText(sLine[sel]); break;
         case '/': elSearch.focus(); elSearch.select(); break;
         case 'h': case 'H': if (sel >= 0) showDist(sName[sel]); break;
+        case 'o': case 'O': toggleAdjusted(); break;
         case '?': elHelp.classList.toggle('show'); break;
         case 'Escape':
             if (elHelp.classList.contains('show')) elHelp.classList.remove('show');

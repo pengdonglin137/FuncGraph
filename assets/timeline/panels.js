@@ -6,7 +6,7 @@ function lineLink(n, label) { return '<a class="tl-link" data-line="' + n + '">'
 function showDetail(i) {
     range = null;
     AN.kind = null;
-    const f = sFlags[i], d = sEnd[i] - sStart[i], t = TRACKS[sTask[i]];
+    const f = sFlags[i], d = durOf(i), t = TRACKS[sTask[i]];
     let pills = pill('ctx' + (f & FL.CTX), CTX_NAMES[f & FL.CTX] + (f & FL.CTXINF ? '?' : ''));
     if (f & FL.IRQOFF) pills += pill('warn', 'irqs off');
     if (f & FL.BHOFF) pills += pill('warn', 'BH off');
@@ -55,7 +55,7 @@ function showDetail(i) {
     for (let k = i, g = 0; k >= 0 && g < 128; k = sParent[k], g++) stack.push(k);
     stack.reverse();
     if (stack.length && sDepth[stack[0]] > 0) h += '<div class="tl-crumb ghost">… ' + sDepth[stack[0]] + ' frame(s) outside trace window</div>';
-    for (const m of stack) h += '<div class="tl-crumb' + (m === i ? ' cur' : '') + '" data-slice="' + m + '"><span class="d">' + fmtDur(sEnd[m] - sStart[m]).padStart(10, '\u00a0') + '</span>&nbsp; ' + '\u00a0'.repeat(Math.min(sDepth[m], 30)) + esc(nameOf(m)) + '</div>';
+    for (const m of stack) h += '<div class="tl-crumb' + (m === i ? ' cur' : '') + '" data-slice="' + m + '"><span class="d">' + fmtDur(durOf(m)).padStart(10, '\u00a0') + '</span>&nbsp; ' + '\u00a0'.repeat(Math.min(sDepth[m], 30)) + esc(nameOf(m)) + '</div>';
     h += '</div>';
     // heaviest children
     const kids = [];
@@ -66,7 +66,7 @@ function showDetail(i) {
     }
     if (kids.length) {
         const agg = new Map();
-        for (const k of kids) { const a = agg.get(sName[k]) || [0, 0, k]; a[0]++; a[1] += sEnd[k] - sStart[k]; agg.set(sName[k], a); }
+        for (const k of kids) { const a = agg.get(sName[k]) || [0, 0, k]; a[0]++; a[1] += durOf(k); agg.set(sName[k], a); }
         const top = Array.from(agg.entries()).sort((x, y) => y[1][1] - x[1][1]).slice(0, 8);
         h += '<div style="height:8px"></div><div class="tl-sec">Children (' + kids.length + ' calls)</div><div class="tl-crumbs">';
         for (const [nm, a] of top) h += '<div class="tl-crumb" data-slice="' + a[2] + '"><span class="d">' + fmtDur(a[1]).padStart(10, '\u00a0') + '</span>&nbsp; ' + esc(S[nm]) + (a[0] > 1 ? ' <span class="d">×' + a[0] + '</span>' : '') + '</div>';
@@ -119,13 +119,14 @@ function showRangeSummary() {
             if (e <= rs || s >= re) continue;
             if (textHits && !textHits[i]) continue;
             const d = e - s, ovl = Math.min(e, re) - Math.max(s, rs);
-            const selfPart = d > 0 ? sSelf[i] * ovl / d : 0;
+            const frac = d > 0 ? ovl / d : 0;
+            const selfPart = sSelf[i] * frac;
             let a = agg.get(sName[i]);
             if (!a) { a = { calls: 0, incl: 0, self: 0, max: 0, err: 0, ex: i }; agg.set(sName[i], a); }
             if (s >= rs) { a.calls++; nCalls++; }
-            a.incl += ovl;
+            a.incl += durOf(i) * frac;
             a.self += selfPart;
-            if (d > a.max) { a.max = d; a.ex = i; }
+            if (durOf(i) > a.max) { a.max = durOf(i); a.ex = i; }
             if (eRole[i] === 0) a.err++;
             ctxSelf[sFlags[i] & FL.CTX] += selfPart;
         }
@@ -139,6 +140,7 @@ function showRangeSummary() {
     h += pill('mute', range.track !== null ? trackLabel(TRACKS[range.track]) : 'all tracks');
     h += pill('mute', nCalls + ' calls');
     if (textHits) h += pill('warn', 'filtered');
+    if (adjOn) h += pill('warn', 'overhead subtracted');
     for (let c = 0; c < 4; c++) if (ctxSelf[c] > 0) h += pill('ctx' + c, CTX_NAMES[c] + ' ' + fmtDur(ctxSelf[c]));
     if (offT > 0) h += pill('mute', 'off-CPU ' + fmtDur(offT));
     h += '<span class="sp"></span><button class="tl-close" title="Close (Esc)">×</button></div>';
@@ -213,11 +215,7 @@ function applyTextFilter() {
     rebuildErrList();
     layout();
     draw();
-    if (elDetail.classList.contains('show')) {
-        if (AN.kind === 'errors') showErrors();
-        else if (AN.kind === 'lat') showLatency();
-        else if (AN.kind === 'dist') showDist(AN.func);
-    }
+    refreshPanel();
 }
 window.fgOnFilter = applyTextFilter;
 elFtext.addEventListener('keydown', ev => {
@@ -263,6 +261,7 @@ tlRoot.querySelector('.tl-toolbar').addEventListener('click', ev => {
         case 'errmode': errFilter = errFilter ? 0 : 1; rebuildErrList(); draw(); break;
         case 'fit': fitAll(); break;
         case 'help': elHelp.classList.toggle('show'); break;
+        case 'adj': toggleAdjusted(); break;
         case 'an-errors': showErrors(); break;
         case 'an-lat': showLatency(); break;
         case 'expand': {
@@ -272,6 +271,26 @@ tlRoot.querySelector('.tl-toolbar').addEventListener('click', ev => {
         }
     }
 });
+
+function toggleAdjusted() {
+    if (!sDurAdj) { toast('No overhead estimate: capture with fgcapture.sh --calibrate or pass --overhead'); return; }
+    setAdjusted(!adjOn);
+    const b = tlRoot.querySelector('[data-act=adj]');
+    b.textContent = 'Overhead: ' + (adjOn ? 'subtracted' : 'measured');
+    b.classList.toggle('on', adjOn);
+    colorCache.clear();
+    refreshPanel();
+    draw();
+    toast(adjOn ? 'Durations: overhead subtracted (estimate)' : 'Durations: as measured');
+}
+function refreshPanel() {
+    if (!elDetail.classList.contains('show')) return;
+    if (AN.kind === 'errors') showErrors();
+    else if (AN.kind === 'lat') showLatency();
+    else if (AN.kind === 'dist') showDist(AN.func);
+    else if (range) showRangeSummary();
+    else if (sel >= 0) showDetail(sel);
+}
 
 // ---- capability notes ----
 (function notes() {
@@ -286,6 +305,9 @@ tlRoot.querySelector('.tl-toolbar').addEventListener('click', ev => {
     if (!c.retaddr) note('No call sites: enable <code>options/funcgraph-retaddr</code> to see where each call came from.', true);
     else if (!c.args) note('Arguments are not printed while <code>funcgraph-retaddr</code> is on (kernel limitation).', true);
     if (TIMED && !c.switch_markers && c.proc) note('No context-switch markers seen: off-CPU periods cannot be shown.', true);
+    if (D.overhead) note('Tracing overhead estimate (' + esc(D.overhead.source) + '): ' + fmtDur(D.overhead.child) +
+        ' per traced child call, ' + fmtDur(D.overhead.self) + ' per call. Toggle <b>Overhead</b> to subtract it; slice positions stay as measured.', true);
+    else if (TIMED) note('Durations include tracing overhead (about 1 us per traced call on a Raspberry Pi 4). Capture with <code>fgcapture.sh --calibrate</code> to get a correction.', true);
     if (D.lost.length) note(D.lost.length + ' "LOST EVENTS" record(s): some slices are incomplete (marked with dotted edges). Increase <code>buffer_size_kb</code>.');
     const st = D.stats;
     if (st.truncated || st.orphans) note(st.truncated + ' call(s) without exit, ' + st.orphans + ' without entry (trace window edges).', true);
@@ -303,6 +325,7 @@ elHelp.innerHTML = `
 <li><kbd>↑</kbd> parent · <kbd>↓</kbd> first child · <kbd>[</kbd>/<kbd>]</kbd> siblings</li>
 <li><kbd>E</kbd>/<kbd>Shift+E</kbd> next/prev error · <kbd>/</kbd> search, <kbd>N</kbd> next match</li>
 <li>Click an off-CPU segment: wait chain (who woke the task, wake latency, and who woke the waker)</li>
+<li><kbd>O</kbd>: durations as measured / with the tracing overhead subtracted</li>
 <li><kbd>H</kbd>: duration distribution of the selected function · toolbar <b>Errors</b> / <b>Sched latency</b>: summaries</li>
 <li><kbd>Enter</kbd>: open in text view · <kbd>Alt</kbd>+click a text line: show it here</li></ul>
 <h4>Legend</h4><div class="tl-legend">
@@ -328,6 +351,7 @@ if (!sCpu) tlRoot.querySelector('[data-v=cpu]').style.display = 'none';
 if (!D.caps.latency) { tlRoot.querySelector('[data-ov=irq]').classList.add('na'); tlRoot.querySelector('[data-ov=preempt]').classList.add('na'); }
 if (!D.resched.length && !D.caps.latency) tlRoot.querySelector('[data-ov=rs]').classList.add('na');
 if (!D.offcpu.length) tlRoot.querySelector('[data-ov=off]').classList.add('na');
+if (!sDurAdj) tlRoot.querySelector('[data-act=adj]').style.display = 'none';
 if (!WAKES.length) tlRoot.querySelector('[data-ov=wk]').classList.add('na');
 if (!D.caps.retval) tlRoot.querySelector('[data-ov=err]').classList.add('na');
 new MutationObserver(() => { palette(); ovDirty = true; draw(); })
