@@ -47,7 +47,8 @@ def build_timeline_data(parsed_lines, vmlinux_path, module_dirs, args):
     return data
 
 
-def main():
+def build_parser():
+    """Command line options."""
     parser = argparse.ArgumentParser(description='Convert ftrace output to interactive HTML')
     parser.add_argument('ftrace_file', help='Path to ftrace output file')
     parser.add_argument('--vmlinux', required=True, help='Path to vmlinux file')
@@ -87,8 +88,11 @@ def main():
                              'Default: the .BTF section of --vmlinux and of resolved modules')
     parser.add_argument('--no-btf', action='store_true',
                         help='Do not use BTF; error paths are guessed from return values only')
-    args = parser.parse_args()
+    return parser
 
+
+def validate_args(args):
+    """Check paths/URLs; exits on fatal errors, warns otherwise."""
     # 参数健壮性检查
     # 检查ftrace文件是否存在
     if not os.path.exists(args.ftrace_file):
@@ -177,16 +181,9 @@ def main():
     if args.fast and args.use_external:
         print(f"Warning: --fast and --use-external are both specified, --use-external will be ignored", file=sys.stderr)
 
-    # 检查gawk可用性并决定是否使用--list选项
-    gawk_available = check_gawk_available()
-    use_list = gawk_available
-    
-    if args.verbose:
-        print("[INFO] Verbose mode enabled", file=sys.stderr)
-        print(f"[INFO] gawk available: {gawk_available}", file=sys.stderr)
-        print(f"[INFO] Using faddr2line --list option: {use_list}", file=sys.stderr)
-        print(f"[INFO] Using fast mode: {args.fast}", file=sys.stderr)
-    
+
+def collect_module_dirs(args):
+    """--module-dirs plus common system locations with --auto-search."""
     # 自动添加常见模块目录
     module_dirs = args.module_dirs.copy()
     if args.auto_search:
@@ -206,7 +203,14 @@ def main():
         ]
         module_dirs.extend(common_dirs)
         verbose_print(f"Added {len(common_dirs)} common module directories", args.verbose)
+    return module_dirs
 
+
+def find_faddr2line(args):
+    """Locate faddr2line: kernel scripts/, then PATH, then bundled fastfaddr2line.py (--fast).
+
+    Returns (faddr2line_path, cross_compile, llvm, util_prefix, util_suffix).
+    """
     # 处理工具链前缀（CROSS_COMPILE 和 LLVM）
     # 借鉴内核 faddr2line 的逻辑
     # 注意：faddr2line 只存在于内核源码的 scripts 目录下，LLVM 没有这个工具
@@ -262,6 +266,25 @@ def main():
         else:
             print(f"Error: Cannot locate faddr2line tool (only available in kernel source scripts/)", file=sys.stderr)
             sys.exit(1)
+    return faddr2line_path, cross_compile, llvm, util_prefix, util_suffix
+
+
+def main():
+    args = build_parser().parse_args()
+    validate_args(args)
+
+    # 检查gawk可用性并决定是否使用--list选项
+    gawk_available = check_gawk_available()
+    use_list = gawk_available
+    
+    if args.verbose:
+        print("[INFO] Verbose mode enabled", file=sys.stderr)
+        print(f"[INFO] gawk available: {gawk_available}", file=sys.stderr)
+        print(f"[INFO] Using faddr2line --list option: {use_list}", file=sys.stderr)
+        print(f"[INFO] Using fast mode: {args.fast}", file=sys.stderr)
+
+    module_dirs = collect_module_dirs(args)
+    faddr2line_path, cross_compile, llvm, util_prefix, util_suffix = find_faddr2line(args)
 
     # 使用绝对路径
     faddr2line_path = os.path.abspath(faddr2line_path)
