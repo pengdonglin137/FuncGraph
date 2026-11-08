@@ -53,8 +53,9 @@ class FlexTest(unittest.TestCase):
 
     def test_merge_by_timestamp(self):
         lines = inputs.split_lines(open(self.trace).read())
-        cpu0 = [l for l in lines if ')' in l[:30] and ' 0) ' in l[:30]]
-        rest = [l for l in lines if l not in set(cpu0)]
+        on0 = [inputs.RE_TS.match(l) is not None and ' 0) ' in l[:30] for l in lines]
+        cpu0 = [l for l, k in zip(lines, on0) if k]
+        rest = [l for l, k in zip(lines, on0) if not k]
         p0, p1 = os.path.join(self.tmp, 'c0.txt'), os.path.join(self.tmp, 'c1.txt')
         open(p0, 'w').write('\n'.join(cpu0) + '\n')
         open(p1, 'w').write('\n'.join(rest) + '\n')
