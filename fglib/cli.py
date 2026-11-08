@@ -1,0 +1,376 @@
+"""Command line interface: argument parsing, toolchain discovery, pipeline."""
+
+import os
+import subprocess
+import argparse
+import sys
+import time
+
+from .constants import ERROR_CODE_MAP, PROJECT_DIR
+from .parser import parse_ftrace_file
+from .report import generate_html
+from .util import check_gawk_available, find_module_path, verbose_print
+
+
+def build_timeline_data(parsed_lines, vmlinux_path, module_dirs, args):
+    """Build the Timeline tab data set. Returns a JSON-serializable dict or None on failure."""
+    from . import timeline as tlmod
+    from . import btf as btfmod
+    t0 = time.time()
+    rettypes = None
+    if not args.no_btf:
+        modules = sorted({l.get('module_name') for l in parsed_lines if l.get('module_name')})
+        mod_paths = []
+        for m in modules:
+            mp = find_module_path(m, module_dirs, args.verbose)
+            if mp:
+                mod_paths.append(mp)
+        extra = args.btf or []
+        rettypes = btfmod.build_return_db(vmlinux_path,
+                                          extra_paths=extra, module_paths=mod_paths)
+        for err in rettypes.errors:
+            verbose_print(f"BTF: {err}", args.verbose)
+        if len(rettypes) == 0:
+            print("Note: no BTF found (vmlinux lacks .BTF); timeline error paths will be unverified", file=sys.stderr)
+            rettypes = None
+        else:
+            verbose_print(f"BTF: {len(rettypes)} function return types from {rettypes.sources}", args.verbose)
+    lines = [l.raw_line for l in parsed_lines]
+    builder = tlmod.build_timeline(lines, rettypes=rettypes, errno_map=ERROR_CODE_MAP, verbose=args.verbose)
+    data = builder.to_data()
+    st = data['stats']
+    print(f"Timeline: {st['slices']} slices, {st['tasks']} tasks, mode={data['mode']}, "
+          f"{len(data['chains'])} error chains, {st['offcpu']} off-CPU, {time.time() - t0:.2f}s")
+    if data['n'] == 0:
+        print("Note: no function_graph calls found; timeline tab omitted", file=sys.stderr)
+        return None
+    return data
+
+
+def main():
+    parser = argparse.ArgumentParser(description='Convert ftrace output to interactive HTML')
+    parser.add_argument('ftrace_file', help='Path to ftrace output file')
+    parser.add_argument('--vmlinux', required=True, help='Path to vmlinux file')
+    parser.add_argument('--kernel-src', type=str,
+                        help='Path to kernel source root')
+    parser.add_argument('--module-dirs', nargs='*', default=[],
+                        help='Directories to search for kernel modules')
+    parser.add_argument('--module-srcs', nargs='*', default=[],
+                        help='Module source code root directories (can specify multiple paths)')
+    parser.add_argument('--base-url', help='Base URL for source code links')
+    parser.add_argument('--module-url', action='append', help='Module URL mapping (can be specified multiple times, format: url:mod1,mod2)')
+    parser.add_argument('--output', default='ftrace_viz.html', help='Output HTML file path')
+    parser.add_argument('--auto-search', action='store_true',
+                        help='Automatically search common module directories')
+    parser.add_argument('--verbose', action='store_true',
+                        help='Enable verbose output for debugging')
+    parser.add_argument('--fast', action='store_true',
+                        help='Use fastfaddr2line.py for vmlinux processing')
+    parser.add_argument('--use-external', action='store_true',
+                        help='Force using external faddr2line')
+    parser.add_argument('--highlight-code', action='store_true',
+                        help='Enable syntax highlighting for C source code (requires Pygments)')
+    parser.add_argument('--path-prefix', nargs='*', default=[],
+                        help='Alternative path prefixes to strip from file paths (can specify multiple paths)')
+    parser.add_argument('--filter', action='store_true',
+                        help='Enable filter box in HTML for CPU/PID/Comm filtering')
+    parser.add_argument('--func-links', action='store_true',
+                        help='Enable source links for function names (adds some overhead)')
+    parser.add_argument('--entry-offset', type=int, default=0,
+                        help='Offset to add to function entry addresses (for -fpatchable-function-entry)')
+    parser.add_argument('--enable-fold', action='store_true',
+                        help='Enable function call folding (adds some overhead)')
+    parser.add_argument('--timeline', action='store_true',
+                        help='Add a Timeline tab: per-task flame chart over time with context/error-path coloring')
+    parser.add_argument('--btf', nargs='*', default=None, metavar='FILE',
+                        help='BTF sources for return-type checks (raw /sys/kernel/btf/* copies or ELF files). '
+                             'Default: the .BTF section of --vmlinux and of resolved modules')
+    parser.add_argument('--no-btf', action='store_true',
+                        help='Do not use BTF; error paths are guessed from return values only')
+    args = parser.parse_args()
+
+    # 参数健壮性检查
+    # 检查ftrace文件是否存在
+    if not os.path.exists(args.ftrace_file):
+        print(f"Error: ftrace file '{args.ftrace_file}' does not exist", file=sys.stderr)
+        sys.exit(1)
+
+    if not os.path.isfile(args.ftrace_file):
+        print(f"Error: '{args.ftrace_file}' is not a regular file", file=sys.stderr)
+        sys.exit(1)
+
+    # 检查vmlinux文件是否存在
+    if not os.path.exists(args.vmlinux):
+        print(f"Error: vmlinux file '{args.vmlinux}' does not exist", file=sys.stderr)
+        sys.exit(1)
+
+    if not os.path.isfile(args.vmlinux):
+        print(f"Error: '{args.vmlinux}' is not a regular file", file=sys.stderr)
+        sys.exit(1)
+
+    # 检查kernel-src路径（如果提供）
+    if args.kernel_src:
+        if not os.path.exists(args.kernel_src):
+            print(f"Error: kernel source directory '{args.kernel_src}' does not exist", file=sys.stderr)
+            sys.exit(1)
+        if not os.path.isdir(args.kernel_src):
+            print(f"Error: '{args.kernel_src}' is not a directory", file=sys.stderr)
+            sys.exit(1)
+
+    # 检查module-dirs路径
+    for module_dir in args.module_dirs:
+        if not os.path.exists(module_dir):
+            print(f"Warning: module directory '{module_dir}' does not exist", file=sys.stderr)
+        elif not os.path.isdir(module_dir):
+            print(f"Warning: '{module_dir}' is not a directory", file=sys.stderr)
+
+    # 检查module-srcs路径
+    for module_src in args.module_srcs:
+        if not os.path.exists(module_src):
+            print(f"Warning: module source directory '{module_src}' does not exist", file=sys.stderr)
+        elif not os.path.isdir(module_src):
+            print(f"Warning: '{module_src}' is not a directory", file=sys.stderr)
+
+    # 检查URL格式（如果提供）
+    if args.base_url:
+        if not args.base_url.startswith(('http://', 'https://')):
+            print(f"Warning: base-url '{args.base_url}' does not start with http:// or https://", file=sys.stderr)
+
+    if args.module_url:
+        # 检查module_url格式（支持多个--module-url参数）
+        for module_url_str in args.module_url:
+            # 使用与parse_module_url相同的逻辑来验证
+            # 首先检查是否有冒号
+            if ':' not in module_url_str:
+                # 没有冒号，只有URL
+                if not module_url_str.startswith(('http://', 'https://')):
+                    print(f"Warning: module-url '{module_url_str}' does not start with http:// or https://", file=sys.stderr)
+                continue
+
+            # 有冒号，需要解析
+            import re
+            # 使用与parse_module_url相同的正则表达式
+            url_pattern = r'https?://[^:,]+(?=:[^,]*,|$)'
+            urls = re.findall(url_pattern, module_url_str)
+
+            if not urls:
+                # 尝试更宽松的模式
+                url_pattern = r'https?://[^:,]+'
+                urls = re.findall(url_pattern, module_url_str)
+
+            for url in urls:
+                url = url.strip()
+                # 检查URL格式
+                if not url.startswith(('http://', 'https://')):
+                    print(f"Warning: URL '{url}' in module-url does not start with http:// or https://", file=sys.stderr)
+
+    # 检查输出目录是否可写
+    output_dir = os.path.dirname(args.output) or '.'
+    if not os.path.exists(output_dir):
+        print(f"Error: output directory '{output_dir}' does not exist", file=sys.stderr)
+        sys.exit(1)
+    if not os.access(output_dir, os.W_OK):
+        print(f"Error: output directory '{output_dir}' is not writable", file=sys.stderr)
+        sys.exit(1)
+
+    # 检查fast和use-external互斥
+    if args.fast and args.use_external:
+        print(f"Warning: --fast and --use-external are both specified, --use-external will be ignored", file=sys.stderr)
+
+    # 检查gawk可用性并决定是否使用--list选项
+    gawk_available = check_gawk_available()
+    use_list = gawk_available
+    
+    if args.verbose:
+        print("[INFO] Verbose mode enabled", file=sys.stderr)
+        print(f"[INFO] gawk available: {gawk_available}", file=sys.stderr)
+        print(f"[INFO] Using faddr2line --list option: {use_list}", file=sys.stderr)
+        print(f"[INFO] Using fast mode: {args.fast}", file=sys.stderr)
+    
+    # 自动添加常见模块目录
+    module_dirs = args.module_dirs.copy()
+    if args.auto_search:
+        try:
+            uname_output = subprocess.check_output(['uname', '-r']).decode().strip()
+            verbose_print(f"Detected kernel version: {uname_output}", args.verbose)
+        except Exception as e:
+            verbose_print(f"Failed to detect kernel version: {str(e)}", args.verbose)
+            uname_output = ""
+        
+        common_dirs = [
+            '/lib/modules',
+            '/usr/lib/modules',
+            f'/lib/modules/{uname_output}/kernel',
+            f'/lib/modules/{uname_output}/extra',
+            f'/lib/modules/{uname_output}/updates',
+        ]
+        module_dirs.extend(common_dirs)
+        verbose_print(f"Added {len(common_dirs)} common module directories", args.verbose)
+
+    # 处理工具链前缀（CROSS_COMPILE 和 LLVM）
+    # 借鉴内核 faddr2line 的逻辑
+    # 注意：faddr2line 只存在于内核源码的 scripts 目录下，LLVM 没有这个工具
+    faddr2line_path = None
+    util_suffix = ""
+    util_prefix = ""
+
+    # 从环境变量读取
+    cross_compile = os.environ.get('CROSS_COMPILE', '')
+    llvm = os.environ.get('LLVM', '')
+
+    if llvm == "":
+        util_prefix = cross_compile
+    else:
+        util_prefix = "llvm-"
+
+        if llvm.endswith("/"):
+            util_prefix = llvm + util_prefix
+        elif llvm.startswith("-"):
+            util_suffix = llvm
+
+    # faddr2line 只存在于内核源码中，不使用工具链前缀
+    # 但我们需要记录这些信息，因为后续可能需要调用其他工具（如 readelf、addr2line）
+
+    # 1. 尝试在 kernel source 中查找原生 faddr2line
+    if args.kernel_src:
+        potential_path = os.path.join(args.kernel_src, 'scripts', 'faddr2line')
+        if os.path.isfile(potential_path):
+            faddr2line_path = potential_path
+            verbose_print(f"Found faddr2line in kernel source: {potential_path}", args.verbose)
+
+    # 2. 尝试在 PATH 中查找原生 faddr2line
+    if not faddr2line_path:
+        try:
+            result = subprocess.run(['which', 'faddr2line'], capture_output=True, text=True, check=True)
+            faddr2line_path = result.stdout.strip()
+            verbose_print(f"Found faddr2line in PATH: {faddr2line_path}", args.verbose)
+        except Exception:
+            pass
+
+    # 3. 如果还是找不到，检查是否使用 fast 模式
+    if not faddr2line_path:
+        if args.fast:
+            # fast 模式下，使用 fastfaddr2line.py
+            script_dir = PROJECT_DIR
+            fast_faddr2line_path = os.path.join(script_dir, 'fastfaddr2line.py')
+            if os.path.exists(fast_faddr2line_path):
+                faddr2line_path = fast_faddr2line_path
+                verbose_print(f"Using fastfaddr2line.py at {fast_faddr2line_path}", args.verbose)
+            else:
+                print(f"Error: Cannot locate fastfaddr2line.py at {fast_faddr2line_path}", file=sys.stderr)
+                sys.exit(1)
+        else:
+            print(f"Error: Cannot locate faddr2line tool (only available in kernel source scripts/)", file=sys.stderr)
+            sys.exit(1)
+
+    # 使用绝对路径
+    faddr2line_path = os.path.abspath(faddr2line_path)
+    vmlinux_path = os.path.abspath(args.vmlinux)
+
+    # 处理内核源码路径（单个）
+    kernel_src_abs = os.path.abspath(args.kernel_src) if args.kernel_src else None
+
+    # 处理多个path_prefix路径（保持原样，不转换为绝对路径）
+    path_prefix = args.path_prefix if args.path_prefix else []
+
+    # 处理多个module_srcs路径
+    module_srcs_abs = []
+    if args.module_srcs:
+        for src in args.module_srcs:
+            module_srcs_abs.append(os.path.abspath(src))
+
+    # 显示工具链信息
+    if args.verbose:
+        if cross_compile:
+            print(f"[INFO] CROSS_COMPILE: {cross_compile}", file=sys.stderr)
+        if llvm:
+            print(f"[INFO] LLVM: {llvm}", file=sys.stderr)
+        if util_prefix or util_suffix:
+            print(f"[INFO] Tool chain prefix/suffix: {util_prefix}*{util_suffix}", file=sys.stderr)
+            print(f"[INFO] Note: faddr2line only exists in kernel source, not affected by toolchain", file=sys.stderr)
+        print(f"[INFO] Using faddr2line: {faddr2line_path}", file=sys.stderr)
+        print(f"[INFO] Using vmlinux: {vmlinux_path}", file=sys.stderr)
+        if kernel_src_abs:
+            print(f"[INFO] Using kernel source: {kernel_src_abs}", file=sys.stderr)
+        if path_prefix:
+            print(f"[INFO] Using path prefix paths: {path_prefix}", file=sys.stderr)
+        if module_srcs_abs:
+            print(f"[INFO] Using module source paths: {module_srcs_abs}", file=sys.stderr)
+    
+    # 解析ftrace文件
+    start_time = time.time()
+    parsed_lines = parse_ftrace_file(args.ftrace_file, args.verbose, args.enable_fold)
+    parse_time = time.time() - start_time
+    verbose_print(f"File parsing completed in {parse_time:.2f} seconds", args.verbose)
+
+    # 构建时间轴数据（可选）
+    timeline_json = None
+    if args.timeline:
+        timeline_json = build_timeline_data(parsed_lines, vmlinux_path, module_dirs, args)
+
+    # 计算统计信息
+    expandable_count = sum(1 for l in parsed_lines if l['expandable'])
+    module_count = sum(1 for l in parsed_lines if l['expandable'] and l['module_name'])
+    kernel_count = expandable_count - module_count
+
+    # 生成HTML
+    html_content, vmlinux_time, module_time = generate_html(
+        parsed_lines,
+        vmlinux_path,
+        faddr2line_path,
+        module_dirs=module_dirs,  # 传递原始模块目录列表（用于auto-search）
+        base_url=args.base_url,
+        module_url=args.module_url,  # 传递模块URL
+        kernel_src=kernel_src_abs,  # 传递单个绝对路径
+        use_list=use_list,
+        verbose=args.verbose,
+        fast_mode=args.fast,  # 传递fast_mode参数
+        highlight_code=args.highlight_code,  # 传递highlight_code参数
+        path_prefix=path_prefix,  # 传递原始路径列表
+        module_src=module_srcs_abs,  # 传递处理后的绝对路径列表（用于路径清理）
+        module_srcs=module_srcs_abs,  # 传递处理后的绝对路径列表（用于fastfaddr2line查找源码）
+        script_args=args,  # 传递命令行参数用于显示
+        enable_filter=args.filter,  # 传递过滤器开关
+        parse_time=parse_time,  # 传递解析时间
+        total_time=0,  # 占位符，稍后计算
+        func_links=args.func_links,  # 传递函数名超链接开关
+        entry_offset=args.entry_offset,  # 传递函数入口地址偏移量
+        enable_fold=args.enable_fold,  # 传递折叠功能开关
+        timeline_json=timeline_json
+    )
+
+    # 计算总时间
+    total_time = parse_time + vmlinux_time + module_time
+
+    # 输出详细的统计信息到日志
+    print(f"\n=== Processing Statistics ===")
+    print(f"Trace file parsing: {parse_time:.2f}s")
+    if vmlinux_time > 0:
+        print(f"Vmlinux resolution: {vmlinux_time:.2f}s")
+    if module_time > 0:
+        print(f"Modules resolution: {module_time:.2f}s")
+    print(f"Total processing time: {parse_time + vmlinux_time + module_time:.2f}s")
+    print(f"Total lines: {len(parsed_lines)}")
+    print(f"Expandable entries: {sum(1 for l in parsed_lines if l['expandable'])}")
+    print(f"=============================\n")
+    
+    # 写入输出文件
+    try:
+        with open(args.output, 'w') as f:
+            f.write(html_content)
+        verbose_print(f"Output written to: {args.output}", args.verbose)
+    except Exception as e:
+        print(f"Error writing output file: {str(e)}", file=sys.stderr)
+        sys.exit(1)
+    
+    print(f"Generated interactive visualization: {args.output}")
+    print(f"Processed {len(parsed_lines)} lines, with {expandable_count} expandable entries")
+    print(f"Resolved {module_count} module functions, {kernel_count} kernel functions")
+    
+    if args.verbose:
+        print(f"\n[SUMMARY]")
+        print(f"Total lines processed: {len(parsed_lines)}")
+        print(f"Expandable entries: {expandable_count}")
+        print(f"  - Kernel functions: {kernel_count}")
+        print(f"  - Module functions: {module_count}")
+        print(f"Output file: {os.path.abspath(args.output)}")

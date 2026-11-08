@@ -920,13 +920,11 @@ def build_timeline(lines, rettypes=None, errno_map=None, verbose=False):
 if __name__ == '__main__':
     import json
     import sys
-    import os
-    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
     path = sys.argv[1]
     vml = sys.argv[2] if len(sys.argv) > 2 else None
     db = None
     if vml:
-        import btf
+        from fglib import btf
         db = btf.build_return_db(vml)
     with open(path, errors='replace') as f:
         lines = f.read().split('\n')
