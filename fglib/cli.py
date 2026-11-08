@@ -155,6 +155,13 @@ def build_parser():
     parser.add_argument('--overhead', metavar='CHILD_NS[,SELF_NS]',
                         help='tracing overhead per traced child call (and per call) to offer corrected durations; '
                              "default: read from a '# fgcapture: overhead' header (fgcapture.sh --calibrate)")
+    src = parser.add_argument_group('source code for the source blocks (default: the local tree faddr2line reads)')
+    src.add_argument('--source-url', metavar='TEMPLATE',
+                     help="fetch files from a URL with {path} and optional {rev}, e.g. "
+                          "'https://raw.githubusercontent.com/torvalds/linux/{rev}/{path}'")
+    src.add_argument('--source-rev', metavar='REV',
+                     help='revision for {rev}; without --source-url: read files with `git show REV:path` from --kernel-src')
+    src.add_argument('--source-cache', metavar='DIR', help='cache for fetched files (default ~/.cache/funcgraph/src)')
     parser.add_argument('--compare', metavar='BASE_TRACE',
                         help='Add a Compare tab: per-function calls/self/inclusive time vs. this base trace')
     parser.add_argument('--no-text-view', action='store_true',
@@ -489,6 +496,14 @@ def main():
     elif len(parsed_lines) > 150000:
         print(f"Warning: {len(parsed_lines)} lines make a very large text view that browsers may fail to open; "
               "consider --no-text-view (with --timeline) or a pre-filter (--pid/--graph/--time-range)", file=sys.stderr)
+    source_provider = None
+    if (args.source_url or args.source_rev) and vmlinux_path:
+        from . import sources
+        try:
+            source_provider = sources.make_provider(args, kernel_src_abs, [kernel_src_abs] + list(path_prefix))
+        except ValueError as e:
+            print(f"Error: {e}", file=sys.stderr)
+            sys.exit(1)
     html_content, vmlinux_time, module_time = generate_html(
         text_lines,
         vmlinux_path,
@@ -512,7 +527,8 @@ def main():
         entry_offset=args.entry_offset,  # 传递函数入口地址偏移量
         enable_fold=args.enable_fold,  # 传递折叠功能开关
         timeline_json=timeline_json,
-        compare_json=compare_json
+        compare_json=compare_json,
+        source_provider=source_provider
     )
 
     # 计算总时间

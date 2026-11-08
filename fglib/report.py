@@ -13,6 +13,7 @@ from collections import defaultdict
 from .assets import COMPARE_CSS, COMPARE_JS, REPORT_CSS, REPORT_JS, TIMELINE_CSS, VIEWS_BOOT_JS, VIEWS_CSS, read_asset, timeline_script
 from .constants import APP_AUTHOR, APP_TITLE, APP_VERSION, ERROR_CODE_MAP, PROJECT_DIR
 from .inline import timeline_inline_map
+from .sources import rewrite as rewrite_sources
 from .highlight import highlight_ftrace_line
 from .resolver import call_faddr2line_batch, call_faddr2line_for_func_names, create_source_link, parse_list_output, parse_module_url
 from .util import build_source_url, clean_file_path, escape_html_preserve_spaces, find_module_path, format_args_info, get_environment_info, get_relative_path, remove_compiler_suffix, verbose_print
@@ -49,11 +50,13 @@ class HtmlGenerator:
                  module_src=None, module_srcs=None, script_args=None,
                  enable_filter=False, parse_time=0, total_time=0,
                  func_links=False, entry_offset=0, enable_fold=False,
-                 timeline_json=None, compare_json=None):
+                 timeline_json=None, compare_json=None, source_provider=None):
         # Store all parameters as instance attributes
         self.parsed_lines = parsed_lines
         self.timeline_json = timeline_json
         self.compare_json = compare_json
+        self.source_provider = source_provider
+        self.source_note = None
         self._src_pool = []
         self._src_index = {}
         self._list_cache = {}
@@ -132,6 +135,8 @@ class HtmlGenerator:
                 info_content_html += f'                <div class="info-item"><div class="info-label">Foldable:</div><div class="info-value">{foldable_count}</div></div>\n'
 
         # 添加脚本参数部分
+        if self.source_note:
+            info_content_html += f'                <div class="info-item"><div class="info-label">Source:</div><div class="info-value">{html.escape(self.source_note)}</div></div>\n'
         if info_items:
             info_content_html += '                <div class="info-section-title">Parameters</div>\n'
             for label, value in info_items:
@@ -855,6 +860,19 @@ class HtmlGenerator:
         self.filter_html = filter_html
         self.combined_module_url_map = combined_module_url_map
         self.default_module_url = default_module_url
+        if self.source_provider is not None and func_locations_map:
+            t0 = time.time()
+            func_locations_map, st = rewrite_sources(func_locations_map, self.source_provider)
+            ratio = st['match_ratio']
+            self.source_note = (f"{self.source_provider.describe()}: {st['files']} files"
+                                f"{' (' + str(st['missing_files']) + ' not found)' if st['missing_files'] else ''}, "
+                                f"{st['with_source']}/{st['positions']} positions with source"
+                                + (f", {ratio * 100:.0f}% match the function names" if ratio is not None else ''))
+            print(f"Source: {self.source_note} ({time.time() - t0:.1f}s)")
+            if ratio is not None and ratio < 0.75:
+                print("Warning: the source does not seem to match the vmlinux (function names are not found "
+                      "at the reported lines); check --source-rev", file=sys.stderr)
+                self.source_note += ' - WARNING: probably a different version than the vmlinux'
         self.func_locations_map = func_locations_map
         self.vmlinux_funcs = vmlinux_funcs
         self.module_funcs = module_funcs
@@ -1323,7 +1341,7 @@ class HtmlGenerator:
         return read_asset(REPORT_CSS)
 
 
-def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None, base_url=None, module_url=None, kernel_src=None, use_list=False, verbose=False, fast_mode=False, highlight_code=False, path_prefix=None, module_src=None, module_srcs=None, script_args=None, enable_filter=False, parse_time=0, total_time=0, func_links=False, entry_offset=0, enable_fold=False, timeline_json=None, compare_json=None):
+def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None, base_url=None, module_url=None, kernel_src=None, use_list=False, verbose=False, fast_mode=False, highlight_code=False, path_prefix=None, module_src=None, module_srcs=None, script_args=None, enable_filter=False, parse_time=0, total_time=0, func_links=False, entry_offset=0, enable_fold=False, timeline_json=None, compare_json=None, source_provider=None):
     """Generate interactive HTML page. Wrapper for backward compatibility."""
     generator = HtmlGenerator(
         parsed_lines, vmlinux_path, faddr2line_path,
@@ -1334,6 +1352,7 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
         script_args=script_args, enable_filter=enable_filter,
         parse_time=parse_time, total_time=total_time,
         func_links=func_links, entry_offset=entry_offset,
-        enable_fold=enable_fold, timeline_json=timeline_json, compare_json=compare_json
+        enable_fold=enable_fold, timeline_json=timeline_json, compare_json=compare_json,
+        source_provider=source_provider
     )
     return generator.generate()
