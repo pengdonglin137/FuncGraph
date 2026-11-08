@@ -7,6 +7,7 @@ import sys
 import time
 
 from .constants import ERROR_CODE_MAP, PROJECT_DIR
+from . import prefilter
 from .parser import parse_ftrace_file
 from .report import generate_html
 from .util import check_gawk_available, find_module_path, verbose_print
@@ -81,6 +82,22 @@ def build_parser():
                         help='Offset to add to function entry addresses (for -fpatchable-function-entry)')
     parser.add_argument('--enable-fold', action='store_true',
                         help='Enable function call folding (adds some overhead)')
+    flt = parser.add_argument_group('pre-filter (applied before conversion; keeps whole call trees)')
+    def csv(conv):
+        def f(text):
+            try:
+                return [conv(x) for x in text.split(',') if x]
+            except ValueError:
+                raise argparse.ArgumentTypeError(f'bad list {text!r}')
+        return f
+    flt.add_argument('--pid', type=csv(int), metavar='PID[,PID]', help='keep only these tasks')
+    flt.add_argument('--comm', type=csv(str), metavar='RE[,RE]', help='keep tasks whose comm matches')
+    flt.add_argument('--cpu', type=csv(int), metavar='N[,N]', help='keep only these CPUs')
+    flt.add_argument('--time-range', metavar='START:END',
+                     help='keep calls starting in this window; absolute seconds, or +offset from the first '
+                          'timestamp with units, e.g. +2ms:+5ms')
+    flt.add_argument('--graph', type=csv(str), metavar='RE[,RE]', help='keep only the call trees of matching functions')
+    flt.add_argument('--notrace', type=csv(str), metavar='RE[,RE]', help='drop the call trees of matching functions')
     parser.add_argument('--timeline', action='store_true',
                         help='Add a Timeline tab: per-task flame chart over time with context/error-path coloring')
     parser.add_argument('--btf', nargs='*', default=None, metavar='FILE',
@@ -93,6 +110,12 @@ def build_parser():
 
 def validate_args(args):
     """Check paths/URLs; exits on fatal errors, warns otherwise."""
+    if args.time_range:
+        try:
+            prefilter.parse_range(args.time_range)
+        except ValueError as e:
+            print(f"Error: --time-range: {e}", file=sys.stderr)
+            sys.exit(1)
     # 参数健壮性检查
     # 检查ftrace文件是否存在
     if not os.path.exists(args.ftrace_file):
@@ -322,7 +345,19 @@ def main():
     
     # 解析ftrace文件
     start_time = time.time()
-    parsed_lines = parse_ftrace_file(args.ftrace_file, args.verbose, args.enable_fold)
+    raw_lines = None
+    pre = prefilter.Filter(pids=args.pid, comms=args.comm, cpus=args.cpu, time_range=args.time_range,
+                           graph=args.graph, notrace=args.notrace)
+    if pre.active():
+        with open(args.ftrace_file, 'r', errors='replace') as f:
+            raw_lines = f.read().split('\n')
+        if raw_lines and raw_lines[-1] == '':
+            raw_lines.pop()
+        raw_lines, st = prefilter.apply(raw_lines, pre)
+        print(f"Pre-filter ({pre.describe()}): kept {st['out']} of {st['in']} lines")
+        if not any(l and not l.startswith('#') for l in raw_lines):
+            print("Warning: the pre-filter kept no trace lines (check --pid/--comm/--graph/--time-range)", file=sys.stderr)
+    parsed_lines = parse_ftrace_file(args.ftrace_file, args.verbose, args.enable_fold, lines=raw_lines)
     parse_time = time.time() - start_time
     verbose_print(f"File parsing completed in {parse_time:.2f} seconds", args.verbose)
 

@@ -13,14 +13,15 @@ class FtraceParser:
     def __init__(self, verbose=False):
         self.verbose = verbose
 
-    def parse(self, file_path, enable_fold=False):
+    def parse(self, file_path, enable_fold=False, lines=None):
         """Parse ftrace file and return list of FtraceLine objects.
 
         This is the main entry point, equivalent to the old parse_ftrace_file().
 
         参数:
-            file_path: ftrace输出文件路径
+            file_path: ftrace输出文件路径（lines 给出时只用于日志）
             enable_fold: 是否启用函数调用折叠功能
+            lines: 可选，已读入（可能已预过滤）的行列表，不含换行符
 
         返回:
             parsed_lines: 包含所有行信息的列表
@@ -30,7 +31,7 @@ class FtraceParser:
         expandable_count = 0
 
         try:
-            with open(file_path, 'r') as f:
+            with (open(file_path, 'r') if lines is None else _NullCtx(lines)) as f:
                 for line_num, line in enumerate(f, 1):
                     try:
                         line = line.rstrip('\n')
@@ -619,10 +620,23 @@ def _base36(n):
             return out
 
 
-def parse_ftrace_file(file_path, verbose=False, enable_fold=False):
+class _NullCtx:
+    """Context manager yielding an in-memory line list (same shape as a file)."""
+
+    def __init__(self, lines):
+        self.lines = lines
+
+    def __enter__(self):
+        return self.lines
+
+    def __exit__(self, *exc):
+        return False
+
+
+def parse_ftrace_file(file_path, verbose=False, enable_fold=False, lines=None):
     """Parse ftrace file. Wrapper for backward compatibility."""
     parser = FtraceParser(verbose=verbose)
-    return parser.parse(file_path, enable_fold=enable_fold)
+    return parser.parse(file_path, enable_fold=enable_fold, lines=lines)
 
 
 def identify_fold_blocks(parsed_lines, verbose=False):
