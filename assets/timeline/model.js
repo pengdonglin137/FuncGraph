@@ -46,6 +46,13 @@ function computeSelf() {
     for (let i = 0; i < N; i++) { if (sSelf[i] < 0) sSelf[i] = 0; if (sSelf[i] > maxSelf) maxSelf = sSelf[i]; }
 }
 computeSelf();
+const sSelfRaw = Float64Array.from(sSelf);      // measured self time (for breakdowns)
+const SECTIONS = D.sections || [];              // [task, kind, start, end, sslice, eslice, maxDepth, sline, eline]
+const SEC_NAMES = ['irqs off', 'preempt off', 'BH off'];
+const ATOMIC = new Map((D.atomic || []).map(a => [a[0], a[1]]));
+function atomicText(bits) {
+    return [[1, 'irqs off'], [2, 'preemption disabled'], [4, 'in interrupt'], [8, 'BH disabled']].filter(x => bits & x[0]).map(x => x[1]).join(', ');
+}
 function setAdjusted(on) {
     adjOn = !!(on && sDurAdj);
     sDur = adjOn ? sDurAdj : sDurRaw;
@@ -270,6 +277,7 @@ tlRoot.innerHTML = `
     <button class="tl-btn" data-act="expand" title="Expand / collapse all tracks">Tracks</button>
     <button class="tl-btn" data-act="adj" title="Subtract the estimated tracing overhead from durations (O)">Overhead: measured</button>
     <button class="tl-btn" data-act="an-errors" title="Error summary by syscall / origin / errno">Errors</button>
+    <button class="tl-btn" data-act="an-sec" title="Critical sections: irqs-off / preempt-off / BH-off regions">Sections</button>
     <button class="tl-btn" data-act="an-lat" title="Scheduling latency: need-resched windows and what delayed them">Sched latency</button>
     <button class="tl-btn" data-act="help" title="Help (?)">?</button>
   </span>

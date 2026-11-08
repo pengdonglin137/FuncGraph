@@ -51,6 +51,15 @@ RE_FUNC_HEAD = re.compile(r'([A-Za-z_$][\w.$]*)(?: \[([\w-]+)\])?\(')
 RE_CALLER = re.compile(r'<-([A-Za-z_$][\w.$]*)\+(0x[0-9a-fA-F]+)/(0x[0-9a-fA-F]+)(?: \[([\w-]+)\])?')
 RE_RET = re.compile(r' ret=(-?\d+|0x[0-9a-fA-F]+)')
 RE_EXIT_NAME = re.compile(r'^ ([A-Za-z_$][\w.$]*)(?: \[([\w-]+)\])?')
+# preempt-depth digit of task-context lines (for the baseline of the trace)
+RE_LAT_TASK = re.compile(r' [.dDb][.BNLbnpl]\.([.0-9a-f])[.0-9a-f]? \| ')
+# Functions that may sleep: calling them with irqs off, preemption disabled or from an
+# interrupt is a bug ("BUG: sleeping function called from invalid context")
+RE_MAY_SLEEP = re.compile(r'^(?:__might_sleep|__might_fault|mutex_lock(?:_nested|_interruptible\w*|_killable\w*|_io\w*)?|__mutex_lock|'
+                          r'down(?:_read|_write|_interruptible|_killable|_timeout)?(?:_nested)?|rwsem_down_\w+_slowpath|'
+                          r'wait_for_completion\w*|msleep\w*|usleep_range\w*|schedule|io_schedule|schedule_timeout\w*|'
+                          r'schedule_hrtimeout\w*|synchronize_rcu\w*)$')
+SEC_IRQ, SEC_PREEMPT, SEC_BH = 0, 1, 2
 RE_OVERHEAD = re.compile(r'^# fgcapture: overhead child=(\d+)ns self=(\d+)ns')
 RE_SCHED_SWITCH = re.compile(r'sched_switch: prev_comm=(.*?) prev_pid=(\d+) .*?prev_state=(\S+) ==> next_comm=(.*?) next_pid=(\d+)')
 # sched_waking fires in the waker's context; sched_wakeup may fire on the target CPU (TTWU_QUEUE IPI)
@@ -118,7 +127,7 @@ class _Frame:
 class _Task:
     __slots__ = ('key', 'tid', 'pid', 'comm', 'comms', 'kind', 'cpu', 'stack', 'vclock',
                  'pending_leaf', 'last_ts', 'last_cpu', 'runs', 'resched_open', 'resched_info',
-                 'irqoff_open', 'off_open', 'loose', 'first_ts', 'new_run')
+                 'irqoff_open', 'off_open', 'loose', 'first_ts', 'new_run', 'sec_open', 'last_task_ts')
 
     def __init__(self, key, tid, pid, comm, kind, cpu):
         self.key = key
@@ -141,6 +150,8 @@ class _Task:
         self.off_open = None      # pending off-cpu record (index into offcpu)
         self.loose = []           # slice indices at unknown parent (orphan adoption)
         self.new_run = False      # next timestamp starts a new on-CPU run (after switch-in)
+        self.sec_open = [None, None, None]   # per SEC_* kind: [start_ts, start_slice, start_line, max_depth]
+        self.last_task_ts = None             # last timestamp seen in task context
 
 
 class TimelineBuilder:
@@ -174,6 +185,9 @@ class TimelineBuilder:
         self.offcpu = []          # [task, start, end, depth, reason_idx, state_idx, cpu_out, cpu_in, preempted, waker_idx]
         self.resched = []         # [task, start, end, max_preempt, irqoff, closed_by]
         self.irqoff = []          # [task, start, end]
+        self.sections = []        # [task, kind, start, end, start_slice, end_slice, max_depth, start_line, end_line]
+        self.atomic = []          # [slice, reasons bits: 1 irqs off, 2 preempt off, 4 irq context, 8 BH off]
+        self.preempt_base = 0
         self.lost = []            # [cpu, ts, count, line]
         self.wakeups = {}         # pid -> list of (ts, waker_task)
         self.wake_events = []     # [waker_tid, ts, target_tid, ctx, waker_slice, offcpu_rec|None]
@@ -309,9 +323,24 @@ class TimelineBuilder:
         return f, ctx
 
     # -- main pass -----------------------------------------------------
+    def _preempt_baseline(self):
+        """Lowest preempt depth seen in task context: the tracer/trace path itself may add one."""
+        lo = None
+        for raw in self.lines:
+            m = RE_LAT_TASK.search(raw, 0, 120)
+            if m:
+                c = m.group(1)
+                v = 0 if c == '.' else int(c, 16)
+                if lo is None or v < lo:
+                    lo = v
+                    if v == 0:
+                        break
+        return lo or 0
+
     def build(self):
         t_start = time.time()
         lines = self.lines
+        self.preempt_base = self._preempt_baseline()
         ts_seen = False
         for lineno0, raw in enumerate(lines):
             if not raw or raw[0] == '#':
@@ -366,13 +395,14 @@ class TimelineBuilder:
             self._cur_cpu = cpu if cpu is not None else -1
             task = self._task(pid, comm, cpu)
             self._resolve_switch_in(task, cpu, ts)
+            prev_ts = task.last_ts
             if ts is not None:
                 self._track_run(task, cpu, ts)
                 if cpu is not None:
                     self.cpu_last_ts[cpu] = ts
             lflags, lctx = self._lat_flags(lat)
             if lat is not None and ts is not None:
-                self._track_lat(task, lat, lflags, ts, lineno)
+                self._track_lat(task, lat, lflags, ts, lineno, prev_ts)
             # Fill a pending leaf duration (no duration column) from the next timestamp
             if task.pending_leaf >= 0 and ts is not None:
                 i = task.pending_leaf
@@ -465,6 +495,16 @@ class TimelineBuilder:
                 flags |= F_CALLER_MISMATCH
         args_i = self._s(args) if args else -1
         caller_i = self._s(caller) if caller else -1
+        atomic = 0
+        if lflags & F_HAS_LAT and RE_MAY_SLEEP.match(_strip_suffix(name)):
+            if lflags & F_IRQOFF:
+                atomic |= 1
+            if ((lflags >> F_PREEMPT_SHIFT) & 0xf) > self.preempt_base:
+                atomic |= 2
+            if ctx != CTX_TASK:
+                atomic |= 4
+            if lflags & F_BHOFF:
+                atomic |= 8
         if kind == 'leaf':
             flags |= F_LEAF
             if dur is not None:
@@ -476,6 +516,8 @@ class TimelineBuilder:
                 end = start + 1000
                 flags |= F_ESTIMATED
             idx = self._new_slice(task, depth, start, end, name, module, lineno, flags, parent, ret, caller_i, args_i)
+            if atomic:
+                self.atomic.append([idx, atomic])
             if end is None:
                 self.s_end[idx] = start + 1
                 task.pending_leaf = idx
@@ -485,6 +527,8 @@ class TimelineBuilder:
                 task.loose.append(idx)
         else:
             idx = self._new_slice(task, depth, start, None, name, module, lineno, flags, parent, None, caller_i, args_i)
+            if atomic:
+                self.atomic.append([idx, atomic])
             task.stack.append(_Frame(idx, depth, name, ctx))
             if parent < 0:
                 task.loose.append(idx)
@@ -623,6 +667,8 @@ class TimelineBuilder:
             info = prev.resched_info
             self.resched.append([prev.tid, prev.resched_open, t_out, info[0], info[1], 1])
             prev.resched_open = None
+        if t_out is not None:
+            self._close_sections(prev, t_out, -1)
         if prev.irqoff_open is not None and t_out is not None:
             self.irqoff.append([prev.tid, prev.irqoff_open, t_out])
             prev.irqoff_open = None
@@ -657,7 +703,7 @@ class TimelineBuilder:
         task.last_ts = ts
         task.last_cpu = cpu
 
-    def _track_lat(self, task, lat, lflags, ts, lineno):
+    def _track_lat(self, task, lat, lflags, ts, lineno, prev_ts=None):
         if lat[1] != '.':
             if task.resched_open is None:
                 task.resched_open = ts
@@ -673,12 +719,46 @@ class TimelineBuilder:
             self.resched.append([task.tid, task.resched_open, ts, info[0], info[1], 0])
             task.resched_open = None
         ctx = lflags & F_CTX_MASK
+        # The task was switched out inside __schedule (no switch marker without funcgraph-proc
+        # or with set_ftrace_pid): end its sections when it left, a new one starts on resume.
+        if (prev_ts is not None and ts - prev_ts > 20000 and any(task.sec_open)
+                and any(RE_SCHED_INTERNAL.match(self.strings[self.s_name[f.idx]]) for f in task.stack[-4:])):
+            self._close_sections(task, prev_ts, lineno)
+        if ctx in (CTX_SOFTIRQ, CTX_HARDIRQ) and task.last_task_ts is not None:
+            # An interrupt (or softirq on irq exit) ran, so irqs - and for softirq BH - were enabled
+            # again before it, in code that was not traced: end the section at the last task-context line.
+            for kind in ((SEC_IRQ, SEC_BH) if ctx == CTX_SOFTIRQ else (SEC_IRQ,)):
+                op = task.sec_open[kind]
+                if op is not None:
+                    self.sections.append([task.tid, kind, op[0], task.last_task_ts, op[1], -1, op[3], op[2], lineno])
+                    task.sec_open[kind] = None
+        if ctx == CTX_TASK and task.kind == 0:
+            task.last_task_ts = ts
+            pd = ((lflags >> F_PREEMPT_SHIFT) & 0xf) - self.preempt_base
+            frame = task.stack[-1].idx if task.stack else -1
+            for kind, on, depth in ((SEC_IRQ, lflags & F_IRQOFF, 1), (SEC_PREEMPT, pd > 0, pd),
+                                    (SEC_BH, lflags & F_BHOFF, 1)):
+                op = task.sec_open[kind]
+                if on:
+                    if op is None:
+                        task.sec_open[kind] = [ts, frame, lineno, depth]
+                    elif depth > op[3]:
+                        op[3] = depth
+                elif op is not None:
+                    self.sections.append([task.tid, kind, op[0], ts, op[1], frame, op[3], op[2], lineno])
+                    task.sec_open[kind] = None
         if (lflags & F_IRQOFF) and ctx == CTX_TASK:
             if task.irqoff_open is None:
                 task.irqoff_open = ts
         elif task.irqoff_open is not None and ctx == CTX_TASK:
             self.irqoff.append([task.tid, task.irqoff_open, ts])
             task.irqoff_open = None
+
+    def _close_sections(self, task, ts, line):
+        for kind, op in enumerate(task.sec_open):
+            if op is not None:
+                self.sections.append([task.tid, kind, op[0], ts, op[1], -1, op[3], op[2], line])
+                task.sec_open[kind] = None
 
     # -- post-processing ----------------------------------------------
     def _finish(self, ts_seen):
@@ -705,6 +785,8 @@ class TimelineBuilder:
             t.stack = []
             if t.resched_open is not None and t.last_ts is not None:
                 self.resched.append([t.tid, t.resched_open, t.last_ts, t.resched_info[0], t.resched_info[1], 2])
+            if t.last_ts is not None:
+                self._close_sections(t, t.last_ts, -1)
             if t.irqoff_open is not None and t.last_ts is not None:
                 self.irqoff.append([t.tid, t.irqoff_open, t.last_ts])
         # Truncated frames: end must cover their children
@@ -948,6 +1030,12 @@ class TimelineBuilder:
             'wakeups': [[w[0], rel(w[1]), w[2], w[3], remap[w[4]] if w[4] >= 0 else -1, off_index.get(id(w[5]), -1)]
                         for w in self.wake_events] if timed else [],
             'irqoff': [[r[0], rel(r[1]), rel(r[2])] for r in self.irqoff] if timed else [],
+            # [task, kind(0 irqs-off/1 preempt-off/2 BH-off), start, end, start_slice, end_slice, max_depth, start_line, end_line]
+            'sections': [[r[0], r[1], rel(r[2]), rel(r[3]), remap[r[4]] if r[4] >= 0 else -1,
+                          remap[r[5]] if r[5] >= 0 else -1, r[6], r[7], r[8]]
+                         for r in self.sections if r[3] > r[2]] if timed else [],
+            'atomic': [[remap[a[0]], a[1]] for a in self.atomic],
+            'preempt_base': self.preempt_base,
             'lost': [[r[0], r[2], r[3]] for r in self.lost],
             'stats': {k: (round(v, 3) if isinstance(v, float) else v) for k, v in self.stats.items()},
             'overhead': {'child': ovh[0], 'self': ovh[1], 'source': self.overhead_source} if ovh else None,

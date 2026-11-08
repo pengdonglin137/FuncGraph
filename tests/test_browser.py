@@ -119,6 +119,22 @@ class BrowserSmokeTest(unittest.TestCase):
         self.assertTrue(self.ev("!!document.querySelector('.an-hist')"))
         self.assertGreater(self.ev("document.querySelectorAll('.an-list tr').length"), 0)
 
+    def test_breakdown_sections_slowfast(self):
+        self.open_timeline()
+        self.page.fill('.tl-search', '^do_el0_svc$')
+        self.page.press('.tl-search', 'Enter')
+        self.page.wait_for_timeout(200)
+        self.ev('document.activeElement.blur()')
+        self.assertIn('own code', self.ev("document.querySelector('.an-bd-legend').innerText"))
+        self.page.keyboard.press('h')
+        self.page.wait_for_timeout(200)
+        self.page.click('[data-act=slowfast]')
+        self.page.wait_for_timeout(300)
+        self.assertIn('Slow vs fast', self.ev("document.querySelector('.tl-detail').innerText"))
+        self.page.click('[data-act=an-sec]')
+        self.page.wait_for_timeout(200)
+        self.assertGreater(self.ev("document.querySelectorAll('tr[data-sec]').length"), 0)
+
     def test_wakeup_overlay_toggle(self):
         self.open_timeline()
         self.assertFalse(self.ev("document.querySelector('[data-ov=wk]').classList.contains('na')"))

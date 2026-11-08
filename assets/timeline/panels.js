@@ -12,6 +12,7 @@ function showDetail(i) {
     if (f & FL.BHOFF) pills += pill('warn', 'BH off');
     if ((f >> FL.RS_SHIFT) & 7) pills += pill('warn', 'need-resched');
     if (eRole[i] >= 0) pills += pill('err', eRole[i] === 0 ? 'error origin' : 'error propagated');
+    if (ATOMIC.has(i)) pills += pill('err', 'may sleep in atomic context');
     if (f & FL.TRUNC) pills += pill('mute', 'no exit');
     if (f & FL.ORPHAN) pills += pill('mute', 'no entry');
     if (f & FL.EST) pills += pill('mute', 'estimated');
@@ -37,8 +38,10 @@ function showDetail(i) {
     if (c) h += kv('call site', esc(c) + (f & FL.MISMATCH ? '<br><span class="tl-pill warn">caller differs from parent slice: untraced/inlined frame in between</span>' : ''));
     const a = argsOf(i);
     if (a) h += kv('args', esc(a));
+    if (ATOMIC.has(i)) h += kv('context', 'called with ' + esc(atomicText(ATOMIC.get(i))) + ' (sleeping function in atomic context)', 'err');
     h += kv('trace lines', lineLink(sLine[i]) + (sEline && sEline[i] && sEline[i] !== sLine[i] ? ' → ' + lineLink(sEline[i]) : ''));
     h += '</div><div>';
+    h += breakdownHtml(i);
     // error chain
     if (eChain[i] >= 0) {
         const ch = CHAINS[eChain[i]];
@@ -265,6 +268,7 @@ tlRoot.querySelector('.tl-toolbar').addEventListener('click', ev => {
         case 'adj': toggleAdjusted(); break;
         case 'an-errors': showErrors(); break;
         case 'an-lat': showLatency(); break;
+        case 'an-sec': showSections(); break;
         case 'expand': {
             const any = ORDER.some(t => t.collapsed);
             for (const t of ORDER) t.collapsed = !any;
@@ -288,6 +292,7 @@ function refreshPanel() {
     if (!elDetail.classList.contains('show')) return;
     if (AN.kind === 'errors') showErrors();
     else if (AN.kind === 'lat') showLatency();
+    else if (AN.kind === 'sec') showSections();
     else if (AN.kind === 'dist') showDist(AN.func);
     else if (range) showRangeSummary();
     else if (sel >= 0) showDetail(sel);

@@ -230,6 +230,13 @@ lost[]    [cpu, count, line]
 - **唤醒**：优先使用 `sched_waking`，它在唤醒者的上下文里触发；`sched_wakeup` 可能在目标 CPU 的 IPI 里触发，唤醒者会变成 idle。记录为 `wakeups[] = [waker_task, ts, target_task, ctx, waker_slice, offcpu_index]`。前端在显示唤醒点时跳过 `try_to_wake_up`、`__wake_up*` 等内部函数，显示唤醒者实际在做的事，例如 `anon_pipe_write`。
 - **开销修正**：function_graph 的入口和出口 hook 都计入函数耗时。`fgcapture.sh --calibrate` 用相同选项跟踪 3000 次 `vfs_read`，一次用 `set_graph_function`（跟踪子调用），一次用 `set_ftrace_filter`（只跟踪 vfs_read 本身），由两者中位数之差除以子孙调用数得到每个被跟踪子调用的开销 `child`，叶子耗时的 p1 作为每次调用的测量开销 `self`。修正值 = 实测 − child × 子孙调用数 − self（不小于 0），存为 `cols.adj`。树莓派 4（6.18、lockdep）实测 child ≈ 1.1 us、self ≈ 0.46 us；`vfs_read` 修正后的中位数 1.2 us，与不跟踪子调用时的 0.94 us 接近。开销随 CPU、频率和内核配置变化，修正值只是估计，默认显示实测值。
 
+## 7b. flag 与耗时的进一步分析
+
+- **临界区**：`_track_lat` 在 task 上下文里按行跟踪三种状态：关中断（`d`/`D`）、关抢占（preempt 数字大于基线）、关软中断（`b`/`D`）。基线取 task 上下文中出现过的最小 preempt 深度，6.18 上为 1（跟踪路径本身关了一次抢占）。区间在 flag 恢复、任务换出、或出现 hardirq/softirq 行时结束：中断能进来说明在没被跟踪的代码里已经重新开了中断。记录为 `sections[] = [task, kind, start, end, start_slice, end_slice, max_depth, start_line, end_line]`，起止切片是 flag 变化时栈顶的函数。精度受被跟踪函数密度限制。
+- **原子上下文睡眠**：调用 `RE_MAY_SLEEP` 中的函数（`__might_sleep`、`mutex_lock*`、`down*`、`wait_for_completion*`、`msleep`、`schedule_timeout*` 等）时，若入口行关中断、关抢占（高于基线）、关软中断或处于中断上下文，记入 `atomic[] = [slice, bits]`。`vfree` 等内部会延迟到安全上下文执行的函数不在列表中。
+- **耗时去向**（前端 `breakdown()`）：对切片的子树分类，结果是实测耗时的精确划分：自身 self、被跟踪子调用的 self 之和、子树中进入更高上下文的中断切片、与该切片重叠的 off-CPU 段（阻塞/抢占，从它所在帧的 self 中扣除）。有开销估计时另外给出其中的跟踪开销。
+- **快慢对比**：同名（可限定调用点）调用按耗时排序，取最快一半与最慢 10%，比较两组每次调用在子树中各函数的平均调用次数和 self 时间，以及中断和 off-CPU 时间，按差值排序。
+
 ## 8. 性能数据
 
 | 场景 | 数据 |

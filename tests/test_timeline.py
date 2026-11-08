@@ -130,6 +130,19 @@ SYNTH_WAKE = """\
 """
 
 
+SYNTH_SECTIONS = """\
+1000.000100 |   0)   t-5     |  ...1. |               |  outer() {
+1000.000101 |   0)   t-5     |  ...1. |               |    _raw_spin_lock_irqsave() {
+1000.000102 |   0)   t-5     |  d..2. |   1.000 us    |      preempt_count_add();
+1000.000104 |   0)   t-5     |  d..2. |   3.000 us    |    } /* _raw_spin_lock_irqsave */
+1000.000110 |   0)   t-5     |  d..2. |   1.000 us    |    mutex_lock();
+1000.000120 |   0)   t-5     |  d.h3. |   1.000 us    |    irq_handler();
+1000.000130 |   0)   t-5     |  ...2. |   1.000 us    |    work();
+1000.000140 |   0)   t-5     |  ...1. |   1.000 us    |    done();
+1000.000150 |   0)   t-5     |  ...1. |  51.000 us    |  } /* outer */
+"""
+
+
 class SyntheticTest(unittest.TestCase):
     def check(self, d, mode):
         self.assertEqual(invariant_errors(d), [])
@@ -205,6 +218,22 @@ class SyntheticTest(unittest.TestCase):
         self.assertEqual((d['overhead']['child'], d['overhead']['self'], d['overhead']['source']), (500, 50, 'trace header'))
         self.assertIsNone(build(SYNTH_FULL)['cols']['adj'])
         self.assertTrue(all(a >= 0 for a in build(hdr)['cols']['adj']))
+
+    def test_critical_sections_and_atomic_sleep(self):
+        d = build(SYNTH_SECTIONS)
+        self.check(d, 'abs')
+        self.assertEqual(d['preempt_base'], 1)
+        irq = [r for r in d['sections'] if r[1] == 0]
+        pre = [r for r in d['sections'] if r[1] == 1]
+        self.assertEqual(len(irq), 1)
+        # irqs-off ends before the interrupt (irqs were re-enabled in untraced code)
+        self.assertEqual(irq[0][3] - irq[0][2], 8000)
+        self.assertEqual(self.name(d, irq[0][4]), '_raw_spin_lock_irqsave')
+        self.assertEqual(len(pre), 1)
+        self.assertEqual(pre[0][3] - pre[0][2], 38000)          # until 'done' at preempt depth 1
+        names = [d['strings'][x] for x in d['cols']['name']]
+        at = {names[a[0]]: a[1] for a in d['atomic']}
+        self.assertEqual(at, {'mutex_lock': 1 | 2})               # irqs off + preemption disabled
 
     def test_btf_filters_void_comparator_and_null(self):
         db = ReturnTypeDB()

@@ -388,6 +388,7 @@ function drawSlice(i, x0, x1, y, h, labels) {
         if (f & FL.TRUNC) { ctx.fillStyle = P.sub; for (let yy = y; yy < y + h; yy += 4) ctx.fillRect(cx0 + ww - 2, yy, 2, 2); }
         if (f & FL.ORPHAN) { ctx.fillStyle = P.sub; for (let yy = y; yy < y + h; yy += 4) ctx.fillRect(cx0, yy, 2, 2); }
         if (f & FL.MISMATCH) { ctx.fillStyle = P.mis; ctx.fillRect(cx0, y, 3, 3); }
+        if (ATOMIC.has(i)) { ctx.strokeStyle = P.errLine; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(cx0, y + h - 1); ctx.lineTo(cx0 + ww, y + h - 1); ctx.stroke(); }
     }
     if (ov.rs && w > 6 && ((f >> FL.RS_SHIFT) & 7)) {
         ctx.fillStyle = P.rs;

@@ -96,6 +96,7 @@ Data flow: `FtraceParser.parse()` → `AddressResolver.resolve_batch()` → (opt
 - Container uses `width: fit-content; min-width: 100%` to allow long trace lines to expand beyond the viewport, triggering the browser's native horizontal scrollbar.
 - Timeline `flags` bit layout is shared by `fglib/timeline.py` (`F_*`) and `assets/timeline/model.js` (`FL`); change both together.
 - Timeline JS files `model/render/interact/analysis/panels.js` are concatenated into one closure `__tlBoot()` (order in `fglib/assets.py`). Extra tabs register in `window.fgViews` and are wired by the global `assets/views/boot.js`; add a view in `HtmlGenerator._views()`.
+- Sections/atomic checks live in `TimelineBuilder._track_lat` / `_on_call` (task context only, preempt baseline from `_preempt_baseline`); breakdown and slow-vs-fast are computed in the browser from slices (`analysis.js`: `subtree`, `breakdown`, `slowFast`).
 - In timeline JS, displayed durations go through `durOf(i)` (measured or overhead-corrected, toggled by `setAdjusted`); geometry always uses `sStart/sEnd`.
 - New CLI options that change nothing when unused must be added to the hidden-when-default list in `util.format_args_info` to keep golden output stable.
 - Text-view filter → timeline: `applyFilter`/`clearFilter` call `fgNotifyFilter(text, Set<lineNumber>|null)`; the timeline registers `window.fgOnFilter`.
