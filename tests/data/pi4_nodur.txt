@@ -1,0 +1,1500 @@
+# tracer: function_graph
+#
+#     TIME        CPU  TASK/PID                      FUNCTION CALLS
+#      |          |     |    |                       |   |   |   |
+2030105.795124 |   0)   sh-131108    | mutex_unlock() {
+2030105.795129 |   0)   sh-131108    |   __mutex_unlock_slowpath(); /* ret=0xffffff8043980000 */
+2030105.795133 |   0)   sh-131108    | } /* mutex_unlock ret=0xffffff8043980000 */
+2030105.795212 |   0)   sh-131108    | __arm64_sys_openat() {
+2030105.795213 |   0)   sh-131108    |   do_sys_openat2() {
+2030105.795214 |   0)   sh-131108    |     getname_flags() {
+2030105.795214 |   0)   sh-131108    |       kmem_cache_alloc_noprof() {
+2030105.795215 |   0)   sh-131108    |         fs_reclaim_acquire(); /* ret=0xffffff8043980000 */
+2030105.795218 |   0)   sh-131108    |         fs_reclaim_release(); /* ret=0xffffff8043980000 */
+2030105.795220 |   0)   sh-131108    |         __might_sleep() {
+2030105.795220 |   0)   sh-131108    |           __might_resched(); /* ret=0x0 */
+2030105.795222 |   0)   sh-131108    |         } /* __might_sleep ret=0x0 */
+2030105.795223 |   0)   sh-131108    |       } /* kmem_cache_alloc_noprof ret=0xffffff8044935000 */
+2030105.795223 |   0)   sh-131108    |       __might_fault() {
+2030105.795224 |   0)   sh-131108    |         __might_sleep() {
+2030105.795225 |   0)   sh-131108    |           __might_resched(); /* ret=0x0 */
+2030105.795226 |   0)   sh-131108    |         } /* __might_sleep ret=0x0 */
+2030105.795227 |   0)   sh-131108    |       } /* __might_fault ret=0xffffff8043980000 */
+2030105.795228 |   0)   sh-131108    |     } /* getname_flags ret=0xffffff8044935000 */
+2030105.795229 |   0)   sh-131108    |     get_unused_fd_flags() {
+2030105.795229 |   0)   sh-131108    |       alloc_fd() {
+2030105.795230 |   0)   sh-131108    |         _raw_spin_lock() {
+2030105.795231 |   0)   sh-131108    |           preempt_count_add(); /* ret=0xffffffc08002f6c0 */
+2030105.795232 |   0)   sh-131108    |           do_raw_spin_trylock(); /* ret=0x1 */
+2030105.795234 |   0)   sh-131108    |         } /* _raw_spin_lock ret=0xffffff8043980000 */
+2030105.795235 |   0)   sh-131108    |         _raw_spin_unlock() {
+2030105.795235 |   0)   sh-131108    |           do_raw_spin_unlock(); /* ret=-1 */
+2030105.795237 |   0)   sh-131108    |           preempt_count_sub(); /* ret=0x0 */
+2030105.795238 |   0)   sh-131108    |         } /* _raw_spin_unlock ret=0x100000000 */
+2030105.795238 |   0)   sh-131108    |       } /* alloc_fd ret=0x3 */
+2030105.795239 |   0)   sh-131108    |     } /* get_unused_fd_flags ret=0x3 */
+2030105.795240 |   0)   sh-131108    |     do_filp_open() {
+2030105.795240 |   0)   sh-131108    |       path_openat() {
+2030105.795241 |   0)   sh-131108    |         alloc_empty_file() {
+2030105.795242 |   0)   sh-131108    |           kmem_cache_alloc_noprof() {
+2030105.795242 |   0)   sh-131108    |             fs_reclaim_acquire(); /* ret=0xffffff8043980000 */
+2030105.795245 |   0)   sh-131108    |             fs_reclaim_release(); /* ret=0xffffff8043980000 */
+2030105.795246 |   0)   sh-131108    |             __might_sleep() {
+2030105.795247 |   0)   sh-131108    |               __might_resched(); /* ret=0x0 */
+2030105.795248 |   0)   sh-131108    |             } /* __might_sleep ret=0x0 */
+2030105.795249 |   0)   sh-131108    |           } /* kmem_cache_alloc_noprof ret=0xffffff8061f91800 */
+2030105.795249 |   0)   sh-131108    |           init_file() {
+2030105.795250 |   0)   sh-131108    |             security_file_alloc(); /* ret=0x0 */
+2030105.795251 |   0)   sh-131108    |             __raw_spin_lock_init(); /* ret=-1 */
+2030105.795253 |   0)   sh-131108    |             __mutex_init() {
+2030105.795253 |   0)   sh-131108    |               __raw_spin_lock_init(); /* ret=-1 */
+2030105.795255 |   0)   sh-131108    |             } /* __mutex_init ret=0x1 */
+2030105.795255 |   0)   sh-131108    |           } /* init_file ret=0x0 */
+2030105.795256 |   0)   sh-131108    |         } /* alloc_empty_file ret=0xffffff8061f91800 */
+2030105.795257 |   0)   sh-131108    |         path_init() {
+2030105.795258 |   0)   sh-131108    |           __rcu_read_lock(); /* ret=0x1 */
+2030105.795259 |   0)   sh-131108    |           nd_jump_root() {
+2030105.795260 |   0)   sh-131108    |             set_root() {
+2030105.795261 |   0)   sh-131108    |               unwind_find_stack.constprop.0(); /* ret=0xffffffc08715ba28 */
+2030105.795263 |   0)   sh-131108    |               unwind_find_stack.constprop.0(); /* ret=0xffffffc08715b9d8 */
+2030105.795264 |   0)   sh-131108    |               unwind_find_stack.constprop.0(); /* ret=0xffffffc08715b9d8 */
+2030105.795266 |   0)   sh-131108    |               unwind_find_stack.constprop.0(); /* ret=0xffffffc08715ba28 */
+2030105.795267 |   0)   sh-131108    |               unwind_find_stack.constprop.0(); /* ret=0xffffffc08715b9d8 */
+2030105.795268 |   0)   sh-131108    |               unwind_find_stack.constprop.0(); /* ret=0xffffffc08715b9d8 */
+2030105.795271 |   0)   sh-131108    |               unwind_find_stack.constprop.0(); /* ret=0xffffffc08715ba28 */
+2030105.795272 |   0)   sh-131108    |               unwind_find_stack.constprop.0(); /* ret=0xffffffc08715b9d8 */
+2030105.795273 |   0)   sh-131108    |               unwind_find_stack.constprop.0(); /* ret=0xffffffc08715b9d8 */
+2030105.795274 |   0)   sh-131108    |               unwind_find_stack.constprop.0(); /* ret=0xffffffc08715ba28 */
+2030105.795275 |   0)   sh-131108    |               unwind_find_stack.constprop.0(); /* ret=0xffffffc08715b9d8 */
+2030105.795277 |   0)   sh-131108    |               unwind_find_stack.constprop.0(); /* ret=0xffffffc08715b9d8 */
+2030105.795278 |   0)   sh-131108    |             } /* set_root ret=0x0 */
+2030105.795279 |   0)   sh-131108    |           } /* nd_jump_root ret=0x0 */
+2030105.795279 |   0)   sh-131108    |         } /* path_init ret=0xffffff8044935020 */
+2030105.795280 |   0)   sh-131108    |         link_path_walk() {
+2030105.795281 |   0)   sh-131108    |           inode_permission() {
+2030105.795282 |   0)   sh-131108    |             generic_permission(); /* ret=0x0 */
+2030105.795283 |   0)   sh-131108    |             security_inode_permission(); /* ret=0x0 */
+2030105.795284 |   0)   sh-131108    |           } /* inode_permission ret=0x0 */
+2030105.795288 |   0)   sh-131108    |           walk_component() {
+2030105.795289 |   0)   sh-131108    |             lookup_fast() {
+2030105.795289 |   0)   sh-131108    |               __d_lookup_rcu() {
+2030105.795290 |   0)   sh-131108    |                 rcu_read_lock_held() {
+2030105.795291 |   0)   sh-131108    |                   rcu_lockdep_current_cpu_online(); /* ret=0x1 */
+2030105.795293 |   0)   sh-131108    |                 } /* rcu_read_lock_held ret=0x1 */
+2030105.795294 |   0)   sh-131108    |               } /* __d_lookup_rcu ret=0xffffff804063ccd0 */
+2030105.795294 |   0)   sh-131108    |             } /* lookup_fast ret=0xffffff804063ccd0 */
+2030105.795295 |   0)   sh-131108    |             step_into() {
+2030105.795296 |   0)   sh-131108    |               __lookup_mnt(); /* ret=0xffffff8041146c00 */
+2030105.795298 |   0)   sh-131108    |               unwind_find_stack.constprop.0(); /* ret=0xffffffc08715b9d8 */
+2030105.795299 |   0)   sh-131108    |               unwind_find_stack.constprop.0(); /* ret=0xffffffc08715b988 */
+2030105.795300 |   0)   sh-131108    |               unwind_find_stack.constprop.0(); /* ret=0xffffffc08715b988 */
+2030105.795302 |   0)   sh-131108    |               unwind_find_stack.constprop.0(); /* ret=0xffffffc08715b9d8 */
+2030105.795303 |   0)   sh-131108    |               unwind_find_stack.constprop.0(); /* ret=0xffffffc08715b988 */
+2030105.795304 |   0)   sh-131108    |               unwind_find_stack.constprop.0(); /* ret=0xffffffc08715b988 */
+2030105.795307 |   0)   sh-131108    |               unwind_find_stack.constprop.0(); /* ret=0xffffffc08715b9d8 */
+2030105.795308 |   0)   sh-131108    |               unwind_find_stack.constprop.0(); /* ret=0xffffffc08715b988 */
+2030105.795309 |   0)   sh-131108    |               unwind_find_stack.constprop.0(); /* ret=0xffffffc08715b988 */
+2030105.795311 |   0)   sh-131108    |               unwind_find_stack.constprop.0(); /* ret=0xffffffc08715b9d8 */
+2030105.795312 |   0)   sh-131108    |               unwind_find_stack.constprop.0(); /* ret=0xffffffc08715b988 */
+2030105.795313 |   0)   sh-131108    |               unwind_find_stack.constprop.0(); /* ret=0xffffffc08715b988 */
+2030105.795314 |   0)   sh-131108    |             } /* step_into ret=0x0 */
+2030105.795315 |   0)   sh-131108    |           } /* walk_component ret=0x0 */
+2030105.795316 |   0)   sh-131108    |           inode_permission() {
+2030105.795317 |   0)   sh-131108    |             generic_permission(); /* ret=0x0 */
+2030105.795318 |   0)   sh-131108    |             security_inode_permission(); /* ret=0x0 */
+2030105.795319 |   0)   sh-131108    |           } /* inode_permission ret=0x0 */
+2030105.795320 |   0)   sh-131108    |           make_vfsuid(); /* ret=0x0 */
+2030105.795321 |   0)   sh-131108    |         } /* link_path_walk ret=0x0 */
+2030105.795321 |   0)   sh-131108    |         lookup_fast() {
+2030105.795322 |   0)   sh-131108    |           __d_lookup_rcu() {
+2030105.795323 |   0)   sh-131108    |             rcu_read_lock_held() {
+2030105.795324 |   0)   sh-131108    |               rcu_lockdep_current_cpu_online(); /* ret=0x1 */
+2030105.795325 |   0)   sh-131108    |             } /* rcu_read_lock_held ret=0x1 */
+2030105.795326 |   0)   sh-131108    |           } /* __d_lookup_rcu ret=0xffffff8040656148 */
+2030105.795326 |   0)   sh-131108    |         } /* lookup_fast ret=0xffffff8040656148 */
+2030105.795327 |   0)   sh-131108    |         step_into(); /* ret=0x0 */
+2030105.795328 |   0)   sh-131108    |         complete_walk() {
+2030105.795329 |   0)   sh-131108    |           try_to_unlazy() {
+2030105.795330 |   0)   sh-131108    |             legitimize_links(); /* ret=0x1 */
+2030105.795331 |   0)   sh-131108    |             __legitimize_path() {
+2030105.795332 |   0)   sh-131108    |               __legitimize_mnt(); /* ret=0x0 */
+2030105.795333 |   0)   sh-131108    |               _raw_spin_lock() {
+2030105.795334 |   0)   sh-131108    |                 preempt_count_add(); /* ret=0xffffffc08002f6c0 */
+2030105.795336 |   0)   sh-131108    |                 do_raw_spin_trylock(); /* ret=0x1 */
+2030105.795337 |   0)   sh-131108    |               } /* _raw_spin_lock ret=0xffffff8043980000 */
+2030105.795338 |   0)   sh-131108    |               _raw_spin_unlock() {
+2030105.795339 |   0)   sh-131108    |                 do_raw_spin_unlock(); /* ret=-1 */
+2030105.795340 |   0)   sh-131108    |                 preempt_count_sub(); /* ret=0x0 */
+2030105.795341 |   0)   sh-131108    |               } /* _raw_spin_unlock ret=0x100000000 */
+2030105.795342 |   0)   sh-131108    |             } /* __legitimize_path ret=0x1 */
+2030105.795343 |   0)   sh-131108    |             __rcu_read_unlock(); /* ret=0x3fffffff */
+2030105.795344 |   0)   sh-131108    |           } /* try_to_unlazy ret=0x1 */
+2030105.795344 |   0)   sh-131108    |         } /* complete_walk ret=0x0 */
+2030105.795345 |   0)   sh-131108    |         may_open() {
+2030105.795346 |   0)   sh-131108    |           inode_permission() {
+2030105.795347 |   0)   sh-131108    |             make_vfsuid(); /* ret=0x0 */
+2030105.795348 |   0)   sh-131108    |             make_vfsgid(); /* ret=0x0 */
+2030105.795349 |   0)   sh-131108    |             generic_permission(); /* ret=0x0 */
+2030105.795351 |   0)   sh-131108    |             devcgroup_check_permission() {
+2030105.795352 |   0)   sh-131108    |               __cgroup_bpf_check_dev_permission() {
+2030105.795352 |   0)   sh-131108    |                 __rcu_read_lock(); /* ret=0x1 */
+2030105.795354 |   0)   sh-131108    |                 rcu_read_lock_sched_held() {
+2030105.795355 |   0)   sh-131108    |                   rcu_lockdep_current_cpu_online(); /* ret=0x1 */
+2030105.795356 |   0)   sh-131108    |                 } /* rcu_read_lock_sched_held ret=0x0 */
+2030105.795357 |   0)   sh-131108    |                 rcu_read_lock_held() {
+2030105.795358 |   0)   sh-131108    |                   rcu_lockdep_current_cpu_online(); /* ret=0x1 */
+2030105.795359 |   0)   sh-131108    |                 } /* rcu_read_lock_held ret=0x1 */
+2030105.795360 |   0)   sh-131108    |                 preempt_count_add(); /* ret=0xffffffc08002f6c0 */
+2030105.795363 |   0)   sh-131108    |                 preempt_count_sub(); /* ret=0x0 */
+2030105.795364 |   0)   sh-131108    |                 __rcu_read_lock(); /* ret=0x2 */
+2030105.795366 |   0)   sh-131108    |                 rcu_read_lock_held() {
+2030105.795366 |   0)   sh-131108    |                   rcu_lockdep_current_cpu_online(); /* ret=0x1 */
+2030105.795368 |   0)   sh-131108    |                 } /* rcu_read_lock_held ret=0x1 */
+2030105.795369 |   0)   sh-131108    |                 __rcu_read_unlock(); /* ret=0x3fffffff */
+2030105.795371 |   0)   sh-131108    |                 preempt_count_add(); /* ret=0xffffffc08002f6c0 */
+2030105.795372 |   0)   sh-131108    |                 preempt_count_sub(); /* ret=0x0 */
+2030105.795373 |   0)   sh-131108    |                 __rcu_read_unlock(); /* ret=0x3fffffff */
+2030105.795375 |   0)   sh-131108    |               } /* __cgroup_bpf_check_dev_permission ret=0x0 */
+2030105.795375 |   0)   sh-131108    |               __rcu_read_lock(); /* ret=0x1 */
+2030105.795377 |   0)   sh-131108    |               rcu_read_lock_sched_held() {
+2030105.795378 |   0)   sh-131108    |                 rcu_lockdep_current_cpu_online(); /* ret=0x1 */
+2030105.795379 |   0)   sh-131108    |               } /* rcu_read_lock_sched_held ret=0x0 */
+2030105.795380 |   0)   sh-131108    |               rcu_read_lock_held() {
+2030105.795380 |   0)   sh-131108    |                 rcu_lockdep_current_cpu_online(); /* ret=0x1 */
+2030105.795382 |   0)   sh-131108    |               } /* rcu_read_lock_held ret=0x1 */
+2030105.795383 |   0)   sh-131108    |               match_exception_partial(); /* ret=0x0 */
+2030105.795384 |   0)   sh-131108    |               __rcu_read_unlock(); /* ret=0x3fffffff */
+2030105.795385 |   0)   sh-131108    |             } /* devcgroup_check_permission ret=0x0 */
+2030105.795386 |   0)   sh-131108    |             security_inode_permission(); /* ret=0x0 */
+2030105.795387 |   0)   sh-131108    |           } /* inode_permission ret=0x0 */
+2030105.795388 |   0)   sh-131108    |         } /* may_open ret=0x0 */
+2030105.795389 |   0)   sh-131108    |         vfs_open() {
+2030105.795389 |   0)   sh-131108    |           do_dentry_open() {
+2030105.795390 |   0)   sh-131108    |             path_get() {
+2030105.795391 |   0)   sh-131108    |               mntget(); /* ret=0xffffff8041146c20 */
+2030105.795392 |   0)   sh-131108    |               _raw_spin_lock() {
+2030105.795392 |   0)   sh-131108    |                 preempt_count_add(); /* ret=0xffffffc08002f6c0 */
+2030105.795394 |   0)   sh-131108    |                 do_raw_spin_trylock(); /* ret=0x1 */
+2030105.795396 |   0)   sh-131108    |               } /* _raw_spin_lock ret=0xffffff8043980000 */
+2030105.795397 |   0)   sh-131108    |               _raw_spin_unlock() {
+2030105.795397 |   0)   sh-131108    |                 do_raw_spin_unlock(); /* ret=-1 */
+2030105.795399 |   0)   sh-131108    |                 preempt_count_sub(); /* ret=0x0 */
+2030105.795400 |   0)   sh-131108    |               } /* _raw_spin_unlock ret=0x100000000 */
+2030105.795401 |   0)   sh-131108    |             } /* path_get ret=0x100000000 */
+2030105.795402 |   0)   sh-131108    |             try_module_get(); /* ret=0x1 */
+2030105.795403 |   0)   sh-131108    |             security_file_open(); /* ret=0x0 */
+2030105.795404 |   0)   sh-131108    |             chrdev_open() {
+2030105.795405 |   0)   sh-131108    |               _raw_spin_lock() {
+2030105.795405 |   0)   sh-131108    |                 preempt_count_add(); /* ret=0xffffffc08002f6c0 */
+2030105.795408 |   0)   sh-131108    |                 do_raw_spin_trylock(); /* ret=0x1 */
+2030105.795410 |   0)   sh-131108    |               } /* _raw_spin_lock ret=0xffffff8043980000 */
+2030105.795411 |   0)   sh-131108    |               try_module_get(); /* ret=0x1 */
+2030105.795413 |   0)   sh-131108    |               _raw_spin_unlock() {
+2030105.795414 |   0)   sh-131108    |                 do_raw_spin_unlock(); /* ret=-1 */
+2030105.795415 |   0)   sh-131108    |                 preempt_count_sub(); /* ret=0x0 */
+2030105.795416 |   0)   sh-131108    |               } /* _raw_spin_unlock ret=0x100000000 */
+2030105.795417 |   0)   sh-131108    |               try_module_get(); /* ret=0x1 */
+2030105.795418 |   0)   sh-131108    |               module_put(); /* ret=0x0 */
+2030105.795420 |   0)   sh-131108    |               memory_open(); /* ret=0x0 */
+2030105.795421 |   0)   sh-131108    |             } /* chrdev_open ret=0x0 */
+2030105.795422 |   0)   sh-131108    |             file_ra_state_init() {
+2030105.795423 |   0)   sh-131108    |               inode_to_bdi(); /* ret=0xffffffc08378bd08 */
+2030105.795424 |   0)   sh-131108    |             } /* file_ra_state_init ret=0x0 */
+2030105.795425 |   0)   sh-131108    |           } /* do_dentry_open ret=0x0 */
+2030105.795426 |   0)   sh-131108    |           __fsnotify_parent(); /* ret=0x0 */
+2030105.795428 |   0)   sh-131108    |         } /* vfs_open ret=0x0 */
+2030105.795428 |   0)   sh-131108    |         security_file_post_open(); /* ret=0x0 */
+2030105.795430 |   0)   sh-131108    |         terminate_walk() {
+2030105.795430 |   0)   sh-131108    |           dput() {
+2030105.795431 |   0)   sh-131108    |             __might_sleep() {
+2030105.795432 |   0)   sh-131108    |               __might_resched(); /* ret=0x0 */
+2030105.795433 |   0)   sh-131108    |             } /* __might_sleep ret=0x0 */
+2030105.795434 |   0)   sh-131108    |             __rcu_read_lock(); /* ret=0x1 */
+2030105.795435 |   0)   sh-131108    |             _raw_spin_lock() {
+2030105.795436 |   0)   sh-131108    |               preempt_count_add(); /* ret=0xffffffc08002f6c0 */
+2030105.795438 |   0)   sh-131108    |               do_raw_spin_trylock(); /* ret=0x1 */
+2030105.795440 |   0)   sh-131108    |             } /* _raw_spin_lock ret=0xffffff8043980000 */
+2030105.795440 |   0)   sh-131108    |             _raw_spin_unlock() {
+2030105.795441 |   0)   sh-131108    |               do_raw_spin_unlock(); /* ret=-1 */
+2030105.795442 |   0)   sh-131108    |               preempt_count_sub(); /* ret=0x0 */
+2030105.795444 |   0)   sh-131108    |             } /* _raw_spin_unlock ret=0x100000000 */
+2030105.795445 |   0)   sh-131108    |             __rcu_read_unlock(); /* ret=0x3fffffff */
+2030105.795446 |   0)   sh-131108    |           } /* dput ret=0x3fffffff */
+2030105.795446 |   0)   sh-131108    |           mntput() {
+2030105.795447 |   0)   sh-131108    |             mntput_no_expire() {
+2030105.795448 |   0)   sh-131108    |               __rcu_read_lock(); /* ret=0x1 */
+2030105.795450 |   0)   sh-131108    |               __rcu_read_unlock(); /* ret=0x3fffffff */
+2030105.795451 |   0)   sh-131108    |             } /* mntput_no_expire ret=0xffffff8043980000 */
+2030105.795451 |   0)   sh-131108    |           } /* mntput ret=0xffffff8043980000 */
+2030105.795452 |   0)   sh-131108    |         } /* terminate_walk ret=0x0 */
+2030105.795453 |   0)   sh-131108    |       } /* path_openat ret=0xffffff8061f91800 */
+2030105.795453 |   0)   sh-131108    |     } /* do_filp_open ret=0xffffff8061f91800 */
+2030105.795454 |   0)   sh-131108    |     fd_install() {
+2030105.795454 |   0)   sh-131108    |       preempt_count_add(); /* ret=0xffffffc08002f6c0 */
+2030105.795456 |   0)   sh-131108    |       rcu_read_lock_sched_held() {
+2030105.795457 |   0)   sh-131108    |         rcu_lockdep_current_cpu_online(); /* ret=0x1 */
+2030105.795458 |   0)   sh-131108    |       } /* rcu_read_lock_sched_held ret=0x1 */
+2030105.795459 |   0)   sh-131108    |       preempt_count_sub(); /* ret=0x0 */
+2030105.795460 |   0)   sh-131108    |     } /* fd_install ret=0x100000000 */
+2030105.795461 |   0)   sh-131108    |     putname() {
+2030105.795461 |   0)   sh-131108    |       kmem_cache_free(); /* ret=0xffffff8043980000 */
+2030105.795463 |   0)   sh-131108    |     } /* putname ret=0xffffff8043980000 */
+2030105.795464 |   0)   sh-131108    |   } /* do_sys_openat2 ret=0x3 */
+2030105.795464 |   0)   sh-131108    | } /* __arm64_sys_openat ret=0x3 */
+2030105.799310 |   1)   cat-131124   | __arm64_sys_faccessat() {
+2030105.799314 |   1)   cat-131124   |   do_faccessat() {
+2030105.799315 |   1)   cat-131124   |     make_kuid() {
+2030105.799316 |   1)   cat-131124   |       map_id_range_down(); /* ret=0x0 */
+2030105.799319 |   1)   cat-131124   |     } /* make_kuid ret=0x0 */
+2030105.799320 |   1)   cat-131124   |     user_path_at() {
+2030105.799321 |   1)   cat-131124   |       getname_flags() {
+2030105.799322 |   1)   cat-131124   |         kmem_cache_alloc_noprof() {
+2030105.799323 |   1)   cat-131124   |           fs_reclaim_acquire(); /* ret=0xffffff8040813040 */
+2030105.799326 |   1)   cat-131124   |           fs_reclaim_release(); /* ret=0xffffff8040813040 */
+2030105.799327 |   1)   cat-131124   |           __might_sleep() {
+2030105.799328 |   1)   cat-131124   |             __might_resched(); /* ret=0x0 */
+2030105.799329 |   1)   cat-131124   |           } /* __might_sleep ret=0x0 */
+2030105.799330 |   1)   cat-131124   |         } /* kmem_cache_alloc_noprof ret=0xffffff80409b3000 */
+2030105.799331 |   1)   cat-131124   |         __might_fault() {
+2030105.799332 |   1)   cat-131124   |           __might_sleep() {
+2030105.799333 |   1)   cat-131124   |             __might_resched(); /* ret=0x0 */
+2030105.799334 |   1)   cat-131124   |           } /* __might_sleep ret=0x0 */
+2030105.799336 |   1)   cat-131124   |         } /* __might_fault ret=0xffffff8040813040 */
+2030105.799337 |   1)   cat-131124   |       } /* getname_flags ret=0xffffff80409b3000 */
+2030105.799338 |   1)   cat-131124   |       filename_lookup() {
+2030105.799339 |   1)   cat-131124   |         path_lookupat() {
+2030105.799339 |   1)   cat-131124   |           path_init() {
+2030105.799340 |   1)   cat-131124   |             __rcu_read_lock(); /* ret=0x1 */
+2030105.799342 |   1)   cat-131124   |             nd_jump_root() {
+2030105.799343 |   1)   cat-131124   |               set_root() {
+2030105.799344 |   1)   cat-131124   |                 unwind_find_stack.constprop.0(); /* ret=0xffffffc0871e3a58 */
+2030105.799345 |   1)   cat-131124   |                 unwind_find_stack.constprop.0(); /* ret=0xffffffc0871e3a08 */
+2030105.799347 |   1)   cat-131124   |                 unwind_find_stack.constprop.0(); /* ret=0xffffffc0871e3a08 */
+2030105.799348 |   1)   cat-131124   |                 unwind_find_stack.constprop.0(); /* ret=0xffffffc0871e3a58 */
+2030105.799349 |   1)   cat-131124   |                 unwind_find_stack.constprop.0(); /* ret=0xffffffc0871e3a08 */
+2030105.799350 |   1)   cat-131124   |                 unwind_find_stack.constprop.0(); /* ret=0xffffffc0871e3a08 */
+2030105.799353 |   1)   cat-131124   |                 unwind_find_stack.constprop.0(); /* ret=0xffffffc0871e3a58 */
+2030105.799354 |   1)   cat-131124   |                 unwind_find_stack.constprop.0(); /* ret=0xffffffc0871e3a08 */
+2030105.799356 |   1)   cat-131124   |                 unwind_find_stack.constprop.0(); /* ret=0xffffffc0871e3a08 */
+2030105.799357 |   1)   cat-131124   |                 unwind_find_stack.constprop.0(); /* ret=0xffffffc0871e3a58 */
+2030105.799358 |   1)   cat-131124   |                 unwind_find_stack.constprop.0(); /* ret=0xffffffc0871e3a08 */
+2030105.799360 |   1)   cat-131124   |                 unwind_find_stack.constprop.0(); /* ret=0xffffffc0871e3a08 */
+2030105.799361 |   1)   cat-131124   |               } /* set_root ret=0x0 */
+2030105.799362 |   1)   cat-131124   |             } /* nd_jump_root ret=0x0 */
+2030105.799362 |   1)   cat-131124   |           } /* path_init ret=0xffffff80409b3020 */
+2030105.799363 |   1)   cat-131124   |           link_path_walk() {
+2030105.799364 |   1)   cat-131124   |             inode_permission() {
+2030105.799365 |   1)   cat-131124   |               generic_permission(); /* ret=0x0 */
+2030105.799367 |   1)   cat-131124   |               security_inode_permission(); /* ret=0x0 */
+2030105.799368 |   1)   cat-131124   |             } /* inode_permission ret=0x0 */
+2030105.799369 |   1)   cat-131124   |             walk_component() {
+2030105.799369 |   1)   cat-131124   |               lookup_fast() {
+2030105.799370 |   1)   cat-131124   |                 __d_lookup_rcu() {
+2030105.799371 |   1)   cat-131124   |                   rcu_read_lock_held() {
+2030105.799372 |   1)   cat-131124   |                     rcu_lockdep_current_cpu_online(); /* ret=0x1 */
+2030105.799373 |   1)   cat-131124   |                   } /* rcu_read_lock_held ret=0x1 */
+2030105.799374 |   1)   cat-131124   |                 } /* __d_lookup_rcu ret=0xffffff804063dae8 */
+2030105.799374 |   1)   cat-131124   |               } /* lookup_fast ret=0xffffff804063dae8 */
+2030105.799375 |   1)   cat-131124   |               step_into() {
+2030105.799376 |   1)   cat-131124   |                 __lookup_mnt(); /* ret=0x0 */
+2030105.799378 |   1)   cat-131124   |               } /* step_into ret=0x0 */
+2030105.799379 |   1)   cat-131124   |             } /* walk_component ret=0x0 */
+2030105.799380 |   1)   cat-131124   |             inode_permission() {
+2030105.799380 |   1)   cat-131124   |               generic_permission(); /* ret=0x0 */
+2030105.799382 |   1)   cat-131124   |               security_inode_permission(); /* ret=0x0 */
+2030105.799383 |   1)   cat-131124   |             } /* inode_permission ret=0x0 */
+2030105.799384 |   1)   cat-131124   |             make_vfsuid(); /* ret=0x0 */
+2030105.799385 |   1)   cat-131124   |           } /* link_path_walk ret=0x0 */
+2030105.799386 |   1)   cat-131124   |           walk_component() {
+2030105.799387 |   1)   cat-131124   |             lookup_fast() {
+2030105.799387 |   1)   cat-131124   |               __d_lookup_rcu() {
+2030105.799388 |   1)   cat-131124   |                 rcu_read_lock_held() {
+2030105.799389 |   1)   cat-131124   |                   rcu_lockdep_current_cpu_online(); /* ret=0x1 */
+2030105.799390 |   1)   cat-131124   |                 } /* rcu_read_lock_held ret=0x1 */
+2030105.799391 |   1)   cat-131124   |               } /* __d_lookup_rcu ret=0xffffff80473003d8 */
+2030105.799391 |   1)   cat-131124   |             } /* lookup_fast ret=0xffffff80473003d8 */
+2030105.799392 |   1)   cat-131124   |             step_into(); /* ret=-2 */
+2030105.799393 |   1)   cat-131124   |           } /* walk_component ret=-2 */
+2030105.799394 |   1)   cat-131124   |           link_path_walk(); /* ret=-2 */
+2030105.799397 |   1)   cat-131124   |           terminate_walk() {
+2030105.799399 |   1)   cat-131124   |             __rcu_read_unlock(); /* ret=0x3fffffff */
+2030105.799400 |   1)   cat-131124   |           } /* terminate_walk ret=0x3fffffff */
+2030105.799401 |   1)   cat-131124   |         } /* path_lookupat ret=-2 */
+2030105.799401 |   1)   cat-131124   |       } /* filename_lookup ret=-2 */
+2030105.799402 |   1)   cat-131124   |       putname() {
+2030105.799403 |   1)   cat-131124   |         kmem_cache_free(); /* ret=0xffffff8040813040 */
+2030105.799405 |   1)   cat-131124   |       } /* putname ret=0xffffff8040813040 */
+2030105.799406 |   1)   cat-131124   |     } /* user_path_at ret=-2 */
+2030105.799407 |   1)   cat-131124   |   } /* do_faccessat ret=-2 */
+2030105.799407 |   1)   cat-131124   | } /* __arm64_sys_faccessat ret=-2 */
+2030105.799460 |   1)   cat-131124   | __arm64_sys_openat() {
+2030105.799461 |   1)   cat-131124   |   do_sys_openat2() {
+2030105.799463 |   1)   cat-131124   |     getname_flags() {
+2030105.799463 |   1)   cat-131124   |       kmem_cache_alloc_noprof() {
+2030105.799464 |   1)   cat-131124   |         fs_reclaim_acquire(); /* ret=0xffffff8040813040 */
+2030105.799466 |   1)   cat-131124   |         fs_reclaim_release(); /* ret=0xffffff8040813040 */
+2030105.799468 |   1)   cat-131124   |         __might_sleep() {
+2030105.799468 |   1)   cat-131124   |           __might_resched(); /* ret=0x0 */
+2030105.799470 |   1)   cat-131124   |         } /* __might_sleep ret=0x0 */
+2030105.799471 |   1)   cat-131124   |       } /* kmem_cache_alloc_noprof ret=0xffffff80409b3000 */
+2030105.799471 |   1)   cat-131124   |       __might_fault() {
+2030105.799472 |   1)   cat-131124   |         __might_sleep() {
+2030105.799473 |   1)   cat-131124   |           __might_resched(); /* ret=0x0 */
+2030105.799474 |   1)   cat-131124   |         } /* __might_sleep ret=0x0 */
+2030105.799475 |   1)   cat-131124   |       } /* __might_fault ret=0xffffff8040813040 */
+2030105.799476 |   1)   cat-131124   |     } /* getname_flags ret=0xffffff80409b3000 */
+2030105.799477 |   1)   cat-131124   |     get_unused_fd_flags() {
+2030105.799477 |   1)   cat-131124   |       alloc_fd() {
+2030105.799478 |   1)   cat-131124   |         _raw_spin_lock() {
+2030105.799479 |   1)   cat-131124   |           preempt_count_add(); /* ret=0xffffffc08002f6c0 */
+2030105.799481 |   1)   cat-131124   |           do_raw_spin_trylock(); /* ret=0x1 */
+2030105.799482 |   1)   cat-131124   |         } /* _raw_spin_lock ret=0xffffff8040813040 */
+2030105.799484 |   1)   cat-131124   |         _raw_spin_unlock() {
+2030105.799485 |   1)   cat-131124   |           do_raw_spin_unlock(); /* ret=-1 */
+2030105.799486 |   1)   cat-131124   |           preempt_count_sub(); /* ret=0x0 */
+2030105.799487 |   1)   cat-131124   |         } /* _raw_spin_unlock ret=0x100000000 */
+2030105.799488 |   1)   cat-131124   |       } /* alloc_fd ret=0x3 */
+2030105.799488 |   1)   cat-131124   |     } /* get_unused_fd_flags ret=0x3 */
+2030105.799489 |   1)   cat-131124   |     do_filp_open() {
+2030105.799490 |   1)   cat-131124   |       path_openat() {
+2030105.799491 |   1)   cat-131124   |         alloc_empty_file() {
+2030105.799492 |   1)   cat-131124   |           kmem_cache_alloc_noprof() {
+2030105.799492 |   1)   cat-131124   |             fs_reclaim_acquire(); /* ret=0xffffff8040813040 */
+2030105.799494 |   1)   cat-131124   |             fs_reclaim_release(); /* ret=0xffffff8040813040 */
+2030105.799496 |   1)   cat-131124   |             __might_sleep() {
+2030105.799497 |   1)   cat-131124   |               __might_resched(); /* ret=0x0 */
+2030105.799498 |   1)   cat-131124   |             } /* __might_sleep ret=0x0 */
+2030105.799499 |   1)   cat-131124   |           } /* kmem_cache_alloc_noprof ret=0xffffff80412ebe00 */
+2030105.799500 |   1)   cat-131124   |           init_file() {
+2030105.799501 |   1)   cat-131124   |             security_file_alloc(); /* ret=0x0 */
+2030105.799502 |   1)   cat-131124   |             __raw_spin_lock_init(); /* ret=-1 */
+2030105.799504 |   1)   cat-131124   |             __mutex_init() {
+2030105.799505 |   1)   cat-131124   |               __raw_spin_lock_init(); /* ret=-1 */
+2030105.799506 |   1)   cat-131124   |             } /* __mutex_init ret=0x1 */
+2030105.799507 |   1)   cat-131124   |           } /* init_file ret=0x0 */
+2030105.799508 |   1)   cat-131124   |         } /* alloc_empty_file ret=0xffffff80412ebe00 */
+2030105.799509 |   1)   cat-131124   |         path_init() {
+2030105.799509 |   1)   cat-131124   |           __rcu_read_lock(); /* ret=0x1 */
+2030105.799511 |   1)   cat-131124   |           nd_jump_root() {
+2030105.799512 |   1)   cat-131124   |             set_root() {
+2030105.799512 |   1)   cat-131124   |               unwind_find_stack.constprop.0(); /* ret=0xffffffc0871e3a28 */
+2030105.799514 |   1)   cat-131124   |               unwind_find_stack.constprop.0(); /* ret=0xffffffc0871e39d8 */
+2030105.799515 |   1)   cat-131124   |               unwind_find_stack.constprop.0(); /* ret=0xffffffc0871e39d8 */
+2030105.799516 |   1)   cat-131124   |               unwind_find_stack.constprop.0(); /* ret=0xffffffc0871e3a28 */
+2030105.799517 |   1)   cat-131124   |               unwind_find_stack.constprop.0(); /* ret=0xffffffc0871e39d8 */
+2030105.799519 |   1)   cat-131124   |               unwind_find_stack.constprop.0(); /* ret=0xffffffc0871e39d8 */
+2030105.799521 |   1)   cat-131124   |               unwind_find_stack.constprop.0(); /* ret=0xffffffc0871e3a28 */
+2030105.799522 |   1)   cat-131124   |               unwind_find_stack.constprop.0(); /* ret=0xffffffc0871e39d8 */
+2030105.799523 |   1)   cat-131124   |               unwind_find_stack.constprop.0(); /* ret=0xffffffc0871e39d8 */
+2030105.799524 |   1)   cat-131124   |               unwind_find_stack.constprop.0(); /* ret=0xffffffc0871e3a28 */
+2030105.799525 |   1)   cat-131124   |               unwind_find_stack.constprop.0(); /* ret=0xffffffc0871e39d8 */
+2030105.799526 |   1)   cat-131124   |               unwind_find_stack.constprop.0(); /* ret=0xffffffc0871e39d8 */
+2030105.799529 |   1)   cat-131124   |             } /* set_root ret=0x0 */
+2030105.799529 |   1)   cat-131124   |           } /* nd_jump_root ret=0x0 */
+2030105.799530 |   1)   cat-131124   |         } /* path_init ret=0xffffff80409b3020 */
+2030105.799531 |   1)   cat-131124   |         link_path_walk() {
+2030105.799531 |   1)   cat-131124   |           inode_permission() {
+2030105.799532 |   1)   cat-131124   |             generic_permission(); /* ret=0x0 */
+2030105.799533 |   1)   cat-131124   |             security_inode_permission(); /* ret=0x0 */
+2030105.799535 |   1)   cat-131124   |           } /* inode_permission ret=0x0 */
+2030105.799535 |   1)   cat-131124   |           walk_component() {
+2030105.799536 |   1)   cat-131124   |             lookup_fast() {
+2030105.799537 |   1)   cat-131124   |               __d_lookup_rcu() {
+2030105.799537 |   1)   cat-131124   |                 rcu_read_lock_held() {
+2030105.799538 |   1)   cat-131124   |                   rcu_lockdep_current_cpu_online(); /* ret=0x1 */
+2030105.799539 |   1)   cat-131124   |                 } /* rcu_read_lock_held ret=0x1 */
+2030105.799540 |   1)   cat-131124   |               } /* __d_lookup_rcu ret=0xffffff804063dae8 */
+2030105.799541 |   1)   cat-131124   |             } /* lookup_fast ret=0xffffff804063dae8 */
+2030105.799541 |   1)   cat-131124   |             step_into() {
+2030105.799542 |   1)   cat-131124   |               __lookup_mnt(); /* ret=0x0 */
+2030105.799543 |   1)   cat-131124   |             } /* step_into ret=0x0 */
+2030105.799544 |   1)   cat-131124   |           } /* walk_component ret=0x0 */
+2030105.799545 |   1)   cat-131124   |           inode_permission() {
+2030105.799545 |   1)   cat-131124   |             generic_permission(); /* ret=0x0 */
+2030105.799546 |   1)   cat-131124   |             security_inode_permission(); /* ret=0x0 */
+2030105.799548 |   1)   cat-131124   |           } /* inode_permission ret=0x0 */
+2030105.799548 |   1)   cat-131124   |           make_vfsuid(); /* ret=0x0 */
+2030105.799550 |   1)   cat-131124   |         } /* link_path_walk ret=0x0 */
+2030105.799551 |   1)   cat-131124   |         lookup_fast() {
+2030105.799551 |   1)   cat-131124   |           __d_lookup_rcu() {
+2030105.799552 |   1)   cat-131124   |             rcu_read_lock_held() {
+2030105.799553 |   1)   cat-131124   |               rcu_lockdep_current_cpu_online(); /* ret=0x1 */
+2030105.799554 |   1)   cat-131124   |             } /* rcu_read_lock_held ret=0x1 */
+2030105.799555 |   1)   cat-131124   |           } /* __d_lookup_rcu ret=0xffffff80485e4cd0 */
+2030105.799556 |   1)   cat-131124   |         } /* lookup_fast ret=0xffffff80485e4cd0 */
+2030105.799556 |   1)   cat-131124   |         step_into(); /* ret=0x0 */
+2030105.799558 |   1)   cat-131124   |         complete_walk() {
+2030105.799558 |   1)   cat-131124   |           try_to_unlazy() {
+2030105.799559 |   1)   cat-131124   |             legitimize_links(); /* ret=0x1 */
+2030105.799561 |   1)   cat-131124   |             __legitimize_path() {
+2030105.799561 |   1)   cat-131124   |               __legitimize_mnt(); /* ret=0x0 */
+2030105.799563 |   1)   cat-131124   |               _raw_spin_lock() {
+2030105.799564 |   1)   cat-131124   |                 preempt_count_add(); /* ret=0xffffffc08002f6c0 */
+2030105.799566 |   1)   cat-131124   |                 do_raw_spin_trylock(); /* ret=0x1 */
+2030105.799568 |   1)   cat-131124   |               } /* _raw_spin_lock ret=0xffffff8040813040 */
+2030105.799568 |   1)   cat-131124   |               _raw_spin_unlock() {
+2030105.799569 |   1)   cat-131124   |                 do_raw_spin_unlock(); /* ret=-1 */
+2030105.799571 |   1)   cat-131124   |                 preempt_count_sub(); /* ret=0x0 */
+2030105.799572 |   1)   cat-131124   |               } /* _raw_spin_unlock ret=0x100000000 */
+2030105.799572 |   1)   cat-131124   |             } /* __legitimize_path ret=0x1 */
+2030105.799574 |   1)   cat-131124   |             __rcu_read_unlock(); /* ret=0x3fffffff */
+2030105.799575 |   1)   cat-131124   |           } /* try_to_unlazy ret=0x1 */
+2030105.799575 |   1)   cat-131124   |         } /* complete_walk ret=0x0 */
+2030105.799577 |   1)   cat-131124   |         may_open() {
+2030105.799578 |   1)   cat-131124   |           inode_permission() {
+2030105.799578 |   1)   cat-131124   |             generic_permission(); /* ret=0x0 */
+2030105.799579 |   1)   cat-131124   |             security_inode_permission(); /* ret=0x0 */
+2030105.799581 |   1)   cat-131124   |           } /* inode_permission ret=0x0 */
+2030105.799581 |   1)   cat-131124   |         } /* may_open ret=0x0 */
+2030105.799582 |   1)   cat-131124   |         vfs_open() {
+2030105.799583 |   1)   cat-131124   |           do_dentry_open() {
+2030105.799584 |   1)   cat-131124   |             path_get() {
+2030105.799584 |   1)   cat-131124   |               mntget(); /* ret=0xffffff8041146f20 */
+2030105.799586 |   1)   cat-131124   |               _raw_spin_lock() {
+2030105.799586 |   1)   cat-131124   |                 preempt_count_add(); /* ret=0xffffffc08002f6c0 */
+2030105.799588 |   1)   cat-131124   |                 do_raw_spin_trylock(); /* ret=0x1 */
+2030105.799590 |   1)   cat-131124   |               } /* _raw_spin_lock ret=0xffffff8040813040 */
+2030105.799590 |   1)   cat-131124   |               _raw_spin_unlock() {
+2030105.799591 |   1)   cat-131124   |                 do_raw_spin_unlock(); /* ret=-1 */
+2030105.799593 |   1)   cat-131124   |                 preempt_count_sub(); /* ret=0x0 */
+2030105.799594 |   1)   cat-131124   |               } /* _raw_spin_unlock ret=0x100000000 */
+2030105.799594 |   1)   cat-131124   |             } /* path_get ret=0x100000000 */
+2030105.799596 |   1)   cat-131124   |             try_module_get(); /* ret=0x1 */
+2030105.799597 |   1)   cat-131124   |             security_file_open(); /* ret=0x0 */
+2030105.799598 |   1)   cat-131124   |             ext4_file_open() {
+2030105.799599 |   1)   cat-131124   |               fscrypt_file_open() {
+2030105.799600 |   1)   cat-131124   |                 __rcu_read_lock(); /* ret=0x1 */
+2030105.799602 |   1)   cat-131124   |                 __rcu_read_unlock(); /* ret=0x3fffffff */
+2030105.799604 |   1)   cat-131124   |               } /* fscrypt_file_open ret=0x0 */
+2030105.799605 |   1)   cat-131124   |               dquot_file_open() {
+2030105.799605 |   1)   cat-131124   |                 generic_file_open(); /* ret=0x0 */
+2030105.799607 |   1)   cat-131124   |               } /* dquot_file_open ret=0x0 */
+2030105.799607 |   1)   cat-131124   |             } /* ext4_file_open ret=0x0 */
+2030105.799608 |   1)   cat-131124   |             file_ra_state_init() {
+2030105.799609 |   1)   cat-131124   |               inode_to_bdi(); /* ret=0xffffff8047a13000 */
+2030105.799610 |   1)   cat-131124   |             } /* file_ra_state_init ret=0x20 */
+2030105.799611 |   1)   cat-131124   |           } /* do_dentry_open ret=0x0 */
+2030105.799612 |   1)   cat-131124   |           __fsnotify_parent() {
+2030105.799613 |   1)   cat-131124   |             dget_parent() {
+2030105.799614 |   1)   cat-131124   |               __rcu_read_lock(); /* ret=0x1 */
+2030105.799615 |   1)   cat-131124   |               _raw_spin_lock() {
+2030105.799616 |   1)   cat-131124   |                 preempt_count_add(); /* ret=0xffffffc08002f6c0 */
+2030105.799618 |   1)   cat-131124   |                 do_raw_spin_trylock(); /* ret=0x1 */
+2030105.799619 |   1)   cat-131124   |               } /* _raw_spin_lock ret=0xffffff8040813040 */
+2030105.799619 |   1)   cat-131124   |               _raw_spin_unlock() {
+2030105.799620 |   1)   cat-131124   |                 do_raw_spin_unlock(); /* ret=-1 */
+2030105.799621 |   1)   cat-131124   |                 preempt_count_sub(); /* ret=0x0 */
+2030105.799622 |   1)   cat-131124   |               } /* _raw_spin_unlock ret=0x100000000 */
+2030105.799623 |   1)   cat-131124   |               __rcu_read_unlock(); /* ret=0x3fffffff */
+2030105.799625 |   1)   cat-131124   |             } /* dget_parent ret=0xffffff804063dae8 */
+2030105.799626 |   1)   cat-131124   |             fsnotify(); /* ret=0x0 */
+2030105.799628 |   1)   cat-131124   |             dput() {
+2030105.799629 |   1)   cat-131124   |               __might_sleep() {
+2030105.799629 |   1)   cat-131124   |                 __might_resched(); /* ret=0x0 */
+2030105.799631 |   1)   cat-131124   |               } /* __might_sleep ret=0x0 */
+2030105.799631 |   1)   cat-131124   |               __rcu_read_lock(); /* ret=0x1 */
+2030105.799633 |   1)   cat-131124   |               _raw_spin_lock() {
+2030105.799633 |   1)   cat-131124   |                 preempt_count_add(); /* ret=0xffffffc08002f6c0 */
+2030105.799635 |   1)   cat-131124   |                 do_raw_spin_trylock(); /* ret=0x1 */
+2030105.799637 |   1)   cat-131124   |               } /* _raw_spin_lock ret=0xffffff8040813040 */
+2030105.799637 |   1)   cat-131124   |               _raw_spin_unlock() {
+2030105.799638 |   1)   cat-131124   |                 do_raw_spin_unlock(); /* ret=-1 */
+2030105.799640 |   1)   cat-131124   |                 preempt_count_sub(); /* ret=0x0 */
+2030105.799641 |   1)   cat-131124   |               } /* _raw_spin_unlock ret=0x100000000 */
+2030105.799642 |   1)   cat-131124   |               __rcu_read_unlock(); /* ret=0x3fffffff */
+2030105.799643 |   1)   cat-131124   |             } /* dput ret=0x3fffffff */
+2030105.799643 |   1)   cat-131124   |           } /* __fsnotify_parent ret=0x0 */
+2030105.799644 |   1)   cat-131124   |         } /* vfs_open ret=0x0 */
+2030105.799645 |   1)   cat-131124   |         security_file_post_open(); /* ret=0x0 */
+2030105.799646 |   1)   cat-131124   |         terminate_walk() {
+2030105.799647 |   1)   cat-131124   |           dput() {
+2030105.799647 |   1)   cat-131124   |             __might_sleep() {
+2030105.799648 |   1)   cat-131124   |               __might_resched(); /* ret=0x0 */
+2030105.799649 |   1)   cat-131124   |             } /* __might_sleep ret=0x0 */
+2030105.799650 |   1)   cat-131124   |             __rcu_read_lock(); /* ret=0x1 */
+2030105.799652 |   1)   cat-131124   |             _raw_spin_lock() {
+2030105.799652 |   1)   cat-131124   |               preempt_count_add(); /* ret=0xffffffc08002f6c0 */
+2030105.799654 |   1)   cat-131124   |               do_raw_spin_trylock(); /* ret=0x1 */
+2030105.799655 |   1)   cat-131124   |             } /* _raw_spin_lock ret=0xffffff8040813040 */
+2030105.799656 |   1)   cat-131124   |             _raw_spin_unlock() {
+2030105.799657 |   1)   cat-131124   |               do_raw_spin_unlock(); /* ret=-1 */
+2030105.799658 |   1)   cat-131124   |               preempt_count_sub(); /* ret=0x0 */
+2030105.799659 |   1)   cat-131124   |             } /* _raw_spin_unlock ret=0x100000000 */
+2030105.799660 |   1)   cat-131124   |             __rcu_read_unlock(); /* ret=0x3fffffff */
+2030105.799661 |   1)   cat-131124   |           } /* dput ret=0x3fffffff */
+2030105.799662 |   1)   cat-131124   |           mntput() {
+2030105.799662 |   1)   cat-131124   |             mntput_no_expire() {
+2030105.799663 |   1)   cat-131124   |               __rcu_read_lock(); /* ret=0x1 */
+2030105.799665 |   1)   cat-131124   |               __rcu_read_unlock(); /* ret=0x3fffffff */
+2030105.799666 |   1)   cat-131124   |             } /* mntput_no_expire ret=0xffffff8040813040 */
+2030105.799667 |   1)   cat-131124   |           } /* mntput ret=0xffffff8040813040 */
+2030105.799668 |   1)   cat-131124   |         } /* terminate_walk ret=0x0 */
+2030105.799668 |   1)   cat-131124   |       } /* path_openat ret=0xffffff80412ebe00 */
+2030105.799669 |   1)   cat-131124   |     } /* do_filp_open ret=0xffffff80412ebe00 */
+2030105.799670 |   1)   cat-131124   |     fd_install() {
+2030105.799671 |   1)   cat-131124   |       preempt_count_add(); /* ret=0xffffffc08002f6c0 */
+2030105.799673 |   1)   cat-131124   |       rcu_read_lock_sched_held() {
+2030105.799673 |   1)   cat-131124   |         rcu_lockdep_current_cpu_online(); /* ret=0x1 */
+2030105.799675 |   1)   cat-131124   |       } /* rcu_read_lock_sched_held ret=0x1 */
+2030105.799677 |   1)   cat-131124   |       preempt_count_sub(); /* ret=0x0 */
+2030105.799678 |   1)   cat-131124   |     } /* fd_install ret=0x100000000 */
+2030105.799679 |   1)   cat-131124   |     putname() {
+2030105.799679 |   1)   cat-131124   |       kmem_cache_free(); /* ret=0xffffff8040813040 */
+2030105.799681 |   1)   cat-131124   |     } /* putname ret=0xffffff8040813040 */
+2030105.799681 |   1)   cat-131124   |   } /* do_sys_openat2 ret=0x3 */
+2030105.799682 |   1)   cat-131124   | } /* __arm64_sys_openat ret=0x3 */
+2030105.799985 |   1)   cat-131124   | __arm64_sys_openat() {
+2030105.799986 |   1)   cat-131124   |   do_sys_openat2() {
+2030105.799987 |   1)   cat-131124   |     getname_flags() {
+2030105.799987 |   1)   cat-131124   |       kmem_cache_alloc_noprof() {
+2030105.799988 |   1)   cat-131124   |         fs_reclaim_acquire(); /* ret=0xffffff8040813040 */
+2030105.799991 |   1)   cat-131124   |         fs_reclaim_release(); /* ret=0xffffff8040813040 */
+2030105.799992 |   1)   cat-131124   |         __might_sleep() {
+2030105.799993 |   1)   cat-131124   |           __might_resched(); /* ret=0x0 */
+2030105.799994 |   1)   cat-131124   |         } /* __might_sleep ret=0x0 */
+2030105.799995 |   1)   cat-131124   |       } /* kmem_cache_alloc_noprof ret=0xffffff80409b3000 */
+2030105.799996 |   1)   cat-131124   |       __might_fault() {
+2030105.799996 |   1)   cat-131124   |         __might_sleep() {
+2030105.799997 |   1)   cat-131124   |           __might_resched(); /* ret=0x0 */
+2030105.799998 |   1)   cat-131124   |         } /* __might_sleep ret=0x0 */
+2030105.800000 |   1)   cat-131124   |       } /* __might_fault ret=0xffffff8040813040 */
+2030105.800000 |   1)   cat-131124   |     } /* getname_flags ret=0xffffff80409b3000 */
+2030105.800001 |   1)   cat-131124   |     get_unused_fd_flags() {
+2030105.800002 |   1)   cat-131124   |       alloc_fd() {
+2030105.800003 |   1)   cat-131124   |         _raw_spin_lock() {
+2030105.800003 |   1)   cat-131124   |           preempt_count_add(); /* ret=0xffffffc08002f6c0 */
+2030105.800005 |   1)   cat-131124   |           do_raw_spin_trylock(); /* ret=0x1 */
+2030105.800006 |   1)   cat-131124   |         } /* _raw_spin_lock ret=0xffffff8040813040 */
+2030105.800007 |   1)   cat-131124   |         _raw_spin_unlock() {
+2030105.800008 |   1)   cat-131124   |           do_raw_spin_unlock(); /* ret=-1 */
+2030105.800009 |   1)   cat-131124   |           preempt_count_sub(); /* ret=0x0 */
+2030105.800011 |   1)   cat-131124   |         } /* _raw_spin_unlock ret=0x100000000 */
+2030105.800011 |   1)   cat-131124   |       } /* alloc_fd ret=0x3 */
+2030105.800012 |   1)   cat-131124   |     } /* get_unused_fd_flags ret=0x3 */
+2030105.800012 |   1)   cat-131124   |     do_filp_open() {
+2030105.800013 |   1)   cat-131124   |       path_openat() {
+2030105.800014 |   1)   cat-131124   |         alloc_empty_file() {
+2030105.800014 |   1)   cat-131124   |           kmem_cache_alloc_noprof() {
+2030105.800015 |   1)   cat-131124   |             fs_reclaim_acquire(); /* ret=0xffffff8040813040 */
+2030105.800017 |   1)   cat-131124   |             fs_reclaim_release(); /* ret=0xffffff8040813040 */
+2030105.800019 |   1)   cat-131124   |             __might_sleep() {
+2030105.800019 |   1)   cat-131124   |               __might_resched(); /* ret=0x0 */
+2030105.800021 |   1)   cat-131124   |             } /* __might_sleep ret=0x0 */
+2030105.800021 |   1)   cat-131124   |           } /* kmem_cache_alloc_noprof ret=0xffffff80412eb980 */
+2030105.800022 |   1)   cat-131124   |           init_file() {
+2030105.800023 |   1)   cat-131124   |             security_file_alloc() {
+2030105.800024 |   1)   cat-131124   |               unwind_find_stack.constprop.0(); /* ret=0xffffffc0871e3748 */
+2030105.800025 |   1)   cat-131124   |               unwind_find_stack.constprop.0(); /* ret=0xffffffc0871e36f8 */
+2030105.800027 |   1)   cat-131124   |               unwind_find_stack.constprop.0(); /* ret=0xffffffc0871e36f8 */
+2030105.800028 |   1)   cat-131124   |               unwind_find_stack.constprop.0(); /* ret=0xffffffc0871e3748 */
+2030105.800029 |   1)   cat-131124   |               unwind_find_stack.constprop.0(); /* ret=0xffffffc0871e36f8 */
+2030105.800030 |   1)   cat-131124   |               unwind_find_stack.constprop.0(); /* ret=0xffffffc0871e36f8 */
+2030105.800031 |   1)   cat-131124   |               irq_enter_rcu() {
+2030105.800032 |   1)   cat-131124   |                 preempt_count_add(); /* ret=0x10000 */
+2030105.800033 |   1)   cat-131124   |               } /* irq_enter_rcu ret=0xffffff8040813040 */
+2030105.800119 |   1)   cat-131124   |               do_softirq_own_stack() {
+2030105.800120 |   1)   cat-131124   |                 ____do_softirq() {
+2030105.800120 |   1)   cat-131124   |                   __do_softirq() {
+2030105.800121 |   1)   cat-131124   |                     handle_softirqs() {
+2030105.800122 |   1)   cat-131124   |                       __local_bh_disable_ip(); /* ret=0x102 */
+2030105.800124 |   1)   cat-131124   |                       unwind_find_stack.constprop.0(); /* ret=0xffffffc0837f3e68 */
+2030105.800125 |   1)   cat-131124   |                       unwind_find_stack.constprop.0(); /* ret=0xffffffc0837f3e08 */
+2030105.800126 |   1)   cat-131124   |                       unwind_find_stack.constprop.0(); /* ret=0xffffffc0837f3e08 */
+2030105.800127 |   1)   cat-131124   |                       unwind_find_stack.constprop.0(); /* ret=0xffffffc0837f3e68 */
+2030105.800128 |   1)   cat-131124   |                       unwind_find_stack.constprop.0(); /* ret=0xffffffc0837f3e08 */
+2030105.800130 |   1)   cat-131124   |                       unwind_find_stack.constprop.0(); /* ret=0xffffffc0837f3e08 */
+2030105.800131 |   1)   cat-131124   |                       sched_balance_softirq() {
+2030105.800132 |   1)   cat-131124   |                         sched_balance_update_blocked_averages() {
+2030105.800133 |   1)   cat-131124   |                           unwind_find_stack.constprop.0(); /* ret=0xffffffc0837f3d98 */
+2030105.800134 |   1)   cat-131124   |                           unwind_find_stack.constprop.0(); /* ret=0xffffffc0837f3d38 */
+2030105.800135 |   1)   cat-131124   |                           unwind_find_stack.constprop.0(); /* ret=0xffffffc0837f3d38 */
+2030105.800136 |   1)   cat-131124   |                           unwind_find_stack.constprop.0(); /* ret=0xffffffc0837f3d98 */
+2030105.800138 |   1)   cat-131124   |                           unwind_find_stack.constprop.0(); /* ret=0xffffffc0837f3d38 */
+2030105.800139 |   1)   cat-131124   |                           unwind_find_stack.constprop.0(); /* ret=0xffffffc0837f3d38 */
+2030105.800141 |   1)   cat-131124   |                           raw_spin_rq_lock_nested() {
+2030105.800141 |   1)   cat-131124   |                             preempt_count_add(); /* ret=0x1 */
+2030105.800142 |   1)   cat-131124   |                             _raw_spin_lock_nested() {
+2030105.800143 |   1)   cat-131124   |                               preempt_count_add(); /* ret=0x1 */
+2030105.800145 |   1)   cat-131124   |                               do_raw_spin_trylock(); /* ret=0x1 */
+2030105.800146 |   1)   cat-131124   |                             } /* _raw_spin_lock_nested ret=0xffffff8040813040 */
+2030105.800146 |   1)   cat-131124   |                             preempt_count_sub(); /* ret=0x103 */
+2030105.800147 |   1)   cat-131124   |                           } /* raw_spin_rq_lock_nested ret=0x103 */
+2030105.800148 |   1)   cat-131124   |                           update_rq_clock(); /* ret=0x7365ed7130879 */
+2030105.800150 |   1)   cat-131124   |                           update_other_load_avgs() {
+2030105.800150 |   1)   cat-131124   |                             update_rt_rq_load_avg(); /* ret=0x1 */
+2030105.800152 |   1)   cat-131124   |                             update_dl_rq_load_avg(); /* ret=0x1 */
+2030105.800153 |   1)   cat-131124   |                           } /* update_other_load_avgs ret=0x1 */
+2030105.800154 |   1)   cat-131124   |                           __update_load_avg_cfs_rq(); /* ret=0x1 */
+2030105.800157 |   1)   cat-131124   |                           __update_load_avg_cfs_rq(); /* ret=0x1 */
+2030105.800159 |   1)   cat-131124   |                           __update_load_avg_cfs_rq(); /* ret=0x0 */
+2030105.800160 |   1)   cat-131124   |                           __update_load_avg_se(); /* ret=0x0 */
+2030105.800161 |   1)   cat-131124   |                           __update_load_avg_cfs_rq(); /* ret=0x0 */
+2030105.800163 |   1)   cat-131124   |                           __update_load_avg_cfs_rq(); /* ret=0x0 */
+2030105.800164 |   1)   cat-131124   |                           __update_load_avg_se(); /* ret=0x0 */
+2030105.800165 |   1)   cat-131124   |                           __update_load_avg_cfs_rq(); /* ret=0x0 */
+2030105.800166 |   1)   cat-131124   |                           __update_load_avg_cfs_rq(); /* ret=0x0 */
+2030105.800168 |   1)   cat-131124   |                           __update_load_avg_se(); /* ret=0x0 */
+2030105.800169 |   1)   cat-131124   |                           __update_load_avg_cfs_rq(); /* ret=0x0 */
+2030105.800170 |   1)   cat-131124   |                           __update_load_avg_cfs_rq(); /* ret=0x0 */
+2030105.800171 |   1)   cat-131124   |                           rcu_read_lock_sched_held() {
+2030105.800172 |   1)   cat-131124   |                             rcu_lockdep_current_cpu_online(); /* ret=0x1 */
+2030105.800173 |   1)   cat-131124   |                           } /* rcu_read_lock_sched_held ret=0x1 */
+2030105.800174 |   1)   cat-131124   |                           raw_spin_rq_unlock() {
+2030105.800174 |   1)   cat-131124   |                             _raw_spin_unlock() {
+2030105.800175 |   1)   cat-131124   |                               do_raw_spin_unlock(); /* ret=-1 */
+2030105.800176 |   1)   cat-131124   |                               preempt_count_sub(); /* ret=0x102 */
+2030105.800177 |   1)   cat-131124   |                             } /* _raw_spin_unlock ret=0x100000102 */
+2030105.800178 |   1)   cat-131124   |                           } /* raw_spin_rq_unlock ret=0x100000102 */
+2030105.800178 |   1)   cat-131124   |                           unwind_find_stack.constprop.0(); /* ret=0xffffffc0837f3d98 */
+2030105.800180 |   1)   cat-131124   |                           unwind_find_stack.constprop.0(); /* ret=0xffffffc0837f3d38 */
+2030105.800181 |   1)   cat-131124   |                           unwind_find_stack.constprop.0(); /* ret=0xffffffc0837f3d38 */
+2030105.800182 |   1)   cat-131124   |                           unwind_find_stack.constprop.0(); /* ret=0xffffffc0837f3d98 */
+2030105.800183 |   1)   cat-131124   |                           unwind_find_stack.constprop.0(); /* ret=0xffffffc0837f3d38 */
+2030105.800184 |   1)   cat-131124   |                           unwind_find_stack.constprop.0(); /* ret=0xffffffc0837f3d38 */
+2030105.800186 |   1)   cat-131124   |                         } /* sched_balance_update_blocked_averages ret=0x0 */
+2030105.800186 |   1)   cat-131124   |                         sched_balance_domains() {
+2030105.800187 |   1)   cat-131124   |                           __rcu_read_lock(); /* ret=0x1 */
+2030105.800189 |   1)   cat-131124   |                           rcu_read_lock_held() {
+2030105.800189 |   1)   cat-131124   |                             rcu_lockdep_current_cpu_online(); /* ret=0x1 */
+2030105.800190 |   1)   cat-131124   |                           } /* rcu_read_lock_held ret=0x1 */
+2030105.800191 |   1)   cat-131124   |                           __msecs_to_jiffies(); /* ret=0x20 */
+2030105.800193 |   1)   cat-131124   |                           __rcu_read_unlock(); /* ret=0x3fffffff */
+2030105.800194 |   1)   cat-131124   |                         } /* sched_balance_domains ret=0xffffff8040813040 */
+2030105.800194 |   1)   cat-131124   |                       } /* sched_balance_softirq ret=0xffffff8040813040 */
+2030105.800195 |   1)   cat-131124   |                       rcu_core_si() {
+2030105.800195 |   1)   cat-131124   |                         rcu_core() {
+2030105.800196 |   1)   cat-131124   |                           note_gp_changes() {
+2030105.800197 |   1)   cat-131124   |                             unwind_find_stack.constprop.0(); /* ret=0xffffffc0837f3d58 */
+2030105.800198 |   1)   cat-131124   |                             unwind_find_stack.constprop.0(); /* ret=0xffffffc0837f3cf8 */
+2030105.800199 |   1)   cat-131124   |                             unwind_find_stack.constprop.0(); /* ret=0xffffffc0837f3cf8 */
+2030105.800200 |   1)   cat-131124   |                             unwind_find_stack.constprop.0(); /* ret=0xffffffc0837f3d58 */
+2030105.800202 |   1)   cat-131124   |                             unwind_find_stack.constprop.0(); /* ret=0xffffffc0837f3cf8 */
+2030105.800203 |   1)   cat-131124   |                             unwind_find_stack.constprop.0(); /* ret=0xffffffc0837f3cf8 */
+2030105.800204 |   1)   cat-131124   |                             _raw_spin_trylock() {
+2030105.800204 |   1)   cat-131124   |                               preempt_count_add(); /* ret=0x1 */
+2030105.800206 |   1)   cat-131124   |                               do_raw_spin_trylock(); /* ret=0x1 */
+2030105.800208 |   1)   cat-131124   |                             } /* _raw_spin_trylock ret=0x1 */
+2030105.800208 |   1)   cat-131124   |                             __note_gp_changes() {
+2030105.800209 |   1)   cat-131124   |                               rcu_advance_cbs() {
+2030105.800210 |   1)   cat-131124   |                                 rcu_lockdep_assert_cblist_protected.constprop.0(); /* ret=0x100000103 */
+2030105.800211 |   1)   cat-131124   |                                 rcu_segcblist_pend_cbs(); /* ret=0x1 */
+2030105.800212 |   1)   cat-131124   |                                 rcu_segcblist_advance(); /* ret=0xffffff807d62e0f0 */
+2030105.800213 |   1)   cat-131124   |                                 rcu_accelerate_cbs() {
+2030105.800214 |   1)   cat-131124   |                                   rcu_lockdep_assert_cblist_protected.constprop.0(); /* ret=0x100000103 */
+2030105.800215 |   1)   cat-131124   |                                   rcu_segcblist_pend_cbs(); /* ret=0x1 */
+2030105.800216 |   1)   cat-131124   |                                   rcu_segcblist_accelerate(); /* ret=0x1 */
+2030105.800218 |   1)   cat-131124   |                                   rcu_start_this_gp() {
+2030105.800218 |   1)   cat-131124   |                                     trace_rcu_this_gp.constprop.0(); /* ret=0x1 */
+2030105.800220 |   1)   cat-131124   |                                     trace_rcu_this_gp.constprop.0(); /* ret=0x1 */
+2030105.800221 |   1)   cat-131124   |                                   } /* rcu_start_this_gp ret=0x0 */
+2030105.800221 |   1)   cat-131124   |                                 } /* rcu_accelerate_cbs ret=0x0 */
+2030105.800222 |   1)   cat-131124   |                               } /* rcu_advance_cbs ret=0x0 */
+2030105.800223 |   1)   cat-131124   |                               rcu_gpnum_ovf(); /* ret=0x44d4835 */
+2030105.800224 |   1)   cat-131124   |                             } /* __note_gp_changes ret=0x0 */
+2030105.800225 |   1)   cat-131124   |                             _raw_spin_unlock_irqrestore() {
+2030105.800226 |   1)   cat-131124   |                               do_raw_spin_unlock(); /* ret=-1 */
+2030105.800227 |   1)   cat-131124   |                               unwind_find_stack.constprop.0(); /* ret=0xffffffc0837f3d38 */
+2030105.800228 |   1)   cat-131124   |                               unwind_find_stack.constprop.0(); /* ret=0xffffffc0837f3cd8 */
+2030105.800229 |   1)   cat-131124   |                               unwind_find_stack.constprop.0(); /* ret=0xffffffc0837f3cd8 */
+2030105.800231 |   1)   cat-131124   |                               unwind_find_stack.constprop.0(); /* ret=0xffffffc0837f3d38 */
+2030105.800232 |   1)   cat-131124   |                               unwind_find_stack.constprop.0(); /* ret=0xffffffc0837f3cd8 */
+2030105.800233 |   1)   cat-131124   |                               unwind_find_stack.constprop.0(); /* ret=0xffffffc0837f3cd8 */
+2030105.800234 |   1)   cat-131124   |                               preempt_count_sub(); /* ret=0x102 */
+2030105.800235 |   1)   cat-131124   |                             } /* _raw_spin_unlock_irqrestore ret=0x100000102 */
+2030105.800236 |   1)   cat-131124   |                           } /* note_gp_changes ret=0x100000102 */
+2030105.800237 |   1)   cat-131124   |                           rcu_check_gp_start_stall.constprop.0(); /* ret=0xffffffc082a1be80 */
+2030105.800238 |   1)   cat-131124   |                           rcu_segcblist_ready_cbs(); /* ret=0x0 */
+2030105.800239 |   1)   cat-131124   |                         } /* rcu_core ret=0xffffff8040813040 */
+2030105.800239 |   1)   cat-131124   |                       } /* rcu_core_si ret=0xffffff8040813040 */
+2030105.800240 |   1)   cat-131124   |                       unwind_find_stack.constprop.0(); /* ret=0xffffffc0837f3e68 */
+2030105.800241 |   1)   cat-131124   |                       unwind_find_stack.constprop.0(); /* ret=0xffffffc0837f3e08 */
+2030105.800243 |   1)   cat-131124   |                       unwind_find_stack.constprop.0(); /* ret=0xffffffc0837f3e08 */
+2030105.800244 |   1)   cat-131124   |                       unwind_find_stack.constprop.0(); /* ret=0xffffffc0837f3e68 */
+2030105.800245 |   1)   cat-131124   |                       unwind_find_stack.constprop.0(); /* ret=0xffffffc0837f3e08 */
+2030105.800246 |   1)   cat-131124   |                       unwind_find_stack.constprop.0(); /* ret=0xffffffc0837f3e08 */
+2030105.800247 |   1)   cat-131124   |                       __local_bh_enable(); /* ret=0x2 */
+2030105.800249 |   1)   cat-131124   |                     } /* handle_softirqs ret=0x400000 */
+2030105.800249 |   1)   cat-131124   |                   } /* __do_softirq ret=0x400000 */
+2030105.800250 |   1)   cat-131124   |                 } /* ____do_softirq ret=0x400000 */
+2030105.800250 |   1)   cat-131124   |               } /* do_softirq_own_stack ret=0x400000 */
+2030105.800251 |   1)   cat-131124   |               idle_cpu(); /* ret=0x0 */
+2030105.800252 |   1)   cat-131124   |               raw_irqentry_exit_cond_resched(); /* ret=0x2 */
+2030105.800253 |   1)   cat-131124   |               unwind_find_stack.constprop.0(); /* ret=0xffffffc0871e3718 */
+2030105.800254 |   1)   cat-131124   |               unwind_find_stack.constprop.0(); /* ret=0xffffffc0871e36c8 */
+2030105.800255 |   1)   cat-131124   |               unwind_find_stack.constprop.0(); /* ret=0xffffffc0871e36c8 */
+2030105.800257 |   1)   cat-131124   |               unwind_find_stack.constprop.0(); /* ret=0xffffffc0871e3718 */
+2030105.800258 |   1)   cat-131124   |               unwind_find_stack.constprop.0(); /* ret=0xffffffc0871e36c8 */
+2030105.800259 |   1)   cat-131124   |               unwind_find_stack.constprop.0(); /* ret=0xffffffc0871e36c8 */
+2030105.800261 |   1)   cat-131124   |             } /* security_file_alloc ret=0x0 */
+2030105.800262 |   1)   cat-131124   |             __raw_spin_lock_init(); /* ret=-1 */
+2030105.800263 |   1)   cat-131124   |             __mutex_init() {
+2030105.800264 |   1)   cat-131124   |               __raw_spin_lock_init(); /* ret=-1 */
+2030105.800265 |   1)   cat-131124   |             } /* __mutex_init ret=0x1 */
+2030105.800266 |   1)   cat-131124   |           } /* init_file ret=0x0 */
+2030105.800267 |   1)   cat-131124   |         } /* alloc_empty_file ret=0xffffff80412eb980 */
+2030105.800268 |   1)   cat-131124   |         path_init() {
+2030105.800269 |   1)   cat-131124   |           __rcu_read_lock(); /* ret=0x1 */
+2030105.800270 |   1)   cat-131124   |           nd_jump_root() {
+2030105.800271 |   1)   cat-131124   |             set_root() {
+2030105.800272 |   1)   cat-131124   |               unwind_find_stack.constprop.0(); /* ret=0xffffffc0871e3a28 */
+2030105.800273 |   1)   cat-131124   |               unwind_find_stack.constprop.0(); /* ret=0xffffffc0871e39d8 */
+2030105.800274 |   1)   cat-131124   |               unwind_find_stack.constprop.0(); /* ret=0xffffffc0871e39d8 */
+2030105.800276 |   1)   cat-131124   |               unwind_find_stack.constprop.0(); /* ret=0xffffffc0871e3a28 */
+2030105.800277 |   1)   cat-131124   |               unwind_find_stack.constprop.0(); /* ret=0xffffffc0871e39d8 */
+2030105.800278 |   1)   cat-131124   |               unwind_find_stack.constprop.0(); /* ret=0xffffffc0871e39d8 */
+2030105.800281 |   1)   cat-131124   |               unwind_find_stack.constprop.0(); /* ret=0xffffffc0871e3a28 */
+2030105.800282 |   1)   cat-131124   |               unwind_find_stack.constprop.0(); /* ret=0xffffffc0871e39d8 */
+2030105.800283 |   1)   cat-131124   |               unwind_find_stack.constprop.0(); /* ret=0xffffffc0871e39d8 */
+2030105.800284 |   1)   cat-131124   |               unwind_find_stack.constprop.0(); /* ret=0xffffffc0871e3a28 */
+2030105.800286 |   1)   cat-131124   |               unwind_find_stack.constprop.0(); /* ret=0xffffffc0871e39d8 */
+2030105.800287 |   1)   cat-131124   |               unwind_find_stack.constprop.0(); /* ret=0xffffffc0871e39d8 */
+2030105.800288 |   1)   cat-131124   |             } /* set_root ret=0x0 */
+2030105.800289 |   1)   cat-131124   |           } /* nd_jump_root ret=0x0 */
+2030105.800290 |   1)   cat-131124   |         } /* path_init ret=0xffffff80409b3020 */
+2030105.800290 |   1)   cat-131124   |         link_path_walk() {
+2030105.800291 |   1)   cat-131124   |           inode_permission() {
+2030105.800292 |   1)   cat-131124   |             generic_permission(); /* ret=0x0 */
+2030105.800293 |   1)   cat-131124   |             security_inode_permission(); /* ret=0x0 */
+2030105.800294 |   1)   cat-131124   |           } /* inode_permission ret=0x0 */
+2030105.800295 |   1)   cat-131124   |           walk_component() {
+2030105.800295 |   1)   cat-131124   |             lookup_fast() {
+2030105.800296 |   1)   cat-131124   |               __d_lookup_rcu() {
+2030105.800297 |   1)   cat-131124   |                 rcu_read_lock_held() {
+2030105.800298 |   1)   cat-131124   |                   rcu_lockdep_current_cpu_online(); /* ret=0x1 */
+2030105.800299 |   1)   cat-131124   |                 } /* rcu_read_lock_held ret=0x1 */
+2030105.800300 |   1)   cat-131124   |               } /* __d_lookup_rcu ret=0xffffff8047300b88 */
+2030105.800300 |   1)   cat-131124   |             } /* lookup_fast ret=0xffffff8047300b88 */
+2030105.800301 |   1)   cat-131124   |             step_into() {
+2030105.800302 |   1)   cat-131124   |               atime_needs_update() {
+2030105.800303 |   1)   cat-131124   |                 make_vfsuid(); /* ret=0x0 */
+2030105.800304 |   1)   cat-131124   |                 make_vfsgid(); /* ret=0x0 */
+2030105.800305 |   1)   cat-131124   |               } /* atime_needs_update ret=0x0 */
+2030105.800306 |   1)   cat-131124   |               security_inode_follow_link(); /* ret=0x0 */
+2030105.800307 |   1)   cat-131124   |             } /* step_into ret=0xffffff804864c3d0 */
+2030105.800308 |   1)   cat-131124   |           } /* walk_component ret=0xffffff804864c3d0 */
+2030105.800309 |   1)   cat-131124   |           inode_permission() {
+2030105.800309 |   1)   cat-131124   |             generic_permission(); /* ret=0x0 */
+2030105.800311 |   1)   cat-131124   |             security_inode_permission(); /* ret=0x0 */
+2030105.800312 |   1)   cat-131124   |           } /* inode_permission ret=0x0 */
+2030105.800312 |   1)   cat-131124   |           walk_component() {
+2030105.800313 |   1)   cat-131124   |             lookup_fast() {
+2030105.800314 |   1)   cat-131124   |               __d_lookup_rcu() {
+2030105.800314 |   1)   cat-131124   |                 rcu_read_lock_held() {
+2030105.800315 |   1)   cat-131124   |                   rcu_lockdep_current_cpu_online(); /* ret=0x1 */
+2030105.800316 |   1)   cat-131124   |                 } /* rcu_read_lock_held ret=0x1 */
+2030105.800317 |   1)   cat-131124   |               } /* __d_lookup_rcu ret=0xffffff804267ee18 */
+2030105.800317 |   1)   cat-131124   |             } /* lookup_fast ret=0xffffff804267ee18 */
+2030105.800318 |   1)   cat-131124   |             step_into() {
+2030105.800319 |   1)   cat-131124   |               __lookup_mnt(); /* ret=0x0 */
+2030105.800320 |   1)   cat-131124   |             } /* step_into ret=0x0 */
+2030105.800321 |   1)   cat-131124   |           } /* walk_component ret=0x0 */
+2030105.800321 |   1)   cat-131124   |           inode_permission() {
+2030105.800322 |   1)   cat-131124   |             generic_permission(); /* ret=0x0 */
+2030105.800323 |   1)   cat-131124   |             security_inode_permission(); /* ret=0x0 */
+2030105.800324 |   1)   cat-131124   |           } /* inode_permission ret=0x0 */
+2030105.800325 |   1)   cat-131124   |           walk_component() {
+2030105.800326 |   1)   cat-131124   |             lookup_fast() {
+2030105.800326 |   1)   cat-131124   |               __d_lookup_rcu() {
+2030105.800327 |   1)   cat-131124   |                 rcu_read_lock_held() {
+2030105.800327 |   1)   cat-131124   |                   rcu_lockdep_current_cpu_online(); /* ret=0x1 */
+2030105.800329 |   1)   cat-131124   |                 } /* rcu_read_lock_held ret=0x1 */
+2030105.800329 |   1)   cat-131124   |               } /* __d_lookup_rcu ret=0xffffff804267fc30 */
+2030105.800330 |   1)   cat-131124   |             } /* lookup_fast ret=0xffffff804267fc30 */
+2030105.800331 |   1)   cat-131124   |             step_into(); /* ret=0x0 */
+2030105.800332 |   1)   cat-131124   |           } /* walk_component ret=0x0 */
+2030105.800333 |   1)   cat-131124   |           inode_permission() {
+2030105.800334 |   1)   cat-131124   |             generic_permission(); /* ret=0x0 */
+2030105.800335 |   1)   cat-131124   |             security_inode_permission(); /* ret=0x0 */
+2030105.800337 |   1)   cat-131124   |           } /* inode_permission ret=0x0 */
+2030105.800338 |   1)   cat-131124   |           walk_component() {
+2030105.800338 |   1)   cat-131124   |             lookup_fast() {
+2030105.800339 |   1)   cat-131124   |               __d_lookup_rcu() {
+2030105.800339 |   1)   cat-131124   |                 rcu_read_lock_held() {
+2030105.800340 |   1)   cat-131124   |                   rcu_lockdep_current_cpu_online(); /* ret=0x1 */
+2030105.800341 |   1)   cat-131124   |                 } /* rcu_read_lock_held ret=0x1 */
+2030105.800342 |   1)   cat-131124   |               } /* __d_lookup_rcu ret=0xffffff8042670148 */
+2030105.800343 |   1)   cat-131124   |             } /* lookup_fast ret=0xffffff8042670148 */
+2030105.800343 |   1)   cat-131124   |             step_into(); /* ret=0x0 */
+2030105.800344 |   1)   cat-131124   |           } /* walk_component ret=0x0 */
+2030105.800345 |   1)   cat-131124   |           inode_permission() {
+2030105.800346 |   1)   cat-131124   |             generic_permission(); /* ret=0x0 */
+2030105.800347 |   1)   cat-131124   |             security_inode_permission(); /* ret=0x0 */
+2030105.800348 |   1)   cat-131124   |           } /* inode_permission ret=0x0 */
+2030105.800349 |   1)   cat-131124   |           make_vfsuid(); /* ret=0x0 */
+2030105.800350 |   1)   cat-131124   |         } /* link_path_walk ret=0x0 */
+2030105.800351 |   1)   cat-131124   |         lookup_fast() {
+2030105.800352 |   1)   cat-131124   |           __d_lookup_rcu() {
+2030105.800352 |   1)   cat-131124   |             rcu_read_lock_held() {
+2030105.800353 |   1)   cat-131124   |               rcu_lockdep_current_cpu_online(); /* ret=0x1 */
+2030105.800354 |   1)   cat-131124   |             } /* rcu_read_lock_held ret=0x1 */
+2030105.800355 |   1)   cat-131124   |           } /* __d_lookup_rcu ret=0xffffff80426715c8 */
+2030105.800356 |   1)   cat-131124   |         } /* lookup_fast ret=0xffffff80426715c8 */
+2030105.800357 |   1)   cat-131124   |         step_into(); /* ret=0x0 */
+2030105.800358 |   1)   cat-131124   |         complete_walk() {
+2030105.800358 |   1)   cat-131124   |           try_to_unlazy() {
+2030105.800359 |   1)   cat-131124   |             legitimize_links(); /* ret=0x1 */
+2030105.800361 |   1)   cat-131124   |             __legitimize_path() {
+2030105.800361 |   1)   cat-131124   |               __legitimize_mnt(); /* ret=0x0 */
+2030105.800363 |   1)   cat-131124   |               _raw_spin_lock() {
+2030105.800363 |   1)   cat-131124   |                 preempt_count_add(); /* ret=0xffffffc08002f6c0 */
+2030105.800365 |   1)   cat-131124   |                 do_raw_spin_trylock(); /* ret=0x1 */
+2030105.800367 |   1)   cat-131124   |               } /* _raw_spin_lock ret=0xffffff8040813040 */
+2030105.800368 |   1)   cat-131124   |               _raw_spin_unlock() {
+2030105.800368 |   1)   cat-131124   |                 do_raw_spin_unlock(); /* ret=-1 */
+2030105.800370 |   1)   cat-131124   |                 preempt_count_sub(); /* ret=0x0 */
+2030105.800371 |   1)   cat-131124   |               } /* _raw_spin_unlock ret=0x100000000 */
+2030105.800372 |   1)   cat-131124   |             } /* __legitimize_path ret=0x1 */
+2030105.800372 |   1)   cat-131124   |             __rcu_read_unlock(); /* ret=0x3fffffff */
+2030105.800373 |   1)   cat-131124   |           } /* try_to_unlazy ret=0x1 */
+2030105.800374 |   1)   cat-131124   |         } /* complete_walk ret=0x0 */
+2030105.800375 |   1)   cat-131124   |         may_open() {
+2030105.800376 |   1)   cat-131124   |           inode_permission() {
+2030105.800376 |   1)   cat-131124   |             generic_permission(); /* ret=0x0 */
+2030105.800378 |   1)   cat-131124   |             security_inode_permission(); /* ret=0x0 */
+2030105.800379 |   1)   cat-131124   |           } /* inode_permission ret=0x0 */
+2030105.800379 |   1)   cat-131124   |         } /* may_open ret=0x0 */
+2030105.800380 |   1)   cat-131124   |         vfs_open() {
+2030105.800381 |   1)   cat-131124   |           do_dentry_open() {
+2030105.800381 |   1)   cat-131124   |             path_get() {
+2030105.800382 |   1)   cat-131124   |               mntget(); /* ret=0xffffff8041146f20 */
+2030105.800383 |   1)   cat-131124   |               _raw_spin_lock() {
+2030105.800384 |   1)   cat-131124   |                 preempt_count_add(); /* ret=0xffffffc08002f6c0 */
+2030105.800386 |   1)   cat-131124   |                 do_raw_spin_trylock(); /* ret=0x1 */
+2030105.800387 |   1)   cat-131124   |               } /* _raw_spin_lock ret=0xffffff8040813040 */
+2030105.800387 |   1)   cat-131124   |               _raw_spin_unlock() {
+2030105.800388 |   1)   cat-131124   |                 do_raw_spin_unlock(); /* ret=-1 */
+2030105.800389 |   1)   cat-131124   |                 preempt_count_sub(); /* ret=0x0 */
+2030105.800390 |   1)   cat-131124   |               } /* _raw_spin_unlock ret=0x100000000 */
+2030105.800391 |   1)   cat-131124   |             } /* path_get ret=0x100000000 */
+2030105.800392 |   1)   cat-131124   |             try_module_get(); /* ret=0x1 */
+2030105.800393 |   1)   cat-131124   |             security_file_open(); /* ret=0x0 */
+2030105.800394 |   1)   cat-131124   |             ext4_file_open() {
+2030105.800395 |   1)   cat-131124   |               fscrypt_file_open() {
+2030105.800396 |   1)   cat-131124   |                 __rcu_read_lock(); /* ret=0x1 */
+2030105.800398 |   1)   cat-131124   |                 __rcu_read_unlock(); /* ret=0x3fffffff */
+2030105.800399 |   1)   cat-131124   |               } /* fscrypt_file_open ret=0x0 */
+2030105.800400 |   1)   cat-131124   |               dquot_file_open() {
+2030105.800400 |   1)   cat-131124   |                 generic_file_open(); /* ret=0x0 */
+2030105.800401 |   1)   cat-131124   |               } /* dquot_file_open ret=0x0 */
+2030105.800402 |   1)   cat-131124   |             } /* ext4_file_open ret=0x0 */
+2030105.800403 |   1)   cat-131124   |             file_ra_state_init() {
+2030105.800403 |   1)   cat-131124   |               inode_to_bdi(); /* ret=0xffffff8047a13000 */
+2030105.800405 |   1)   cat-131124   |             } /* file_ra_state_init ret=0x20 */
+2030105.800406 |   1)   cat-131124   |           } /* do_dentry_open ret=0x0 */
+2030105.800407 |   1)   cat-131124   |           __fsnotify_parent(); /* ret=0x0 */
+2030105.800408 |   1)   cat-131124   |         } /* vfs_open ret=0x0 */
+2030105.800409 |   1)   cat-131124   |         security_file_post_open(); /* ret=0x0 */
+2030105.800410 |   1)   cat-131124   |         terminate_walk() {
+2030105.800411 |   1)   cat-131124   |           dput() {
+2030105.800411 |   1)   cat-131124   |             __might_sleep() {
+2030105.800412 |   1)   cat-131124   |               __might_resched(); /* ret=0x0 */
+2030105.800413 |   1)   cat-131124   |             } /* __might_sleep ret=0x0 */
+2030105.800414 |   1)   cat-131124   |             __rcu_read_lock(); /* ret=0x1 */
+2030105.800416 |   1)   cat-131124   |             _raw_spin_lock() {
+2030105.800416 |   1)   cat-131124   |               preempt_count_add(); /* ret=0xffffffc08002f6c0 */
+2030105.800418 |   1)   cat-131124   |               do_raw_spin_trylock(); /* ret=0x1 */
+2030105.800419 |   1)   cat-131124   |             } /* _raw_spin_lock ret=0xffffff8040813040 */
+2030105.800420 |   1)   cat-131124   |             _raw_spin_unlock() {
+2030105.800421 |   1)   cat-131124   |               do_raw_spin_unlock(); /* ret=-1 */
+2030105.800422 |   1)   cat-131124   |               preempt_count_sub(); /* ret=0x0 */
+2030105.800423 |   1)   cat-131124   |             } /* _raw_spin_unlock ret=0x100000000 */
+2030105.800424 |   1)   cat-131124   |             __rcu_read_unlock(); /* ret=0x3fffffff */
+2030105.800425 |   1)   cat-131124   |           } /* dput ret=0x3fffffff */
+2030105.800426 |   1)   cat-131124   |           mntput() {
+2030105.800426 |   1)   cat-131124   |             mntput_no_expire() {
+2030105.800427 |   1)   cat-131124   |               __rcu_read_lock(); /* ret=0x1 */
+2030105.800429 |   1)   cat-131124   |               __rcu_read_unlock(); /* ret=0x3fffffff */
+2030105.800430 |   1)   cat-131124   |             } /* mntput_no_expire ret=0xffffff8040813040 */
+2030105.800431 |   1)   cat-131124   |           } /* mntput ret=0xffffff8040813040 */
+2030105.800431 |   1)   cat-131124   |         } /* terminate_walk ret=0x0 */
+2030105.800432 |   1)   cat-131124   |       } /* path_openat ret=0xffffff80412eb980 */
+2030105.800433 |   1)   cat-131124   |     } /* do_filp_open ret=0xffffff80412eb980 */
+2030105.800433 |   1)   cat-131124   |     fd_install() {
+2030105.800434 |   1)   cat-131124   |       preempt_count_add(); /* ret=0xffffffc08002f6c0 */
+2030105.800436 |   1)   cat-131124   |       rcu_read_lock_sched_held() {
+2030105.800437 |   1)   cat-131124   |         rcu_lockdep_current_cpu_online(); /* ret=0x1 */
+2030105.800438 |   1)   cat-131124   |       } /* rcu_read_lock_sched_held ret=0x1 */
+2030105.800439 |   1)   cat-131124   |       preempt_count_sub(); /* ret=0x0 */
+2030105.800440 |   1)   cat-131124   |     } /* fd_install ret=0x100000000 */
+2030105.800441 |   1)   cat-131124   |     putname() {
+2030105.800442 |   1)   cat-131124   |       kmem_cache_free(); /* ret=0xffffff8040813040 */
+2030105.800443 |   1)   cat-131124   |     } /* putname ret=0xffffff8040813040 */
+2030105.800444 |   1)   cat-131124   |   } /* do_sys_openat2 ret=0x3 */
+2030105.800444 |   1)   cat-131124   | } /* __arm64_sys_openat ret=0x3 */
+2030105.803528 |   1)   cat-131124   | __arm64_sys_openat() {
+2030105.803531 |   1)   cat-131124   |   do_sys_openat2() {
+2030105.803532 |   1)   cat-131124   |     getname_flags() {
+2030105.803533 |   1)   cat-131124   |       kmem_cache_alloc_noprof() {
+2030105.803534 |   1)   cat-131124   |         fs_reclaim_acquire(); /* ret=0xffffff8040813040 */
+2030105.803537 |   1)   cat-131124   |         fs_reclaim_release(); /* ret=0xffffff8040813040 */
+2030105.803539 |   1)   cat-131124   |         __might_sleep() {
+2030105.803539 |   1)   cat-131124   |           __might_resched(); /* ret=0x0 */
+2030105.803541 |   1)   cat-131124   |         } /* __might_sleep ret=0x0 */
+2030105.803542 |   1)   cat-131124   |       } /* kmem_cache_alloc_noprof ret=0xffffff80409b3000 */
+2030105.803542 |   1)   cat-131124   |       __might_fault() {
+2030105.803543 |   1)   cat-131124   |         __might_sleep() {
+2030105.803544 |   1)   cat-131124   |           __might_resched(); /* ret=0x0 */
+2030105.803545 |   1)   cat-131124   |         } /* __might_sleep ret=0x0 */
+2030105.803546 |   1)   cat-131124   |       } /* __might_fault ret=0xffffff8040813040 */
+2030105.803548 |   1)   cat-131124   |       unwind_find_stack.constprop.0(); /* ret=0xffffffc0871e3a98 */
+2030105.803550 |   1)   cat-131124   |       unwind_find_stack.constprop.0(); /* ret=0xffffffc0871e3a48 */
+2030105.803551 |   1)   cat-131124   |       unwind_find_stack.constprop.0(); /* ret=0xffffffc0871e3a48 */
+2030105.803552 |   1)   cat-131124   |       unwind_find_stack.constprop.0(); /* ret=0xffffffc0871e3a98 */
+2030105.803553 |   1)   cat-131124   |       unwind_find_stack.constprop.0(); /* ret=0xffffffc0871e3a48 */
+2030105.803555 |   1)   cat-131124   |       unwind_find_stack.constprop.0(); /* ret=0xffffffc0871e3a48 */
+2030105.803556 |   1)   cat-131124   |       unwind_find_stack.constprop.0(); /* ret=0xffffffc0871e3ab8 */
+2030105.803558 |   1)   cat-131124   |       unwind_find_stack.constprop.0(); /* ret=0xffffffc0871e3a68 */
+2030105.803559 |   1)   cat-131124   |       unwind_find_stack.constprop.0(); /* ret=0xffffffc0871e3a68 */
+2030105.803560 |   1)   cat-131124   |       unwind_find_stack.constprop.0(); /* ret=0xffffffc0871e3ab8 */
+2030105.803561 |   1)   cat-131124   |       unwind_find_stack.constprop.0(); /* ret=0xffffffc0871e3a68 */
+2030105.803563 |   1)   cat-131124   |       unwind_find_stack.constprop.0(); /* ret=0xffffffc0871e3a68 */
+2030105.803564 |   1)   cat-131124   |       do_mem_abort() {
+2030105.803565 |   1)   cat-131124   |         lock_mm_and_find_vma() {
+2030105.803566 |   1)   cat-131124   |           down_read_trylock() {
+2030105.803568 |   1)   cat-131124   |             preempt_count_add(); /* ret=0xffffffc08002f6c0 */
+2030105.803569 |   1)   cat-131124   |             preempt_count_sub(); /* ret=0x0 */
+2030105.803571 |   1)   cat-131124   |           } /* down_read_trylock ret=0x1 */
+2030105.803571 |   1)   cat-131124   |           find_vma() {
+2030105.803573 |   1)   cat-131124   |             __rcu_read_lock(); /* ret=0x1 */
+2030105.803576 |   1)   cat-131124   |             __rcu_read_unlock(); /* ret=0x3fffffff */
+2030105.803577 |   1)   cat-131124   |           } /* find_vma ret=0xffffff802e150b00 */
+2030105.803578 |   1)   cat-131124   |         } /* lock_mm_and_find_vma ret=0xffffff802e150b00 */
+2030105.803578 |   1)   cat-131124   |         fault_from_pkey(); /* ret=0x0 */
+2030105.803580 |   1)   cat-131124   |         handle_mm_fault() {
+2030105.803580 |   1)   cat-131124   |           __handle_mm_fault() {
+2030105.803581 |   1)   cat-131124   |             pte_offset_map_rw_nolock() {
+2030105.803582 |   1)   cat-131124   |               ___pte_offset_map() {
+2030105.803582 |   1)   cat-131124   |                 __rcu_read_lock(); /* ret=0x1 */
+2030105.803584 |   1)   cat-131124   |               } /* ___pte_offset_map ret=0xffffff8045fbb4c0 */
+2030105.803585 |   1)   cat-131124   |             } /* pte_offset_map_rw_nolock ret=0xffffff8045fbb4c0 */
+2030105.803585 |   1)   cat-131124   |             __rcu_read_unlock(); /* ret=0x3fffffff */
+2030105.803587 |   1)   cat-131124   |             do_fault() {
+2030105.803587 |   1)   cat-131124   |               __rcu_read_lock(); /* ret=0x1 */
+2030105.803589 |   1)   cat-131124   |               filemap_map_pages() {
+2030105.803590 |   1)   cat-131124   |                 __rcu_read_lock(); /* ret=0x2 */
+2030105.803592 |   1)   cat-131124   |                 next_uptodate_folio() {
+2030105.803592 |   1)   cat-131124   |                   rcu_read_lock_held() {
+2030105.803593 |   1)   cat-131124   |                     rcu_lockdep_current_cpu_online(); /* ret=0x1 */
+2030105.803595 |   1)   cat-131124   |                   } /* rcu_read_lock_held ret=0x1 */
+2030105.803595 |   1)   cat-131124   |                   rcu_read_lock_held() {
+2030105.803596 |   1)   cat-131124   |                     rcu_lockdep_current_cpu_online(); /* ret=0x1 */
+2030105.803598 |   1)   cat-131124   |                   } /* rcu_read_lock_held ret=0x1 */
+2030105.803598 |   1)   cat-131124   |                   rcu_read_lock_held() {
+2030105.803599 |   1)   cat-131124   |                     rcu_lockdep_current_cpu_online(); /* ret=0x1 */
+2030105.803600 |   1)   cat-131124   |                   } /* rcu_read_lock_held ret=0x1 */
+2030105.803601 |   1)   cat-131124   |                   __rcu_read_lock(); /* ret=0x3 */
+2030105.803603 |   1)   cat-131124   |                   __rcu_read_unlock(); /* ret=0x3fffffff */
+2030105.803605 |   1)   cat-131124   |                   rcu_read_lock_held() {
+2030105.803605 |   1)   cat-131124   |                     rcu_lockdep_current_cpu_online(); /* ret=0x1 */
+2030105.803607 |   1)   cat-131124   |                   } /* rcu_read_lock_held ret=0x1 */
+2030105.803607 |   1)   cat-131124   |                 } /* next_uptodate_folio ret=0xfffffffec1e4cd00 */
+2030105.803608 |   1)   cat-131124   |                 __pte_offset_map_lock() {
+2030105.803609 |   1)   cat-131124   |                   ___pte_offset_map() {
+2030105.803609 |   1)   cat-131124   |                     __rcu_read_lock(); /* ret=0x3 */
+2030105.803611 |   1)   cat-131124   |                   } /* ___pte_offset_map ret=0xffffff8045fbb480 */
+2030105.803612 |   1)   cat-131124   |                   _raw_spin_lock() {
+2030105.803612 |   1)   cat-131124   |                     preempt_count_add(); /* ret=0xffffffc08002f6c0 */
+2030105.803614 |   1)   cat-131124   |                     do_raw_spin_trylock(); /* ret=0x1 */
+2030105.803616 |   1)   cat-131124   |                   } /* _raw_spin_lock ret=0xffffff8040813040 */
+2030105.803617 |   1)   cat-131124   |                 } /* __pte_offset_map_lock ret=0xffffff8045fbb480 */
+2030105.803617 |   1)   cat-131124   |                 set_pte_range() {
+2030105.803618 |   1)   cat-131124   |                   read_sanitised_ftr_reg() {
+2030105.803619 |   1)   cat-131124   |                     search_cmp_ftr_reg(); /* ret=0x320 */
+2030105.803620 |   1)   cat-131124   |                     search_cmp_ftr_reg(); /* ret=0xc0 */
+2030105.803621 |   1)   cat-131124   |                     search_cmp_ftr_reg(); /* ret=0xffff62a0 */
+2030105.803622 |   1)   cat-131124   |                     search_cmp_ftr_reg(); /* ret=-32 */
+2030105.803623 |   1)   cat-131124   |                     search_cmp_ftr_reg(); /* ret=0x0 */
+2030105.803625 |   1)   cat-131124   |                   } /* read_sanitised_ftr_reg ret=0x0 */
+2030105.803625 |   1)   cat-131124   |                   folio_add_file_rmap_ptes(); /* ret=0x0 */
+2030105.803627 |   1)   cat-131124   |                   __sync_icache_dcache(); /* ret=0x5e0000000601a2d */
+2030105.803628 |   1)   cat-131124   |                 } /* set_pte_range ret=0x40000000000001 */
+2030105.803629 |   1)   cat-131124   |                 folio_unlock(); /* ret=0xfffffffec1e4cd00 */
+2030105.803630 |   1)   cat-131124   |                 next_uptodate_folio() {
+2030105.803631 |   1)   cat-131124   |                   rcu_read_lock_held() {
+2030105.803631 |   1)   cat-131124   |                     rcu_lockdep_current_cpu_online(); /* ret=0x1 */
+2030105.803633 |   1)   cat-131124   |                   } /* rcu_read_lock_held ret=0x1 */
+2030105.803633 |   1)   cat-131124   |                   __rcu_read_lock(); /* ret=0x4 */
+2030105.803635 |   1)   cat-131124   |                   __rcu_read_unlock(); /* ret=0x3fffffff */
+2030105.803637 |   1)   cat-131124   |                   rcu_read_lock_held() {
+2030105.803638 |   1)   cat-131124   |                     rcu_lockdep_current_cpu_online(); /* ret=0x1 */
+2030105.803639 |   1)   cat-131124   |                   } /* rcu_read_lock_held ret=0x1 */
+2030105.803640 |   1)   cat-131124   |                 } /* next_uptodate_folio ret=0xfffffffec1e4cc40 */
+2030105.803640 |   1)   cat-131124   |                 set_pte_range() {
+2030105.803641 |   1)   cat-131124   |                   read_sanitised_ftr_reg() {
+2030105.803641 |   1)   cat-131124   |                     search_cmp_ftr_reg(); /* ret=0x320 */
+2030105.803643 |   1)   cat-131124   |                     search_cmp_ftr_reg(); /* ret=0xc0 */
+2030105.803645 |   1)   cat-131124   |                     search_cmp_ftr_reg(); /* ret=0xffff62a0 */
+2030105.803646 |   1)   cat-131124   |                     search_cmp_ftr_reg(); /* ret=-32 */
+2030105.803647 |   1)   cat-131124   |                     search_cmp_ftr_reg(); /* ret=0x0 */
+2030105.803648 |   1)   cat-131124   |                   } /* read_sanitised_ftr_reg ret=0x0 */
+2030105.803649 |   1)   cat-131124   |                   folio_add_file_rmap_ptes(); /* ret=0x0 */
+2030105.803650 |   1)   cat-131124   |                   __sync_icache_dcache(); /* ret=0x5e0000000601a2d */
+2030105.803651 |   1)   cat-131124   |                 } /* set_pte_range ret=0x40000000000001 */
+2030105.803652 |   1)   cat-131124   |                 folio_unlock(); /* ret=0xfffffffec1e4cc40 */
+2030105.803653 |   1)   cat-131124   |                 next_uptodate_folio() {
+2030105.803654 |   1)   cat-131124   |                   rcu_read_lock_held() {
+2030105.803655 |   1)   cat-131124   |                     rcu_lockdep_current_cpu_online(); /* ret=0x1 */
+2030105.803656 |   1)   cat-131124   |                   } /* rcu_read_lock_held ret=0x1 */
+2030105.803657 |   1)   cat-131124   |                   __rcu_read_lock(); /* ret=0x4 */
+2030105.803659 |   1)   cat-131124   |                   __rcu_read_unlock(); /* ret=0x3fffffff */
+2030105.803660 |   1)   cat-131124   |                   rcu_read_lock_held() {
+2030105.803661 |   1)   cat-131124   |                     rcu_lockdep_current_cpu_online(); /* ret=0x1 */
+2030105.803662 |   1)   cat-131124   |                   } /* rcu_read_lock_held ret=0x1 */
+2030105.803663 |   1)   cat-131124   |                 } /* next_uptodate_folio ret=0xfffffffec1e4cc00 */
+2030105.803663 |   1)   cat-131124   |                 set_pte_range() {
+2030105.803664 |   1)   cat-131124   |                   read_sanitised_ftr_reg() {
+2030105.803665 |   1)   cat-131124   |                     search_cmp_ftr_reg(); /* ret=0x320 */
+2030105.803666 |   1)   cat-131124   |                     search_cmp_ftr_reg(); /* ret=0xc0 */
+2030105.803667 |   1)   cat-131124   |                     search_cmp_ftr_reg(); /* ret=0xffff62a0 */
+2030105.803668 |   1)   cat-131124   |                     search_cmp_ftr_reg(); /* ret=-32 */
+2030105.803669 |   1)   cat-131124   |                     search_cmp_ftr_reg(); /* ret=0x0 */
+2030105.803671 |   1)   cat-131124   |                   } /* read_sanitised_ftr_reg ret=0x0 */
+2030105.803671 |   1)   cat-131124   |                   folio_add_file_rmap_ptes(); /* ret=0x0 */
+2030105.803672 |   1)   cat-131124   |                   __sync_icache_dcache(); /* ret=0x5e0000000601a2d */
+2030105.803673 |   1)   cat-131124   |                 } /* set_pte_range ret=0x40000000000001 */
+2030105.803674 |   1)   cat-131124   |                 folio_unlock(); /* ret=0xfffffffec1e4cc00 */
+2030105.803675 |   1)   cat-131124   |                 next_uptodate_folio() {
+2030105.803676 |   1)   cat-131124   |                   rcu_read_lock_held() {
+2030105.803677 |   1)   cat-131124   |                     rcu_lockdep_current_cpu_online(); /* ret=0x1 */
+2030105.803678 |   1)   cat-131124   |                   } /* rcu_read_lock_held ret=0x1 */
+2030105.803679 |   1)   cat-131124   |                   __rcu_read_lock(); /* ret=0x4 */
+2030105.803681 |   1)   cat-131124   |                   __rcu_read_unlock(); /* ret=0x3fffffff */
+2030105.803682 |   1)   cat-131124   |                   rcu_read_lock_held() {
+2030105.803683 |   1)   cat-131124   |                     rcu_lockdep_current_cpu_online(); /* ret=0x1 */
+2030105.803684 |   1)   cat-131124   |                   } /* rcu_read_lock_held ret=0x1 */
+2030105.803685 |   1)   cat-131124   |                 } /* next_uptodate_folio ret=0xfffffffec1e4c9c0 */
+2030105.803685 |   1)   cat-131124   |                 set_pte_range() {
+2030105.803686 |   1)   cat-131124   |                   read_sanitised_ftr_reg() {
+2030105.803686 |   1)   cat-131124   |                     search_cmp_ftr_reg(); /* ret=0x320 */
+2030105.803688 |   1)   cat-131124   |                     search_cmp_ftr_reg(); /* ret=0xc0 */
+2030105.803689 |   1)   cat-131124   |                     search_cmp_ftr_reg(); /* ret=0xffff62a0 */
+2030105.803690 |   1)   cat-131124   |                     search_cmp_ftr_reg(); /* ret=-32 */
+2030105.803691 |   1)   cat-131124   |                     search_cmp_ftr_reg(); /* ret=0x0 */
+2030105.803692 |   1)   cat-131124   |                   } /* read_sanitised_ftr_reg ret=0x0 */
+2030105.803693 |   1)   cat-131124   |                   folio_add_file_rmap_ptes(); /* ret=0x0 */
+2030105.803694 |   1)   cat-131124   |                   __sync_icache_dcache(); /* ret=0x5e0000000601a2d */
+2030105.803696 |   1)   cat-131124   |                 } /* set_pte_range ret=0x40000000000001 */
+2030105.803696 |   1)   cat-131124   |                 folio_unlock(); /* ret=0xfffffffec1e4c9c0 */
+2030105.803697 |   1)   cat-131124   |                 next_uptodate_folio() {
+2030105.803698 |   1)   cat-131124   |                   rcu_read_lock_held() {
+2030105.803699 |   1)   cat-131124   |                     rcu_lockdep_current_cpu_online(); /* ret=0x1 */
+2030105.803700 |   1)   cat-131124   |                   } /* rcu_read_lock_held ret=0x1 */
+2030105.803701 |   1)   cat-131124   |                   __rcu_read_lock(); /* ret=0x4 */
+2030105.803703 |   1)   cat-131124   |                   __rcu_read_unlock(); /* ret=0x3fffffff */
+2030105.803704 |   1)   cat-131124   |                   rcu_read_lock_held() {
+2030105.803705 |   1)   cat-131124   |                     rcu_lockdep_current_cpu_online(); /* ret=0x1 */
+2030105.803706 |   1)   cat-131124   |                   } /* rcu_read_lock_held ret=0x1 */
+2030105.803706 |   1)   cat-131124   |                 } /* next_uptodate_folio ret=0xfffffffec1e4c980 */
+2030105.803707 |   1)   cat-131124   |                 set_pte_range() {
+2030105.803708 |   1)   cat-131124   |                   read_sanitised_ftr_reg() {
+2030105.803708 |   1)   cat-131124   |                     search_cmp_ftr_reg(); /* ret=0x320 */
+2030105.803709 |   1)   cat-131124   |                     search_cmp_ftr_reg(); /* ret=0xc0 */
+2030105.803711 |   1)   cat-131124   |                     search_cmp_ftr_reg(); /* ret=0xffff62a0 */
+2030105.803713 |   1)   cat-131124   |                     search_cmp_ftr_reg(); /* ret=-32 */
+2030105.803714 |   1)   cat-131124   |                     search_cmp_ftr_reg(); /* ret=0x0 */
+2030105.803715 |   1)   cat-131124   |                   } /* read_sanitised_ftr_reg ret=0x0 */
+2030105.803716 |   1)   cat-131124   |                   folio_add_file_rmap_ptes(); /* ret=0x0 */
+2030105.803717 |   1)   cat-131124   |                   __sync_icache_dcache(); /* ret=0x5e0000000601a2d */
+2030105.803718 |   1)   cat-131124   |                 } /* set_pte_range ret=0x40000000000001 */
+2030105.803719 |   1)   cat-131124   |                 folio_unlock(); /* ret=0xfffffffec1e4c980 */
+2030105.803720 |   1)   cat-131124   |                 next_uptodate_folio() {
+2030105.803721 |   1)   cat-131124   |                   rcu_read_lock_held() {
+2030105.803721 |   1)   cat-131124   |                     rcu_lockdep_current_cpu_online(); /* ret=0x1 */
+2030105.803723 |   1)   cat-131124   |                   } /* rcu_read_lock_held ret=0x1 */
+2030105.803723 |   1)   cat-131124   |                   __rcu_read_lock(); /* ret=0x4 */
+2030105.803725 |   1)   cat-131124   |                   __rcu_read_unlock(); /* ret=0x3fffffff */
+2030105.803727 |   1)   cat-131124   |                   rcu_read_lock_held() {
+2030105.803727 |   1)   cat-131124   |                     rcu_lockdep_current_cpu_online(); /* ret=0x1 */
+2030105.803729 |   1)   cat-131124   |                   } /* rcu_read_lock_held ret=0x1 */
+2030105.803729 |   1)   cat-131124   |                 } /* next_uptodate_folio ret=0xfffffffec1e4c540 */
+2030105.803730 |   1)   cat-131124   |                 set_pte_range() {
+2030105.803731 |   1)   cat-131124   |                   read_sanitised_ftr_reg() {
+2030105.803731 |   1)   cat-131124   |                     search_cmp_ftr_reg(); /* ret=0x320 */
+2030105.803733 |   1)   cat-131124   |                     search_cmp_ftr_reg(); /* ret=0xc0 */
+2030105.803734 |   1)   cat-131124   |                     search_cmp_ftr_reg(); /* ret=0xffff62a0 */
+2030105.803735 |   1)   cat-131124   |                     search_cmp_ftr_reg(); /* ret=-32 */
+2030105.803736 |   1)   cat-131124   |                     search_cmp_ftr_reg(); /* ret=0x0 */
+2030105.803737 |   1)   cat-131124   |                   } /* read_sanitised_ftr_reg ret=0x0 */
+2030105.803738 |   1)   cat-131124   |                   folio_add_file_rmap_ptes(); /* ret=0x0 */
+2030105.803739 |   1)   cat-131124   |                   __sync_icache_dcache(); /* ret=0x5e0000000601a2d */
+2030105.803740 |   1)   cat-131124   |                 } /* set_pte_range ret=0x40000000000001 */
+2030105.803741 |   1)   cat-131124   |                 folio_unlock(); /* ret=0xfffffffec1e4c540 */
+2030105.803742 |   1)   cat-131124   |                 next_uptodate_folio() {
+2030105.803743 |   1)   cat-131124   |                   rcu_read_lock_held() {
+2030105.803743 |   1)   cat-131124   |                     rcu_lockdep_current_cpu_online(); /* ret=0x1 */
+2030105.803745 |   1)   cat-131124   |                   } /* rcu_read_lock_held ret=0x1 */
+2030105.803745 |   1)   cat-131124   |                   __rcu_read_lock(); /* ret=0x4 */
+2030105.803747 |   1)   cat-131124   |                   __rcu_read_unlock(); /* ret=0x3fffffff */
+2030105.803749 |   1)   cat-131124   |                   rcu_read_lock_held() {
+2030105.803749 |   1)   cat-131124   |                     rcu_lockdep_current_cpu_online(); /* ret=0x1 */
+2030105.803750 |   1)   cat-131124   |                   } /* rcu_read_lock_held ret=0x1 */
+2030105.803751 |   1)   cat-131124   |                 } /* next_uptodate_folio ret=0xfffffffec1e4c500 */
+2030105.803752 |   1)   cat-131124   |                 set_pte_range() {
+2030105.803752 |   1)   cat-131124   |                   read_sanitised_ftr_reg() {
+2030105.803753 |   1)   cat-131124   |                     search_cmp_ftr_reg(); /* ret=0x320 */
+2030105.803754 |   1)   cat-131124   |                     search_cmp_ftr_reg(); /* ret=0xc0 */
+2030105.803756 |   1)   cat-131124   |                     search_cmp_ftr_reg(); /* ret=0xffff62a0 */
+2030105.803757 |   1)   cat-131124   |                     search_cmp_ftr_reg(); /* ret=-32 */
+2030105.803758 |   1)   cat-131124   |                     search_cmp_ftr_reg(); /* ret=0x0 */
+2030105.803759 |   1)   cat-131124   |                   } /* read_sanitised_ftr_reg ret=0x0 */
+2030105.803760 |   1)   cat-131124   |                   folio_add_file_rmap_ptes(); /* ret=0x0 */
+2030105.803761 |   1)   cat-131124   |                   __sync_icache_dcache(); /* ret=0x5e0000000601a2d */
+2030105.803762 |   1)   cat-131124   |                 } /* set_pte_range ret=0x40000000000001 */
+2030105.803763 |   1)   cat-131124   |                 folio_unlock(); /* ret=0xfffffffec1e4c500 */
+2030105.803764 |   1)   cat-131124   |                 next_uptodate_folio() {
+2030105.803765 |   1)   cat-131124   |                   rcu_read_lock_held() {
+2030105.803765 |   1)   cat-131124   |                     rcu_lockdep_current_cpu_online(); /* ret=0x1 */
+2030105.803766 |   1)   cat-131124   |                   } /* rcu_read_lock_held ret=0x1 */
+2030105.803767 |   1)   cat-131124   |                   __rcu_read_lock(); /* ret=0x4 */
+2030105.803769 |   1)   cat-131124   |                   __rcu_read_unlock(); /* ret=0x3fffffff */
+2030105.803770 |   1)   cat-131124   |                   rcu_read_lock_held() {
+2030105.803771 |   1)   cat-131124   |                     rcu_lockdep_current_cpu_online(); /* ret=0x1 */
+2030105.803772 |   1)   cat-131124   |                   } /* rcu_read_lock_held ret=0x1 */
+2030105.803773 |   1)   cat-131124   |                 } /* next_uptodate_folio ret=0xfffffffec1e48ec0 */
+2030105.803774 |   1)   cat-131124   |                 set_pte_range() {
+2030105.803774 |   1)   cat-131124   |                   read_sanitised_ftr_reg() {
+2030105.803775 |   1)   cat-131124   |                     search_cmp_ftr_reg(); /* ret=0x320 */
+2030105.803776 |   1)   cat-131124   |                     search_cmp_ftr_reg(); /* ret=0xc0 */
+2030105.803778 |   1)   cat-131124   |                     search_cmp_ftr_reg(); /* ret=0xffff62a0 */
+2030105.803779 |   1)   cat-131124   |                     search_cmp_ftr_reg(); /* ret=-32 */
+2030105.803780 |   1)   cat-131124   |                     search_cmp_ftr_reg(); /* ret=0x0 */
+2030105.803781 |   1)   cat-131124   |                   } /* read_sanitised_ftr_reg ret=0x0 */
+2030105.803782 |   1)   cat-131124   |                   folio_add_file_rmap_ptes(); /* ret=0x0 */
+2030105.803783 |   1)   cat-131124   |                   __sync_icache_dcache(); /* ret=0x5e0000000601a2d */
+2030105.803784 |   1)   cat-131124   |                 } /* set_pte_range ret=0x40000000000001 */
+2030105.803784 |   1)   cat-131124   |                 folio_unlock(); /* ret=0xfffffffec1e48ec0 */
+2030105.803785 |   1)   cat-131124   |                 next_uptodate_folio() {
+2030105.803786 |   1)   cat-131124   |                   rcu_read_lock_held() {
+2030105.803787 |   1)   cat-131124   |                     rcu_lockdep_current_cpu_online(); /* ret=0x1 */
+2030105.803788 |   1)   cat-131124   |                   } /* rcu_read_lock_held ret=0x1 */
+2030105.803789 |   1)   cat-131124   |                   __rcu_read_lock(); /* ret=0x4 */
+2030105.803790 |   1)   cat-131124   |                   __rcu_read_unlock(); /* ret=0x3fffffff */
+2030105.803792 |   1)   cat-131124   |                   rcu_read_lock_held() {
+2030105.803792 |   1)   cat-131124   |                     rcu_lockdep_current_cpu_online(); /* ret=0x1 */
+2030105.803794 |   1)   cat-131124   |                   } /* rcu_read_lock_held ret=0x1 */
+2030105.803794 |   1)   cat-131124   |                 } /* next_uptodate_folio ret=0xfffffffec1e48e80 */
+2030105.803795 |   1)   cat-131124   |                 set_pte_range() {
+2030105.803795 |   1)   cat-131124   |                   folio_add_file_rmap_ptes(); /* ret=0x0 */
+2030105.803796 |   1)   cat-131124   |                   __sync_icache_dcache(); /* ret=0x5e0000000601a2d */
+2030105.803798 |   1)   cat-131124   |                 } /* set_pte_range ret=0x40000000000001 */
+2030105.803798 |   1)   cat-131124   |                 folio_unlock(); /* ret=0xfffffffec1e48e80 */
+2030105.803799 |   1)   cat-131124   |                 next_uptodate_folio() {
+2030105.803800 |   1)   cat-131124   |                   rcu_read_lock_held() {
+2030105.803801 |   1)   cat-131124   |                     rcu_lockdep_current_cpu_online(); /* ret=0x1 */
+2030105.803802 |   1)   cat-131124   |                   } /* rcu_read_lock_held ret=0x1 */
+2030105.803802 |   1)   cat-131124   |                   __rcu_read_lock(); /* ret=0x4 */
+2030105.803804 |   1)   cat-131124   |                   __rcu_read_unlock(); /* ret=0x3fffffff */
+2030105.803806 |   1)   cat-131124   |                   rcu_read_lock_held() {
+2030105.803806 |   1)   cat-131124   |                     rcu_lockdep_current_cpu_online(); /* ret=0x1 */
+2030105.803807 |   1)   cat-131124   |                   } /* rcu_read_lock_held ret=0x1 */
+2030105.803808 |   1)   cat-131124   |                 } /* next_uptodate_folio ret=0xfffffffec1e48940 */
+2030105.803809 |   1)   cat-131124   |                 set_pte_range() {
+2030105.803809 |   1)   cat-131124   |                   read_sanitised_ftr_reg() {
+2030105.803810 |   1)   cat-131124   |                     search_cmp_ftr_reg(); /* ret=0x320 */
+2030105.803811 |   1)   cat-131124   |                     search_cmp_ftr_reg(); /* ret=0xc0 */
+2030105.803812 |   1)   cat-131124   |                     search_cmp_ftr_reg(); /* ret=0xffff62a0 */
+2030105.803813 |   1)   cat-131124   |                     search_cmp_ftr_reg(); /* ret=-32 */
+2030105.803814 |   1)   cat-131124   |                     search_cmp_ftr_reg(); /* ret=0x0 */
+2030105.803816 |   1)   cat-131124   |                   } /* read_sanitised_ftr_reg ret=0x0 */
+2030105.803816 |   1)   cat-131124   |                   folio_add_file_rmap_ptes(); /* ret=0x0 */
+2030105.803817 |   1)   cat-131124   |                   __sync_icache_dcache(); /* ret=0x5e0000000601a2d */
+2030105.803818 |   1)   cat-131124   |                 } /* set_pte_range ret=0x40000000000001 */
+2030105.803819 |   1)   cat-131124   |                 folio_unlock(); /* ret=0xfffffffec1e48940 */
+2030105.803820 |   1)   cat-131124   |                 next_uptodate_folio() {
+2030105.803821 |   1)   cat-131124   |                   rcu_read_lock_held() {
+2030105.803822 |   1)   cat-131124   |                     rcu_lockdep_current_cpu_online(); /* ret=0x1 */
+2030105.803823 |   1)   cat-131124   |                   } /* rcu_read_lock_held ret=0x1 */
+2030105.803823 |   1)   cat-131124   |                   __rcu_read_lock(); /* ret=0x4 */
+2030105.803825 |   1)   cat-131124   |                   __rcu_read_unlock(); /* ret=0x3fffffff */
+2030105.803826 |   1)   cat-131124   |                   rcu_read_lock_held() {
+2030105.803827 |   1)   cat-131124   |                     rcu_lockdep_current_cpu_online(); /* ret=0x1 */
+2030105.803828 |   1)   cat-131124   |                   } /* rcu_read_lock_held ret=0x1 */
+2030105.803829 |   1)   cat-131124   |                 } /* next_uptodate_folio ret=0xfffffffec1e48900 */
+2030105.803829 |   1)   cat-131124   |                 set_pte_range() {
+2030105.803830 |   1)   cat-131124   |                   read_sanitised_ftr_reg() {
+2030105.803831 |   1)   cat-131124   |                     search_cmp_ftr_reg(); /* ret=0x320 */
+2030105.803832 |   1)   cat-131124   |                     search_cmp_ftr_reg(); /* ret=0xc0 */
+2030105.803833 |   1)   cat-131124   |                     search_cmp_ftr_reg(); /* ret=0xffff62a0 */
+2030105.803834 |   1)   cat-131124   |                     search_cmp_ftr_reg(); /* ret=-32 */
+2030105.803835 |   1)   cat-131124   |                     search_cmp_ftr_reg(); /* ret=0x0 */
+2030105.803836 |   1)   cat-131124   |                   } /* read_sanitised_ftr_reg ret=0x0 */
+2030105.803837 |   1)   cat-131124   |                   folio_add_file_rmap_ptes(); /* ret=0x0 */
+2030105.803838 |   1)   cat-131124   |                   __sync_icache_dcache(); /* ret=0x5e0000000601a2d */
+2030105.803840 |   1)   cat-131124   |                 } /* set_pte_range ret=0x40000000000001 */
+2030105.803841 |   1)   cat-131124   |                 folio_unlock(); /* ret=0xfffffffec1e48900 */
+2030105.803842 |   1)   cat-131124   |                 next_uptodate_folio() {
+2030105.803843 |   1)   cat-131124   |                   rcu_read_lock_held() {
+2030105.803843 |   1)   cat-131124   |                     rcu_lockdep_current_cpu_online(); /* ret=0x1 */
+2030105.803845 |   1)   cat-131124   |                   } /* rcu_read_lock_held ret=0x1 */
+2030105.803845 |   1)   cat-131124   |                   __rcu_read_lock(); /* ret=0x4 */
+2030105.803847 |   1)   cat-131124   |                   __rcu_read_unlock(); /* ret=0x3fffffff */
+2030105.803849 |   1)   cat-131124   |                   rcu_read_lock_held() {
+2030105.803849 |   1)   cat-131124   |                     rcu_lockdep_current_cpu_online(); /* ret=0x1 */
+2030105.803851 |   1)   cat-131124   |                   } /* rcu_read_lock_held ret=0x1 */
+2030105.803851 |   1)   cat-131124   |                 } /* next_uptodate_folio ret=0xfffffffec1e48640 */
+2030105.803852 |   1)   cat-131124   |                 set_pte_range() {
+2030105.803853 |   1)   cat-131124   |                   read_sanitised_ftr_reg() {
+2030105.803853 |   1)   cat-131124   |                     search_cmp_ftr_reg(); /* ret=0x320 */
+2030105.803854 |   1)   cat-131124   |                     search_cmp_ftr_reg(); /* ret=0xc0 */
+2030105.803856 |   1)   cat-131124   |                     search_cmp_ftr_reg(); /* ret=0xffff62a0 */
+2030105.803857 |   1)   cat-131124   |                     search_cmp_ftr_reg(); /* ret=-32 */
+2030105.803858 |   1)   cat-131124   |                     search_cmp_ftr_reg(); /* ret=0x0 */
+2030105.803859 |   1)   cat-131124   |                   } /* read_sanitised_ftr_reg ret=0x0 */
+2030105.803860 |   1)   cat-131124   |                   folio_add_file_rmap_ptes(); /* ret=0x0 */
+2030105.803861 |   1)   cat-131124   |                   __sync_icache_dcache(); /* ret=0x5e0000000601a2d */
+2030105.803862 |   1)   cat-131124   |                 } /* set_pte_range ret=0x40000000000001 */
+2030105.803863 |   1)   cat-131124   |                 folio_unlock(); /* ret=0xfffffffec1e48640 */
+2030105.803864 |   1)   cat-131124   |                 next_uptodate_folio() {
+2030105.803865 |   1)   cat-131124   |                   rcu_read_lock_held() {
+2030105.803865 |   1)   cat-131124   |                     rcu_lockdep_current_cpu_online(); /* ret=0x1 */
+2030105.803866 |   1)   cat-131124   |                   } /* rcu_read_lock_held ret=0x1 */
+2030105.803867 |   1)   cat-131124   |                   __rcu_read_lock(); /* ret=0x4 */
+2030105.803869 |   1)   cat-131124   |                   __rcu_read_unlock(); /* ret=0x3fffffff */
+2030105.803870 |   1)   cat-131124   |                   rcu_read_lock_held() {
+2030105.803871 |   1)   cat-131124   |                     rcu_lockdep_current_cpu_online(); /* ret=0x1 */
+2030105.803872 |   1)   cat-131124   |                   } /* rcu_read_lock_held ret=0x1 */
+2030105.803873 |   1)   cat-131124   |                 } /* next_uptodate_folio ret=0xfffffffec1e48600 */
+2030105.803873 |   1)   cat-131124   |                 set_pte_range() {
+2030105.803874 |   1)   cat-131124   |                   read_sanitised_ftr_reg() {
+2030105.803875 |   1)   cat-131124   |                     search_cmp_ftr_reg(); /* ret=0x320 */
+2030105.803876 |   1)   cat-131124   |                     search_cmp_ftr_reg(); /* ret=0xc0 */
+2030105.803877 |   1)   cat-131124   |                     search_cmp_ftr_reg(); /* ret=0xffff62a0 */
+2030105.803878 |   1)   cat-131124   |                     search_cmp_ftr_reg(); /* ret=-32 */
+2030105.803879 |   1)   cat-131124   |                     search_cmp_ftr_reg(); /* ret=0x0 */
+2030105.803881 |   1)   cat-131124   |                   } /* read_sanitised_ftr_reg ret=0x0 */
+2030105.803881 |   1)   cat-131124   |                   folio_add_file_rmap_ptes(); /* ret=0x0 */
+2030105.803882 |   1)   cat-131124   |                   __sync_icache_dcache(); /* ret=0x5e0000000601a2d */
+2030105.803884 |   1)   cat-131124   |                 } /* set_pte_range ret=0x40000000000001 */
+2030105.803884 |   1)   cat-131124   |                 folio_unlock(); /* ret=0xfffffffec1e48600 */
+2030105.803885 |   1)   cat-131124   |                 next_uptodate_folio() {
+2030105.803886 |   1)   cat-131124   |                   rcu_read_lock_held() {
+2030105.803887 |   1)   cat-131124   |                     rcu_lockdep_current_cpu_online(); /* ret=0x1 */
+2030105.803888 |   1)   cat-131124   |                   } /* rcu_read_lock_held ret=0x1 */
+2030105.803889 |   1)   cat-131124   |                   __rcu_read_lock(); /* ret=0x4 */
+2030105.803891 |   1)   cat-131124   |                   __rcu_read_unlock(); /* ret=0x3fffffff */
+2030105.803892 |   1)   cat-131124   |                   rcu_read_lock_held() {
+2030105.803893 |   1)   cat-131124   |                     rcu_lockdep_current_cpu_online(); /* ret=0x1 */
+2030105.803894 |   1)   cat-131124   |                   } /* rcu_read_lock_held ret=0x1 */
+2030105.803894 |   1)   cat-131124   |                 } /* next_uptodate_folio ret=0xfffffffec1e47a40 */
+2030105.803895 |   1)   cat-131124   |                 set_pte_range() {
+2030105.803896 |   1)   cat-131124   |                   read_sanitised_ftr_reg() {
+2030105.803896 |   1)   cat-131124   |                     search_cmp_ftr_reg(); /* ret=0x320 */
+2030105.803897 |   1)   cat-131124   |                     search_cmp_ftr_reg(); /* ret=0xc0 */
+2030105.803899 |   1)   cat-131124   |                     search_cmp_ftr_reg(); /* ret=0xffff62a0 */
+2030105.803900 |   1)   cat-131124   |                     search_cmp_ftr_reg(); /* ret=-32 */
+2030105.803901 |   1)   cat-131124   |                     search_cmp_ftr_reg(); /* ret=0x0 */
+2030105.803902 |   1)   cat-131124   |                   } /* read_sanitised_ftr_reg ret=0x0 */
+2030105.803903 |   1)   cat-131124   |                   folio_add_file_rmap_ptes(); /* ret=0x0 */
+2030105.803904 |   1)   cat-131124   |                   __sync_icache_dcache(); /* ret=0x5e0000000601a2d */
+2030105.803906 |   1)   cat-131124   |                 } /* set_pte_range ret=0x40000000000001 */
+2030105.803906 |   1)   cat-131124   |                 folio_unlock(); /* ret=0xfffffffec1e47a40 */
+2030105.803907 |   1)   cat-131124   |                 next_uptodate_folio() {
+2030105.803908 |   1)   cat-131124   |                   rcu_read_lock_held() {
+2030105.803909 |   1)   cat-131124   |                     rcu_lockdep_current_cpu_online(); /* ret=0x1 */
+2030105.803910 |   1)   cat-131124   |                   } /* rcu_read_lock_held ret=0x1 */
+2030105.803911 |   1)   cat-131124   |                   __rcu_read_lock(); /* ret=0x4 */
+2030105.803913 |   1)   cat-131124   |                   __rcu_read_unlock(); /* ret=0x3fffffff */
+2030105.803914 |   1)   cat-131124   |                   rcu_read_lock_held() {
+2030105.803915 |   1)   cat-131124   |                     rcu_lockdep_current_cpu_online(); /* ret=0x1 */
+2030105.803916 |   1)   cat-131124   |                   } /* rcu_read_lock_held ret=0x1 */
+2030105.803917 |   1)   cat-131124   |                 } /* next_uptodate_folio ret=0xfffffffec1e47a00 */
+2030105.803917 |   1)   cat-131124   |                 set_pte_range() {
+2030105.803918 |   1)   cat-131124   |                   read_sanitised_ftr_reg() {
+2030105.803919 |   1)   cat-131124   |                     search_cmp_ftr_reg(); /* ret=0x320 */
+2030105.803920 |   1)   cat-131124   |                     search_cmp_ftr_reg(); /* ret=0xc0 */
+2030105.803921 |   1)   cat-131124   |                     search_cmp_ftr_reg(); /* ret=0xffff62a0 */
+2030105.803922 |   1)   cat-131124   |                     search_cmp_ftr_reg(); /* ret=-32 */
+2030105.803923 |   1)   cat-131124   |                     search_cmp_ftr_reg(); /* ret=0x0 */
+2030105.803925 |   1)   cat-131124   |                   } /* read_sanitised_ftr_reg ret=0x0 */
+2030105.803925 |   1)   cat-131124   |                   folio_add_file_rmap_ptes(); /* ret=0x0 */
+2030105.803927 |   1)   cat-131124   |                   __sync_icache_dcache(); /* ret=0x5e0000000601a2d */
+2030105.803928 |   1)   cat-131124   |                 } /* set_pte_range ret=0x40000000000001 */
+2030105.803928 |   1)   cat-131124   |                 folio_unlock(); /* ret=0xfffffffec1e47a00 */
+2030105.803930 |   1)   cat-131124   |                 next_uptodate_folio() {
+2030105.803930 |   1)   cat-131124   |                   rcu_read_lock_held() {
+2030105.803931 |   1)   cat-131124   |                     rcu_lockdep_current_cpu_online(); /* ret=0x1 */
+2030105.803932 |   1)   cat-131124   |                   } /* rcu_read_lock_held ret=0x1 */
+2030105.803933 |   1)   cat-131124   |                   __rcu_read_lock(); /* ret=0x4 */
+2030105.803935 |   1)   cat-131124   |                   __rcu_read_unlock(); /* ret=0x3fffffff */
+2030105.803936 |   1)   cat-131124   |                   rcu_read_lock_held() {
+2030105.803937 |   1)   cat-131124   |                     rcu_lockdep_current_cpu_online(); /* ret=0x1 */
+2030105.803938 |   1)   cat-131124   |                   } /* rcu_read_lock_held ret=0x1 */
+2030105.803939 |   1)   cat-131124   |                 } /* next_uptodate_folio ret=0xfffffffec1e47740 */
+2030105.803940 |   1)   cat-131124   |                 set_pte_range() {
+2030105.803940 |   1)   cat-131124   |                   read_sanitised_ftr_reg() {
+2030105.803941 |   1)   cat-131124   |                     search_cmp_ftr_reg(); /* ret=0x320 */
+2030105.803942 |   1)   cat-131124   |                     search_cmp_ftr_reg(); /* ret=0xc0 */
+2030105.803943 |   1)   cat-131124   |                     search_cmp_ftr_reg(); /* ret=0xffff62a0 */
+2030105.803944 |   1)   cat-131124   |                     search_cmp_ftr_reg(); /* ret=-32 */
+2030105.803946 |   1)   cat-131124   |                     search_cmp_ftr_reg(); /* ret=0x0 */
+2030105.803947 |   1)   cat-131124   |                   } /* read_sanitised_ftr_reg ret=0x0 */
+2030105.803948 |   1)   cat-131124   |                   folio_add_file_rmap_ptes(); /* ret=0x0 */
+2030105.803949 |   1)   cat-131124   |                   __sync_icache_dcache(); /* ret=0x5e0000000601a2d */
+2030105.803950 |   1)   cat-131124   |                 } /* set_pte_range ret=0x40000000000001 */
+2030105.803951 |   1)   cat-131124   |                 folio_unlock(); /* ret=0xfffffffec1e47740 */
+2030105.803952 |   1)   cat-131124   |                 next_uptodate_folio(); /* ret=0x0 */
+2030105.803953 |   1)   cat-131124   |                 _raw_spin_lock_irqsave() {
+2030105.803954 |   1)   cat-131124   |                   unwind_find_stack.constprop.0(); /* ret=0xffffffc0871e3718 */
+2030105.803956 |   1)   cat-131124   |                   unwind_find_stack.constprop.0(); /* ret=0xffffffc0871e36c8 */
+2030105.803957 |   1)   cat-131124   |                   unwind_find_stack.constprop.0(); /* ret=0xffffffc0871e36c8 */
+2030105.803958 |   1)   cat-131124   |                   unwind_find_stack.constprop.0(); /* ret=0xffffffc0871e3718 */
+2030105.803960 |   1)   cat-131124   |                   unwind_find_stack.constprop.0(); /* ret=0xffffffc0871e36c8 */
+2030105.803961 |   1)   cat-131124   |                   unwind_find_stack.constprop.0(); /* ret=0xffffffc0871e36c8 */
+2030105.803962 |   1)   cat-131124   |                   preempt_count_add(); /* ret=0x1 */
+2030105.803964 |   1)   cat-131124   |                   do_raw_spin_trylock(); /* ret=0x1 */
+2030105.803965 |   1)   cat-131124   |                 } /* _raw_spin_lock_irqsave ret=0x0 */
+2030105.803966 |   1)   cat-131124   |                 _raw_spin_unlock_irqrestore() {
+2030105.803967 |   1)   cat-131124   |                   do_raw_spin_unlock(); /* ret=-1 */
+2030105.803968 |   1)   cat-131124   |                   unwind_find_stack.constprop.0(); /* ret=0xffffffc0871e3738 */
+2030105.803969 |   1)   cat-131124   |                   unwind_find_stack.constprop.0(); /* ret=0xffffffc0871e36e8 */
+2030105.803970 |   1)   cat-131124   |                   unwind_find_stack.constprop.0(); /* ret=0xffffffc0871e36e8 */
+2030105.803972 |   1)   cat-131124   |                   unwind_find_stack.constprop.0(); /* ret=0xffffffc0871e3738 */
+2030105.803974 |   1)   cat-131124   |                   unwind_find_stack.constprop.0(); /* ret=0xffffffc0871e36e8 */
+2030105.803975 |   1)   cat-131124   |                   unwind_find_stack.constprop.0(); /* ret=0xffffffc0871e36e8 */
+2030105.803976 |   1)   cat-131124   |                   preempt_count_sub(); /* ret=0x1 */
+2030105.803978 |   1)   cat-131124   |                 } /* _raw_spin_unlock_irqrestore ret=0x100000001 */
+2030105.803978 |   1)   cat-131124   |                 mm_trace_rss_stat(); /* ret=0x1 */
+2030105.803980 |   1)   cat-131124   |                 _raw_spin_unlock() {
+2030105.803981 |   1)   cat-131124   |                   do_raw_spin_unlock(); /* ret=-1 */
+2030105.803982 |   1)   cat-131124   |                   preempt_count_sub(); /* ret=0x0 */
+2030105.803983 |   1)   cat-131124   |                 } /* _raw_spin_unlock ret=0x100000000 */
+2030105.803984 |   1)   cat-131124   |                 __rcu_read_unlock(); /* ret=0x3fffffff */
+2030105.803985 |   1)   cat-131124   |                 __rcu_read_unlock(); /* ret=0x3fffffff */
+2030105.803987 |   1)   cat-131124   |               } /* filemap_map_pages ret=0x100 */
+2030105.803987 |   1)   cat-131124   |               __rcu_read_unlock(); /* ret=0x3fffffff */
+2030105.803989 |   1)   cat-131124   |             } /* do_fault ret=0x100 */
+2030105.803989 |   1)   cat-131124   |           } /* __handle_mm_fault ret=0x100 */
+2030105.803990 |   1)   cat-131124   |         } /* handle_mm_fault ret=0x100 */
+2030105.803991 |   1)   cat-131124   |         up_read() {
+2030105.803991 |   1)   cat-131124   |           preempt_count_add(); /* ret=0xffffffc08002f6c0 */
+2030105.803993 |   1)   cat-131124   |           preempt_count_sub(); /* ret=0x0 */
+2030105.803994 |   1)   cat-131124   |         } /* up_read ret=0x100000000 */
+2030105.803995 |   1)   cat-131124   |       } /* do_mem_abort ret=0x0 */
+2030105.803996 |   1)   cat-131124   |       unwind_find_stack.constprop.0(); /* ret=0xffffffc0871e3ab8 */
+2030105.803997 |   1)   cat-131124   |       unwind_find_stack.constprop.0(); /* ret=0xffffffc0871e3a68 */
+2030105.803998 |   1)   cat-131124   |       unwind_find_stack.constprop.0(); /* ret=0xffffffc0871e3a68 */
+2030105.803999 |   1)   cat-131124   |       unwind_find_stack.constprop.0(); /* ret=0xffffffc0871e3ab8 */
+2030105.804000 |   1)   cat-131124   |       unwind_find_stack.constprop.0(); /* ret=0xffffffc0871e3a68 */
+2030105.804002 |   1)   cat-131124   |       unwind_find_stack.constprop.0(); /* ret=0xffffffc0871e3a68 */
+2030105.804003 |   1)   cat-131124   |       raw_irqentry_exit_cond_resched() {
+2030105.804004 |   1)   cat-131124   |         rcu_irq_exit_check_preempt(); /* ret=0x20164e24 */
+2030105.804005 |   1)   cat-131124   |       } /* raw_irqentry_exit_cond_resched ret=0x0 */
+2030105.804006 |   1)   cat-131124   |       unwind_find_stack.constprop.0(); /* ret=0xffffffc0871e3a68 */
+2030105.804007 |   1)   cat-131124   |       unwind_find_stack.constprop.0(); /* ret=0xffffffc0871e3a18 */
+2030105.804009 |   1)   cat-131124   |       unwind_find_stack.constprop.0(); /* ret=0xffffffc0871e3a18 */
+2030105.804010 |   1)   cat-131124   |       unwind_find_stack.constprop.0(); /* ret=0xffffffc0871e3a68 */
+2030105.804011 |   1)   cat-131124   |       unwind_find_stack.constprop.0(); /* ret=0xffffffc0871e3a18 */
+2030105.804013 |   1)   cat-131124   |       unwind_find_stack.constprop.0(); /* ret=0xffffffc0871e3a18 */
+2030105.804014 |   1)   cat-131124   |     } /* getname_flags ret=0xffffff80409b3000 */
+2030105.804015 |   1)   cat-131124   |     get_unused_fd_flags() {
+2030105.804016 |   1)   cat-131124   |       alloc_fd() {
+2030105.804017 |   1)   cat-131124   |         _raw_spin_lock() {
+2030105.804017 |   1)   cat-131124   |           preempt_count_add(); /* ret=0xffffffc08002f6c0 */
+2030105.804019 |   1)   cat-131124   |           do_raw_spin_trylock(); /* ret=0x1 */
+2030105.804021 |   1)   cat-131124   |         } /* _raw_spin_lock ret=0xffffff8040813040 */
+2030105.804022 |   1)   cat-131124   |         _raw_spin_unlock() {
+2030105.804022 |   1)   cat-131124   |           do_raw_spin_unlock(); /* ret=-1 */
+2030105.804024 |   1)   cat-131124   |             unwind_find_stack.constprop.0(); /* ret=0xffffffc0871e37f8 */
+2030105.804025 |   1)   cat-131124   |             unwind_find_stack.constprop.0(); /* ret=0xffffffc0871e37a8 */
+2030105.804026 |   1)   cat-131124   |             unwind_find_stack.constprop.0(); /* ret=0xffffffc0871e37a8 */
+2030105.804027 |   1)   cat-131124   |             unwind_find_stack.constprop.0(); /* ret=0xffffffc0871e37f8 */
+2030105.804029 |   1)   cat-131124   |             unwind_find_stack.constprop.0(); /* ret=0xffffffc0871e37a8 */
+2030105.804030 |   1)   cat-131124   |             unwind_find_stack.constprop.0(); /* ret=0xffffffc0871e37a8 */
+2030105.804031 |   1)   cat-131124   |             irq_enter_rcu() {
+2030105.804031 |   1)   cat-131124   |               preempt_count_add(); /* ret=0x10000 */
+2030105.804032 |   1)   cat-131124   |             } /* irq_enter_rcu ret=0xffffff8040813040 */
+2030105.804092 |   1)   cat-131124   |             do_softirq_own_stack() {
+2030105.804093 |   1)   cat-131124   |               ____do_softirq() {
+2030105.804094 |   1)   cat-131124   |                 __do_softirq() {
+2030105.804094 |   1)   cat-131124   |                   handle_softirqs() {
+2030105.804095 |   1)   cat-131124   |                     __local_bh_disable_ip(); /* ret=0x103 */
+2030105.804097 |   1)   cat-131124   |                     unwind_find_stack.constprop.0(); /* ret=0xffffffc0837f3e68 */
+2030105.804098 |   1)   cat-131124   |                     unwind_find_stack.constprop.0(); /* ret=0xffffffc0837f3e08 */
+2030105.804099 |   1)   cat-131124   |                     unwind_find_stack.constprop.0(); /* ret=0xffffffc0837f3e08 */
+2030105.804100 |   1)   cat-131124   |                     unwind_find_stack.constprop.0(); /* ret=0xffffffc0837f3e68 */
+2030105.804102 |   1)   cat-131124   |                     unwind_find_stack.constprop.0(); /* ret=0xffffffc0837f3e08 */
+2030105.804103 |   1)   cat-131124   |                     unwind_find_stack.constprop.0(); /* ret=0xffffffc0837f3e08 */
+2030105.804104 |   1)   cat-131124   |                     rcu_core_si() {
+2030105.804105 |   1)   cat-131124   |                       rcu_core() {
+2030105.804106 |   1)   cat-131124   |                         note_gp_changes() {
+2030105.804107 |   1)   cat-131124   |                           unwind_find_stack.constprop.0(); /* ret=0xffffffc0837f3d58 */
+2030105.804108 |   1)   cat-131124   |                           unwind_find_stack.constprop.0(); /* ret=0xffffffc0837f3cf8 */
+2030105.804109 |   1)   cat-131124   |                           unwind_find_stack.constprop.0(); /* ret=0xffffffc0837f3cf8 */
+2030105.804110 |   1)   cat-131124   |                           unwind_find_stack.constprop.0(); /* ret=0xffffffc0837f3d58 */
+2030105.804111 |   1)   cat-131124   |                           unwind_find_stack.constprop.0(); /* ret=0xffffffc0837f3cf8 */
+2030105.804112 |   1)   cat-131124   |                           unwind_find_stack.constprop.0(); /* ret=0xffffffc0837f3cf8 */
+2030105.804113 |   1)   cat-131124   |                           _raw_spin_trylock() {
+2030105.804114 |   1)   cat-131124   |                             preempt_count_add(); /* ret=0x1 */
+2030105.804115 |   1)   cat-131124   |                             do_raw_spin_trylock(); /* ret=0x1 */
+2030105.804117 |   1)   cat-131124   |                           } /* _raw_spin_trylock ret=0x1 */
+2030105.804117 |   1)   cat-131124   |                           __note_gp_changes() {
+2030105.804118 |   1)   cat-131124   |                             rcu_advance_cbs() {
+2030105.804118 |   1)   cat-131124   |                               rcu_lockdep_assert_cblist_protected.constprop.0(); /* ret=0x100000104 */
+2030105.804120 |   1)   cat-131124   |                               rcu_segcblist_pend_cbs(); /* ret=0x1 */
+2030105.804121 |   1)   cat-131124   |                               rcu_segcblist_advance(); /* ret=0xffffff807d62e0f0 */
+2030105.804122 |   1)   cat-131124   |                               rcu_accelerate_cbs() {
+2030105.804123 |   1)   cat-131124   |                                 rcu_lockdep_assert_cblist_protected.constprop.0(); /* ret=0x100000104 */
+2030105.804124 |   1)   cat-131124   |                                 rcu_segcblist_pend_cbs(); /* ret=0x1 */
+2030105.804125 |   1)   cat-131124   |                                 rcu_segcblist_accelerate(); /* ret=0x0 */
+2030105.804126 |   1)   cat-131124   |                               } /* rcu_accelerate_cbs ret=0x0 */
+2030105.804127 |   1)   cat-131124   |                             } /* rcu_advance_cbs ret=0x0 */
+2030105.804127 |   1)   cat-131124   |                             rcu_gpnum_ovf(); /* ret=0x44d4839 */
+2030105.804129 |   1)   cat-131124   |                           } /* __note_gp_changes ret=0x0 */
+2030105.804129 |   1)   cat-131124   |                           _raw_spin_unlock_irqrestore() {
+2030105.804130 |   1)   cat-131124   |                             do_raw_spin_unlock(); /* ret=-1 */
+2030105.804132 |   1)   cat-131124   |                             unwind_find_stack.constprop.0(); /* ret=0xffffffc0837f3d38 */
+2030105.804133 |   1)   cat-131124   |                             unwind_find_stack.constprop.0(); /* ret=0xffffffc0837f3cd8 */
+2030105.804134 |   1)   cat-131124   |                             unwind_find_stack.constprop.0(); /* ret=0xffffffc0837f3cd8 */
+2030105.804135 |   1)   cat-131124   |                             unwind_find_stack.constprop.0(); /* ret=0xffffffc0837f3d38 */
+2030105.804136 |   1)   cat-131124   |                             unwind_find_stack.constprop.0(); /* ret=0xffffffc0837f3cd8 */
+2030105.804137 |   1)   cat-131124   |                             unwind_find_stack.constprop.0(); /* ret=0xffffffc0837f3cd8 */
+2030105.804139 |   1)   cat-131124   |                             preempt_count_sub(); /* ret=0x103 */
+2030105.804140 |   1)   cat-131124   |                           } /* _raw_spin_unlock_irqrestore ret=0x100000103 */
+2030105.804140 |   1)   cat-131124   |                         } /* note_gp_changes ret=0x100000103 */
+2030105.804141 |   1)   cat-131124   |                         rcu_check_gp_start_stall.constprop.0(); /* ret=0xffffffc082a1be80 */
+2030105.804142 |   1)   cat-131124   |                         rcu_segcblist_ready_cbs(); /* ret=0x0 */
+2030105.804143 |   1)   cat-131124   |                       } /* rcu_core ret=0xffffff8040813040 */
+2030105.804143 |   1)   cat-131124   |                     } /* rcu_core_si ret=0xffffff8040813040 */
+2030105.804144 |   1)   cat-131124   |                     unwind_find_stack.constprop.0(); /* ret=0xffffffc0837f3e68 */
+2030105.804145 |   1)   cat-131124   |                     unwind_find_stack.constprop.0(); /* ret=0xffffffc0837f3e08 */
+2030105.804146 |   1)   cat-131124   |                     unwind_find_stack.constprop.0(); /* ret=0xffffffc0837f3e08 */
+2030105.804148 |   1)   cat-131124   |                     unwind_find_stack.constprop.0(); /* ret=0xffffffc0837f3e68 */
+2030105.804149 |   1)   cat-131124   |                     unwind_find_stack.constprop.0(); /* ret=0xffffffc0837f3e08 */
+2030105.804150 |   1)   cat-131124   |                     unwind_find_stack.constprop.0(); /* ret=0xffffffc0837f3e08 */
+2030105.804151 |   1)   cat-131124   |                     __local_bh_enable(); /* ret=0x3 */
+2030105.804152 |   1)   cat-131124   |                   } /* handle_softirqs ret=0x400000 */
+2030105.804153 |   1)   cat-131124   |                 } /* __do_softirq ret=0x400000 */
+2030105.804153 |   1)   cat-131124   |               } /* ____do_softirq ret=0x400000 */
+2030105.804154 |   1)   cat-131124   |             } /* do_softirq_own_stack ret=0x400000 */
+2030105.804155 |   1)   cat-131124   |             idle_cpu(); /* ret=0x0 */
+2030105.804156 |   1)   cat-131124   |             raw_irqentry_exit_cond_resched(); /* ret=0x3 */
+2030105.804157 |   1)   cat-131124   |             unwind_find_stack.constprop.0(); /* ret=0xffffffc0871e37c8 */
+2030105.804158 |   1)   cat-131124   |             unwind_find_stack.constprop.0(); /* ret=0xffffffc0871e3778 */
+2030105.804159 |   1)   cat-131124   |             unwind_find_stack.constprop.0(); /* ret=0xffffffc0871e3778 */
+2030105.804160 |   1)   cat-131124   |             unwind_find_stack.constprop.0(); /* ret=0xffffffc0871e37c8 */
+2030105.804162 |   1)   cat-131124   |             unwind_find_stack.constprop.0(); /* ret=0xffffffc0871e3778 */
+2030105.804163 |   1)   cat-131124   |             unwind_find_stack.constprop.0(); /* ret=0xffffffc0871e3778 */
+2030105.804165 |   1)   cat-131124   |           preempt_count_sub(); /* ret=0x0 */
+2030105.804167 |   1)   cat-131124   |         } /* _raw_spin_unlock ret=0x100000000 */
+2030105.804167 |   1)   cat-131124   |       } /* alloc_fd ret=0x3 */
+2030105.804168 |   1)   cat-131124   |     } /* get_unused_fd_flags ret=0x3 */
+2030105.804169 |   1)   cat-131124   |     do_filp_open() {
+2030105.804169 |   1)   cat-131124   |       path_openat() {
+2030105.804170 |   1)   cat-131124   |         alloc_empty_file() {
+2030105.804171 |   1)   cat-131124   |           kmem_cache_alloc_noprof() {
+2030105.804172 |   1)   cat-131124   |             fs_reclaim_acquire(); /* ret=0xffffff8040813040 */
+2030105.804174 |   1)   cat-131124   |             fs_reclaim_release(); /* ret=0xffffff8040813040 */
+2030105.804176 |   1)   cat-131124   |             __might_sleep() {
+2030105.804176 |   1)   cat-131124   |               __might_resched(); /* ret=0x0 */
+2030105.804178 |   1)   cat-131124   |             } /* __might_sleep ret=0x0 */
+2030105.804179 |   1)   cat-131124   |           } /* kmem_cache_alloc_noprof ret=0xffffff80412ebe00 */
+2030105.804180 |   1)   cat-131124   |           init_file() {
+2030105.804180 |   1)   cat-131124   |             security_file_alloc(); /* ret=0x0 */
+2030105.804182 |   1)   cat-131124   |             __raw_spin_lock_init(); /* ret=-1 */
+2030105.804183 |   1)   cat-131124   |             __mutex_init() {
+2030105.804184 |   1)   cat-131124   |               __raw_spin_lock_init(); /* ret=-1 */
+2030105.804185 |   1)   cat-131124   |             } /* __mutex_init ret=0x1 */
+2030105.804186 |   1)   cat-131124   |           } /* init_file ret=0x0 */
+2030105.804187 |   1)   cat-131124   |         } /* alloc_empty_file ret=0xffffff80412ebe00 */
+2030105.804188 |   1)   cat-131124   |         path_init() {
+2030105.804188 |   1)   cat-131124   |           __rcu_read_lock(); /* ret=0x1 */

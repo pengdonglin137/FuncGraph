@@ -1,76 +1,60 @@
 #!/usr/bin/env python3
-"""Invariant tests for timeline.py / btf.py.
+"""timeline.py: slice reconstruction invariants and per-option behaviour.
 
-Usage: python3 tests/test_timeline.py [trace files...]
-Without arguments runs the bundled ftrace.txt plus synthetic format variants.
-Optional env: FG_VMLINUX=<vmlinux with .BTF> to also check BTF classification.
+    python3 -m unittest tests/test_timeline.py
+    FG_TRACES="a.txt b.txt" python3 -m unittest tests/test_timeline.py   # also check extra traces
 """
 import os
-import sys
+import unittest
 
-HERE = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, os.path.dirname(HERE))
-import timeline  # noqa: E402
-import btf  # noqa: E402
-
-FAIL = []
+import helpers
+from fglib import timeline
+from fglib.btf import ReturnTypeDB
 
 
-def check(cond, msg):
-    if not cond:
-        FAIL.append(msg)
-    return cond
+def build(text, db=None):
+    return timeline.build_timeline(text.split('\n'), rettypes=db).to_data()
 
 
-def invariants(name, data, expect_mode=None):
-    c = data['cols']
-    n = data['n']
-    start, dur, task, depth, parent = [], c['dur'], c['task'], c['depth'], c['parent']
-    acc, pt = 0, -1
-    for i in range(n):
-        if task[i] != pt:
-            pt, acc = task[i], 0
+def decode(d):
+    c = d['cols']
+    start, acc, pt = [], 0, -1
+    for i in range(d['n']):
+        if c['task'][i] != pt:
+            pt, acc = c['task'][i], 0
         acc += c['start'][i]
         start.append(acc)
-    end = [start[i] + dur[i] for i in range(n)]
-    bad_dur = sum(1 for d in dur if d < 0)
-    bad_nest = 0
-    bad_depth = 0
+    end = [s + x for s, x in zip(start, c['dur'])]
+    return start, end
+
+
+def invariant_errors(d):
+    """Return a list of violated invariants (empty when the model is consistent)."""
+    c, n = d['cols'], d['n']
+    start, end = decode(d)
+    errs = []
+    if any(x < 0 for x in c['dur']):
+        errs.append('negative duration')
     for i in range(n):
-        p = parent[i]
+        p = c['parent'][i]
         if p < 0:
             continue
         if not (start[p] <= start[i] and end[i] <= end[p]):
-            bad_nest += 1
-        if depth[p] != depth[i] - 1 or task[p] != task[i]:
-            bad_depth += 1
+            errs.append(f'slice {i} outside parent {p}')
+        if c['depth'][p] != c['depth'][i] - 1 or c['task'][p] != c['task'][i]:
+            errs.append(f'slice {i}: parent depth/task mismatch')
     rows = {}
     for i in range(n):
-        rows.setdefault((task[i], depth[i]), []).append(i)
-    overlap = 0
+        rows.setdefault((c['task'][i], c['depth'][i]), []).append(i)
     for idx in rows.values():
         idx.sort(key=lambda i: start[i])
         for a, b in zip(idx, idx[1:]):
             if start[b] < end[a]:
-                overlap += 1
-    check(bad_dur == 0, f"{name}: {bad_dur} negative durations")
-    check(bad_nest == 0, f"{name}: {bad_nest} children outside parent")
-    check(bad_depth == 0, f"{name}: {bad_depth} parent depth/task mismatch")
-    check(overlap == 0, f"{name}: {overlap} overlapping slices in a row")
-    if expect_mode:
-        check(data['mode'] == expect_mode, f"{name}: mode {data['mode']} != {expect_mode}")
-    caps = ','.join(k for k, v in data['caps'].items() if v)
-    print(f"  {name:28s} mode={data['mode']:10s} slices={n:7d} tasks={len(data['tasks']):3d} "
-          f"chains={len(data['chains']):4d} off={len(data['offcpu']):3d} trunc={data['stats']['truncated']} "
-          f"orph={data['stats']['orphans']}  [{caps}]")
-
-
-def run(name, text, db=None, expect_mode=None):
-    lines = text.split('\n')
-    b = timeline.build_timeline(lines, rettypes=db)
-    d = b.to_data()
-    invariants(name, d, expect_mode)
-    return d
+                errs.append(f'overlap {a}/{b}')
+    for ch in d['chains']:
+        if not (0 <= ch[0] < n and 0 <= ch[1] < n):
+            errs.append('chain index out of range')
+    return errs[:10]
 
 
 SYNTH_FULL = """\
@@ -115,44 +99,117 @@ SYNTH_SWITCH = """\
 
 1000.000300 |   0)   a-10     |  ...1. | ! 200.000 us  |  } /* schedule */
 """
+SYNTH_VOID = """\
+1000.000100 |   0)   sh-7     |  ...1. |   1.000 us    |  do_raw_spin_unlock(); /* <-x+0x1/0x2 ret=-1 */
+1000.000102 |   0)   sh-7     |  ...1. |   1.000 us    |  search_cmp_ftr_reg(); /* <-x+0x1/0x2 ret=-32 */
+1000.000104 |   0)   sh-7     |  ...1. |   1.000 us    |  real_errno(); /* <-x+0x1/0x2 ret=-22 */
+1000.000106 |   0)   sh-7     |  ...1. |   1.000 us    |  get_ptr(); /* <-x+0x1/0x2 ret=0x0 */
+"""
 
 
-def main():
-    paths = sys.argv[1:]
-    vml = os.environ.get('FG_VMLINUX')
-    db = btf.build_return_db(vml) if vml else None
-    print("synthetic:")
-    d = run('full', SYNTH_FULL, expect_mode='abs')
-    S = d['strings']
-    ch = d['chains']
-    check(len(ch) == 1, f"full: expected 1 error chain, got {len(ch)}")
-    if ch:
-        check(S[d['cols']['name'][ch[0][0]]] == 'path_openat' and ch[0][3] == 1, "full: chain origin/fate wrong")
-    check(d['cols']['flags'][[S[x] for x in d['cols']['name']].index('handle_irq_x')] & 3 == 2, "full: hardirq ctx not set")
-    run('noproc', SYNTH_NOPROC, expect_mode='compressed')
-    d = run('orphan', SYNTH_ORPHAN, expect_mode='compressed')
-    check(d['stats']['orphans'] == 2 and d['stats']['truncated'] == 1, f"orphan: stats {d['stats']}")
-    run('nodur', SYNTH_NODUR, expect_mode='abs')
-    d = run('switch', SYNTH_SWITCH, expect_mode='abs')
-    a_off = [r for r in d['offcpu'] if d['tasks'][r[0]]['pid'] == 10]
-    check(len(a_off) == 1 and a_off[0][2] is not None and a_off[0][3] == 1, f"switch: offcpu {d['offcpu']}")
-    if not paths:
-        paths = [os.path.join(os.path.dirname(HERE), 'ftrace.txt')]
-    print("files:")
-    for p in paths:
-        with open(p, errors='replace') as f:
-            run(os.path.basename(p), f.read(), db=db)
-    if db is not None:
-        for fn, want in (('do_raw_spin_unlock', 'void'), ('mutex_unlock', 'void')):
-            r, _ = db.lookup(fn)
-            check(r is not None and r[0] == want, f"btf: {fn} -> {r}, want {want}")
-    if FAIL:
-        print("FAILED:")
-        for m in FAIL:
-            print("  " + m)
-        sys.exit(1)
-    print("ALL TIMELINE TESTS PASSED")
+class SyntheticTest(unittest.TestCase):
+    def check(self, d, mode):
+        self.assertEqual(invariant_errors(d), [])
+        self.assertEqual(d['mode'], mode)
+
+    def name(self, d, i):
+        return d['strings'][d['cols']['name'][i]]
+
+    def test_full_error_chain(self):
+        d = build(SYNTH_FULL)
+        self.check(d, 'abs')
+        self.assertEqual(len(d['chains']), 1)
+        origin, top, errno, fate = d['chains'][0][:4]
+        self.assertEqual(self.name(d, origin), 'path_openat')
+        self.assertEqual(self.name(d, top), '__arm64_sys_openat')
+        self.assertEqual((errno, fate), (-2, 1))          # reaches user space
+
+    def test_hardirq_context_from_flags(self):
+        d = build(SYNTH_FULL)
+        names = [d['strings'][x] for x in d['cols']['name']]
+        self.assertEqual(d['cols']['flags'][names.index('handle_irq_x')] & timeline.F_CTX_MASK, timeline.CTX_HARDIRQ)
+
+    def test_no_proc_per_cpu_tracks(self):
+        d = build(SYNTH_NOPROC)
+        self.check(d, 'compressed')
+        self.assertEqual(sorted(t['kind'] for t in d['tasks']), [2, 2])
+
+    def test_orphans_and_truncation(self):
+        d = build(SYNTH_ORPHAN)
+        self.check(d, 'compressed')
+        self.assertEqual((d['stats']['orphans'], d['stats']['truncated']), (2, 1))
+
+    def test_no_duration_estimates_from_timestamps(self):
+        d = build(SYNTH_NODUR)
+        self.check(d, 'abs')
+        self.assertTrue(all(f & timeline.F_ESTIMATED for f in d['cols']['flags']))
+
+    def test_context_switch_offcpu_and_runs(self):
+        d = build(SYNTH_SWITCH)
+        self.check(d, 'abs')
+        a = [r for r in d['offcpu'] if d['tasks'][r[0]]['pid'] == 10]
+        self.assertEqual(len(a), 1)
+        self.assertIsNotNone(a[0][2])
+        self.assertEqual(a[0][3], 1)                       # drawn below the schedule() frame
+        runs = next(t['runs'] for t in d['tasks'] if t['pid'] == 10)
+        self.assertEqual(len(runs), 2)                     # split at switch-in
+
+    def test_btf_filters_void_comparator_and_null(self):
+        db = ReturnTypeDB()
+        db.funcs.update({'do_raw_spin_unlock': ('void', 0), 'search_cmp_ftr_reg': ('sint', 4),
+                         'real_errno': ('sint', 4), 'get_ptr': ('ptr', 8)})
+        d = build(SYNTH_VOID, db)
+        errs = {self.name(d, r[0]) for r in d['errs']}
+        self.assertEqual(errs, {'real_errno'})
+        names = [d['strings'][x] for x in d['cols']['name']]
+        self.assertTrue(d['cols']['flags'][names.index('get_ptr')] & timeline.F_NULL_RET)
+
+    def test_without_btf_guesses_from_value(self):
+        d = build(SYNTH_VOID)
+        errs = {self.name(d, r[0]) for r in d['errs']}
+        self.assertIn('do_raw_spin_unlock', errs)          # unverified false positive is expected
+        self.assertTrue(all(r[4] == 0 for r in d['errs']))  # ...and marked unverified
+
+
+class FixtureTest(unittest.TestCase):
+    """Real traces from a Raspberry Pi 4 captured with different option sets."""
+    EXPECT = {
+        'pi4_full': ('abs', {'proc', 'latency', 'retval', 'retaddr', 'tail'}, set()),
+        'pi4_default': ('compressed', {'cpu', 'duration'}, {'proc', 'latency', 'retval', 'abs'}),
+        'pi4_sched': ('abs', {'sched_events', 'switch_markers', 'latency'}, set()),
+        'pi4_noproc': ('abs', {'latency', 'retval'}, {'proc'}),
+        'pi4_nodur': ('abs', {'proc', 'retval'}, {'duration', 'latency'}),
+        'pi4_args': ('abs', {'args', 'retval'}, {'retaddr'}),
+        'x86': ('compressed', {'latency', 'retval', 'retaddr', 'args'}, {'abs'}),
+    }
+
+    def test_fixtures(self):
+        for name, (mode, has, lacks) in self.EXPECT.items():
+            with self.subTest(fixture=name):
+                with open(helpers.fixture(name), errors='replace') as f:
+                    d = build(f.read())
+                self.assertEqual(invariant_errors(d), [])
+                self.assertEqual(d['mode'], mode)
+                caps = {k for k, v in d['caps'].items() if v}
+                self.assertTrue(has <= caps, f'missing caps {has - caps}')
+                self.assertFalse(lacks & caps, f'unexpected caps {lacks & caps}')
+                self.assertGreater(d['n'], 100)
+
+    def test_sched_fixture_has_offcpu(self):
+        with open(helpers.fixture('pi4_sched')) as f:
+            d = build(f.read())
+        closed = [r for r in d['offcpu'] if r[2] is not None]   # None: not back on CPU before the window ended
+        self.assertGreater(len(closed), 0)
+        self.assertTrue(all(r[2] >= r[1] for r in closed))
+        self.assertTrue(any(r[5] >= 0 for r in d['offcpu']))   # prev_state taken from sched_switch
+
+    @unittest.skipUnless(os.environ.get('FG_TRACES'), 'set FG_TRACES to extra trace files')
+    def test_extra_traces(self):
+        for p in os.environ['FG_TRACES'].split():
+            with self.subTest(trace=p):
+                with open(p, errors='replace') as f:
+                    self.assertEqual(invariant_errors(build(f.read())), [])
 
 
 if __name__ == '__main__':
-    main()
+    unittest.main()
