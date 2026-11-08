@@ -78,6 +78,12 @@ The following table documents each command-line option supported by `funcgraph.p
 | `--timeline` | flag | Add the Timeline tab (per-task flame chart over time, see below) | `--timeline` |
 | `--btf` | paths... | BTF sources for return-type checks: raw `/sys/kernel/btf/*` copies or ELF files (default: `.BTF` of vmlinux/modules) | `--btf vmlinux.btf` |
 | `--no-btf` | flag | Do not use BTF for error-path detection | `--no-btf` |
+| `--compare` | path | Add a Compare tab: per-function calls / self / inclusive / max / error differences against this base trace | `--compare before.txt` |
+| `--overhead` | `CHILD[,SELF]` ns | Tracing overhead estimate for corrected durations (default: read from the `fgcapture.sh --calibrate` header) | `--overhead 1115,463` |
+| `--no-text-view` | flag | Only build Timeline/Compare (no per-line text view, no address resolution), for very large traces | `--timeline --no-text-view` |
+| `--pid` / `--comm` / `--cpu` | lists | Pre-filter: keep only these tasks / comm regexes / CPUs (comma separated) | `--pid 1234,1235` |
+| `--time-range` | `START:END` | Pre-filter: keep calls starting in this window; absolute seconds or `+offset` with units | `--time-range +2ms:+5ms` |
+| `--graph` / `--notrace` | regexes | Pre-filter: keep / drop whole call trees of matching functions | `--graph vfs_read` |
 
 **Notes:**
 - `--fast` and `--use-external` should not be used together; if both are specified, `--use-external` will be ignored.
@@ -178,8 +184,29 @@ cat trace > ~/ftrace.txt
 Notes:
 - With `funcgraph-retaddr` on, kernels such as 6.18 do not print arguments even if `funcgraph-args` is set. Capture arguments in a separate run without `funcgraph-retaddr`.
 - On kernels without the BTF printing optimizations (e.g. 6.18), `funcgraph-args` makes reading `trace` very slow (measured ~36 ms per line on a Raspberry Pi 4). Always narrow it with `set_graph_function`, `set_ftrace_filter` or `set_ftrace_pid` first.
-- Optionally enable `events/sched/sched_switch` and `sched_wakeup`: the timeline then shows the task state at switch-out and who woke the task.
+- Optionally enable `events/sched/sched_switch`, `sched_waking` and `sched_wakeup` (`fgcapture.sh --sched`): the timeline then shows the task state at switch-out, wakeup arrows and wait chains.
 - Use a larger `buffer_size_kb` if you see `LOST EVENTS`.
+
+## Capture helper (`fgcapture.sh`)
+
+Run on the target as root. It sets up tracefs for the scenario, captures, checks for lost events and restores every setting it changed.
+
+```bash
+fgcapture.sh -d 0.5 -o /tmp/all.txt                 # timeline options, whole system, 0.5 s
+fgcapture.sh --sched --calibrate -- cat /nonexistent # trace one command (+children), sched events, overhead estimate
+fgcapture.sh --args -g vfs_read,vfs_write -d 1       # arguments (no retaddr; requires -g/-p, slow to read on 6.18)
+```
+
+`--calibrate` measures the tracing overhead with the same options (vfs_read with and without traced children) and writes `# fgcapture: overhead child=..ns self=..ns` into the trace header. On a Raspberry Pi 4 (6.18, lockdep) it is about 1.1 us per traced child call and 0.46 us per call: a traced `do_el0_svc` of 41 us is about 10 us without tracing.
+
+## Analysis features
+
+- **Pre-filter** (`--pid`, `--comm`, `--cpu`, `--time-range`, `--graph`, `--notrace`): applied before conversion and keeps whole call trees, so big traces shrink before the HTML is built.
+- **Compare tab** (`--compare BASE`): per-function calls, self time, inclusive time, mean, max and error counts with differences; sort by absolute/relative change, filter by regex. Pre-filters apply to both traces.
+- **Timeline panels**: *Errors* groups error chains by syscall, origin function and errno (click to step through occurrences); *Sched latency* lists need-resched windows with the self time spent inside them; `H` shows the duration distribution (histogram, p50/p90/p99, slowest calls) of the selected function.
+- **Wakeups and wait chains** (with `sched_waking`/`sched_wakeup`): arrows from the waker to the woken task; clicking an off-CPU segment shows who woke it, from which function, the wake latency, and what the waker itself was waiting for.
+- **Overhead correction**: with an estimate, `O` (or the *Overhead* button) switches tooltips, panels and summaries to durations with the overhead subtracted. Slice positions always stay as measured. Compare offers the same switch when both traces have an estimate.
+- **Large traces**: above ~150k lines the text view becomes too heavy for browsers; use a pre-filter or `--timeline --no-text-view` (362k lines: 15.7 MB, opens in about a second).
 
 ## Capturing Trace
 
@@ -306,9 +333,12 @@ Open `result.html` and use the unified filter:
 ```
 funcgraph.py          # Entry point
 fastfaddr2line.py     # Address resolution tool (standalone)
-fglib/                # Implementation: parser, resolver, report, timeline, btf, cli ...
+fglib/                # Implementation: parser, resolver, report, timeline, btf, prefilter, compare, cli ...
+fgcapture.sh          # Capture helper (run on the target)
 assets/report/        # Text view JS/CSS (inlined into the HTML)
 assets/timeline/      # Timeline tab JS/CSS
+assets/compare/       # Compare tab
+assets/views/         # Tab switching shared by the extra views
 tests/                # Self-tests (tests/run.sh) and fixtures from a Raspberry Pi 4
 docs/design.md        # Design document
 ftrace.txt            # Example data

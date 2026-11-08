@@ -79,6 +79,12 @@ python3 funcgraph.py trace.txt \
 | `--timeline` | 标志 | 增加 Timeline 标签页（按任务的时序火焰图，见下文） | `--timeline` |
 | `--btf` | 路径... | 用于判断返回类型的 BTF 来源：`/sys/kernel/btf/*` 的副本或 ELF 文件（默认用 vmlinux/模块的 `.BTF` 段） | `--btf vmlinux.btf` |
 | `--no-btf` | 标志 | 判断错误路径时不使用 BTF | `--no-btf` |
+| `--compare` | 路径 | 增加 Compare 标签页：与这份基准 trace 按函数比较调用次数、自身耗时、总耗时、最大值和错误数 | `--compare before.txt` |
+| `--overhead` | `CHILD[,SELF]` 纳秒 | 跟踪开销估计值，用于显示修正后的耗时（默认读取 `fgcapture.sh --calibrate` 写入的文件头） | `--overhead 1115,463` |
+| `--no-text-view` | 标志 | 只生成 Timeline/Compare，不生成逐行文本视图、不解析地址，用于很大的 trace | `--timeline --no-text-view` |
+| `--pid` / `--comm` / `--cpu` | 列表 | 预过滤：只保留这些任务 / comm 正则 / CPU（逗号分隔） | `--pid 1234,1235` |
+| `--time-range` | `START:END` | 预过滤：保留在此时间窗口内开始的调用；绝对秒数，或带单位的 `+偏移` | `--time-range +2ms:+5ms` |
+| `--graph` / `--notrace` | 正则 | 预过滤：保留 / 去掉匹配函数的整棵调用树 | `--graph vfs_read` |
 
 **说明：**
 - `--fast` 和 `--use-external` 不应同时使用；如果都指定了，`--use-external` 会被忽略。
@@ -179,8 +185,29 @@ cat trace > ~/ftrace.txt
 注意：
 - 开启 `funcgraph-retaddr` 后，6.18 等内核即使设置了 `funcgraph-args` 也不会打印参数。需要参数时另外采一次，不开 `funcgraph-retaddr`。
 - 在没有合入 BTF 打印优化的内核上（如 6.18），开启 `funcgraph-args` 后读取 `trace` 非常慢（树莓派 4 实测约 36 ms/行）。务必先用 `set_graph_function`、`set_ftrace_filter` 或 `set_ftrace_pid` 缩小范围。
-- 可选开启 `events/sched/sched_switch` 和 `sched_wakeup`，时间轴会显示换出时的任务状态和唤醒者。
+- 可选开启 `events/sched/sched_switch`、`sched_waking` 和 `sched_wakeup`（`fgcapture.sh --sched`），时间轴会显示换出时的任务状态、唤醒箭头和等待链。
 - 出现 `LOST EVENTS` 时请增大 `buffer_size_kb`。
+
+## 采集脚本（`fgcapture.sh`）
+
+在目标机上以 root 运行。脚本按场景设置 tracefs、采集、检查是否丢事件，并恢复所有改过的设置。
+
+```bash
+fgcapture.sh -d 0.5 -o /tmp/all.txt                 # 时间轴选项，全系统，0.5 秒
+fgcapture.sh --sched --calibrate -- cat /nonexistent # 只跟踪一条命令（含子进程），带调度事件和开销标定
+fgcapture.sh --args -g vfs_read,vfs_write -d 1       # 采参数（不开 retaddr；必须指定 -g/-p，6.18 上读取很慢）
+```
+
+`--calibrate` 用相同选项测量跟踪开销（vfs_read 跟踪子调用和不跟踪子调用各一次），把 `# fgcapture: overhead child=..ns self=..ns` 写入 trace 文件头。树莓派 4（6.18，开 lockdep）上约为每个被跟踪子调用 1.1 us、每次调用 0.46 us：跟踪时 41 us 的 `do_el0_svc`，去掉开销约 10 us。
+
+## 分析功能
+
+- **预过滤**（`--pid`、`--comm`、`--cpu`、`--time-range`、`--graph`、`--notrace`）：在转换前执行，保留完整调用树，大 trace 先缩小再生成 HTML。
+- **Compare 标签页**（`--compare BASE`）：按函数比较调用次数、自身耗时、总耗时、平均值、最大值和错误数，可按绝对或相对变化排序、按正则过滤。预过滤同时作用于两份 trace。
+- **时间轴分析面板**：*Errors* 按 syscall、源头函数和 errno 分组汇总错误链（点击依次跳到每次出现）；*Sched latency* 列出 need-resched 窗口及窗口内各函数的自身耗时；`H` 显示选中函数的耗时分布（直方图、p50/p90/p99、最慢的调用）。
+- **唤醒与等待链**（需要 `sched_waking`/`sched_wakeup`）：画出唤醒者指向被唤醒任务的箭头；点击 off-CPU 段可看到谁在哪个函数里唤醒了它、唤醒延迟，以及唤醒者自己之前在等什么。
+- **开销修正**：有开销估计值时，按 `O`（或 *Overhead* 按钮）把提示、面板和汇总切换成扣除开销后的耗时，切片位置始终保持实测值。两份 trace 都有估计值时，Compare 也提供同样的切换。
+- **大 trace**：超过约 15 万行时文本视图对浏览器负担太重，请用预过滤或 `--timeline --no-text-view`（36 万行：15.7 MB，约 1 秒打开）。
 
 ## 抓取 Trace
 
@@ -308,9 +335,12 @@ python3 funcgraph.py ~/ftrace.txt \
 ```
 funcgraph.py          # 入口
 fastfaddr2line.py     # 地址解析工具（可单独使用）
-fglib/                # 实现：parser、resolver、report、timeline、btf、cli 等
+fglib/                # 实现：parser、resolver、report、timeline、btf、prefilter、compare、cli 等
+fgcapture.sh          # 采集脚本（在目标机上运行）
 assets/report/        # 文本视图的 JS/CSS（生成时内联进 HTML）
 assets/timeline/      # 时间轴标签页的 JS/CSS
+assets/compare/       # 对比标签页
+assets/views/         # 附加视图共用的标签切换
 tests/                # 自测（tests/run.sh）和树莓派 4 采集的样例
 docs/design.md        # 设计文档
 ftrace.txt            # 示例数据

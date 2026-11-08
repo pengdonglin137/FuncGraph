@@ -27,12 +27,17 @@ fglib/
   resolver.py             AddressResolver：func+off/len → 源码位置（调用 faddr2line）
   report.py               HtmlGenerator：拼装 HTML（内容行、信息面板、内嵌数据）
   assets.py               读取 assets/ 下的前端文件
-  timeline.py             TimelineBuilder：按任务重建调用切片、错误链分析
+  timeline.py             TimelineBuilder：按任务重建调用切片、错误链、唤醒、开销修正
   btf.py                  BTF 解析：函数返回类型分类
+  prefilter.py            转换前预过滤（pid/comm/cpu/时间窗口/调用树）
+  compare.py              两份 trace 按函数比较
   cli.py                  参数解析、参数检查、工具链查找、处理流程
+fgcapture.sh              目标机采集脚本（场景预设、开销标定、丢事件检查、恢复 tracefs）
 assets/
   report/report.{js,css}  文本视图前端
-  timeline/               时间轴前端：boot.js（全局）+ model/render/interact/panels.js（闭包）+ timeline.css
+  views/                  附加视图的注册与标签切换（boot.js，全局）+ 共用样式
+  timeline/               时间轴前端：model/render/interact/analysis/panels.js（闭包）+ timeline.css
+  compare/                对比视图前端
 tests/                    自测，见第 9 节
 docs/design.md            本文
 ```
@@ -52,11 +57,13 @@ constants ← util ← highlight ← resolver ← report ← cli
 
 ```
 trace.txt
+  │  prefilter.apply()                （可选）按 pid/comm/cpu/时间/调用树缩小，保留完整调用树
   │  FtraceParser.parse()             逐行解析，enable_fold 时配对 { }，生成 fold id
   ▼
 list[FtraceLine]
   ├─► AddressResolver.resolve_batch()  按 vmlinux / 每个模块分批解析返回地址
   │      └─ faddr2line 或 fastfaddr2line.py（常驻 addr2line 子进程）
+  ├─► (可选) build_compare_data()      compare.compare(当前, 基准) → cmpData
   ├─► (可选) build_timeline_data()
   │      ├─ btf.build_return_db()      vmlinux / .ko / --btf 的返回类型
   │      └─ TimelineBuilder.build()    → 按列存储的 dict（tlData）
@@ -203,10 +210,12 @@ lost[]    [cpu, count, line]
 | 19 | 调用点与父切片不一致（中间有未跟踪的帧） |
 | 20 / 21 / 22 | 返回 NULL / 叶子 / 上下文是推断的 |
 
-## 7. 时间轴前端（`assets/timeline/`）
+## 7. 附加视图与时间轴前端
 
-- `boot.js` 在全局作用域执行，提供 `fgSwitchView()`、在文本行上 Alt+点击跳转，并在第一次切换到时间轴时调用 `__tlBoot()` 初始化。
-- `model.js`、`render.js`、`interact.js`、`panels.js` 按顺序拼接到 `function __tlBoot(){...}` 中，共享同一个作用域，返回 `{resize, revealLine, draw}`。
+- `assets/views/boot.js` 在全局作用域执行。附加视图注册到 `window.fgViews[name] = {el, init}`，第一次切换到该视图时才调用 `init()`。它提供 `fgSwitchView()`、`fgCurrentView()`，以及在文本行上 Alt+点击跳到时间轴。报告里视图代码在前、boot.js 在后。新增标签页只需在 `HtmlGenerator._views()` 加一项并写一个注册脚本。
+- 时间轴的 `model.js`、`render.js`、`interact.js`、`analysis.js`、`panels.js` 按顺序拼接到 `function __tlBoot(){...}` 中，共享同一个作用域，返回 `{resize, revealLine, draw}`。
+  - **analysis**：错误汇总（syscall → 源头 → errno）、函数耗时分布（对数直方图、分位数、最慢调用）、调度延迟归因（need-resched 窗口内的自身耗时）、等待链（off-CPU → 唤醒者 → 唤醒者之前的等待）。
+  - 显示用的耗时统一经过 `durOf(i)`；`setAdjusted()` 在实测值和扣除开销后的值之间切换（快捷键 `O`）。切片的位置和宽度始终用实测的 `sStart/sEnd`。
   - **model**：解码列数据到 TypedArray，计算自身耗时，建立轨道和每个深度的行索引，构建 CPU 轨道数据，生成 DOM 骨架。
   - **render**：Canvas 2D 绘制。宽度小于 1.5px 的切片合并成密集块，用二分查找跳过同一像素内的切片。叠加层包括错误、关中断斜纹、need-resched 角标和横条、off-CPU 段、preempt 深度条、各种标记。另有概览条和时间轴刻度。
   - **interact**：命中测试、缩放平移、拖选范围、键盘操作（在捕获阶段处理，并阻止事件传给文本视图）、错误导航、搜索。
@@ -214,15 +223,25 @@ lost[]    [cpu, count, line]
 - 配色：按上下文选择色相，每个函数在色相上有小幅偏移以便区分相邻切片。也可以按函数名、自身耗时、CPU、模块配色。支持深色和浅色主题（监听 `data-theme` 属性）。
 - 文本视图和时间轴通过 trace 行号互相定位：切片记录了入口行号和出口行号，文本行的锚点是 `#L<n>`。
 
+## 7a. 预过滤、对比、唤醒与开销修正
+
+- **预过滤**（`prefilter.py`）在原始行上工作。每个任务维护一个三态栈：KEEP（在保留的调用树内）、DROP、PENDING（`--graph` 尚未匹配，子调用仍可能匹配）。`--time-range` 按调用的开始时间判断，开始在窗口内的调用连同所有子调用都保留，不会截断。保留的上下文切换标记会带上前后的分隔线。
+- **对比**（`compare.py`）对两份 trace 都走时间轴模型，按函数汇总调用次数、总耗时、自身耗时（总耗时减去直接子调用）、最大值、错误源头数。两份都有开销估计时额外生成 `rows_adj`。
+- **唤醒**：优先使用 `sched_waking`，它在唤醒者的上下文里触发；`sched_wakeup` 可能在目标 CPU 的 IPI 里触发，唤醒者会变成 idle。记录为 `wakeups[] = [waker_task, ts, target_task, ctx, waker_slice, offcpu_index]`。前端在显示唤醒点时跳过 `try_to_wake_up`、`__wake_up*` 等内部函数，显示唤醒者实际在做的事，例如 `anon_pipe_write`。
+- **开销修正**：function_graph 的入口和出口 hook 都计入函数耗时。`fgcapture.sh --calibrate` 用相同选项跟踪 3000 次 `vfs_read`，一次用 `set_graph_function`（跟踪子调用），一次用 `set_ftrace_filter`（只跟踪 vfs_read 本身），由两者中位数之差除以子孙调用数得到每个被跟踪子调用的开销 `child`，叶子耗时的 p1 作为每次调用的测量开销 `self`。修正值 = 实测 − child × 子孙调用数 − self（不小于 0），存为 `cols.adj`。树莓派 4（6.18、lockdep）实测 child ≈ 1.1 us、self ≈ 0.46 us；`vfs_read` 修正后的中位数 1.2 us，与不跟踪子调用时的 0.94 us 接近。开销随 CPU、频率和内核配置变化，修正值只是估计，默认显示实测值。
+
 ## 8. 性能数据
 
 | 场景 | 数据 |
 |---|---|
 | traceA（18.6 万行）构建时间轴 | 14.2 万个切片，约 1.5s |
-| traceB 全量（7.2 万行），带时间轴 | HTML 114MB（懒加载前 330MB），其中时间轴数据 3.1MB |
+| traceB 全量（7.2 万行），带时间轴 | 生成 20s（优化前 66s）；HTML 114MB（懒加载前 330MB），其中时间轴数据 3.1MB |
+| 36 万行，`--timeline --no-text-view` | 生成 12.7s，HTML 15.7MB，浏览器约 1.1s 打开 |
 | 时间轴初始化（1.3 万个切片） | 约 55ms |
 
-剩下的体积主要来自每行的 `data-*` 属性和高亮用的 span。如果要继续减小，下一步是把文本行也改成虚拟列表，按需生成 DOM。
+生成耗时的优化：源码块按（位置文本，URL）缓存渲染结果（55183 次调用只有 3207 种）；`fastfaddr2line.py` 用 `struct` 直接读 `.symtab`（4s → 0.1s，与 pyelftools 结果逐项一致）；函数名解析与返回地址解析并行。剩余时间主要是 addr2line 本身。
+
+文本视图的体积主要来自每行的 `data-*` 属性和高亮 span。超过约 15 万行时 CLI 会提示改用预过滤或 `--no-text-view`。文本视图的虚拟列表（按需生成 DOM）还没做，见第 11 节。
 
 ## 9. 自测
 
@@ -240,6 +259,9 @@ python3 tests/golden.py --update   # 修改代码前先记录基线
 | `test_report.py` | 用假的 vmlinux 和 faddr2line 跑完整命令行：功能标记、行数、懒加载池、折叠引用、有无时间轴时文本部分一致、HTML 和 `<script>` 注入、`node --check` 检查所有内联脚本、每种实测数据都能生成时间轴 |
 | `test_fastfaddr2line.py` | 符号匹配：精确长度、别名、编译器后缀、同名符号按长度区分、entry offset、最后一个符号；设置 `FG_VMLINUX` 时与内核的 `scripts/faddr2line` 对比结果 |
 | `test_browser.py` | Playwright：展开源码块、折叠、错误导航和跳到文本、过滤联动、范围汇总、主题和配色切换，同时检查页面没有 JS 错误 |
+| `test_prefilter.py` | 各过滤条件、保留完整调用树、时间窗口语义、过滤后的实测数据仍满足不变量 |
+| `test_compare.py` | 按函数统计与差值、错误计数、修正行需要两份都有估计值 |
+| `test_fgcapture.py` | 脚本语法、帮助、非 root 拒绝运行（实际采集在树莓派 4 上手工验证） |
 | `golden.py` | 6 种配置（x86 完整/最少/时间轴，pi4 完整/默认选项/sched 且不用 BTF），去掉耗时等动态字段后逐字节比较 |
 
 `tests/data/` 中的 6 份夹具来自树莓派 4（6.18 arm64），每份取前 1500 行，说明见 `tests/helpers.py` 的 `FIXTURES`。
@@ -259,4 +281,5 @@ python3 tests/golden.py --update   # 修改代码前先记录基线
 - 时间轴依赖文本格式。读取 `trace_pipe_raw`（二进制）可以绕过 6.18 格式化参数很慢、以及 args 和 retaddr 不能同时输出的问题，但还没有实现。
 - 没有 `latency-format` 时，上下文是根据函数名推断的，覆盖了常见的中断入口函数，但不完整。
 - `funcgraph-abstime` 只精确到 us。时间戳和 duration 不一致的部分用限制在父切片内的方式修正，修正次数记录在 `stats.clamped` 中。
-- 文本视图仍然为每一行生成 DOM，几十万行的 trace 打开会比较慢。
+- 文本视图仍然为每一行生成 DOM，十几万行以上的 trace 浏览器难以打开；目前的办法是预过滤或 `--no-text-view`。下一步是虚拟列表，需要重写 `report.js` 中直接操作 DOM 的过滤、折叠和键盘导航。
+- 开销修正假设每个被跟踪调用的开销相同；在中断、迁移或缓存行为不同的路径上会有偏差。

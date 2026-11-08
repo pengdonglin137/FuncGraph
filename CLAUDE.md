@@ -69,6 +69,9 @@ fglib/report.py       HtmlGenerator: content lines, info panel, embedded data
 fglib/assets.py       reads assets/ (report + timeline JS/CSS)
 fglib/timeline.py     TimelineBuilder: per-task slices, off-CPU, windows, error chains -> tlData
 fglib/btf.py          BTF reader: function return-type classes
+fglib/prefilter.py    --pid/--comm/--cpu/--time-range/--graph/--notrace on raw lines (KEEP/DROP/PENDING stack)
+fglib/compare.py      --compare BASE: per-function stats and deltas (cmpData)
+fgcapture.sh          target-side capture helper (--sched, --args, --calibrate, -- CMD)
 fglib/cli.py          build_parser / validate_args / collect_module_dirs / find_faddr2line / main
 ```
 
@@ -92,5 +95,7 @@ Data flow: `FtraceParser.parse()` → `AddressResolver.resolve_batch()` → (opt
 - Fold ids are `f<base36 entry line index>`; `data-fold-ancestors` is a space-separated list of them.
 - Container uses `width: fit-content; min-width: 100%` to allow long trace lines to expand beyond the viewport, triggering the browser's native horizontal scrollbar.
 - Timeline `flags` bit layout is shared by `fglib/timeline.py` (`F_*`) and `assets/timeline/model.js` (`FL`); change both together.
-- Timeline JS files `model/render/interact/panels.js` are concatenated into one closure `__tlBoot()` (order in `fglib/assets.py`); `boot.js` is global.
+- Timeline JS files `model/render/interact/analysis/panels.js` are concatenated into one closure `__tlBoot()` (order in `fglib/assets.py`). Extra tabs register in `window.fgViews` and are wired by the global `assets/views/boot.js`; add a view in `HtmlGenerator._views()`.
+- In timeline JS, displayed durations go through `durOf(i)` (measured or overhead-corrected, toggled by `setAdjusted`); geometry always uses `sStart/sEnd`.
+- New CLI options that change nothing when unused must be added to the hidden-when-default list in `util.format_args_info` to keep golden output stable.
 - Text-view filter → timeline: `applyFilter`/`clearFilter` call `fgNotifyFilter(text, Set<lineNumber>|null)`; the timeline registers `window.fgOnFilter`.
