@@ -701,8 +701,8 @@ class HtmlGenerator:
         # kernel_src保持单个路径（可以是None）
 
         # 使用绝对路径
-        abs_vmlinux_path = os.path.abspath(self.vmlinux_path)
-        abs_faddr2line_path = os.path.abspath(self.faddr2line_path)
+        abs_vmlinux_path = os.path.abspath(self.vmlinux_path) if self.vmlinux_path else None
+        abs_faddr2line_path = os.path.abspath(self.faddr2line_path) if self.faddr2line_path else ''
 
         # 如果使用fast模式，优先使用fastfaddr2line.py
         if self.fast_mode:

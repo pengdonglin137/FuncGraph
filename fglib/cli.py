@@ -7,7 +7,11 @@ import sys
 import time
 
 from .constants import ERROR_CODE_MAP, PROJECT_DIR
-from . import prefilter
+import configparser
+
+import lzma
+
+from . import config, inputs, prefilter
 from .parser import parse_ftrace_file
 from .report import generate_html
 from .util import check_gawk_available, find_module_path, verbose_print
@@ -17,8 +21,7 @@ def build_compare_data(args, raw_lines, parsed_lines, timeline_json, vmlinux_pat
     """Compare tab data: per-function statistics of --compare BASE vs. this trace."""
     from . import compare, timeline as tlmod
     t0 = time.time()
-    with open(args.compare, 'r', errors='replace') as f:
-        base_lines = f.read().split('\n')
+    base_lines = inputs.split_lines(inputs.read_text(args.compare))
     pre = prefilter.Filter(pids=args.pid, comms=args.comm, cpus=args.cpu, time_range=args.time_range,
                            graph=args.graph, notrace=args.notrace)
     if pre.active():
@@ -30,7 +33,7 @@ def build_compare_data(args, raw_lines, parsed_lines, timeline_json, vmlinux_pat
         cur = tlmod.build_timeline([l.raw_line for l in parsed_lines], rettypes=rettypes, errno_map=ERROR_CODE_MAP,
                                    overhead=parse_overhead(args.overhead)).to_data()
     data = compare.compare(cur, base_lines, rettypes=rettypes, overhead=parse_overhead(args.overhead), base_name=os.path.basename(args.compare),
-                           cur_name=os.path.basename(args.ftrace_file))
+                           cur_name=os.path.basename(input_name(args)))
     print(f"Compare: {len(data['rows'])} functions vs {args.compare}, {time.time() - t0:.2f}s")
     return data
 
@@ -51,7 +54,7 @@ _RETTYPES = {}
 
 def load_rettypes(parsed_lines, vmlinux_path, module_dirs, args):
     """BTF return-type database (cached per run); None with --no-btf or when no BTF exists."""
-    if args.no_btf:
+    if args.no_btf or (not vmlinux_path and not args.btf):
         return None
     if 'db' in _RETTYPES:
         return _RETTYPES['db']
@@ -95,8 +98,15 @@ def build_timeline_data(parsed_lines, vmlinux_path, module_dirs, args):
 def build_parser():
     """Command line options."""
     parser = argparse.ArgumentParser(description='Convert ftrace output to interactive HTML')
-    parser.add_argument('ftrace_file', help='Path to ftrace output file')
-    parser.add_argument('--vmlinux', required=True, help='Path to vmlinux file')
+    parser.add_argument('ftrace_file', nargs='+',
+                        help="ftrace output file(s); '-' reads stdin, .gz/.xz/.bz2 are decompressed, "
+                             'several files are merged by timestamp')
+    parser.add_argument('--config', metavar='FILE',
+                        help='INI file with option defaults (default: ./funcgraph.ini or ~/.config/funcgraph/config.ini)')
+    parser.add_argument('--preset', metavar='NAME', help='use the [preset NAME] section of the config file')
+    parser.add_argument('--no-config', action='store_true', help='ignore config files')
+    parser.add_argument('--vmlinux', help='Path to vmlinux (for source locations, links and BTF). Optional: without it '
+                        'the report has no source information but the trace views, timeline and analyses work')
     parser.add_argument('--kernel-src', type=str,
                         help='Path to kernel source root')
     parser.add_argument('--module-dirs', nargs='*', default=[],
@@ -173,20 +183,24 @@ def validate_args(args):
     if args.compare and not os.path.isfile(args.compare):
         print(f"Error: --compare file '{args.compare}' does not exist", file=sys.stderr)
         sys.exit(1)
-    if not os.path.exists(args.ftrace_file):
-        print(f"Error: ftrace file '{args.ftrace_file}' does not exist", file=sys.stderr)
+    for p in args.ftrace_file:
+        if p == '-':
+            continue
+        if not os.path.exists(p):
+            print(f"Error: ftrace file '{p}' does not exist", file=sys.stderr)
+            sys.exit(1)
+        if not os.path.isfile(p):
+            print(f"Error: '{p}' is not a regular file", file=sys.stderr)
+            sys.exit(1)
+    if args.ftrace_file.count('-') > 1:
+        print("Error: '-' (stdin) can be given only once", file=sys.stderr)
         sys.exit(1)
 
-    if not os.path.isfile(args.ftrace_file):
-        print(f"Error: '{args.ftrace_file}' is not a regular file", file=sys.stderr)
-        sys.exit(1)
-
-    # 检查vmlinux文件是否存在
-    if not os.path.exists(args.vmlinux):
+    if args.vmlinux and not os.path.exists(args.vmlinux):
         print(f"Error: vmlinux file '{args.vmlinux}' does not exist", file=sys.stderr)
         sys.exit(1)
 
-    if not os.path.isfile(args.vmlinux):
+    if args.vmlinux and not os.path.isfile(args.vmlinux):
         print(f"Error: '{args.vmlinux}' is not a regular file", file=sys.stderr)
         sys.exit(1)
 
@@ -347,8 +361,32 @@ def find_faddr2line(args):
     return faddr2line_path, cross_compile, llvm, util_prefix, util_suffix
 
 
+def input_name(args):
+    names = ['stdin' if p == '-' else p for p in args.ftrace_file]
+    return names[0] if len(names) == 1 else names[0] + f' (+{len(names) - 1})'
+
+
+def parse_args(argv=None):
+    parser = build_parser()
+    pre, _ = parser.parse_known_args(argv)
+    if not pre.no_config:
+        try:
+            path = config.find_config(pre.config)
+            if path:
+                values, used = config.load(path, pre.preset)
+                config.apply(parser, values, path)
+                if pre.verbose:
+                    print(f"[INFO] config {path}: {', '.join(used)}", file=sys.stderr)
+            elif pre.preset:
+                raise config.ConfigError('--preset given but no config file found')
+        except (config.ConfigError, OSError, configparser.Error) as e:
+            print(f"Error: {e}", file=sys.stderr)
+            sys.exit(1)
+    return parser.parse_args(argv)
+
+
 def main():
-    args = build_parser().parse_args()
+    args = parse_args()
     validate_args(args)
 
     # 检查gawk可用性并决定是否使用--list选项
@@ -362,11 +400,14 @@ def main():
         print(f"[INFO] Using fast mode: {args.fast}", file=sys.stderr)
 
     module_dirs = collect_module_dirs(args)
-    faddr2line_path, cross_compile, llvm, util_prefix, util_suffix = find_faddr2line(args)
-
-    # 使用绝对路径
-    faddr2line_path = os.path.abspath(faddr2line_path)
-    vmlinux_path = os.path.abspath(args.vmlinux)
+    if args.vmlinux:
+        faddr2line_path, cross_compile, llvm, util_prefix, util_suffix = find_faddr2line(args)
+        faddr2line_path = os.path.abspath(faddr2line_path)
+        vmlinux_path = os.path.abspath(args.vmlinux)
+    else:
+        faddr2line_path = vmlinux_path = None
+        cross_compile, llvm, util_prefix, util_suffix = os.environ.get('CROSS_COMPILE', ''), os.environ.get('LLVM', ''), '', ''
+        print("Note: no --vmlinux given: source locations, source links and BTF checks are skipped")
 
     # 处理内核源码路径（单个）
     kernel_src_abs = os.path.abspath(args.kernel_src) if args.kernel_src else None
@@ -400,21 +441,27 @@ def main():
     
     # 解析ftrace文件
     start_time = time.time()
-    raw_lines = None
+    try:
+        raw_lines, note = inputs.read_lines(args.ftrace_file)
+    except (OSError, EOFError, lzma.LZMAError) as e:
+        print(f"Error: cannot read trace input: {e}", file=sys.stderr)
+        sys.exit(1)
+    if note:
+        print(f"Input: {note}")
     pre = prefilter.Filter(pids=args.pid, comms=args.comm, cpus=args.cpu, time_range=args.time_range,
                            graph=args.graph, notrace=args.notrace)
     if pre.active():
-        with open(args.ftrace_file, 'r', errors='replace') as f:
-            raw_lines = f.read().split('\n')
-        if raw_lines and raw_lines[-1] == '':
-            raw_lines.pop()
         raw_lines, st = prefilter.apply(raw_lines, pre)
         print(f"Pre-filter ({pre.describe()}): kept {st['out']} of {st['in']} lines")
         if not any(l and not l.startswith('#') for l in raw_lines):
             print("Warning: the pre-filter kept no trace lines (check --pid/--comm/--graph/--time-range)", file=sys.stderr)
-    parsed_lines = parse_ftrace_file(args.ftrace_file, args.verbose, args.enable_fold, lines=raw_lines)
+    parsed_lines = parse_ftrace_file(input_name(args), args.verbose, args.enable_fold, lines=raw_lines)
     parse_time = time.time() - start_time
     verbose_print(f"File parsing completed in {parse_time:.2f} seconds", args.verbose)
+
+    if not vmlinux_path:
+        for l in parsed_lines:       # nothing to resolve: no source blocks
+            l.expandable = False
 
     # 构建时间轴数据（可选）
     timeline_json = None

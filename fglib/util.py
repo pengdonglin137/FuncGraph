@@ -342,11 +342,13 @@ def format_args_info(args):
         if key in hidden_params:
             continue
         # Timeline options are only listed when used (keeps output identical otherwise)
-        if key in ('timeline', 'btf', 'no_btf', 'pid', 'comm', 'cpu', 'time_range', 'graph', 'notrace', 'compare', 'overhead', 'no_text_view') and not value:
+        if key in ('timeline', 'btf', 'no_btf', 'pid', 'comm', 'cpu', 'time_range', 'graph', 'notrace', 'compare', 'overhead', 'no_text_view', 'config', 'preset', 'no_config') and not value:
             continue
 
         # 格式化参数显示
         display_key = key.replace('_', ' ').title()
+        if key == 'ftrace_file' and isinstance(value, list) and len(value) == 1:
+            value = value[0]          # one input: shown as before (basename when long)
 
         # 处理值的显示
         if isinstance(value, bool):
