@@ -311,6 +311,8 @@ def build_return_db(vmlinux=None, extra_paths=None, module_paths=None, verbose=F
     for p in extra_paths + list(module_paths or []):
         if base is not None and p == base.source:
             continue
+        if p in extra_paths and os.path.basename(p).startswith('vmlinux'):
+            continue  # another base candidate, not split BTF
         try:
             info = load_btf(p, base=base)
         except (OSError, BtfError, struct.error, EOFError, lzma.LZMAError, zlib.error) as e:

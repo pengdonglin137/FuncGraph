@@ -9,6 +9,7 @@ import glob
 import fnmatch
 from collections import defaultdict
 import time
+import json
 
 # ============================================================
 # Constants and Configuration
@@ -1927,6 +1928,9 @@ def format_args_info(args):
     for key, value in args_dict.items():
         if key in hidden_params:
             continue
+        # Timeline options are only listed when used (keeps output identical otherwise)
+        if key in ('timeline', 'btf', 'no_btf') and not value:
+            continue
 
         # 格式化参数显示
         display_key = key.replace('_', ' ').title()
@@ -2224,9 +2228,11 @@ class HtmlGenerator:
                  fast_mode=False, highlight_code=False, path_prefix=None,
                  module_src=None, module_srcs=None, script_args=None,
                  enable_filter=False, parse_time=0, total_time=0,
-                 func_links=False, entry_offset=0, enable_fold=False):
+                 func_links=False, entry_offset=0, enable_fold=False,
+                 timeline_json=None):
         # Store all parameters as instance attributes
         self.parsed_lines = parsed_lines
+        self.timeline_json = timeline_json
         self.vmlinux_path = vmlinux_path
         self.faddr2line_path = faddr2line_path
         self.module_dirs = module_dirs or []
@@ -2318,7 +2324,7 @@ class HtmlGenerator:
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{APP_TITLE} v{APP_VERSION} - {APP_AUTHOR}</title>
     <style>
-{self._generate_css()}    </style>
+{self._generate_css()}{self._timeline_css()}    </style>
 </head>
 <body>
     <div class="progress-bar" id="progressBar"></div>
@@ -2353,7 +2359,7 @@ class HtmlGenerator:
             {{INFO_CONTENT_PLACEHOLDER}}
         </div>
 
-        <!-- 控制按钮 - 水平工具栏 -->
+{self._timeline_tabs()}        <!-- 控制按钮 - 水平工具栏 -->
         <div class="controls">
             <div id="filterPlaceholder"></div>
             <div class="toolbar">
@@ -2380,7 +2386,8 @@ class HtmlGenerator:
         html_str += self._generate_content_lines()
 
         html_str += """
-        </div>
+        </div>""" + ("""
+        <div id="timelineView"></div>""" if self.timeline_json else "") + """
     </div>
 
     <div class="keyboard-hint" id="keyboardHint">
@@ -2404,6 +2411,7 @@ class HtmlGenerator:
     </div>
 """
         html_str += self._generate_javascript()
+        html_str += self._timeline_scripts()
         html_str += """</body>
 </html>
 """
@@ -2419,6 +2427,37 @@ class HtmlGenerator:
             html_str = html_str.replace('<div id="filterPlaceholder"></div>', self.filter_html)
 
         return html_str, self.vmlinux_time, self.module_time
+
+    # ---- Timeline view (optional, --timeline) ----
+    @staticmethod
+    def _timeline_asset(name):
+        path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'assets', name)
+        with open(path, 'r', encoding='utf-8') as f:
+            return f.read()
+
+    def _timeline_css(self):
+        if not self.timeline_json:
+            return ''
+        return self._timeline_asset('timeline.css') + '\n'
+
+    def _timeline_tabs(self):
+        if not self.timeline_json:
+            return ''
+        n = self.timeline_json.get('n', 0)
+        return ('        <div class="view-tabs">\n'
+                '            <button class="view-tab active" data-view="text" onclick="fgSwitchView(\'text\')">Text</button>\n'
+                '            <button class="view-tab" data-view="timeline" onclick="fgSwitchView(\'timeline\')">'
+                f'Timeline<span class="tab-badge">{n} calls</span></button>\n'
+                '        </div>\n')
+
+    def _timeline_scripts(self):
+        if not self.timeline_json:
+            return ''
+        data = json.dumps(self.timeline_json, separators=(',', ':')).replace('<', '\\u003c')
+        parts = ''.join(self._timeline_asset(f'timeline_{i}.js') for i in range(1, 5))
+        return ('    <script type="application/json" id="tlData">' + data + '</script>\n'
+                '    <script>\n' + self._timeline_asset('timeline_boot.js') +
+                '\nfunction __tlBoot() {\n' + parts + '\n}\n    </script>\n')
 
     def _prepare_data(self):
         """Pre-process data: resolve func names, collect filter data, parse module URLs.
@@ -7117,7 +7156,7 @@ class HtmlGenerator:
 '''
 
 
-def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None, base_url=None, module_url=None, kernel_src=None, use_list=False, verbose=False, fast_mode=False, highlight_code=False, path_prefix=None, module_src=None, module_srcs=None, script_args=None, enable_filter=False, parse_time=0, total_time=0, func_links=False, entry_offset=0, enable_fold=False):
+def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None, base_url=None, module_url=None, kernel_src=None, use_list=False, verbose=False, fast_mode=False, highlight_code=False, path_prefix=None, module_src=None, module_srcs=None, script_args=None, enable_filter=False, parse_time=0, total_time=0, func_links=False, entry_offset=0, enable_fold=False, timeline_json=None):
     """Generate interactive HTML page. Wrapper for backward compatibility."""
     generator = HtmlGenerator(
         parsed_lines, vmlinux_path, faddr2line_path,
@@ -7128,13 +7167,55 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
         script_args=script_args, enable_filter=enable_filter,
         parse_time=parse_time, total_time=total_time,
         func_links=func_links, entry_offset=entry_offset,
-        enable_fold=enable_fold
+        enable_fold=enable_fold, timeline_json=timeline_json
     )
     return generator.generate()
 
 # ============================================================
 # Main Entry Point
 # ============================================================
+
+def build_timeline_data(parsed_lines, vmlinux_path, module_dirs, args):
+    """Build the Timeline tab data set. Returns a JSON-serializable dict or None on failure."""
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    if script_dir not in sys.path:
+        sys.path.insert(0, script_dir)
+    try:
+        import timeline as tlmod
+        import btf as btfmod
+    except ImportError as e:
+        print(f"Warning: timeline disabled, cannot import helper modules: {e}", file=sys.stderr)
+        return None
+    t0 = time.time()
+    rettypes = None
+    if not args.no_btf:
+        modules = sorted({l.get('module_name') for l in parsed_lines if l.get('module_name')})
+        mod_paths = []
+        for m in modules:
+            mp = find_module_path(m, module_dirs, args.verbose)
+            if mp:
+                mod_paths.append(mp)
+        extra = args.btf or []
+        rettypes = btfmod.build_return_db(vmlinux_path,
+                                          extra_paths=extra, module_paths=mod_paths)
+        for err in rettypes.errors:
+            verbose_print(f"BTF: {err}", args.verbose)
+        if len(rettypes) == 0:
+            print("Note: no BTF found (vmlinux lacks .BTF); timeline error paths will be unverified", file=sys.stderr)
+            rettypes = None
+        else:
+            verbose_print(f"BTF: {len(rettypes)} function return types from {rettypes.sources}", args.verbose)
+    lines = [l.raw_line for l in parsed_lines]
+    builder = tlmod.build_timeline(lines, rettypes=rettypes, errno_map=ERROR_CODE_MAP, verbose=args.verbose)
+    data = builder.to_data()
+    st = data['stats']
+    print(f"Timeline: {st['slices']} slices, {st['tasks']} tasks, mode={data['mode']}, "
+          f"{len(data['chains'])} error chains, {st['offcpu']} off-CPU, {time.time() - t0:.2f}s")
+    if data['n'] == 0:
+        print("Note: no function_graph calls found; timeline tab omitted", file=sys.stderr)
+        return None
+    return data
+
 
 def main():
     parser = argparse.ArgumentParser(description='Convert ftrace output to interactive HTML')
@@ -7169,6 +7250,13 @@ def main():
                         help='Offset to add to function entry addresses (for -fpatchable-function-entry)')
     parser.add_argument('--enable-fold', action='store_true',
                         help='Enable function call folding (adds some overhead)')
+    parser.add_argument('--timeline', action='store_true',
+                        help='Add a Timeline tab: per-task flame chart over time with context/error-path coloring')
+    parser.add_argument('--btf', nargs='*', default=None, metavar='FILE',
+                        help='BTF sources for return-type checks (raw /sys/kernel/btf/* copies or ELF files). '
+                             'Default: the .BTF section of --vmlinux and of resolved modules')
+    parser.add_argument('--no-btf', action='store_true',
+                        help='Do not use BTF; error paths are guessed from return values only')
     args = parser.parse_args()
 
     # 参数健壮性检查
@@ -7385,6 +7473,11 @@ def main():
     parse_time = time.time() - start_time
     verbose_print(f"File parsing completed in {parse_time:.2f} seconds", args.verbose)
 
+    # 构建时间轴数据（可选）
+    timeline_json = None
+    if args.timeline:
+        timeline_json = build_timeline_data(parsed_lines, vmlinux_path, module_dirs, args)
+
     # 计算统计信息
     expandable_count = sum(1 for l in parsed_lines if l['expandable'])
     module_count = sum(1 for l in parsed_lines if l['expandable'] and l['module_name'])
@@ -7412,7 +7505,8 @@ def main():
         total_time=0,  # 占位符，稍后计算
         func_links=args.func_links,  # 传递函数名超链接开关
         entry_offset=args.entry_offset,  # 传递函数入口地址偏移量
-        enable_fold=args.enable_fold  # 传递折叠功能开关
+        enable_fold=args.enable_fold,  # 传递折叠功能开关
+        timeline_json=timeline_json
     )
 
     # 计算总时间
