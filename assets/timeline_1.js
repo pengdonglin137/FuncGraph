@@ -89,16 +89,58 @@ const ORDER = TRACKS.filter(t => t.lo >= 0 || t.off.length).sort((a, b) => {
     if (a.kind === 1) return (a.cpu || 0) - (b.cpu || 0);
     return b.busy - a.busy;
 });
+// ---- CPU tracks: which task ran on each CPU, plus irq/softirq strips ----
+const CPU_SEGS = new Map();   // cpu -> {s: Float64Array, e: Float64Array, t: Int32Array}
+const CPU_IRQ = new Map();    // cpu -> [[s, e, ctx], ...]
+(function buildCpu() {
+    if (!TIMED) return;
+    const tmp = new Map();
+    for (const t of TRACKS) {
+        if (t.kind !== 0) continue;
+        for (const r of t.runs) {
+            if (r[2] < 0 || r[1] <= r[0]) continue;
+            if (!tmp.has(r[2])) tmp.set(r[2], []);
+            tmp.get(r[2]).push([r[0], r[1], t.id]);
+        }
+    }
+    for (const [cpu, a] of tmp) {
+        a.sort((x, y) => x[0] - y[0]);
+        for (let k = 1; k < a.length; k++) if (a[k][0] < a[k - 1][1]) a[k - 1][1] = a[k][0];
+        CPU_SEGS.set(cpu, { s: Float64Array.from(a, x => x[0]), e: Float64Array.from(a, x => x[1]), t: Int32Array.from(a, x => x[2]) });
+    }
+    if (sCpu) for (let i = 0; i < N; i++) {
+        const c = sFlags[i] & FL.CTX;
+        if (!c) continue;
+        const p = sParent[i];
+        if (p >= 0 && (sFlags[p] & FL.CTX) === c) continue;
+        const cpu = sCpu[i];
+        if (cpu < 0) continue;
+        if (!CPU_IRQ.has(cpu)) CPU_IRQ.set(cpu, []);
+        CPU_IRQ.get(cpu).push([sStart[i], sEnd[i], c]);
+        if (!CPU_SEGS.has(cpu)) CPU_SEGS.set(cpu, { s: new Float64Array(0), e: new Float64Array(0), t: new Int32Array(0) });
+    }
+    for (const a of CPU_IRQ.values()) a.sort((x, y) => x[0] - y[0]);
+})();
+const CPU_LIST = Array.from(CPU_SEGS.keys()).sort((a, b) => a - b);
+if (CPU_LIST.length && ORDER.some(t => t.kind === 0)) {
+    const ct = { id: -1, pid: -1, comm: 'CPUs', comms: [], kind: 9, cpu: null, runs: [], lo: -1, hi: -1,
+        maxD: CPU_LIST.length - 1, rows: [], busy: 0, off: [], rs: [], io: [], errs: [], cpus: new Set(),
+        collapsed: false, hidden: false, hits: 1, y: 0, h: 0 };
+    ORDER.unshift(ct);
+}
+
 // Idle tracks start collapsed when there is other work to look at
 if (ORDER.some(t => t.kind === 0)) for (const t of ORDER) if (t.kind === 1) t.collapsed = true;
 
 function trackLabel(t) {
+    if (t.kind === 9) return 'CPUs';
     if (t.kind === 1) return '<idle>' + (t.cpu !== null && t.cpu !== undefined ? '  CPU ' + t.cpu : '');
     if (t.kind === 2) return 'CPU ' + t.cpu + '  (no funcgraph-proc)';
     if (t.kind === 3) return 'all';
     return t.comm + '  ' + t.pid;
 }
 function trackSub(t) {
+    if (t.kind === 9) return CPU_LIST.length + ' CPU(s) · task on CPU, irq/softirq strip · click a segment to open its task';
     const parts = [];
     if (t.cpus.size) parts.push('CPU ' + Array.from(t.cpus).sort((a, b) => a - b).join(','));
     if (t.lo >= 0) parts.push((t.hi - t.lo) + ' calls');
@@ -165,7 +207,7 @@ function lbStart(row, t, lo) {  // first j >= lo with start >= t
 const view = { s: 0, e: tMax };
 const ov = { err: true, irq: true, rs: true, off: true, preempt: false, mk: true };
 let colorMode = 'ctx';
-let sel = -1, hov = -1, hovOff = null;
+let sel = -1, hov = -1, hovOff = null, hovCpu = null;
 let range = null;            // {s, e, track|null}
 let search = null;           // RegExp
 let searchHits = null;       // Uint8Array per name index

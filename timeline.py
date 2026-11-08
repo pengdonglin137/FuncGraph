@@ -116,7 +116,7 @@ class _Frame:
 class _Task:
     __slots__ = ('key', 'tid', 'pid', 'comm', 'comms', 'kind', 'cpu', 'stack', 'vclock',
                  'pending_leaf', 'last_ts', 'last_cpu', 'runs', 'resched_open', 'resched_info',
-                 'irqoff_open', 'off_open', 'loose', 'first_ts')
+                 'irqoff_open', 'off_open', 'loose', 'first_ts', 'new_run')
 
     def __init__(self, key, tid, pid, comm, kind, cpu):
         self.key = key
@@ -138,6 +138,7 @@ class _Task:
         self.irqoff_open = None
         self.off_open = None      # pending off-cpu record (index into offcpu)
         self.loose = []           # slice indices at unknown parent (orphan adoption)
+        self.new_run = False      # next timestamp starts a new on-CPU run (after switch-in)
 
 
 class TimelineBuilder:
@@ -236,6 +237,8 @@ class TimelineBuilder:
         self.s_caller.append(caller)
         self.s_args.append(args)
         self.s_cpu.append(self._cur_cpu)
+        if end is not None and task.runs and end > task.runs[-1][1]:
+            task.runs[-1][1] = end
         return idx
 
     # -- prologue ------------------------------------------------------
@@ -527,6 +530,8 @@ class TimelineBuilder:
             self.s_end[i] = end
             self.s_ret[i] = ret
             self.s_eline[i] = lineno
+            if ts is not None and task.runs and end > task.runs[-1][1]:
+                task.runs[-1][1] = end
             if ts is None:
                 task.vclock = max(task.vclock, end)
             return
@@ -616,17 +621,18 @@ class TimelineBuilder:
                         rec[9] = wtid
                         break
             task.off_open = None
+            task.new_run = True
 
     def _track_run(self, task, cpu, ts):
         if task.first_ts is None:
             task.first_ts = ts
         runs = task.runs
-        if runs and runs[-1][2] == cpu and not (task.off_open is not None):
-            runs[-1][1] = ts
-        elif runs and runs[-1][2] == cpu and runs[-1][1] == task.last_ts and task.off_open is None:
-            runs[-1][1] = ts
+        if runs and runs[-1][2] == cpu and task.off_open is None and not task.new_run:
+            if ts > runs[-1][1]:
+                runs[-1][1] = ts
         else:
             runs.append([ts, ts, cpu])
+        task.new_run = False
         task.last_ts = ts
         task.last_cpu = cpu
 

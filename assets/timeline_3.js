@@ -8,6 +8,14 @@ function hitTest(mx, my) {
     if (yy < t.y + HDR) return { track: t, slice: -1, off: null, header: true };
     const k = W / (view.e - view.s), tm = view.s + mx / k;
     const d = t.collapsed ? 0 : Math.floor((yy - t.y - HDR) / ROW);
+    if (t.kind === 9) {
+        if (t.collapsed || d < 0 || d >= CPU_LIST.length) return { track: t, slice: -1, off: null, header: false };
+        const cpu = CPU_LIST[d], sg = CPU_SEGS.get(cpu);
+        let lo = 0, hi = sg.e.length;
+        while (lo < hi) { const m = (lo + hi) >> 1; if (sg.e[m] > tm) hi = m; else lo = m + 1; }
+        const seg = lo < sg.s.length && sg.s[lo] <= tm ? { cpu: cpu, j: lo, t: sg.t[lo], s: sg.s[lo], e: sg.e[lo] } : null;
+        return { track: t, slice: -1, off: null, header: false, cpuSeg: seg, tm: tm };
+    }
     let best = -1;
     if (d >= 0 && d < t.rows.length) {
         const row = t.rows[d];
@@ -129,6 +137,30 @@ function tipOff(r) {
     if (r[9] >= 0) h += row('woken by', esc(trackLabel(TRACKS[r[9]])));
     return h;
 }
+function tipCpu(c) {
+    const t = TRACKS[c.t];
+    let h = '<div class="t-name">' + esc(trackLabel(t)) + '</div><div><span class="t-dur">' + fmtDur(c.e - c.s) + '</span> on CPU ' + c.cpu + '</div><div class="t-sep"></div>';
+    h += '<div class="t-row"><span class="t-k">start</span><span class="t-v">' + fmtDur(c.s) + (MODE === 'abs' ? ' (' + fmtAbs(c.s) + ')' : '') + '</span></div>';
+    const irq = CPU_IRQ.get(c.cpu);
+    if (irq) {
+        const sum = [0, 0, 0, 0];
+        for (const r of irq) if (r[1] > c.s && r[0] < c.e) sum[r[2]] += Math.min(r[1], c.e) - Math.max(r[0], c.s);
+        for (let q = 1; q < 4; q++) if (sum[q]) h += '<div class="t-row"><span class="t-k">' + CTX_NAMES[q] + '</span><span class="t-v">' + fmtDur(sum[q]) + '</span></div>';
+    }
+    return h + '<div class="t-warn">click to open this task</div>';
+}
+function openTaskAt(tid, tm) {
+    const t = TRACKS[tid];
+    t.hidden = false;
+    if (t.collapsed) t.collapsed = false;
+    layout();
+    elScroll.scrollTop = Math.max(0, t.y - 4);
+    if (t.rows.length) {
+        const row = t.rows[0], j = lbEnd(row, tm);
+        if (j < row.length && sStart[row[j]] <= tm) { select(row[j]); return; }
+    }
+    draw();
+}
 function showTip(html, ev) {
     elTip.innerHTML = html;
     elTip.style.display = 'block';
@@ -178,8 +210,10 @@ window.addEventListener('mousemove', ev => {
     const h = hitTest(mx, my);
     const nh = h.slice;
     if (nh !== hov || h.off !== hovOff) { hov = nh; hovOff = h.off; }
-    elCv.classList.toggle('ptr', nh >= 0 || h.header);
-    if (nh >= 0) showTip(tipSlice(nh), ev);
+    hovCpu = h.cpuSeg || null;
+    elCv.classList.toggle('ptr', nh >= 0 || h.header || !!hovCpu);
+    if (hovCpu) showTip(tipCpu(hovCpu), ev);
+    else if (nh >= 0) showTip(tipSlice(nh), ev);
     else if (h.off) showTip(tipOff(h.off), ev);
     else hideTip();
     draw();
@@ -198,11 +232,12 @@ window.addEventListener('mouseup', ev => {
     const [mx, my] = localXY(ev, elCv);
     const h = hitTest(mx, my);
     if (h.header && h.track) { h.track.collapsed = !h.track.collapsed; layout(); draw(); return; }
+    if (h.cpuSeg) { openTaskAt(h.cpuSeg.t, h.tm); return; }
     if (h.slice >= 0) select(h.slice);
     else if (range) { range = null; hideDetail(); draw(); }
     else select(-1);
 });
-elCv.addEventListener('mouseleave', () => { cursorX = -1; hov = -1; hovOff = null; hideTip(); draw(); });
+elCv.addEventListener('mouseleave', () => { cursorX = -1; hov = -1; hovOff = null; hovCpu = null; hideTip(); draw(); });
 elCv.addEventListener('dblclick', ev => {
     const [mx, my] = localXY(ev, elCv);
     const h = hitTest(mx, my);

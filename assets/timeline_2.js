@@ -198,6 +198,7 @@ function drawTrack(t, y, vs, ve, k) {
     ctx.fillText(trackSub(t), 18 + lw, y + 9.5);
     ctx.font = FONT;
     const top = y + HDR;
+    if (t.kind === 9) { if (!t.collapsed) drawCpuTrack(top, vs, ve, k); return; }
     if (t.collapsed) {
         if (t.rows.length) drawRow(t.rows[0], top + 1, MINI - 2, vs, ve, k, false);
         return;
@@ -222,6 +223,69 @@ function drawTrack(t, y, vs, ve, k) {
             ctx.fillStyle = ch[3] === 0 ? P.errOh : P.errO;
             ctx.beginPath(); ctx.moveTo(x, ry - 1); ctx.lineTo(x + 4.5, ry + 7); ctx.lineTo(x - 4.5, ry + 7); ctx.closePath(); ctx.fill();
         }
+    }
+}
+function taskColor(tid) {
+    const t = TRACKS[tid];
+    const key = 'task' + tid;
+    let c = colorCache.get(key);
+    if (!c) {
+        let h = 2166136261;
+        const s = t.comm;
+        for (let q = 0; q < s.length; q++) { h ^= s.charCodeAt(q); h = Math.imul(h, 16777619); }
+        h = (h >>> 1) % 360;
+        c = hsl(h, 50, dark ? 42 : 70);
+        colorCache.set(key, c);
+    }
+    return c;
+}
+function drawCpuTrack(top, vs, ve, k) {
+    for (let d = 0; d < CPU_LIST.length; d++) {
+        const cpu = CPU_LIST[d], ry = top + d * ROW;
+        if (ry > H || ry + ROW < 0) continue;
+        const sg = CPU_SEGS.get(cpu);
+        ctx.font = FONT_S;
+        const labW = ctx.measureText('CPU ' + cpu).width + 10;
+        ctx.font = FONT;
+        let lo = 0, hi = sg.e.length;
+        while (lo < hi) { const m = (lo + hi) >> 1; if (sg.e[m] > vs) hi = m; else lo = m + 1; }
+        for (let j = lo; j < sg.s.length && sg.s[j] < ve; j++) {
+            const x0 = (sg.s[j] - vs) * k, x1 = (sg.e[j] - vs) * k;
+            const cx0 = Math.max(x0, -2), w = Math.max(1, Math.min(x1, W + 2) - cx0);
+            const tid = sg.t[j];
+            ctx.globalAlpha = textHits && !TRACKS[tid].hits ? 0.25 : 1;
+            ctx.fillStyle = taskColor(tid);
+            ctx.fillRect(cx0, ry, w > 3 ? w - 1 : w, ROW - 1);
+            const tx = Math.max(cx0, labW) + 4, tw = Math.min(x1, W) - tx - 4;
+            if (tw > 30) {
+                let txt = trackLabel(TRACKS[tid]);
+                const maxc = Math.floor(tw / charW);
+                if (txt.length > maxc) txt = txt.slice(0, Math.max(1, maxc - 1)) + '…';
+                ctx.fillStyle = P.text;
+                ctx.textBaseline = 'middle';
+                ctx.fillText(txt, tx, ry + ROW / 2);
+            }
+            if (hovCpu && hovCpu.cpu === cpu && hovCpu.j === j) { ctx.strokeStyle = P.hov; ctx.lineWidth = 1; ctx.strokeRect(cx0 + 0.5, ry + 0.5, w - 1, ROW - 2); }
+        }
+        ctx.globalAlpha = 1;
+        const irq = CPU_IRQ.get(cpu);
+        if (irq) for (const r of irq) {
+            if (r[1] < vs || r[0] > ve) continue;
+            const x0 = (r[0] - vs) * k, x1 = (r[1] - vs) * k;
+            ctx.fillStyle = r[2] === 1 ? 'hsl(152,60%,40%)' : r[2] === 2 ? 'hsl(30,85%,50%)' : 'hsl(282,60%,50%)';
+            ctx.fillRect(Math.max(0, x0), ry + ROW - 5, Math.max(1.5, x1 - Math.max(0, x0)), 3);
+        }
+        // CPU label
+        const lab = 'CPU ' + cpu;
+        ctx.font = FONT_S;
+        const lw = ctx.measureText(lab).width + 10;
+        ctx.fillStyle = P.hdr;
+        ctx.globalAlpha = 0.9;
+        ctx.fillRect(0, ry, lw, ROW - 1);
+        ctx.globalAlpha = 1;
+        ctx.fillStyle = P.sub;
+        ctx.fillText(lab, 5, ry + ROW / 2);
+        ctx.font = FONT;
     }
 }
 function bandRect(s, e, y, h, color, vs, k) {

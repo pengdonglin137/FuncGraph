@@ -196,7 +196,7 @@ function applyTextFilter() {
                 textHits[i] = 1; cnt++; TRACKS[sTask[i]].hits++;
             }
         }
-        for (const t of ORDER) t.hidden = hideUnmatched && t.hits === 0;
+        for (const t of ORDER) t.hidden = hideUnmatched && t.kind !== 9 && t.hits === 0;
         elFcount.textContent = cnt + ' of ' + N + ' calls';
         elFbar.classList.add('on');
     }
