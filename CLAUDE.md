@@ -37,8 +37,14 @@ Key flags: `--enable-fold` (collapsible call blocks), `--func-links` (resolve al
 ```bash
 # Self-test: compares refactored output against reference HTML
 # Checks 24 HTML features + byte-level content diff
+# (initAutocomplete/durationFilter checks are stale since the unified filter and fail on the reference too)
 bash test_refactor.sh
+
+# Timeline invariant tests (synthetic format variants + given traces)
+FG_VMLINUX=/vol_1t/raspi/linux/vmlinux python3 tests/test_timeline.py [trace files...]
 ```
+
+Without `--timeline` the output must stay byte-identical to the reference; timeline CLI options are hidden from the info panel when unused.
 
 Requires a pre-generated reference file at `/tmp/funcgraph_reference.html`. Generate it before any code changes with the same parameters as in `test_refactor.sh`.
 
@@ -119,6 +125,15 @@ All original public functions are preserved as thin wrappers delegating to the c
 - `adjust_function_offset()` → `AddressResolver.adjust_offset()`
 - `parse_list_output()` → `AddressResolver.parse_list_output()`
 - `generate_html()` → `HtmlGenerator.generate()`
+
+### Timeline (`--timeline`)
+
+Optional, added on top of the pipeline above:
+
+- `btf.py` (stdlib only): reads `.BTF` from ELF (vmlinux, .ko, split BTF) or raw `/sys/kernel/btf/*` blobs and classifies each function's return type (`void`/`ptr`/`sint`/`uint`/`bool`/`enum`). `build_return_db()` → `ReturnTypeDB.lookup(name)` strips `.isra.0`-style suffixes.
+- `timeline.py`: `TimelineBuilder` re-parses the raw lines with a grammar that follows `kernel/trace/trace_functions_graph.c`, where every prologue column (abstime/rel-time, cpu, proc, latency, duration) is optional. It rebuilds call stacks **per task** (idle is per CPU), pairs exits by `funcgraph-tail` names, handles orphans/truncated calls, context-switch markers (off-CPU periods), `==========>` irq markers, sched events, need-resched windows, irqs-off windows, and error chains (origin → propagation, fate: handled / reaches `*_sys_*` / leaves window). Timing mode: `abs` > `rel` > `compressed` (durations only) > `count`. `to_data()` emits a column-oriented JSON (delta-encoded starts, string table).
+- `assets/timeline.css`, `assets/timeline_boot.js` (global: `fgSwitchView`, Alt+click on text lines), `assets/timeline_1..4.js` (concatenated into `function __tlBoot(){...}`: model, canvas renderer with LOD merging, interaction, detail/range summary). `HtmlGenerator._timeline_*` inline them; nothing is emitted without `timeline_json`.
+- The timeline jumps to the text view via `#L{line}` anchors and unfolds ancestors with the existing global `_setFolded`/`foldedBlocks`. Its keydown handler runs in the capture phase and stops propagation while the tab is active.
 
 ### Data Flow
 

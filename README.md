@@ -23,6 +23,7 @@ FuncGraph converts `function_graph` ftrace output into an interactive, filterabl
 - **Graph filtering**: `graph:func` / `notrace:func` to show/hide entire call trees (like ftrace's `set_graph_function` / `set_graph_notrace`)
 - **Latency field support**: parses irqs-off, need-resched, hardirq/softirq, preempt-depth from latency-mode traces
 - Keyboard-friendly navigation and accessible fold controls
+- **Timeline tab** (`--timeline`): per-task flame chart over time with context, irqs-off, scheduling-delay, off-CPU and error-path coloring
 
 ---
 
@@ -33,6 +34,7 @@ FuncGraph converts `function_graph` ftrace output into an interactive, filterabl
 ### Requirements
 - Python 3.6+
 - addr2line (from binutils)
+- pyelftools (for `--fast`)
 - Optional: Pygments (for syntax highlighting)
 
 ### Basic Usage
@@ -73,6 +75,9 @@ The following table documents each command-line option supported by `funcgraph.p
 | `--func-links` | flag | Add clickable source links to function names (adds some processing overhead) | `--func-links` |
 | `--entry-offset` | int (default: `0`) | Offset to add to function entry addresses (useful for patched functions) | `--entry-offset 8` |
 | `--enable-fold` | flag | Enable function call folding UI (collapse/expand call blocks) | `--enable-fold` |
+| `--timeline` | flag | Add the Timeline tab (per-task flame chart over time, see below) | `--timeline` |
+| `--btf` | paths... | BTF sources for return-type checks: raw `/sys/kernel/btf/*` copies or ELF files (default: `.BTF` of vmlinux/modules) | `--btf vmlinux.btf` |
+| `--no-btf` | flag | Do not use BTF for error-path detection | `--no-btf` |
 
 **Notes:**
 - `--fast` and `--use-external` should not be used together; if both are specified, `--use-external` will be ignored.
@@ -125,6 +130,54 @@ export LLVM=1
 # or export LLVM=-10
 python3 funcgraph.py trace.txt --vmlinux vmlinux --filter --fast
 ```
+
+## Timeline View (`--timeline`)
+
+`--timeline` adds a **Timeline** tab next to the text view. Each task gets a track; inside a track, x is time and y is call depth, so a slice's width is its duration (similar to Android Studio method traces or Perfetto, but for kernel function_graph data). The data is embedded in the same HTML file and drawn on a canvas, so 100k+ calls stay interactive.
+
+What it shows:
+- **Context colors** from the latency flags: task (blue), softirq (green), hardirq (orange), NMI (purple). Hatching marks irqs-off; an amber band/corner marks a pending need-resched (scheduling delay window); an optional bar shows preempt depth.
+- **Off-CPU periods** from the context-switch markers, labeled with the function the task was waiting in (e.g. `mutex_lock`) and whether it was preempted or blocked.
+- **Error paths** from `funcgraph-retval`: the origin (first function returning an errno) is solid red when the error reaches user space (`*_sys_*` in the chain) and orange when a caller handled it; propagating frames get a red outline. Return types are read from BTF, so void functions (leftover register values) and unsigned/bool returns are not reported, and pointer returns are checked with `IS_ERR` semantics.
+- **Call sites** from `funcgraph-retaddr`; a purple corner marks calls whose caller is not the parent slice (untraced, inlined or assembly frames in between).
+- Color modes: context, function name, self time, CPU, module.
+
+Interaction: `W`/`S` or Ctrl+wheel zoom, `A`/`D` or drag to pan, double-click to zoom into a slice, `E`/`Shift+E` next/previous error, `/` search, `Shift`+drag to summarize a time range (self/inclusive time per function, context breakdown, off-CPU time), `Enter` opens the selected call in the text view, and `Alt`+click on a text line shows it in the timeline. Press `?` in the timeline for the full list.
+
+The tool adapts to the options the trace was captured with and tells you what is missing:
+
+| Missing option | Effect in the timeline |
+|---|---|
+| `funcgraph-abstime` | No real time axis: slices are packed back-to-back by duration ("compressed time") |
+| `latency-format` | Context is inferred from IRQ/softirq entry function names; no irqs-off / need-resched / preempt overlays |
+| `funcgraph-proc` | Tasks are reconstructed from context-switch markers, otherwise one track per CPU |
+| `funcgraph-retval` | No error paths |
+| `funcgraph-retaddr` | No call sites |
+| `funcgraph-duration` | Durations are taken from the next timestamp (marked as estimated) |
+
+BTF: by default the `.BTF` section of `--vmlinux` (needs `CONFIG_DEBUG_INFO_BTF=y`) and of the modules found via `--module-dirs` is used. If your vmlinux has no `.BTF`, copy `/sys/kernel/btf/vmlinux` from the target and pass `--btf vmlinux.btf`. `--no-btf` disables the check (errors are then guessed from the value alone).
+
+### Capturing for the timeline
+
+```bash
+cd /sys/kernel/tracing
+echo 0 > tracing_on
+echo 1 > options/funcgraph-abstime    # real time axis (required for gaps and off-CPU)
+echo 1 > options/latency-format       # irqs-off / need-resched / hardirq / softirq / preempt flags
+echo 1 > options/funcgraph-proc
+echo 1 > options/funcgraph-retval
+echo 1 > options/funcgraph-retaddr
+echo 1 > options/funcgraph-tail       # function name on every '}' (better pairing)
+echo function_graph > current_tracer
+echo 1 > tracing_on; sleep 1; echo 0 > tracing_on
+cat trace > ~/ftrace.txt
+```
+
+Notes:
+- With `funcgraph-retaddr` on, kernels such as 6.18 do not print arguments even if `funcgraph-args` is set. Capture arguments in a separate run without `funcgraph-retaddr`.
+- On kernels without the BTF printing optimizations (e.g. 6.18), `funcgraph-args` makes reading `trace` very slow (measured ~36 ms per line on a Raspberry Pi 4). Always narrow it with `set_graph_function`, `set_ftrace_filter` or `set_ftrace_pid` first.
+- Optionally enable `events/sched/sched_switch` and `sched_wakeup`: the timeline then shows the task state at switch-out and who woke the task.
+- Use a larger `buffer_size_kb` if you see `LOST EVENTS`.
 
 ## Capturing Trace
 
@@ -253,6 +306,10 @@ funcgraph_visualization/
 ├── README.md                    # This file
 ├── funcgraph.py                 # Main program
 ├── fastfaddr2line.py            # Address resolution tool
+├── timeline.py                  # Timeline model (per-task call slices, error paths)
+├── btf.py                       # BTF reader (function return types)
+├── assets/                      # Timeline JS/CSS, inlined into the HTML
+├── tests/test_timeline.py       # Timeline invariant tests
 ├── ftrace.txt                   # Example data
 └── sample.png                   # Screenshot
 ```

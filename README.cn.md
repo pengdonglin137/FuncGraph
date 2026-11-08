@@ -23,6 +23,7 @@ FuncGraph 将 `function_graph` 的 ftrace 输出转换为交互式、可过滤�
 - **调用树过滤**：`graph:func` / `notrace:func` 显示/隐藏完整调用树（等效 ftrace 的 `set_graph_function` / `set_graph_notrace`）
 - **Latency 字段支持**：解析 irqs-off、need-resched、hardirq/softirq、preempt-depth
 - 键盘友好导航与可访问折叠控制
+- **时间轴标签页**（`--timeline`）：按任务的时序火焰图，按上下文、关中断、调度延迟、off-CPU 和错误路径配色
 
 ---
 
@@ -34,6 +35,7 @@ FuncGraph 将 `function_graph` 的 ftrace 输出转换为交互式、可过滤�
 
 - Python 3.6+
 - addr2line（来自 binutils）
+- pyelftools（`--fast` 需要）
 - 可选：Pygments（用于语法高亮）
 
 ### 基本用法
@@ -74,6 +76,9 @@ python3 funcgraph.py trace.txt \
 | `--func-links` | 标志 | 为函数名添加可点击的源码链接（添加一些处理开销） | `--func-links` |
 | `--entry-offset` | int（默认：`0`） | 要添加到函数入口地址的偏移（对打补丁的函数有用） | `--entry-offset 8` |
 | `--enable-fold` | 标志 | 启用函数调用折叠 UI（折叠/展开调用块） | `--enable-fold` |
+| `--timeline` | 标志 | 增加 Timeline 标签页（按任务的时序火焰图，见下文） | `--timeline` |
+| `--btf` | 路径... | 用于判断返回类型的 BTF 来源：`/sys/kernel/btf/*` 的副本或 ELF 文件（默认用 vmlinux/模块的 `.BTF` 段） | `--btf vmlinux.btf` |
+| `--no-btf` | 标志 | 判断错误路径时不使用 BTF | `--no-btf` |
 
 **说明：**
 - `--fast` 和 `--use-external` 不应同时使用；如果都指定了，`--use-external` 会被忽略。
@@ -126,6 +131,54 @@ export LLVM=1
 # 或 export LLVM=-10
 python3 funcgraph.py trace.txt --vmlinux vmlinux --filter --fast
 ```
+
+## 时间轴视图（`--timeline`）
+
+`--timeline` 会在文本视图旁增加一个 **Timeline** 标签页。每个任务一条轨道，轨道内横轴是时间、纵轴是调用深度，切片宽度即耗时（类似 Android Studio 的 method trace 或 Perfetto，数据来自内核 function_graph）。数据内嵌在同一个 HTML 中，用 Canvas 绘制，十几万次调用也能流畅缩放。
+
+显示内容：
+- **上下文配色**（来自 latency 标志）：任务（蓝）、softirq（绿）、hardirq（橙）、NMI（紫）。斜线表示关中断；琥珀色横条/角标表示 need-resched 已置位但尚未调度（调度延迟窗口）；可选显示 preempt 深度条。
+- **Off-CPU 时段**：根据上下文切换标记生成，标注任务在哪个函数里等待（如 `mutex_lock`），以及是被抢占还是阻塞。
+- **错误路径**（需 `funcgraph-retval`）：错误源头（第一个返回 errno 的函数）若一直传到用户态（链上有 `*_sys_*`）显示为实心红色，被调用者处理掉的显示为橙色；传播帧加红色描边。返回类型从 BTF 读取，因此 void 函数（寄存器残值）、无符号和 bool 返回值不会误报，指针返回值按 `IS_ERR` 语义判断。
+- **调用点**（需 `funcgraph-retaddr`）；紫色角标表示调用者与父切片不一致（中间有未跟踪、内联或汇编帧）。
+- 配色模式：上下文、函数名、自身耗时、CPU、模块。
+
+交互：`W`/`S` 或 Ctrl+滚轮缩放，`A`/`D` 或拖动平移，双击放大到切片，`E`/`Shift+E` 下一个/上一个错误，`/` 搜索，`Shift`+拖动汇总一段时间（按函数统计自身/总耗时、上下文占比、off-CPU 时间），`Enter` 在文本视图中打开选中调用，在文本行上 `Alt`+点击可跳到时间轴。在时间轴中按 `?` 查看完整说明。
+
+工具会根据 trace 实际开启的选项自动降级，并在页面上提示缺了什么：
+
+| 缺少的选项 | 对时间轴的影响 |
+|---|---|
+| `funcgraph-abstime` | 没有真实时间轴，切片按耗时首尾相接（压缩时间） |
+| `latency-format` | 上下文根据中断/软中断入口函数名推断；没有关中断、need-resched、preempt 叠加层 |
+| `funcgraph-proc` | 根据上下文切换标记重建任务，否则每个 CPU 一条轨道 |
+| `funcgraph-retval` | 没有错误路径 |
+| `funcgraph-retaddr` | 没有调用点 |
+| `funcgraph-duration` | 耗时取自下一行时间戳（标记为估算） |
+
+BTF：默认读取 `--vmlinux`（需 `CONFIG_DEBUG_INFO_BTF=y`）以及 `--module-dirs` 中找到的模块的 `.BTF` 段。如果 vmlinux 没有 `.BTF`，可从目标机复制 `/sys/kernel/btf/vmlinux` 并用 `--btf vmlinux.btf` 指定。`--no-btf` 关闭检查（此时只能根据返回值猜测错误）。
+
+### 为时间轴采集 trace
+
+```bash
+cd /sys/kernel/tracing
+echo 0 > tracing_on
+echo 1 > options/funcgraph-abstime    # 真实时间轴（显示空隙和 off-CPU 必需）
+echo 1 > options/latency-format       # irqs-off / need-resched / hardirq / softirq / preempt 标志
+echo 1 > options/funcgraph-proc
+echo 1 > options/funcgraph-retval
+echo 1 > options/funcgraph-retaddr
+echo 1 > options/funcgraph-tail       # 每个 '}' 后打印函数名（配对更可靠）
+echo function_graph > current_tracer
+echo 1 > tracing_on; sleep 1; echo 0 > tracing_on
+cat trace > ~/ftrace.txt
+```
+
+注意：
+- 开启 `funcgraph-retaddr` 后，6.18 等内核即使设置了 `funcgraph-args` 也不会打印参数。需要参数时另外采一次，不开 `funcgraph-retaddr`。
+- 在没有合入 BTF 打印优化的内核上（如 6.18），开启 `funcgraph-args` 后读取 `trace` 非常慢（树莓派 4 实测约 36 ms/行）。务必先用 `set_graph_function`、`set_ftrace_filter` 或 `set_ftrace_pid` 缩小范围。
+- 可选开启 `events/sched/sched_switch` 和 `sched_wakeup`，时间轴会显示换出时的任务状态和唤醒者。
+- 出现 `LOST EVENTS` 时请增大 `buffer_size_kb`。
 
 ## 抓取 Trace
 
@@ -256,6 +309,10 @@ funcgraph_visualization/
 ├── README.cn.md                 # 中文说明文档
 ├── funcgraph.py                 # 主程序
 ├── fastfaddr2line.py            # 地址解析工具
+├── timeline.py                  # 时间轴模型（按任务重建调用切片、错误路径分析）
+├── btf.py                       # BTF 解析（函数返回类型）
+├── assets/                      # 时间轴 JS/CSS，生成时内联进 HTML
+├── tests/test_timeline.py       # 时间轴不变量测试
 ├── ftrace.txt                   # 示例数据
 └── sample.html                  # 示例截图
 ```
