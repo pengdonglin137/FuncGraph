@@ -39,7 +39,8 @@
 body.tl-active .controls,
 body.tl-active #content,
 body.tl-active .progress-bar,
-body.tl-active #floatingToggle { display: none !important; }
+body.tl-active #floatingToggle,
+body.tl-active .keyboard-hint { display: none !important; }
 body.tl-active .container { width: auto !important; min-width: 0 !important; }
 #timelineView { display: none; }
 body.tl-active #timelineView { display: flex; }

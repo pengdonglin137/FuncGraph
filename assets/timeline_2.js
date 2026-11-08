@@ -385,8 +385,7 @@ function renderHead() {
     const span = 'span ' + fmtDur(ve - vs) + (MODE === 'abs' ? '   start ' + fmtAbs(vs) + ' s' : '') +
         (MODE === 'compressed' ? '   compressed time (no timestamps)' : MODE === 'count' ? '   call order (no timing)' : '');
     hctx.textAlign = 'right';
-    hctx.fillText(span, W - 8, OV_H + 18);
-    if (range) hctx.fillText('selected ' + fmtDur(range.e - range.s), W - 8, OV_H + 6);
+    hctx.fillText((range ? 'selected ' + fmtDur(range.e - range.s) + '   ' : '') + span, W - 8, OV_H + 18);
     hctx.textAlign = 'left';
     if (cursorX >= 0) {
         const tc = vs + cursorX / k;
