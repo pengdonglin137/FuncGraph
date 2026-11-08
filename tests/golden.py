@@ -56,7 +56,9 @@ CONFIGS = {
 }
 
 MASKS = [
-    (re.compile(r'(<div class="info-label">(?:Parse Time|Vmlinux Time|Modules Time|Total Time|Output|Generated At|Python|OS|Hostname|Processor):</div><div class="info-value">)[^<]*'), r'\1#'),
+    # Timing rows are only emitted when the measured time is > 0, so drop them entirely
+    (re.compile(r' *<div class="info-item"><div class="info-label">(?:Parse Time|Vmlinux Time|Modules Time|Total Time):</div>.*?</div></div>\n'), ''),
+    (re.compile(r'(<div class="info-label">(?:Output|Generated At|Python|OS|Hostname|Processor):</div><div class="info-value">)[^<]*'), r'\1#'),
     (re.compile(r'"build_time":[0-9.]+'), '"build_time":#'),
 ]
 

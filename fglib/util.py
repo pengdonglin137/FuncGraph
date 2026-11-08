@@ -25,7 +25,7 @@ def escape_html_preserve_spaces(text):
 def check_gawk_available():
     """检查gawk是否可用"""
     try:
-        result = subprocess.run(['gawk', '--version'], capture_output=True, text=True, check=True)
+        subprocess.run(['gawk', '--version'], capture_output=True, text=True, check=True)
         return True
     except (subprocess.CalledProcessError, FileNotFoundError):
         return False
@@ -46,8 +46,8 @@ def find_module_path(module_name, module_dirs, verbose=False):
         f"{module_name}.ko.gz",
         f"{module_name}.ko.xz",
         f"{module_name}.ko.zst",
-        f"*.ko",  # 通配符匹配
-        f"*.ko.debug"
+        "*.ko",  # 通配符匹配
+        "*.ko.debug"
     ]
 
     # 递归搜索所有目录

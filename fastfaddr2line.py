@@ -346,7 +346,7 @@ def find_matching_symbol(func_name, offset, length, symbol_by_name, sections, ve
                 return sym.addr, sec_name, target_addr
 
         # Fallback attempt: try to match without length requirement
-        log(f"No exact length match found, trying fallback without length requirement...", verbose)
+        log("No exact length match found, trying fallback without length requirement...", verbose)
 
     # 通用的符号匹配逻辑（适用于无长度要求或长度匹配失败的情况）
     for sym in candidates:
@@ -579,7 +579,7 @@ def resolve_addresses(proc, addr_specs_and_addrs, kernel_src_root, options):
         # 发送哨兵值
         proc.stdin.write(",\n")
         proc.stdin.flush()
-        log(f"已发送哨兵','到addr2line", options.verbose)
+        log("已发送哨兵','到addr2line", options.verbose)
         
         # 读取输出
         output_lines = []

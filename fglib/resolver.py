@@ -432,7 +432,6 @@ class AddressResolver:
             # 1. 尝试匹配函数块头
             header_match = func_header_re.match(line)
             if header_match:
-                func_name = header_match.group(1).strip()
                 html_output.append(f'<div class="location-link"><strong>{escape_html_preserve_spaces(line)}</strong></div>')
 
                 # 收集函数块的所有行，直到下一个函数块头或结束

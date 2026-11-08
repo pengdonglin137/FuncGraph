@@ -879,7 +879,6 @@ class HtmlGenerator:
         # 4. 其他格式
 
         # 首先清理字符串
-        clean_str = clean_file_path(location_str, kernel_src, path_prefix, module_src)
 
         # 尝试从原始字符串提取行号
         line_match = re.search(r':(\d+)(?:\s|$)', location_str)
@@ -1140,7 +1139,7 @@ class HtmlGenerator:
             content_parts.append(f'<span class="line-content">{escaped_line}</span>')
 
             if is_expandable:
-                content_parts.append(f'<span class="expand-btn">+</span>')
+                content_parts.append('<span class="expand-btn">+</span>')
 
             content_parts.append('</div>')
 

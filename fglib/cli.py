@@ -179,7 +179,7 @@ def validate_args(args):
 
     # 检查fast和use-external互斥
     if args.fast and args.use_external:
-        print(f"Warning: --fast and --use-external are both specified, --use-external will be ignored", file=sys.stderr)
+        print("Warning: --fast and --use-external are both specified, --use-external will be ignored", file=sys.stderr)
 
 
 def collect_module_dirs(args):
@@ -264,7 +264,7 @@ def find_faddr2line(args):
                 print(f"Error: Cannot locate fastfaddr2line.py at {fast_faddr2line_path}", file=sys.stderr)
                 sys.exit(1)
         else:
-            print(f"Error: Cannot locate faddr2line tool (only available in kernel source scripts/)", file=sys.stderr)
+            print("Error: Cannot locate faddr2line tool (only available in kernel source scripts/)", file=sys.stderr)
             sys.exit(1)
     return faddr2line_path, cross_compile, llvm, util_prefix, util_suffix
 
@@ -310,7 +310,7 @@ def main():
             print(f"[INFO] LLVM: {llvm}", file=sys.stderr)
         if util_prefix or util_suffix:
             print(f"[INFO] Tool chain prefix/suffix: {util_prefix}*{util_suffix}", file=sys.stderr)
-            print(f"[INFO] Note: faddr2line only exists in kernel source, not affected by toolchain", file=sys.stderr)
+            print("[INFO] Note: faddr2line only exists in kernel source, not affected by toolchain", file=sys.stderr)
         print(f"[INFO] Using faddr2line: {faddr2line_path}", file=sys.stderr)
         print(f"[INFO] Using vmlinux: {vmlinux_path}", file=sys.stderr)
         if kernel_src_abs:
@@ -363,10 +363,9 @@ def main():
     )
 
     # 计算总时间
-    total_time = parse_time + vmlinux_time + module_time
 
     # 输出详细的统计信息到日志
-    print(f"\n=== Processing Statistics ===")
+    print("\n=== Processing Statistics ===")
     print(f"Trace file parsing: {parse_time:.2f}s")
     if vmlinux_time > 0:
         print(f"Vmlinux resolution: {vmlinux_time:.2f}s")
@@ -375,7 +374,7 @@ def main():
     print(f"Total processing time: {parse_time + vmlinux_time + module_time:.2f}s")
     print(f"Total lines: {len(parsed_lines)}")
     print(f"Expandable entries: {sum(1 for l in parsed_lines if l['expandable'])}")
-    print(f"=============================\n")
+    print("=============================\n")
     
     # 写入输出文件
     try:
@@ -391,7 +390,7 @@ def main():
     print(f"Resolved {module_count} module functions, {kernel_count} kernel functions")
     
     if args.verbose:
-        print(f"\n[SUMMARY]")
+        print("\n[SUMMARY]")
         print(f"Total lines processed: {len(parsed_lines)}")
         print(f"Expandable entries: {expandable_count}")
         print(f"  - Kernel functions: {kernel_count}")

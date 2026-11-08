@@ -493,7 +493,6 @@ class FtraceParser:
             cpu = line_data.get('cpu')
             pid = line_data.get('pid')
             raw_func_name = line_data.get('raw_func_name')
-            display_func_name = line_data.get('display_func_name')
             raw_line = line_data.get('raw_line', '')
 
             # 跳过没有CPU/函数名的行
@@ -521,7 +520,6 @@ class FtraceParser:
                 # 创建唯一标识符: CPU_PID_函数名_行号_调用深度_缩进级别
                 # 包含行号以确保同名连续调用（同一 depth/indent）具有不同的 fold_id
                 # 如果pid为None，则使用空字符串
-                pid_str = pid if pid is not None else ""
                 # 使用 line_index 作为唯一性的一部分
                 fold_id = 'f' + _base36(line_index)
 
