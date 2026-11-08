@@ -250,3 +250,4 @@ table.tl-sum td.err { color: #c62828; }
 .an-bd-legend i { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 4px; vertical-align: -1px; }
 .an-bd-legend .d { color: var(--text-muted); }
 .an-tbl tr[data-sec] td, .an-tbl tr[data-site] td, .an-tbl tr.an-atomic td { cursor: pointer; }
+.tl-crumb.inl { font-style: italic; color: var(--text-muted); cursor: default; }

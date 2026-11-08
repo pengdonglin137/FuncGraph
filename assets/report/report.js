@@ -17,11 +17,71 @@
             if (typeof window.fgOnFilter === 'function') window.fgOnFilter();
         }
         let _fgSrcPool = null;
-        function fgFill(el) {
-            if (!el || el.firstChild || el.dataset.src === undefined) return;
+        // Two layouts for source blocks (toolbar "Source" button):
+        //   chain: inline frames outer -> inner, each collapsible, innermost (the call) open
+        //   flat : faddr2line order (innermost first), everything expanded
+        let fgSrcMode = lsGet('srcMode') || 'chain';
+        function fgFill(el, force) {
+            if (!el || el.dataset.src === undefined || (el.firstChild && !force)) return;
             if (!_fgSrcPool) _fgSrcPool = JSON.parse(document.getElementById('fgSrc').textContent);
             el.innerHTML = _fgSrcPool[+el.dataset.src] || '';
+            if (fgSrcMode === 'chain') fgChainView(el);
         }
+        function fgChainView(el) {
+            // split into frames: a location line starts a frame, source lines belong to it
+            const frames = [];
+            let head = null;
+            const tail = [];
+            for (const node of Array.from(el.childNodes)) {
+                const isLoc = node.classList && node.classList.contains('location-link');
+                if (isLoc && node.querySelector && node.querySelector('strong')) { head = node; continue; }
+                if (isLoc) { frames.push({ loc: node, lines: [] }); continue; }
+                if (frames.length && node.classList && node.classList.contains('source-line')) { frames[frames.length - 1].lines.push(node); continue; }
+                tail.push(node);
+            }
+            if (frames.length < 2) return;           // no inlining: keep as is
+            el.innerHTML = '';
+            el.classList.add('src-chain');
+            if (head) el.appendChild(head);
+            const n = frames.length;
+            frames.reverse().forEach((f, k) => {     // outer (traced function) first
+                const d = document.createElement('details');
+                d.className = 'src-frame' + (k === n - 1 ? ' src-call' : '');
+                d.style.marginLeft = (k * 14) + 'px';
+                if (k === n - 1) d.open = true;
+                const sm = document.createElement('summary');
+                const txt = f.loc.textContent.replace(/^\(inlined\s+by\)\s*/, '');
+                const m = txt.match(/^(\S+)\s+at\s+(.*)$/);
+                const tag = k === 0 ? 'traced' : 'inline';
+                sm.innerHTML = '<span class="src-tag ' + tag + '">' + tag + '</span> <b>' +
+                    (m ? escapeHtml(m[1]) : escapeHtml(txt)) + '</b> <span class="src-at">' +
+                    (m ? escapeHtml(m[2]) : '') + '</span>' +
+                    (k < n - 1 ? ' <span class="src-note">→ inlines ' + escapeHtml((frames[k + 1].loc.textContent.replace(/^\(inlined\s+by\)\s*/, '').split(/\s+at\s+/)[0]) || '') + ' here</span>'
+                               : ' <span class="src-note">← the traced call happens here</span>');
+                const link = f.loc.querySelector('a');
+                if (link) { const a = link.cloneNode(true); a.textContent = '↗'; a.className = 'src-open'; sm.appendChild(a); }
+                d.appendChild(sm);
+                for (const ln of f.lines) d.appendChild(ln);
+                el.appendChild(d);
+            });
+            for (const t of tail) el.appendChild(t);
+        }
+        function escapeHtml(s) {
+            return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+        }
+        function fgToggleSrcMode() {
+            fgSrcMode = fgSrcMode === 'chain' ? 'flat' : 'chain';
+            lsSet('srcMode', fgSrcMode);
+            const b = document.getElementById('srcModeBtn');
+            if (b) b.textContent = 'Source: ' + fgSrcMode;
+            document.querySelectorAll('.expanded-content[data-src]').forEach(el => {
+                if (el.firstChild) { el.classList.remove('src-chain'); fgFill(el, true); }
+            });
+        }
+        document.addEventListener('DOMContentLoaded', () => {
+            const b = document.getElementById('srcModeBtn');
+            if (b) b.textContent = 'Source: ' + fgSrcMode;
+        });
         function lsSet(key, val) { localStorage.setItem(_lsPrefix + key, val); }
         function lsRemove(key) { localStorage.removeItem(_lsPrefix + key); }
 

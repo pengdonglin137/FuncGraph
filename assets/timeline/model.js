@@ -6,6 +6,7 @@ const N = D.n, C = D.cols, S = D.strings;
 const MODE = D.mode;
 const TIMED = MODE === 'abs' || MODE === 'rel';
 const FL = {
+    INL: 1 << 23,      // synthetic inline frame (front-end only)
     CTX: 3, IRQOFF: 1 << 2, BHOFF: 1 << 3, RS_SHIFT: 4, PR_SHIFT: 7, MG_SHIFT: 11,
     LAT: 1 << 15, TRUNC: 1 << 16, ORPHAN: 1 << 17, EST: 1 << 18, MISMATCH: 1 << 19,
     NULLRET: 1 << 20, LEAF: 1 << 21, CTXINF: 1 << 22
@@ -15,10 +16,12 @@ const RESCHED_NAMES = ['', 'need-resched (n)', 'need-resched + preempt (N)', 'pr
     'lazy (l)', 'lazy + preempt (L)', 'need + lazy (b)', 'need + lazy + preempt (B)'];
 
 // ---- slice columns ----
-const sStart = new Float64Array(N), sEnd = new Float64Array(N);
-const sDepth = Uint16Array.from(C.depth), sTask = Int32Array.from(C.task);
-const sFlags = Uint32Array.from(C.flags), sName = Int32Array.from(C.name);
-const sParent = Int32Array.from(C.parent), sLine = Int32Array.from(C.line);
+// Real slices are 0..N-1. Inline frames (see buildInline) are appended as synthetic
+// slices N..NA-1; loops over i < N therefore only see traced calls.
+let sStart = new Float64Array(N), sEnd = new Float64Array(N);
+let sDepth = Uint16Array.from(C.depth), sTask = Int32Array.from(C.task);
+let sFlags = Uint32Array.from(C.flags), sName = Int32Array.from(C.name);
+let sParent = Int32Array.from(C.parent), sLine = Int32Array.from(C.line);
 const sEline = C.eline ? Int32Array.from(C.eline) : null;
 const sRet = C.ret, sCaller = C.caller, sArgs = C.args, sMod = C.module, sCpu = C.cpu;
 (function decodeTimes() {
@@ -59,6 +62,70 @@ function setAdjusted(on) {
     computeSelf();
 }
 
+// ---- inline frames ----
+// D.inline: caller string index -> chain outer->inner [[function, file, line], ...];
+// chain[0] is the traced function containing the call site, chain[1..] are inlined into it.
+const INL = D.inline || {};
+const HAS_INL = Object.keys(INL).length > 0;
+function inlChain(i) { return i < N && sCaller && sCaller[i] >= 0 ? (INL[sCaller[i]] || null) : null; }
+const SYN = [];               // per synthetic slice: {k, chain, kids: [real child indices], p}
+let NA = N;
+const sLd = new Int32Array(N);  // depth in the inline view (traced frames + inline frames above)
+let sLdAll = sLd;
+(function buildInline() {
+    const open = new Map();   // parent key -> [{key, sid}] per inline level (index k-1)
+    const synth = [];         // [task, start, end, nameStr, depthLevel, ctxFlags, firstLine, p, chain, k]
+    for (let i = 0; i < N; i++) {
+        const p = sParent[i];
+        const ch = inlChain(i);
+        const n = ch ? ch.length - 1 : 0;
+        const base = p >= 0 ? sLd[p] : sDepth[i] - 1;
+        sLd[i] = base + 1 + n;
+        const pk = p >= 0 ? p : 'r' + sTask[i] + ':' + sDepth[i];
+        let runs = open.get(pk);
+        if (!runs) { runs = []; open.set(pk, runs); }
+        let key = '';
+        for (let k = 1; k <= n; k++) {
+            key += ch[k - 1][0] + ':' + ch[k - 1][2] + '>' + ch[k][0] + '|';
+            const r = runs[k - 1];
+            if (r && r.key === key) {
+                const sy = synth[r.sid];
+                sy[2] = Math.max(sy[2], sEnd[i]);
+                SYN[r.sid].kids.push(i);
+                continue;
+            }
+            runs.length = k - 1;
+            const sid = synth.length;
+            synth.push([sTask[i], sStart[i], sEnd[i], ch[k][0], base + k, sFlags[i] & (FL.CTX | FL.CTXINF), sLine[i], p, ch, k]);
+            SYN.push({ k: k, chain: ch, kids: [i], p: p });
+            runs.push({ key: key, sid: sid });
+        }
+        runs.length = n;
+    }
+    if (!synth.length) return;
+    NA = N + synth.length;
+    const grow = (a, T) => { const b = new T(NA); b.set(a); return b; };
+    sStart = grow(sStart, Float64Array); sEnd = grow(sEnd, Float64Array);
+    sDepth = grow(sDepth, Uint16Array); sTask = grow(sTask, Int32Array);
+    sFlags = grow(sFlags, Uint32Array); sName = grow(sName, Int32Array);
+    sParent = grow(sParent, Int32Array); sLine = grow(sLine, Int32Array);
+    const ld = new Int32Array(NA); ld.set(sLd);
+    const nameIdx = new Map();
+    synth.forEach((y, j) => {
+        const i = N + j;
+        sTask[i] = y[0]; sStart[i] = y[1]; sEnd[i] = y[2];
+        let si = nameIdx.get(y[3]);
+        if (si === undefined) { si = S.length; S.push(y[3]); nameIdx.set(y[3], si); }
+        sName[i] = si; sFlags[i] = FL.INL | y[5]; sLine[i] = y[6]; sParent[i] = y[7];
+        sDepth[i] = y[7] >= 0 ? sDepth[y[7]] : 0;
+        ld[i] = y[4];
+    });
+    sLdAll = ld;
+})();
+let inlineView = false;
+function rowOf(i) { return inlineView ? sLdAll[i] : sDepth[i]; }
+function isSyn(i) { return i >= N; }
+
 // ---- error path data ----
 // eRole: -1 none, 0 origin, 1 propagation.  eFate: 0 handled by caller, 1 reaches user space, 2 leaves window
 const eErr = new Int32Array(N), eRole = new Int8Array(N).fill(-1), eFate = new Int8Array(N).fill(-1);
@@ -73,7 +140,7 @@ function errName(e) { return D.errnames[String(e)] || ''; }
 // ---- tracks ----
 const TRACKS = D.tasks.map((t, i) => ({
     id: i, pid: t.pid, comm: t.comm, comms: t.comms || [], kind: t.kind, cpu: t.cpu, runs: t.runs || [],
-    lo: -1, hi: -1, maxD: -1, rows: [], busy: 0, off: [], rs: [], io: [], errs: [], cpus: new Set(),
+    lo: -1, hi: -1, maxD: -1, rows: [], rowsT: [], rowsI: [], maxDT: -1, maxDI: -1, busy: 0, off: [], rs: [], io: [], errs: [], cpus: new Set(),
     collapsed: false, hidden: false, hits: 0, y: 0, h: 0
 }));
 for (let i = 0; i < N; i++) {
@@ -84,19 +151,46 @@ for (let i = 0; i < N; i++) {
     if (sParent[i] < 0) t.busy += sEnd[i] - sStart[i];
     if (sCpu && sCpu[i] >= 0) t.cpus.add(sCpu[i]);
 }
+function buildRows(ids, depthOf) {
+    let mx = -1;
+    for (const i of ids) if (depthOf(i) > mx) mx = depthOf(i);
+    const cnt = new Int32Array(mx + 1);
+    for (const i of ids) cnt[depthOf(i)]++;
+    const rows = [];
+    for (let d = 0; d <= mx; d++) rows.push(new Int32Array(cnt[d]));
+    cnt.fill(0);
+    for (const i of ids) { const d = depthOf(i); rows[d][cnt[d]++] = i; }
+    for (const r of rows) r.sort((a, b) => sStart[a] - sStart[b] || a - b);
+    return [rows, mx];
+}
+const synByTask = new Map();
+for (let i = N; i < NA; i++) { if (!synByTask.has(sTask[i])) synByTask.set(sTask[i], []); synByTask.get(sTask[i]).push(i); }
 for (const t of TRACKS) {
     if (t.lo < 0) continue;
-    const cnt = new Int32Array(t.maxD + 1);
-    for (let i = t.lo; i < t.hi; i++) cnt[sDepth[i]]++;
-    for (let d = 0; d <= t.maxD; d++) t.rows.push(new Int32Array(cnt[d]));
-    cnt.fill(0);
-    for (let i = t.lo; i < t.hi; i++) { const d = sDepth[i]; t.rows[d][cnt[d]++] = i; }
+    const real = [];
+    for (let i = t.lo; i < t.hi; i++) real.push(i);
+    [t.rowsT, t.maxDT] = buildRows(real, i => sDepth[i]);
+    if (HAS_INL) [t.rowsI, t.maxDI] = buildRows(real.concat(synByTask.get(t.id) || []), i => sLdAll[i]);
+    else { t.rowsI = t.rowsT; t.maxDI = t.maxDT; }
 }
 for (const r of D.offcpu) {   // [task, start, end, depth, reason, state, cpuOut, cpuIn, preempted, waker]
     const t = TRACKS[r[0]];
     t.off.push(r);
-    if (r[3] > t.maxD) t.maxD = r[3];
+    // inline view: below the frame that was open when the task left the CPU
+    r.ldI = r[3];
+    if (HAS_INL && r[3] > 0 && t.rowsT[r[3] - 1]) {
+        const row = t.rowsT[r[3] - 1];
+        const j = lbEnd(row, r[1]);
+        if (j < row.length && sStart[row[j]] <= r[1]) r.ldI = sLdAll[row[j]] + 1;
+    }
+    if (r[3] > t.maxDT) t.maxDT = r[3];
+    if (r.ldI > t.maxDI) t.maxDI = r.ldI;
 }
+function offRow(r) { return inlineView ? r.ldI : r[3]; }
+function applyView() {
+    for (const t of TRACKS) { t.rows = inlineView ? t.rowsI : t.rowsT; t.maxD = inlineView ? t.maxDI : t.maxDT; }
+}
+applyView();
 for (const r of D.resched) TRACKS[r[0]].rs.push(r);   // [task, start, end, maxPreempt, irqoff, closedBy]
 for (const r of D.irqoff) TRACKS[r[0]].io.push(r);    // [task, start, end]
 for (let c = 0; c < CHAINS.length; c++) TRACKS[sTask[CHAINS[c][0]]].errs.push(c);
@@ -276,6 +370,7 @@ tlRoot.innerHTML = `
     <button class="tl-btn" data-act="fit" title="Show the whole trace (0)">Fit</button>
     <button class="tl-btn" data-act="expand" title="Expand / collapse all tracks">Tracks</button>
     <button class="tl-btn" data-act="adj" title="Subtract the estimated tracing overhead from durations (O)">Overhead: measured</button>
+    <button class="tl-btn" data-act="inl" title="Show inlined functions as frames between the traced calls (I)">Inline: hidden</button>
     <button class="tl-btn" data-act="an-errors" title="Error summary by syscall / origin / errno">Errors</button>
     <button class="tl-btn" data-act="an-sec" title="Critical sections: irqs-off / preempt-off / BH-off regions">Sections</button>
     <button class="tl-btn" data-act="an-lat" title="Scheduling latency: need-resched windows and what delayed them">Sched latency</button>

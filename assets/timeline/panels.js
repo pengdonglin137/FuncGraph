@@ -3,9 +3,34 @@ function pill(cls, txt) { return '<span class="tl-pill ' + cls + '">' + esc(txt)
 function kv(k, v, cls) { return '<span class="k">' + k + '</span><span class="v' + (cls ? ' ' + cls : '') + '">' + v + '</span>'; }
 function lineLink(n, label) { return '<a class="tl-link" data-line="' + n + '">' + (label || 'line ' + n) + '</a>'; }
 
+function showInlineDetail(i) {
+    const f = inlineFacts(i);
+    let h = '<div class="tl-detail-head"><span class="tl-detail-title">' + esc(f.fn) + '</span>' + pill('mute', 'inlined') +
+        pill('mute', 'into ' + f.intoFn) + '<span class="sp"></span>' + lineLink(sLine[f.kids[0]], 'Open first call in text view ↵') +
+        '<button class="tl-close" title="Close (Esc)">×</button></div><div class="tl-detail-body"><div class="tl-kv">';
+    h += kv('traced extent', fmtDur(f.span) + ' &nbsp;<span class="d">from the first traced call inside to the end of the last one</span>');
+    h += kv('start / end', fmtDur(sStart[i]) + ' → ' + fmtDur(sEnd[i]));
+    h += kv('inlined into', esc(f.intoFn) + ' at ' + esc(f.atFile) + ':' + f.atLine);
+    h += kv('defined in', esc(f.file));
+    h += kv('traced calls', f.kids.length + ', together ' + fmtDur(f.covered));
+    h += kv('between them', fmtDur(f.gap) + ' <span class="d">own inlined code, untraced callees, interrupts</span>');
+    if (f.mismatch) h += kv('note', 'containing function ' + esc(f.ch[0][0]) + ' ≠ parent slice ' + esc(nameOf(f.y.p)) + ' (untraced frame between)', 'err');
+    h += '<span class="k">limits</span><span class="v d">Inlined code has no entry/exit events: only the traced calls inside it are visible, so the real start may be earlier and the real end later.</span>';
+    h += '</div><div><div class="tl-sec">Inline chain at the call site</div><div class="tl-crumbs">';
+    f.ch.forEach((fr, k) => {
+        h += '<div class="tl-crumb' + (k === f.k ? ' cur' : '') + (k > 0 ? ' inl' : '') + '"><span class="d">' + (k ? 'inline' : 'traced') + '</span>&nbsp; ' +
+            '\u00a0'.repeat(k * 2) + esc(fr[0]) + ' <span class="d">' + esc(fr[1]) + ':' + fr[2] + '</span></div>';
+    });
+    h += '</div><div style="height:8px"></div><div class="tl-sec">Traced calls inside (' + f.kids.length + ')</div><div class="tl-crumbs">';
+    for (const c of f.kids.slice(0, 40)) h += '<div class="tl-crumb" data-slice="' + c + '"><span class="d">' + fmtDur(durOf(c)).padStart(10, '\u00a0') + '</span>&nbsp; ' + esc(nameOf(c)) + '</div>';
+    if (f.kids.length > 40) h += '<div class="tl-crumb ghost">… ' + (f.kids.length - 40) + ' more</div>';
+    h += '</div></div></div>';
+    openDetail(h);
+}
 function showDetail(i) {
     range = null;
     AN.kind = null;
+    if (i >= N) { showInlineDetail(i); return; }
     const f = sFlags[i], d = durOf(i), t = TRACKS[sTask[i]];
     let pills = pill('ctx' + (f & FL.CTX), CTX_NAMES[f & FL.CTX] + (f & FL.CTXINF ? '?' : ''));
     if (f & FL.IRQOFF) pills += pill('warn', 'irqs off');
@@ -58,13 +83,22 @@ function showDetail(i) {
     for (let k = i, g = 0; k >= 0 && g < 128; k = sParent[k], g++) stack.push(k);
     stack.reverse();
     if (stack.length && sDepth[stack[0]] > 0) h += '<div class="tl-crumb ghost">… ' + sDepth[stack[0]] + ' frame(s) outside trace window</div>';
-    for (const m of stack) h += '<div class="tl-crumb' + (m === i ? ' cur' : '') + '" data-slice="' + m + '"><span class="d">' + fmtDur(durOf(m)).padStart(10, '\u00a0') + '</span>&nbsp; ' + '\u00a0'.repeat(Math.min(sDepth[m], 30)) + esc(nameOf(m)) + '</div>';
+    let ind = 0;
+    for (const m of stack) {
+        // inline frames between the parent and this call (from the call site's inline chain)
+        const ch = inlChain(m);
+        if (ch && ch.length > 1) for (const fr of ch.slice(1)) {
+            h += '<div class="tl-crumb inl" title="inlined, ' + esc(fr[1]) + ':' + fr[2] + '"><span class="d">' + 'inline'.padStart(10, '\u00a0') + '</span>&nbsp; ' +
+                '\u00a0'.repeat(Math.min(ind++, 30)) + esc(fr[0]) + ' <span class="d">' + esc(fr[1].split('/').pop()) + ':' + fr[2] + '</span></div>';
+        }
+        h += '<div class="tl-crumb' + (m === i ? ' cur' : '') + '" data-slice="' + m + '"><span class="d">' + fmtDur(durOf(m)).padStart(10, '\u00a0') + '</span>&nbsp; ' + '\u00a0'.repeat(Math.min(ind++, 30)) + esc(nameOf(m)) + '</div>';
+    }
     h += '</div>';
     // heaviest children
     const kids = [];
     const tr = TRACKS[sTask[i]];
-    if (sDepth[i] + 1 < tr.rows.length) {
-        const row = tr.rows[sDepth[i] + 1];
+    if (sDepth[i] + 1 < tr.rowsT.length) {
+        const row = tr.rowsT[sDepth[i] + 1];
         for (let q = lbEnd(row, sStart[i]); q < row.length && sStart[row[q]] <= sEnd[i]; q++) if (sParent[row[q]] === i) kids.push(row[q]);
     }
     if (kids.length) {
@@ -266,6 +300,7 @@ tlRoot.querySelector('.tl-toolbar').addEventListener('click', ev => {
         case 'fit': fitAll(); break;
         case 'help': elHelp.classList.toggle('show'); break;
         case 'adj': toggleAdjusted(); break;
+        case 'inl': toggleInlineView(); break;
         case 'an-errors': showErrors(); break;
         case 'an-lat': showLatency(); break;
         case 'an-sec': showSections(); break;
@@ -277,6 +312,19 @@ tlRoot.querySelector('.tl-toolbar').addEventListener('click', ev => {
     }
 });
 
+function toggleInlineView(force) {
+    if (!HAS_INL) { toast('No inline information: needs resolved call sites (funcgraph-retaddr + vmlinux with debug info)'); return; }
+    inlineView = force === undefined ? !inlineView : !!force;
+    applyView();
+    const b = tlRoot.querySelector('[data-act=inl]');
+    b.textContent = 'Inline: ' + (inlineView ? 'shown' : 'hidden');
+    b.classList.toggle('on', inlineView);
+    if (typeof lsSet === 'function') lsSet('tlInline', inlineView ? '1' : '0');
+    if (sel >= N && !inlineView) select(-1);
+    layout();
+    if (sel >= 0) revealRow(sel);
+    draw();
+}
 function toggleAdjusted() {
     if (!sDurAdj) { toast('No overhead estimate: capture with fgcapture.sh --calibrate or pass --overhead'); return; }
     setAdjusted(!adjOn);
@@ -331,6 +379,7 @@ elHelp.innerHTML = `
 <li><kbd>↑</kbd> parent · <kbd>↓</kbd> first child · <kbd>[</kbd>/<kbd>]</kbd> siblings</li>
 <li><kbd>E</kbd>/<kbd>Shift+E</kbd> next/prev error · <kbd>/</kbd> search, <kbd>N</kbd> next match</li>
 <li>Click an off-CPU segment: wait chain (who woke the task, wake latency, and who woke the waker)</li>
+<li><kbd>I</kbd>: show / hide inlined functions as dashed frames (extent = first to last traced call inside)</li>
 <li><kbd>O</kbd>: durations as measured / with the tracing overhead subtracted</li>
 <li><kbd>H</kbd>: duration distribution of the selected function · toolbar <b>Errors</b> / <b>Sched latency</b>: summaries</li>
 <li><kbd>Enter</kbd>: open in text view · <kbd>Alt</kbd>+click a text line: show it here</li></ul>
@@ -358,6 +407,8 @@ if (!D.caps.latency) { tlRoot.querySelector('[data-ov=irq]').classList.add('na')
 if (!D.resched.length && !D.caps.latency) tlRoot.querySelector('[data-ov=rs]').classList.add('na');
 if (!D.offcpu.length) tlRoot.querySelector('[data-ov=off]').classList.add('na');
 if (!sDurAdj) tlRoot.querySelector('[data-act=adj]').style.display = 'none';
+if (!HAS_INL) tlRoot.querySelector('[data-act=inl]').style.display = 'none';
+else if (typeof lsGet === 'function' && lsGet('tlInline') === '1') toggleInlineView(true);
 if (!WAKES.length) tlRoot.querySelector('[data-ov=wk]').classList.add('na');
 if (!D.caps.retval) tlRoot.querySelector('[data-ov=err]').classList.add('na');
 new MutationObserver(() => { palette(); ovDirty = true; draw(); })

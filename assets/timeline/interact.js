@@ -31,7 +31,7 @@ function hitTest(mx, my) {
     }
     let off = null;
     if (best < 0 && ov.off && !t.collapsed) {
-        for (const r of t.off) if (r[3] === d && tm >= r[1] && tm <= r[2]) { off = r; break; }
+        for (const r of t.off) if (offRow(r) === d && tm >= r[1] && tm <= r[2]) { off = r; break; }
     }
     return { track: t, slice: best, off: off, header: false };
 }
@@ -65,7 +65,7 @@ function zoomTo(s, e, revealSlice) {
 function revealRow(i) {
     const t = TRACKS[sTask[i]];
     if (t.collapsed) { t.collapsed = false; layout(); }
-    const y = t.y + HDR + sDepth[i] * ROW;
+    const y = t.y + HDR + rowOf(i) * ROW;
     if (y < elScroll.scrollTop + 4 || y + ROW > elScroll.scrollTop + H - 4) elScroll.scrollTop = Math.max(0, y - H / 3);
 }
 function select(i, opts) {
@@ -87,7 +87,37 @@ function select(i, opts) {
 }
 
 // ---- tooltip ----
+function inlineFacts(i) {
+    // facts about synthetic inline frame i
+    const y = SYN[i - N], ch = y.chain, k = y.k;
+    const kids = y.kids;
+    let covered = 0;
+    for (const c of kids) covered += sEnd[c] - sStart[c];
+    const span = sEnd[i] - sStart[i];
+    const outer = ch[k - 1];
+    return { y, ch, k, kids, covered, span, gap: Math.max(0, span - covered), fn: ch[k][0], file: ch[k][1],
+        intoFn: outer[0], atFile: outer[1], atLine: outer[2], mismatch: y.p >= 0 && nameOf(y.p).split('.')[0] !== ch[0][0].split('.')[0] };
+}
+function tipInline(i) {
+    const f = inlineFacts(i);
+    const row = (k, v) => '<div class="t-row"><span class="t-k">' + k + '</span><span class="t-v">' + v + '</span></div>';
+    let h = '<div class="t-name">' + esc(f.fn) + ' <span class="t-warn">(inlined)</span></div>';
+    h += '<div>traced extent <span class="t-dur">' + fmtDur(f.span) + '</span></div><div class="t-sep"></div>';
+    h += row('inlined into', esc(f.intoFn) + ' at ' + esc(f.atFile) + ':' + f.atLine);
+    h += row('defined in', esc(f.file));
+    h += row('traced calls', f.kids.length + ' (' + fmtDur(f.covered) + ')');
+    h += row('between them', fmtDur(f.gap) + ' (own inlined code or untraced work)');
+    h += '<div class="t-warn">Start/end = first/last traced call inside: the inlined code itself may begin earlier and end later.</div>';
+    if (f.mismatch) h += '<div class="t-warn">Containing function ' + esc(f.ch[0][0]) + ' differs from the parent slice ' + esc(nameOf(f.y.p)) + ' (untraced frame in between).</div>';
+    return h;
+}
+function inlineLine(i) {
+    // "a > b > c" path of inline frames around the call site of real slice i
+    const ch = inlChain(i);
+    return ch && ch.length > 1 ? ch.slice(1).map(f => f[0]).join(' › ') : '';
+}
 function tipSlice(i) {
+    if (i >= N) return tipInline(i);
     const d = durOf(i), f = sFlags[i];
     let h = '<div class="t-name">' + esc(nameOf(i)) + (modOf(i) ? ' [' + esc(modOf(i)) + ']' : '') + '</div>';
     h += '<div><span class="t-dur">' + fmtDur(d) + '</span>' + (f & FL.EST ? ' <span class="t-warn">(estimated)</span>' : '') +
@@ -104,6 +134,8 @@ function tipSlice(i) {
     }
     const c = callerOf(i);
     if (c) h += row('caller', esc(c) + (f & FL.MISMATCH ? ' <span class="t-warn">(untraced frame between)</span>' : ''));
+    const il = inlineLine(i);
+    if (il) h += row('inlined in', esc(il));
     const a = argsOf(i);
     if (a) h += row('args', esc(a.length > 180 ? a.slice(0, 180) + '…' : a));
     if (f & FL.TRUNC) h += '<div class="t-warn">exit not captured (trace window ended or events lost)</div>';
@@ -155,8 +187,8 @@ function openTaskAt(tid, tm) {
     if (t.collapsed) t.collapsed = false;
     layout();
     elScroll.scrollTop = Math.max(0, t.y - 4);
-    if (t.rows.length) {
-        const row = t.rows[0], j = lbEnd(row, tm);
+    if (t.rowsT.length) {
+        const row = t.rowsT[0], j = lbEnd(row, tm);
         if (j < row.length && sStart[row[j]] <= tm) { select(row[j]); return; }
     }
     draw();
@@ -363,6 +395,7 @@ window.addEventListener('keydown', ev => {
         case '/': elSearch.focus(); elSearch.select(); break;
         case 'h': case 'H': if (sel >= 0) showDist(sName[sel]); break;
         case 'o': case 'O': toggleAdjusted(); break;
+        case 'i': case 'I': toggleInlineView(); break;
         case '?': elHelp.classList.toggle('show'); break;
         case 'Escape':
             if (elHelp.classList.contains('show')) elHelp.classList.remove('show');
@@ -374,7 +407,7 @@ window.addEventListener('keydown', ev => {
 }, true);
 
 function rowPos(i) {
-    const row = TRACKS[sTask[i]].rows[sDepth[i]];
+    const row = TRACKS[sTask[i]].rowsT[sDepth[i]];
     const j = lbStart(row, sStart[i], 0);
     for (let q = j; q < row.length && sStart[row[q]] <= sStart[i]; q++) if (row[q] === i) return [row, q];
     for (let q = Math.max(0, j - 2); q < row.length; q++) if (row[q] === i) return [row, q];
@@ -382,13 +415,14 @@ function rowPos(i) {
 }
 function firstChild(i) {
     const t = TRACKS[sTask[i]];
-    if (sDepth[i] + 1 >= t.rows.length) return -1;
-    const row = t.rows[sDepth[i] + 1];
+    if (isSyn(i) || sDepth[i] + 1 >= t.rowsT.length) return -1;
+    const row = t.rowsT[sDepth[i] + 1];
     const j = lbEnd(row, sStart[i]);
     for (let q = j; q < row.length && sStart[row[q]] <= sEnd[i]; q++) if (sParent[row[q]] === i) return row[q];
     return -1;
 }
 function sibling(i, dir) {
+    if (isSyn(i)) return -1;
     const [row, q] = rowPos(i);
     if (q < 0) return -1;
     const nq = q + dir;

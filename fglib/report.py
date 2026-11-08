@@ -12,6 +12,7 @@ from collections import defaultdict
 
 from .assets import COMPARE_CSS, COMPARE_JS, REPORT_CSS, REPORT_JS, TIMELINE_CSS, VIEWS_BOOT_JS, VIEWS_CSS, read_asset, timeline_script
 from .constants import APP_AUTHOR, APP_TITLE, APP_VERSION, ERROR_CODE_MAP, PROJECT_DIR
+from .inline import timeline_inline_map
 from .highlight import highlight_ftrace_line
 from .resolver import call_faddr2line_batch, call_faddr2line_for_func_names, create_source_link, parse_list_output, parse_module_url
 from .util import build_source_url, clean_file_path, escape_html_preserve_spaces, find_module_path, format_args_info, get_environment_info, get_relative_path, remove_compiler_suffix, verbose_print
@@ -198,6 +199,7 @@ class HtmlGenerator:
                 <div class="btn-group">
                     <button class="control-btn btn-tool" onclick="copyVisibleContent(event)">Copy</button>
                     <button class="control-btn btn-tool" id="heatmapBtn" onclick="toggleHeatmap()">Heatmap</button>
+                    <button class="control-btn btn-tool" id="srcModeBtn" onclick="fgToggleSrcMode()" title="Source blocks: inline chain (outer to inner, collapsible) or flat faddr2line order">Source: chain</button>
                 </div>
                 <span class="heatmap-legend" id="heatmapLegend"></span>
             </div>
@@ -288,10 +290,33 @@ class HtmlGenerator:
     def _view_containers(self):
         return ''.join(f'\n        <div id="{x[3]}" class="fg-view"></div>' for x in self._views())
 
+    def _attach_inline(self):
+        """Add inline-frame chains of call sites to the timeline data (needs resolved addresses)."""
+        tl = self.timeline_json
+        if not tl or 'inline' in tl:
+            return
+        tl['inline'] = {}
+        if not self.func_locations_map:
+            return
+        ksrc = (self.kernel_src.rstrip('/') + '/') if self.kernel_src else None
+
+        def rel(path):
+            return path[len(ksrc):] if ksrc and path.startswith(ksrc) else path
+
+        def lookup(caller):
+            return self.func_locations_map.get(self._adjust_func_info(caller, remove_suffix=False))
+        tl['inline'] = timeline_inline_map(tl['strings'], tl['cols'].get('caller'),
+                                           lambda c: lookup(c))
+        if ksrc:
+            for chain in tl['inline'].values():
+                for f in chain:
+                    f[1] = rel(f[1])
+
     def _timeline_scripts(self):
         views = self._views()
         if not views:
             return ''
+        self._attach_inline()
         out = ''
         for x in views:
             data = json.dumps(x[6], separators=(',', ':')).replace('<', '\\u003c')

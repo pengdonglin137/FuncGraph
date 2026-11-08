@@ -1213,3 +1213,12 @@
         /* the controls live in the top bar now; the floating show/hide toggle is not needed */
         .floating-toggle { display: none !important; }
         body.hide-floating-controls .controls { display: flex !important; }
+        /* source blocks, chain layout */
+        .src-chain .src-frame { border-left: 2px dashed var(--border-color); padding-left: 6px; margin: 2px 0; }
+        .src-chain .src-frame.src-call { border-left: 2px solid var(--btn-primary); }
+        .src-chain summary { cursor: pointer; padding: 2px 0; font-family: inherit; white-space: pre; }
+        .src-chain summary .src-at { color: var(--link-color); }
+        .src-chain summary .src-note { color: var(--text-muted); font-style: italic; }
+        .src-chain .src-tag { font: 600 10px system-ui, sans-serif; padding: 0 5px; border-radius: 7px; background: var(--bg-secondary); color: var(--text-muted); }
+        .src-chain .src-tag.traced { background: rgba(59, 111, 216, .15); color: #2b5bb8; }
+        .src-chain .src-open { margin-left: 8px; text-decoration: none; color: var(--link-color); }

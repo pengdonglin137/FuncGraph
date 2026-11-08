@@ -93,6 +93,7 @@ function baseColor(i) {
 }
 function sliceStyle(i) {
     // returns [fill, textColor, borderColor|null]
+    if (i >= N) return [dark ? 'rgba(120,130,150,.22)' : 'rgba(110,120,140,.13)', P.textDim, dark ? 'rgba(170,180,200,.7)' : 'rgba(90,100,120,.6)'];
     if (ov.err && eRole[i] >= 0) {
         const handled = eFate[i] === 0;
         if (eRole[i] === 0) return [handled ? P.errOh : P.errO, '#ffffff', null];
@@ -101,6 +102,7 @@ function sliceStyle(i) {
     return [baseColor(i), P.text, null];
 }
 function isDim(i) {
+    if (i >= N) return isDim(SYN[i - N].kids[0]);
     if (searchHits && !searchHits[sName[i]]) return true;
     if (textHits && !textHits[i]) return true;
     if (range && range.track !== null && range.track !== sTask[i]) return false;
@@ -209,7 +211,7 @@ function drawTrack(t, y, vs, ve, k) {
         if (ry > H || ry + ROW < 0) continue;
         drawRow(t.rows[d], ry, ROW - 1, vs, ve, k, true);
     }
-    if (ov.off) for (const r of t.off) drawOff(r, top + r[3] * ROW, vs, k);
+    if (ov.off) for (const r of t.off) drawOff(r, top + offRow(r) * ROW, vs, k);
     if (ov.err) {
         // origins are always marked, even when merged into dense blocks
         for (const c of t.errs) {
@@ -218,7 +220,7 @@ function drawTrack(t, y, vs, ve, k) {
             const i = ch[0];
             const x = (sStart[i] - vs) * k;
             if (x < -6 || x > W + 6) continue;
-            const ry = top + sDepth[i] * ROW;
+            const ry = top + rowOf(i) * ROW;
             if (ry < -ROW || ry > H) continue;
             if ((sEnd[i] - sStart[i]) * k >= 6) continue;
             ctx.fillStyle = ch[3] === 0 ? P.errOh : P.errO;
@@ -292,7 +294,7 @@ function drawCpuTrack(top, vs, ve, k) {
 function trackAnchorY(tid, slice, sy) {
     const t = TRACKS[tid];
     if (!t || t.hidden || t.h === 0) return null;
-    if (slice >= 0 && !t.collapsed) return t.y - sy + HDR + sDepth[slice] * ROW + ROW / 2;
+    if (slice >= 0 && !t.collapsed) return t.y - sy + HDR + rowOf(slice) * ROW + ROW / 2;
     return t.y - sy + HDR / 2;
 }
 function drawWakeups(vs, ve, k, sy) {
@@ -305,7 +307,7 @@ function drawWakeups(vs, ve, k, sy) {
         const y0 = trackAnchorY(w[0], w[4], sy);
         const tt = TRACKS[w[2]];
         if (y0 === null || !tt || tt.hidden || tt.h === 0) continue;
-        const y1 = off && !tt.collapsed ? tt.y - sy + HDR + off[3] * ROW + ROW / 2 : tt.y - sy + HDR / 2;
+        const y1 = off && !tt.collapsed ? tt.y - sy + HDR + offRow(off) * ROW + ROW / 2 : tt.y - sy + HDR / 2;
         if ((y0 < 0 && y1 < 0) || (y0 > H && y1 > H)) continue;
         if (++n > 400) break;
         const x0 = (w[1] - vs) * k, x1 = (t1 - vs) * k;
@@ -383,7 +385,12 @@ function drawSlice(i, x0, x1, y, h, labels) {
         const p = (f >> FL.PR_SHIFT) & 15;
         if (p) { ctx.fillStyle = dark ? 'rgba(255,255,255,' + (0.1 + 0.08 * p) + ')' : 'rgba(0,0,0,' + (0.08 + 0.07 * p) + ')'; ctx.fillRect(cx0, y + h - 3, ww, 3); }
     }
-    if (st[2]) { ctx.strokeStyle = st[2]; ctx.lineWidth = 1.5; ctx.strokeRect(cx0 + 0.75, y + 0.75, ww - 1.5, h - 1.5); }
+    if (i >= N) {
+        // inline frame: dashed outline; the dashed ends say "extent known only from the traced calls inside"
+        ctx.strokeStyle = st[2]; ctx.lineWidth = 1; ctx.setLineDash([3, 3]);
+        ctx.strokeRect(cx0 + 0.5, y + 0.5, ww - 1, h - 1);
+        ctx.setLineDash([]);
+    } else if (st[2]) { ctx.strokeStyle = st[2]; ctx.lineWidth = 1.5; ctx.strokeRect(cx0 + 0.75, y + 0.75, ww - 1.5, h - 1.5); }
     if (ov.mk && w > 5) {
         if (f & FL.TRUNC) { ctx.fillStyle = P.sub; for (let yy = y; yy < y + h; yy += 4) ctx.fillRect(cx0 + ww - 2, yy, 2, 2); }
         if (f & FL.ORPHAN) { ctx.fillStyle = P.sub; for (let yy = y; yy < y + h; yy += 4) ctx.fillRect(cx0, yy, 2, 2); }
@@ -396,7 +403,7 @@ function drawSlice(i, x0, x1, y, h, labels) {
     }
     if (labels && w > 26) {
         const nm = nameOf(i);
-        let txt = nm;
+        let txt = i >= N ? 'inline ' + nm : nm;
         if (ov.err && eRole[i] === 0) { const en = errName(eErr[i]); txt += ' = ' + (en || eErr[i]); }
         const maxc = Math.floor((w - 8) / charW);
         if (maxc >= 3) {
@@ -441,8 +448,8 @@ function buildOverview() {
     const k0 = W / tMax;
     for (const t of ORDER) {
         if (t.kind !== 0 && ORDER.some(x => x.kind === 0)) continue;
-        if (!t.rows.length) continue;
-        for (const i of t.rows[0]) {
+        if (!t.rowsT.length) continue;
+        for (const i of t.rowsT[0]) {
             const a = sStart[i] * k0, b = sEnd[i] * k0;
             const pa = Math.floor(a), pb = Math.min(ovDens.length - 1, Math.floor(b));
             for (let p = pa; p <= pb; p++) ovDens[p] += Math.min(b, p + 1) - Math.max(a, p);

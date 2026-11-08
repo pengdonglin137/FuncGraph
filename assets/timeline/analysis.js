@@ -321,8 +321,8 @@ elDetail.addEventListener('click', ev => {
 function subtree(i) {
     // all descendants of slice i (same task, nested in time, parent chain reaches i)
     const t = TRACKS[sTask[i]], d0 = sDepth[i], s = sStart[i], e = sEnd[i], out = [];
-    for (let d = d0 + 1; d < t.rows.length; d++) {
-        const row = t.rows[d];
+    for (let d = d0 + 1; d < t.rowsT.length; d++) {
+        const row = t.rowsT[d];
         let any = false;
         for (let q = lbEnd(row, s); q < row.length && sStart[row[q]] <= e; q++) {
             let k = row[q], g = 0;

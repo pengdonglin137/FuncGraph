@@ -135,6 +135,21 @@ class BrowserSmokeTest(unittest.TestCase):
         self.page.wait_for_timeout(200)
         self.assertGreater(self.ev("document.querySelectorAll('tr[data-sec]').length"), 0)
 
+    def test_source_block_modes(self):
+        lid = self.ev("(() => { const c = Array.from(document.querySelectorAll('.expanded-content[data-src]')); return c[0].id; })()")
+        line_id = lid[:-len('_content')]
+        self.page.query_selector(f'[data-line-id="{line_id}"] .line-content').click()
+        self.page.wait_for_timeout(200)
+        self.assertEqual(self.ev("document.getElementById('srcModeBtn').textContent"), 'Source: chain')
+        self.page.click('#srcModeBtn')
+        self.page.wait_for_timeout(200)
+        self.assertEqual(self.ev("document.getElementById('srcModeBtn').textContent"), 'Source: flat')
+        self.assertEqual(self.ev(f"document.querySelectorAll('#{lid} details').length"), 0)
+
+    def test_inline_toggle_hidden_without_data(self):
+        self.open_timeline()      # fake faddr2line has no inline chains
+        self.assertEqual(self.ev("getComputedStyle(document.querySelector('[data-act=inl]')).display"), 'none')
+
     def test_wakeup_overlay_toggle(self):
         self.open_timeline()
         self.assertFalse(self.ev("document.querySelector('[data-ov=wk]').classList.contains('na')"))
