@@ -109,6 +109,7 @@ function showRangeSummary() {
         for (let i = t.lo; i >= 0 && i < t.hi; i++) {
             const s = sStart[i], e = sEnd[i];
             if (e <= rs || s >= re) continue;
+            if (textHits && !textHits[i]) continue;
             const d = e - s, ovl = Math.min(e, re) - Math.max(s, rs);
             const selfPart = d > 0 ? sSelf[i] * ovl / d : 0;
             let a = agg.get(sName[i]);
@@ -129,6 +130,7 @@ function showRangeSummary() {
     let h = '<div class="tl-detail-head"><span class="tl-detail-title">Range ' + fmtDur(span) + '</span>';
     h += pill('mute', range.track !== null ? trackLabel(TRACKS[range.track]) : 'all tracks');
     h += pill('mute', nCalls + ' calls');
+    if (textHits) h += pill('warn', 'filtered');
     for (let c = 0; c < 4; c++) if (ctxSelf[c] > 0) h += pill('ctx' + c, CTX_NAMES[c] + ' ' + fmtDur(ctxSelf[c]));
     if (offT > 0) h += pill('mute', 'off-CPU ' + fmtDur(offT));
     h += '<span class="sp"></span><button class="tl-close" title="Close (Esc)">×</button></div>';
@@ -175,6 +177,52 @@ function revealLine(n) {
     if (i < 0) { toast('No timeline slice for line ' + n); return; }
     select(i, { reveal: true });
 }
+
+// ---- text-view filter integration ----
+function applyTextFilter() {
+    const st = window.fgFilterState || { text: '', lines: null };
+    if (document.activeElement !== elFtext) elFtext.value = st.text || '';
+    if (!st.lines) {
+        textHits = null;
+        for (const t of ORDER) { t.hits = 0; t.hidden = false; }
+        elFcount.textContent = '';
+        elFbar.classList.remove('on');
+    } else {
+        textHits = new Uint8Array(N);
+        for (const t of ORDER) t.hits = 0;
+        let cnt = 0;
+        for (let i = 0; i < N; i++) {
+            if (st.lines.has(sLine[i]) || (sEline && sEline[i] && st.lines.has(sEline[i]))) {
+                textHits[i] = 1; cnt++; TRACKS[sTask[i]].hits++;
+            }
+        }
+        for (const t of ORDER) t.hidden = hideUnmatched && t.hits === 0;
+        elFcount.textContent = cnt + ' of ' + N + ' calls';
+        elFbar.classList.add('on');
+    }
+    tlRoot.querySelector('[data-act=fhide]').classList.toggle('on', hideUnmatched);
+    if (sel >= 0 && textHits && !textHits[sel]) select(-1);
+    rebuildErrList();
+    layout();
+    draw();
+}
+window.fgOnFilter = applyTextFilter;
+elFtext.addEventListener('keydown', ev => {
+    ev.stopPropagation();
+    if (ev.key === 'Enter') {
+        const fi = document.getElementById('filterInput');
+        fi.value = elFtext.value;
+        elFtext.blur();
+        if (elFtext.value.trim()) applyFilter(); else clearFilter();
+    } else if (ev.key === 'Escape') { elFtext.value = (window.fgFilterState || {}).text || ''; elFtext.blur(); }
+});
+elFbar.addEventListener('click', ev => {
+    const b = ev.target.closest('[data-act]');
+    if (!b) return;
+    if (b.dataset.act === 'fclear') { elFtext.value = ''; clearFilter(); }
+    else if (b.dataset.act === 'fhide') { hideUnmatched = !hideUnmatched; applyTextFilter(); }
+});
+if (!document.getElementById('filterInput')) elFbar.style.display = 'none';
 
 // ---- toolbar ----
 tlRoot.querySelector('[data-role=color]').addEventListener('click', ev => {
@@ -255,7 +303,7 @@ elHelp.innerHTML = `
 
 // ---- init ----
 palette();
-rebuildErrList();
+applyTextFilter();
 if (!CHAINS.length) tlRoot.querySelector('.tl-errnav').style.display = 'none';
 if (!sMod) tlRoot.querySelector('[data-v=module]').style.display = 'none';
 if (!sCpu) tlRoot.querySelector('[data-v=cpu]').style.display = 'none';

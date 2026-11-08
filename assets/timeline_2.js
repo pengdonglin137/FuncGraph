@@ -102,6 +102,7 @@ function sliceStyle(i) {
 }
 function isDim(i) {
     if (searchHits && !searchHits[sName[i]]) return true;
+    if (textHits && !textHits[i]) return true;
     if (range && range.track !== null && range.track !== sTask[i]) return false;
     return false;
 }
@@ -129,6 +130,7 @@ function layout() {
     let y = 0;
     for (const t of ORDER) {
         t.y = y;
+        if (t.hidden) { t.h = 0; continue; }
         t.h = HDR + (t.collapsed ? MINI : (t.maxD + 1) * ROW) + GAP;
         y += t.h;
     }
@@ -159,6 +161,7 @@ function render() {
     ctx.fillStyle = P.grid;
     for (let t = Math.ceil(vs / step) * step; t < ve; t += step) ctx.fillRect(Math.round((t - vs) * k), 0, 1, H);
     for (const t of ORDER) {
+        if (t.hidden) continue;
         const y = t.y - sy;
         if (y + t.h < 0 || y > H) continue;
         drawTrack(t, y, vs, ve, k);

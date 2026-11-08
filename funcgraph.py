@@ -3473,6 +3473,12 @@ class HtmlGenerator:
         //   infoPanelExpanded, floatingControlsHidden, floatingTogglePos, viewState, heatmapEnabled
         function lsGet(key) { return localStorage.getItem(_lsPrefix + key); }
         // Source blocks are de-duplicated in #fgSrc and filled in on first expand
+        // Filter state shared with the Timeline tab (line numbers that pass the filter)
+        window.fgFilterState = { text: '', lines: null };
+        function fgNotifyFilter(text, lines) {
+            window.fgFilterState = { text: text, lines: lines };
+            if (typeof window.fgOnFilter === 'function') window.fgOnFilter();
+        }
         let _fgSrcPool = null;
         function fgFill(el) {
             if (!el || el.firstChild || el.dataset.src === undefined) return;
@@ -4150,6 +4156,7 @@ class HtmlGenerator:
                 _graphFoldIds = {};
             }
 
+            const passLines = hasFilter ? new Set() : null;
             // Single-pass: filter lines + collapse expanded content
             allLineElems.forEach(line => {
                 let show = true;
@@ -4168,6 +4175,7 @@ class HtmlGenerator:
 
                 line.style.display = show ? '' : 'none';
                 if (show) visibleCount++;
+                if (show && passLines) passLines.add(+line.getAttribute('data-line-number'));
 
                 // Collapse expanded content for hidden or all filtered lines (single pass)
                 if (hasFilter && line.classList.contains('expandable')) {
@@ -4184,6 +4192,7 @@ class HtmlGenerator:
 
             // Update expandable lines
             updateExpandableLines();
+            fgNotifyFilter(hasFilter ? text : '', passLines);
 
             // Apply duration sort if requested
             if (sortDir && visibleCount > 0) {
@@ -4254,6 +4263,7 @@ class HtmlGenerator:
             });
 
             updateExpandableLines();
+            fgNotifyFilter('', null);
 
             const visibleLinesContainer = document.getElementById('visibleLinesContainer');
             if (visibleLinesContainer) visibleLinesContainer.style.display = 'none';

@@ -52,7 +52,7 @@ function errName(e) { return D.errnames[String(e)] || ''; }
 const TRACKS = D.tasks.map((t, i) => ({
     id: i, pid: t.pid, comm: t.comm, comms: t.comms || [], kind: t.kind, cpu: t.cpu, runs: t.runs || [],
     lo: -1, hi: -1, maxD: -1, rows: [], busy: 0, off: [], rs: [], io: [], errs: [], cpus: new Set(),
-    collapsed: false, y: 0, h: 0
+    collapsed: false, hidden: false, hits: 0, y: 0, h: 0
 }));
 for (let i = 0; i < N; i++) {
     const t = TRACKS[sTask[i]];
@@ -103,6 +103,7 @@ function trackSub(t) {
     if (t.cpus.size) parts.push('CPU ' + Array.from(t.cpus).sort((a, b) => a - b).join(','));
     if (t.lo >= 0) parts.push((t.hi - t.lo) + ' calls');
     if (t.errs.length) parts.push(t.errs.length + ' err');
+    if (textHits) parts.push(t.hits + ' matched');
     if (t.comms.length > 1) parts.push('was: ' + t.comms.slice(0, -1).join(', '));
     return parts.join('  ·  ');
 }
@@ -168,6 +169,8 @@ let sel = -1, hov = -1, hovOff = null;
 let range = null;            // {s, e, track|null}
 let search = null;           // RegExp
 let searchHits = null;       // Uint8Array per name index
+let textHits = null;         // Uint8Array per slice: passes the text-view filter
+let hideUnmatched = false;
 let errFilter = 1;           // 1: reaches user space, 0: all
 let cursorX = -1;
 
@@ -205,6 +208,11 @@ tlRoot.innerHTML = `
     <button class="tl-btn" data-act="help" title="Help (?)">?</button>
   </span>
 </div>
+<div class="tl-filterbar"><span class="tl-label">Filter</span>
+  <input class="tl-ftext" placeholder="same syntax as the text view, e.g. pid:1234 AND graph:vfs_read" spellcheck="false">
+  <span class="tl-fcount"></span>
+  <button class="tl-btn" data-act="fhide" title="Hide tracks without matches">Hide unmatched</button>
+  <button class="tl-btn" data-act="fclear">Clear</button></div>
 <div class="tl-notes"></div>
 <div class="tl-stage">
   <canvas class="tl-head-canvas"></canvas>
@@ -226,6 +234,9 @@ const elNotes = tlRoot.querySelector('.tl-notes');
 const elSearch = tlRoot.querySelector('.tl-search');
 const elCount = tlRoot.querySelector('.tl-count');
 const elToast = tlRoot.querySelector('.tl-toast');
+const elFbar = tlRoot.querySelector('.tl-filterbar');
+const elFtext = tlRoot.querySelector('.tl-ftext');
+const elFcount = tlRoot.querySelector('.tl-fcount');
 
 let toastTimer = 0;
 function toast(msg) {

@@ -265,3 +265,14 @@ table.tl-sum td.err { color: #c62828; }
 .tl-toast.show { opacity: 1; }
 .line-container.tl-flash { animation: tlFlash 1.6s ease-out; }
 @keyframes tlFlash { 0% { background: rgba(59, 111, 216, .45); } 100% { background: transparent; } }
+
+/* text-view filter bar */
+.tl-filterbar { display: flex; align-items: center; gap: 8px; padding: 0 2px 8px; }
+.tl-ftext {
+    flex: 0 1 520px; border: 1px solid var(--border-color); border-radius: 6px;
+    background: var(--container-bg); color: var(--text-color); padding: 4px 8px;
+    font: 12px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+.tl-filterbar.on .tl-ftext { border-color: #3b6fd8; box-shadow: 0 0 0 2px rgba(59, 111, 216, .15); }
+.tl-fcount { color: var(--text-muted); font-size: 11px; }
+.tl-btn.on { background: #3b6fd8; color: #fff; border-color: #3b6fd8; }

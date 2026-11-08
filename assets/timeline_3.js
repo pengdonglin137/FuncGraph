@@ -3,7 +3,7 @@ function hitTest(mx, my) {
     // returns {track, slice, off, header}
     const yy = my + elScroll.scrollTop;
     let t = null;
-    for (const tr of ORDER) if (yy >= tr.y && yy < tr.y + tr.h - GAP) { t = tr; break; }
+    for (const tr of ORDER) if (!tr.hidden && yy >= tr.y && yy < tr.y + tr.h - GAP) { t = tr; break; }
     if (!t) return { track: null, slice: -1, off: null, header: false };
     if (yy < t.y + HDR) return { track: t, slice: -1, off: null, header: true };
     const k = W / (view.e - view.s), tm = view.s + mx / k;
@@ -244,7 +244,7 @@ elHead.addEventListener('wheel', ev => {
 let errList = [], errPos = -1;
 function rebuildErrList() {
     errList = [];
-    for (let c = 0; c < CHAINS.length; c++) if (!errFilter || CHAINS[c][3] === 1) errList.push(c);
+    for (let c = 0; c < CHAINS.length; c++) if ((!errFilter || CHAINS[c][3] === 1) && (!textHits || textHits[CHAINS[c][0]])) errList.push(c);
     errList.sort((a, b) => sStart[CHAINS[a][0]] - sStart[CHAINS[b][0]]);
     errPos = -1;
     updateErrLabel();
