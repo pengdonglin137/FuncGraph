@@ -5,6 +5,7 @@ import os
 import sys
 import html
 import glob
+import threading
 import time
 import json
 from collections import defaultdict
@@ -14,6 +15,27 @@ from .constants import APP_AUTHOR, APP_TITLE, APP_VERSION, ERROR_CODE_MAP, PROJE
 from .highlight import highlight_ftrace_line
 from .resolver import call_faddr2line_batch, call_faddr2line_for_func_names, create_source_link, parse_list_output, parse_module_url
 from .util import build_source_url, clean_file_path, escape_html_preserve_spaces, find_module_path, format_args_info, get_environment_info, get_relative_path, remove_compiler_suffix, verbose_print
+
+
+class _Background:
+    """Run fn(*args, **kw) in a thread; result() joins and re-raises errors."""
+
+    def __init__(self, fn, *args, **kw):
+        self._out = {}
+
+        def run():
+            try:
+                self._out['value'] = fn(*args, **kw)
+            except BaseException as e:      # surfaced in result()
+                self._out['error'] = e
+        self._thread = threading.Thread(target=run, daemon=True)
+        self._thread.start()
+
+    def result(self):
+        self._thread.join()
+        if 'error' in self._out:
+            raise self._out['error']
+        return self._out['value']
 
 
 class HtmlGenerator:
@@ -32,6 +54,7 @@ class HtmlGenerator:
         self.timeline_json = timeline_json
         self._src_pool = []
         self._src_index = {}
+        self._list_cache = {}
         self.vmlinux_path = vmlinux_path
         self.faddr2line_path = faddr2line_path
         self.module_dirs = module_dirs or []
@@ -270,6 +293,7 @@ class HtmlGenerator:
 
         # 如果启用函数名超链接，收集需要解析的函数名
         func_name_results = {}
+        func_name_job = None
         if self.func_links:
             # 收集所有唯一的原始函数名（去重）和模块信息
             unique_func_names = set()
@@ -364,7 +388,10 @@ class HtmlGenerator:
 
                 # 调用 faddr2line 解析函数名（使用原始函数名）
                 func_name_list = list(unique_func_names)
-                func_name_results = call_faddr2line_for_func_names(
+                # Runs in the background: it is an independent faddr2line process, and the
+                # return-address batch below can resolve at the same time. Joined before use.
+                func_name_job = _Background(
+                    call_faddr2line_for_func_names,
                     self.vmlinux_path, self.faddr2line_path, func_name_list,
                     use_list=self.use_list, verbose=self.verbose, fast_mode=self.fast_mode,
                     path_prefix=self.path_prefix, module_srcs=self.module_srcs,
@@ -372,13 +399,6 @@ class HtmlGenerator:
                     func_module_map=func_module_map,
                     module_paths=module_paths
                 )
-                verbose_print(f"函数名解析完成，获取 {len(func_name_results)} 个结果", self.verbose)
-
-                # 将解析结果存储到 parsed_lines 中
-                for line_data in self.parsed_lines:
-                    raw_func_name = line_data.get('raw_func_name')
-                    if raw_func_name and raw_func_name in func_name_results:
-                        line_data['func_name_info'] = func_name_results[raw_func_name]
 
         # 根据enable_filter参数生成统一过滤框HTML
         filter_html = ""
@@ -777,6 +797,14 @@ class HtmlGenerator:
         # Store all computed state
         self.vmlinux_time = vmlinux_time
         self.module_time = module_time
+        if func_name_job is not None:
+            func_name_results = func_name_job.result()
+            verbose_print(f"函数名解析完成，获取 {len(func_name_results)} 个结果", self.verbose)
+            # 将解析结果存储到 parsed_lines 中
+            for line_data in self.parsed_lines:
+                raw_func_name = line_data.get('raw_func_name')
+                if raw_func_name and raw_func_name in func_name_results:
+                    line_data['func_name_info'] = func_name_results[raw_func_name]
         self.func_name_results = func_name_results
         self.filter_html = filter_html
         self.combined_module_url_map = combined_module_url_map
@@ -1216,7 +1244,13 @@ class HtmlGenerator:
                                 content_parts.append(f'<div class="location-link">{escaped_link}</div>')
                     elif isinstance(locations, str):
                         # 原始输出（--list模式）
-                        content_parts.append(parse_list_output(locations, current_base_url, self.kernel_src, self.highlight_code, self.path_prefix, self.module_src))
+                        # Same location text + URL always renders the same block (55k calls -> ~3k distinct)
+                        list_key = (locations, current_base_url)
+                        rendered = self._list_cache.get(list_key)
+                        if rendered is None:
+                            rendered = parse_list_output(locations, current_base_url, self.kernel_src, self.highlight_code, self.path_prefix, self.module_src)
+                            self._list_cache[list_key] = rendered
+                        content_parts.append(rendered)
                     else:
                         # 未知格式
                         content_parts.append(f'<div class="location-link">Source information unavailable for: {escape_html_preserve_spaces(func_info_for_display)}</div>')

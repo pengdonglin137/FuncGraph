@@ -151,10 +151,10 @@ class AddressResolver:
                         results[original_func] = '\n'.join(current_output)
 
                     # 检查是否有函数没有出现在输出中
+                    # 清理results的键进行比较（只算一次）
+                    cleaned_result_keys = {re.sub(r'\s*\[.*?\]', '', k) for k in results.keys()}
                     for func in func_infos:
                         cleaned_func = re.sub(r'\s*\[.*?\]', '', func)
-                        # 清理results的键进行比较
-                        cleaned_result_keys = [re.sub(r'\s*\[.*?\]', '', k) for k in results.keys()]
                         if cleaned_func not in cleaned_result_keys:
                             results[func] = f"Error: No output for function {func}"
 

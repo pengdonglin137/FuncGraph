@@ -128,6 +128,38 @@ def shorten_path(path, kernel_src_root, basename_only=False, path_prefix=None):
         return os.path.basename(path)
     return path
 
+def _read_func_symbols(elf, symtab, f):
+    """Read STT_FUNC symbols straight from .symtab with struct (~20x faster than
+    iterating pyelftools Symbol objects). Returns [(name, addr, size, shndx)] or
+    None when the layout is unexpected (caller falls back to pyelftools)."""
+    import struct
+    try:
+        is64 = elf.elfclass == 64
+        end = '<' if elf.little_endian else '>'
+        entsize = symtab['sh_entsize'] or (24 if is64 else 16)
+        f.seek(symtab['sh_offset'])
+        data = f.read(symtab['sh_size'])
+        strtab = elf.get_section(symtab['sh_link'])
+        f.seek(strtab['sh_offset'])
+        strs = f.read(strtab['sh_size'])
+        nsec = elf.num_sections()
+    except Exception:
+        return None
+    # Elf64_Sym: name(I) info(B) other(B) shndx(H) value(Q) size(Q)
+    # Elf32_Sym: name(I) value(I) size(I) info(B) other(B) shndx(H)
+    fmt = end + ('IBBHQQ' if is64 else 'IIIBBH')
+    out = []
+    for off in range(0, len(data) - entsize + 1, entsize):
+        if is64:
+            name_off, info, _o, shndx, value, size = struct.unpack_from(fmt, data, off)
+        else:
+            name_off, value, size, info, _o, shndx = struct.unpack_from(fmt, data, off)
+        if info & 0xf != 2 or shndx == 0 or shndx >= nsec:   # STT_FUNC, defined, regular section
+            continue
+        e = strs.find(b'\0', name_off)
+        out.append((strs[name_off:e].decode('utf-8', 'replace'), value, size, shndx))
+    return out
+
 def load_elf_data(executable, verbose=False):
     # type: (str, bool) -> tuple
     log(f"Loading ELF data from {executable}", verbose)
@@ -142,8 +174,25 @@ def load_elf_data(executable, verbose=False):
         sections = {}
         symbol_by_name = defaultdict(list)
         func_count = 0
-        
-        for sym in symtab.iter_symbols():
+
+        fast = _read_func_symbols(elf, symtab, f)
+        if fast is not None:
+            sec_cache = {}
+            for name, addr, size, shndx in fast:
+                sec_name = sec_cache.get(shndx)
+                if sec_name is None:
+                    section = elf.get_section(shndx)
+                    sec_name = section.name
+                    sec_cache[shndx] = sec_name
+                    if sec_name not in sections:
+                        sec_start = section["sh_addr"]
+                        sections[sec_name] = Section(sec_name, sec_start, sec_start + section["sh_size"])
+                symbol = Symbol(name, addr, size, sec_name)
+                sections[sec_name].symbols.append(symbol)
+                symbol_by_name[name].append(symbol)
+                func_count += 1
+
+        for sym in (symtab.iter_symbols() if fast is None else ()):
             if sym.entry.st_info.type != "STT_FUNC":
                 continue
                 
