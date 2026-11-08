@@ -148,11 +148,7 @@
             }
             
             // 初始显示键盘提示，但只在第一次加载页面时
-            if (!keyboardHintShown) {
-                showKeyboardHint();
-                lsSet('keyboardHintShown', 'true');
-                keyboardHintShown = true;
-            }
+            // shortcuts are shown on demand (header "?" button) instead of popping over the trace
         }
         
         // 显示键盘提示
@@ -2469,14 +2465,8 @@
             document.documentElement.setAttribute('data-theme', currentTheme);
 
             // 初始化总行数
-            const linesSpan = document.querySelector('.summary span');
-            if (linesSpan) {
-                const linesText = linesSpan.textContent;
-                const match = linesText.match(/Lines: (\d+)/);
-                if (match) {
-                    total_lines = parseInt(match[1]);
-                }
-            }
+            // (the old .summary element no longer exists; count the rendered lines)
+            total_lines = document.querySelectorAll('.line-container').length;
 
             // 恢复展开状态
             restoreExpandedState();

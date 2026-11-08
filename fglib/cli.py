@@ -147,6 +147,9 @@ def build_parser():
                              "default: read from a '# fgcapture: overhead' header (fgcapture.sh --calibrate)")
     parser.add_argument('--compare', metavar='BASE_TRACE',
                         help='Add a Compare tab: per-function calls/self/inclusive time vs. this base trace')
+    parser.add_argument('--no-text-view', action='store_true',
+                        help='Only build the Timeline/Compare tabs (no per-line text view, no address resolution); '
+                             'for traces too large for the text view (more than ~100k lines)')
     parser.add_argument('--timeline', action='store_true',
                         help='Add a Timeline tab: per-task flame chart over time with context/error-path coloring')
     parser.add_argument('--btf', nargs='*', default=None, metavar='FILE',
@@ -428,8 +431,19 @@ def main():
     kernel_count = expandable_count - module_count
 
     # 生成HTML
+    text_lines = parsed_lines
+    if args.no_text_view:
+        if not (timeline_json or compare_json):
+            print("Error: --no-text-view needs --timeline or --compare", file=sys.stderr)
+            sys.exit(1)
+        if timeline_json is not None:
+            timeline_json['no_text'] = True
+        text_lines = [l for l in parsed_lines if l.raw_line.startswith('#')][:200]
+    elif len(parsed_lines) > 150000:
+        print(f"Warning: {len(parsed_lines)} lines make a very large text view that browsers may fail to open; "
+              "consider --no-text-view (with --timeline) or a pre-filter (--pid/--graph/--time-range)", file=sys.stderr)
     html_content, vmlinux_time, module_time = generate_html(
-        parsed_lines,
+        text_lines,
         vmlinux_path,
         faddr2line_path,
         module_dirs=module_dirs,  # 传递原始模块目录列表（用于auto-search）

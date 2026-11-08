@@ -505,16 +505,25 @@
 
         /* Control bar - horizontal toolbar */
         /* .controls 保持悬浮在右下角，内含水平工具栏 */
+        /* Controls: sticky bar at the top of the page (toolbar first, filter below) */
         .controls {
-            position: fixed;
-            bottom: 16px;
-            right: 16px;
+            position: sticky;
+            top: 0;
             z-index: 1000;
             display: flex;
-            flex-direction: column;
-            align-items: flex-end;
-            gap: 6px;
+            flex-direction: column-reverse;
+            align-items: stretch;
+            gap: 4px;
+            padding: 4px 0 6px;
+            margin-bottom: 4px;
+            background: var(--container-bg);
+            border-bottom: 1px solid var(--border-color);
         }
+        .controls .toolbar { box-shadow: none; border: none; padding: 0; background: transparent; }
+        .controls .filter-box { box-shadow: none; padding: 4px 0 0; border: none; border-top: 1px dashed var(--border-color); border-radius: 0; background: transparent; }
+        .controls .filter-input-row input { max-width: 720px; }
+        /* anchors must not hide under the sticky bar */
+        .line-container { scroll-margin-top: 90px; }
         .toolbar {
             display: flex;
             gap: 4px;
@@ -1201,3 +1210,6 @@
                 max-width: 200px;
             }
         }
+        /* the controls live in the top bar now; the floating show/hide toggle is not needed */
+        .floating-toggle { display: none !important; }
+        body.hide-floating-controls .controls { display: flex !important; }

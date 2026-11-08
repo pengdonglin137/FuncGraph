@@ -174,6 +174,7 @@ class HtmlGenerator:
             </span>
             <span class="header-actions">
                 <button class="header-btn" onclick="toggleTheme()">Theme</button>
+                <button class="header-btn" onclick="showKeyboardHint()" title="Keyboard shortcuts">?</button>
                 <button class="header-btn" onclick="toggleInfoPanel()">ⓘ</button>
             </span>
         </div>

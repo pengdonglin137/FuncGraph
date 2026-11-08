@@ -90,6 +90,19 @@ class ReportTest(unittest.TestCase):
         self.assertTrue(want in self.proc.stdout, self.proc.stdout[-500:])
 
 
+class NoTextViewTest(unittest.TestCase):
+    def test_timeline_only_report(self):
+        k = helpers.FakeKernel()
+        try:
+            html_text, _ = k.run(helpers.fixture('pi4_sched'), '--timeline', '--no-text-view')
+        finally:
+            k.close()
+        self.assertTrue(helpers.json_script(html_text, 'tlData')['no_text'])
+        n_lines = len(re.findall(r'class="line-container', html_text))
+        self.assertLess(n_lines, 50)                       # only header comments
+        self.assertNotIn('data-src=', html_text)            # no source resolution
+
+
 class EscapingTest(unittest.TestCase):
     """Untrusted trace text must not break out of HTML or <script> blocks."""
 

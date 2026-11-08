@@ -56,6 +56,16 @@ class BrowserSmokeTest(unittest.TestCase):
         self.assertEqual(shown, 'block')
         self.assertGreater(kids, 0)
 
+    def test_top_bar_and_filtered_count(self):
+        bar = self.ev("(() => { const r = document.querySelector('.controls').getBoundingClientRect(); return [r.top, getComputedStyle(document.querySelector('.controls')).position]; })()")
+        self.assertEqual(bar[1], 'sticky')
+        self.assertLess(bar[0], 200)
+        self.assertEqual(self.ev("getComputedStyle(document.getElementById('keyboardHint')).display"), 'none')
+        self.page.fill('#filterInput', 'comm:sh')
+        self.page.click('.filter-btn')
+        self.page.wait_for_timeout(300)
+        self.assertIn('Filtered:', self.ev("document.querySelector('.header-stats').innerText"))
+
     def test_fold_hides_children(self):
         self.page.query_selector('.fold-entry .fold-icon').click()
         self.page.wait_for_timeout(200)

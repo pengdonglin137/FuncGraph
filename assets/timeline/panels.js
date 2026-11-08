@@ -161,6 +161,7 @@ function showRangeSummary() {
 
 // ---- jump to the text view ----
 function gotoText(n) {
+    if (D.no_text) { toast('Report generated with --no-text-view: no text view (trace line ' + n + ')'); return; }
     const el = document.getElementById('L' + n);
     if (!el) { toast('Line ' + n + ' not found'); return; }
     // unfold folded ancestors so the line becomes visible

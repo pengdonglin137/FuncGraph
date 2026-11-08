@@ -55,6 +55,8 @@
         ensure('timeline').revealLine(n);
     }, true);
     window.addEventListener('DOMContentLoaded', () => {
+        const tl = document.getElementById('tlData');
+        if (tl && /"no_text":true/.test(tl.textContent.slice(-200)) && views.timeline) { window.fgSwitchView('timeline'); return; }
         const v = get('view');
         if (v && v !== 'text' && views[v] && !location.hash) window.fgSwitchView(v);
     });
