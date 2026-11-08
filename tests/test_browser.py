@@ -109,6 +109,12 @@ class BrowserSmokeTest(unittest.TestCase):
         self.assertTrue(self.ev("!!document.querySelector('.an-hist')"))
         self.assertGreater(self.ev("document.querySelectorAll('.an-list tr').length"), 0)
 
+    def test_wakeup_overlay_toggle(self):
+        self.open_timeline()
+        self.assertFalse(self.ev("document.querySelector('[data-ov=wk]').classList.contains('na')"))
+        self.page.click('[data-ov=wk]')
+        self.page.click('[data-ov=wk]')
+
     def test_range_summary_and_theme(self):
         self.open_timeline()
         box = self.page.query_selector('.tl-canvas').bounding_box()

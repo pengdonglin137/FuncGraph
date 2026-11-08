@@ -18,7 +18,7 @@
 #   -g FUNC[,..]   trace only the call graphs of these functions (set_graph_function)
 #   -n FUNC[,..]   do not trace these call graphs (set_graph_notrace)
 #   -b KB          per-CPU buffer size in KB (default 16384)
-#   --sched        also record sched_switch / sched_wakeup events
+#   --sched        also record sched_switch / sched_waking / sched_wakeup events
 #   --keep         do not restore the previous tracefs settings
 #   -- CMD ...     run CMD and trace only it (and its children): the command starts
 #                  stopped, its pid is written to set_ftrace_pid, then it continues
@@ -74,7 +74,7 @@ save() {
         [ -e $T/$f ] && grep -v '^#' $T/$f > $SAVE/$f 2>/dev/null
     done
     for o in $OPTS; do [ -e $T/options/$o ] && cat $T/options/$o > "$SAVE/opt_$o"; done
-    for e in sched_switch sched_wakeup; do
+    for e in sched_switch sched_wakeup sched_waking; do
         [ -e $T/events/sched/$e/enable ] && cat $T/events/sched/$e/enable > $SAVE/ev_$e
     done
 }
@@ -88,7 +88,7 @@ restore() {
         echo > $T/$f
         [ -s $SAVE/$f ] && while read -r v; do echo "$v" >> $T/$f; done < $SAVE/$f 2>/dev/null
     done
-    for e in sched_switch sched_wakeup; do
+    for e in sched_switch sched_wakeup sched_waking; do
         [ -e $SAVE/ev_$e ] && cat $SAVE/ev_$e > $T/events/sched/$e/enable
     done
     cat $SAVE/buf > $T/buffer_size_kb 2>/dev/null
@@ -126,7 +126,7 @@ else
     for o in funcgraph-abstime funcgraph-proc funcgraph-retval funcgraph-retaddr funcgraph-tail latency-format; do setopt $o 1; done
     setopt funcgraph-args 0
 fi
-for e in sched_switch sched_wakeup; do
+for e in sched_switch sched_wakeup sched_waking; do
     [ -e $T/events/sched/$e/enable ] && echo $SCHED > $T/events/sched/$e/enable
 done
 echo function_graph > $T/current_tracer

@@ -228,3 +228,73 @@ elDetail.addEventListener('click', ev => {
     const sl = ev.target.closest('.an-list tr[data-slice]');
     if (sl) { const i = +sl.dataset.slice; sel = i; zoomTo(sStart[i], sEnd[i], i); draw(); ev.stopImmediatePropagation(); }
 }, true);
+
+// ---- 4. wait chain: off-CPU segment -> who woke it -> what the waker was waiting for ----
+function offBefore(tid, t) {
+    // latest off-CPU segment of task tid that ended at or before t
+    let best = null;
+    for (const r of TRACKS[tid].off) if (r[2] <= t && (!best || r[2] > best[2])) best = r;
+    return best;
+}
+const RE_WAKE_INTERNAL = /^(?:try_to_wake_up|ttwu_\w+|wake_up\w*|__wake_up\w*|autoremove_wake_function|default_wake_function|woken_wake_function|pollwake|ep_poll_callback|complete\w*|swake_up\w*|wake_q_\w+|signal_wake_up\w*|_raw_spin_\w+|raw_spin_rq_\w+|preempt_count_\w+|select_task_rq\w*)$/;
+function wakeSite(i) {
+    // the first frame above the wakeup machinery: what the waker was actually doing
+    let k = i;
+    while (k >= 0 && RE_WAKE_INTERNAL.test(nameOf(k).split('.')[0])) k = sParent[k];
+    return k >= 0 ? nameOf(k) : nameOf(i);
+}
+function showWaitChain(off) {
+    AN.kind = 'wait';
+    const steps = [];
+    let cur = off, guard = 0;
+    while (cur && guard++ < 10) {
+        const idx = OFF_IDX.get(cur);
+        const w = WAKE_OF_OFF.get(idx);
+        steps.push({ off: cur, w: w });
+        if (!w) break;
+        const waker = TRACKS[w[0]];
+        if (waker.kind !== 0 || w[3] !== 0) break;          // woken from idle / irq context: chain ends
+        cur = offBefore(w[0], w[1]);
+        if (cur && w[1] - cur[2] > 50e6) break;            // waker ran long before waking: not a chain
+    }
+    const t = TRACKS[off[0]];
+    let h = '<div class="tl-detail-head"><span class="tl-detail-title">Wait chain · ' + esc(trackLabel(t)) + '</span>' +
+        pill(off[8] ? 'warn' : 'mute', (off[8] ? 'preempted ' : 'blocked ') + fmtDur(off[2] - off[1])) +
+        (off[4] >= 0 ? pill('mute', 'in ' + S[off[4]]) : '') + (off[5] >= 0 ? pill('mute', 'state ' + S[off[5]]) : '') +
+        '<span class="sp"></span><button class="tl-close" title="Close (Esc)">×</button></div>';
+    if (!D.caps.sched_events) {
+        h += '<div style="padding:12px">Who woke the task is unknown: enable <code>events/sched/sched_wakeup</code> ' +
+            '(and <code>sched_switch</code>), e.g. <code>fgcapture.sh --sched</code>.</div>';
+        openDetail(h); return;
+    }
+    h += '<table class="tl-sum an-tbl"><thead><tr><th style="text-align:left">task</th><th>waited</th><th style="text-align:left">waiting in</th>' +
+        '<th style="text-align:left">woken by</th><th style="text-align:left">waker was in</th><th>wake latency</th><th>run again on</th></tr></thead><tbody>';
+    for (const st of steps) {
+        const r = st.off, w = st.w;
+        const who = w ? trackLabel(TRACKS[w[0]]) + (w[3] ? ' <span class="tl-pill ctx' + w[3] + '">' + CTX_NAMES[w[3]] + '</span>' : '') : '<span class="d">not recorded</span>';
+        const inFn = w && w[4] >= 0 ? esc(wakeSite(w[4])) : '';
+        const lat = w ? r[2] - w[1] : 0;
+        h += `<tr data-wait="${OFF_IDX.get(r)}"><td style="text-align:left">${esc(trackLabel(TRACKS[r[0]]))}</td><td>${fmtDur(r[2] - r[1])}</td>` +
+            `<td style="text-align:left">${r[4] >= 0 ? esc(S[r[4]]) : ''}${r[5] >= 0 ? ' <span class="d">[' + esc(S[r[5]]) + ']</span>' : ''}</td>` +
+            `<td style="text-align:left">${who}</td><td style="text-align:left">${inFn}</td>` +
+            `<td class="${lat > 1e6 ? 'err' : ''}">${w ? fmtDur(lat) : ''}</td><td>${r[7] >= 0 ? 'CPU ' + r[7] : ''}</td></tr>`;
+    }
+    h += '</tbody></table><div class="an-hint">Wake latency = time from the wakeup to running again. ' +
+        'Each further row is what the waker itself was waiting for before it woke this task. Click a row to show it.</div>';
+    openDetail(h);
+}
+elDetail.addEventListener('click', ev => {
+    const tr = ev.target.closest('tr[data-wait]');
+    if (!tr) return;
+    const r = D.offcpu[+tr.dataset.wait];
+    const w = WAKE_OF_OFF.get(+tr.dataset.wait);
+    const t = TRACKS[r[0]];
+    t.hidden = false; t.collapsed = false;
+    if (w) { TRACKS[w[0]].hidden = false; }
+    layout();
+    elScroll.scrollTop = Math.max(0, t.y - 4);
+    zoomTo(w ? Math.min(w[1], r[1]) : r[1], r[2], -1);
+    hovOff = r;
+    draw();
+    ev.stopImmediatePropagation();
+}, true);

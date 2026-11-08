@@ -52,7 +52,8 @@ RE_CALLER = re.compile(r'<-([A-Za-z_$][\w.$]*)\+(0x[0-9a-fA-F]+)/(0x[0-9a-fA-F]+
 RE_RET = re.compile(r' ret=(-?\d+|0x[0-9a-fA-F]+)')
 RE_EXIT_NAME = re.compile(r'^ ([A-Za-z_$][\w.$]*)(?: \[([\w-]+)\])?')
 RE_SCHED_SWITCH = re.compile(r'sched_switch: prev_comm=(.*?) prev_pid=(\d+) .*?prev_state=(\S+) ==> next_comm=(.*?) next_pid=(\d+)')
-RE_SCHED_WAKEUP = re.compile(r'sched_wak(?:eup|eup_new|ing): comm=(.*?) pid=(\d+)')
+# sched_waking fires in the waker's context; sched_wakeup may fire on the target CPU (TTWU_QUEUE IPI)
+RE_SCHED_WAKEUP = re.compile(r'sched_(waking|wakeup|wakeup_new): comm=(.*?) pid=(\d+)')
 
 # hardirq/softirq char -> context code
 CTX_TASK, CTX_SOFTIRQ, CTX_HARDIRQ, CTX_NMI = 0, 1, 2, 3
@@ -172,10 +173,11 @@ class TimelineBuilder:
         self.irqoff = []          # [task, start, end]
         self.lost = []            # [cpu, ts, count, line]
         self.wakeups = {}         # pid -> list of (ts, waker_task)
+        self.wake_events = []     # [waker_tid, ts, target_tid, ctx, waker_slice, offcpu_rec|None]
 
         self.caps = dict(abs=False, rel=False, cpu=False, proc=False, latency=False, duration=False,
                          retval=False, retaddr=False, tail=False, args=False, irq_markers=False,
-                         sched_events=False, switch_markers=False)
+                         sched_events=False, sched_waking=False, switch_markers=False)
         self.mode = None
         self.stats = {}
         self._cur_cpu = -1
@@ -372,7 +374,7 @@ class TimelineBuilder:
             depth = indent // 2
 
             if stripped.startswith('/*'):
-                self._on_comment(stripped, task, ts, cpu)
+                self._on_comment(stripped, task, ts, cpu, lctx)
                 continue
             if stripped[0] == '}':
                 self._on_exit(task, depth, stripped, ts, dur, lineno, lflags)
@@ -560,7 +562,7 @@ class TimelineBuilder:
         if parent < 0:
             task.loose.append(idx)
 
-    def _on_comment(self, stripped, task, ts, cpu):
+    def _on_comment(self, stripped, task, ts, cpu, lctx=None):
         m = RE_SCHED_SWITCH.search(stripped)
         if m:
             self.caps['sched_events'] = True
@@ -569,7 +571,17 @@ class TimelineBuilder:
         m = RE_SCHED_WAKEUP.search(stripped)
         if m and ts is not None:
             self.caps['sched_events'] = True
-            self.wakeups.setdefault(int(m.group(2)), []).append((ts, task.tid))
+            kind, pid = m.group(1), int(m.group(3))
+            if kind == 'waking':
+                self.caps['sched_waking'] = True
+            elif self.caps.get('sched_waking'):
+                return          # the waking event already identified the real waker
+            self.wakeups.setdefault(pid, []).append((ts, task.tid))
+            target = self._task(pid, m.group(2).strip(), None) if pid else None
+            if target is not None:
+                ctx = lctx if lctx is not None else (task.stack[-1].ctx if task.stack else CTX_TASK)
+                waker_slice = task.stack[-1].idx if task.stack else -1
+                self.wake_events.append([task.tid, ts, target.tid, ctx, waker_slice, target.off_open])
 
     def _on_switch(self, m):
         self.caps['switch_markers'] = True
@@ -887,6 +899,13 @@ class TimelineBuilder:
         def rel(v):
             return (v - t0) if v is not None else None
 
+        off_index = {}
+        if timed:
+            k = 0
+            for r in self.offcpu:
+                if r[1] is not None:
+                    off_index[id(r)] = k
+                    k += 1
         data = {
             'v': 1,
             'mode': self.mode,
@@ -904,6 +923,9 @@ class TimelineBuilder:
                         r[7] if r[7] is not None else -1, r[8], r[9]]
                        for r in self.offcpu if timed and r[1] is not None],
             'resched': [[r[0], rel(r[1]), rel(r[2])] + r[3:] for r in self.resched] if timed else [],
+            # [waker_task, ts, target_task, ctx, waker_slice, offcpu_index|-1]
+            'wakeups': [[w[0], rel(w[1]), w[2], w[3], remap[w[4]] if w[4] >= 0 else -1, off_index.get(id(w[5]), -1)]
+                        for w in self.wake_events] if timed else [],
             'irqoff': [[r[0], rel(r[1]), rel(r[2])] for r in self.irqoff] if timed else [],
             'lost': [[r[0], r[2], r[3]] for r in self.lost],
             'stats': {k: (round(v, 3) if isinstance(v, float) else v) for k, v in self.stats.items()},

@@ -302,6 +302,7 @@ elHelp.innerHTML = `
 <h4>Select</h4><ul>
 <li><kbd>↑</kbd> parent · <kbd>↓</kbd> first child · <kbd>[</kbd>/<kbd>]</kbd> siblings</li>
 <li><kbd>E</kbd>/<kbd>Shift+E</kbd> next/prev error · <kbd>/</kbd> search, <kbd>N</kbd> next match</li>
+<li>Click an off-CPU segment: wait chain (who woke the task, wake latency, and who woke the waker)</li>
 <li><kbd>H</kbd>: duration distribution of the selected function · toolbar <b>Errors</b> / <b>Sched latency</b>: summaries</li>
 <li><kbd>Enter</kbd>: open in text view · <kbd>Alt</kbd>+click a text line: show it here</li></ul>
 <h4>Legend</h4><div class="tl-legend">
@@ -315,7 +316,8 @@ elHelp.innerHTML = `
 <i style="background:repeating-linear-gradient(135deg,#888 0 2px,#ddd 2px 4px)"></i><span>irqs disabled</span>
 <i style="background:#f59e0b"></i><span>need-resched pending (header band / corner)</span>
 <i style="background:repeating-linear-gradient(135deg,#aaa 0 2px,#eee 2px 4px)"></i><span>off-CPU (amber tint: preempted)</span>
-<i style="background:#8e44ad"></i><span>caller ≠ parent (untraced frame)</span></div>`;
+<i style="background:#8e44ad"></i><span>caller ≠ parent (untraced frame)</span>
+<i style="background:#0f9d8a;height:2px"></i><span>wakeup: waker → woken task (sched_wakeup)</span></div>`;
 
 // ---- init ----
 palette();
@@ -326,6 +328,7 @@ if (!sCpu) tlRoot.querySelector('[data-v=cpu]').style.display = 'none';
 if (!D.caps.latency) { tlRoot.querySelector('[data-ov=irq]').classList.add('na'); tlRoot.querySelector('[data-ov=preempt]').classList.add('na'); }
 if (!D.resched.length && !D.caps.latency) tlRoot.querySelector('[data-ov=rs]').classList.add('na');
 if (!D.offcpu.length) tlRoot.querySelector('[data-ov=off]').classList.add('na');
+if (!WAKES.length) tlRoot.querySelector('[data-ov=wk]').classList.add('na');
 if (!D.caps.retval) tlRoot.querySelector('[data-ov=err]').classList.add('na');
 new MutationObserver(() => { palette(); ovDirty = true; draw(); })
     .observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });

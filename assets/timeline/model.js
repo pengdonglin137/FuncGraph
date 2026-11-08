@@ -83,6 +83,11 @@ let tMax = 1;
 for (let i = 0; i < N; i++) if (sEnd[i] > tMax) tMax = sEnd[i];
 for (const r of D.offcpu) if (r[2] !== null && r[2] > tMax) tMax = r[2];
 for (const r of D.offcpu) if (r[2] === null) r[2] = tMax;
+// wakeups: [waker_task, ts, target_task, ctx, waker_slice, offcpu_index]
+const WAKES = D.wakeups || [];
+const OFF_IDX = new Map(D.offcpu.map((r, i) => [r, i]));
+const WAKE_OF_OFF = new Map();
+for (const w of WAKES) if (w[5] >= 0) WAKE_OF_OFF.set(w[5], w);
 
 const ORDER = TRACKS.filter(t => t.lo >= 0 || t.off.length).sort((a, b) => {
     if (a.kind !== b.kind) return a.kind - b.kind;
@@ -205,7 +210,7 @@ function lbStart(row, t, lo) {  // first j >= lo with start >= t
 
 // ---- view state ----
 const view = { s: 0, e: tMax };
-const ov = { err: true, irq: true, rs: true, off: true, preempt: false, mk: true };
+const ov = { err: true, irq: true, rs: true, off: true, wk: true, preempt: false, mk: true };
 let colorMode = 'ctx';
 let sel = -1, hov = -1, hovOff = null, hovCpu = null;
 let range = null;            // {s, e, track|null}
@@ -232,6 +237,7 @@ tlRoot.innerHTML = `
     <button class="tl-chip" data-ov="irq"><i class="dot" style="background:repeating-linear-gradient(135deg,#555 0 2px,transparent 2px 4px)"></i>IRQs off</button>
     <button class="tl-chip" data-ov="rs"><i class="dot" style="background:#f59e0b"></i>Resched delay</button>
     <button class="tl-chip" data-ov="off"><i class="dot" style="background:#9aa3ad"></i>Off-CPU</button>
+    <button class="tl-chip" data-ov="wk"><i class="dot" style="background:#0f9d8a"></i>Wakeups</button>
     <button class="tl-chip off" data-ov="preempt"><i class="dot" style="background:#6b7280"></i>Preempt depth</button>
     <button class="tl-chip" data-ov="mk"><i class="dot" style="background:#8e44ad"></i>Markers</button>
   </span>

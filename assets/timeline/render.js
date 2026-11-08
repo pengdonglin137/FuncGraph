@@ -166,6 +166,7 @@ function render() {
         if (y + t.h < 0 || y > H) continue;
         drawTrack(t, y, vs, ve, k);
     }
+    if (ov.wk && WAKES.length) drawWakeups(vs, ve, k, sy);
     if (range) {
         const x0 = (range.s - vs) * k, x1 = (range.e - vs) * k;
         ctx.fillStyle = P.range;
@@ -286,6 +287,46 @@ function drawCpuTrack(top, vs, ve, k) {
         ctx.fillStyle = P.sub;
         ctx.fillText(lab, 5, ry + ROW / 2);
         ctx.font = FONT;
+    }
+}
+function trackAnchorY(tid, slice, sy) {
+    const t = TRACKS[tid];
+    if (!t || t.hidden || t.h === 0) return null;
+    if (slice >= 0 && !t.collapsed) return t.y - sy + HDR + sDepth[slice] * ROW + ROW / 2;
+    return t.y - sy + HDR / 2;
+}
+function drawWakeups(vs, ve, k, sy) {
+    let n = 0;
+    ctx.lineWidth = 1.3;
+    for (const w of WAKES) {
+        const off = w[5] >= 0 ? D.offcpu[w[5]] : null;
+        const t1 = off ? off[2] : w[1];              // target resumes here
+        if (t1 < vs || w[1] > ve) continue;
+        const y0 = trackAnchorY(w[0], w[4], sy);
+        const tt = TRACKS[w[2]];
+        if (y0 === null || !tt || tt.hidden || tt.h === 0) continue;
+        const y1 = off && !tt.collapsed ? tt.y - sy + HDR + off[3] * ROW + ROW / 2 : tt.y - sy + HDR / 2;
+        if ((y0 < 0 && y1 < 0) || (y0 > H && y1 > H)) continue;
+        if (++n > 400) break;
+        const x0 = (w[1] - vs) * k, x1 = (t1 - vs) * k;
+        const hot = hovOff && off === hovOff;
+        ctx.strokeStyle = hot ? '#0b7a6b' : dark ? 'rgba(52,211,190,.75)' : 'rgba(15,157,138,.7)';
+        ctx.fillStyle = ctx.strokeStyle;
+        ctx.beginPath();
+        ctx.arc(x0, y0, 2.5, 0, 6.3);
+        ctx.fill();
+        ctx.beginPath();
+        ctx.moveTo(x0, y0);
+        const mx = (x0 + x1) / 2;
+        ctx.bezierCurveTo(mx, y0, mx, y1, x1, y1);
+        ctx.stroke();
+        const dir = y1 >= y0 ? 1 : -1;
+        ctx.beginPath();
+        ctx.moveTo(x1, y1);
+        ctx.lineTo(x1 - 5, y1 - 4 * dir);
+        ctx.lineTo(x1 + 1, y1 - 6 * dir);
+        ctx.closePath();
+        ctx.fill();
     }
 }
 function bandRect(s, e, y, h, color, vs, k) {

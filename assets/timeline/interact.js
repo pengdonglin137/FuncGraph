@@ -234,6 +234,7 @@ window.addEventListener('mouseup', ev => {
     if (h.header && h.track) { h.track.collapsed = !h.track.collapsed; layout(); draw(); return; }
     if (h.cpuSeg) { openTaskAt(h.cpuSeg.t, h.tm); return; }
     if (h.slice >= 0) select(h.slice);
+    else if (h.off) { sel = -1; showWaitChain(h.off); draw(); }
     else if (range) { range = null; hideDetail(); draw(); }
     else select(-1);
 });

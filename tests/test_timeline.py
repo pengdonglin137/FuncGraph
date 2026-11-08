@@ -107,6 +107,29 @@ SYNTH_VOID = """\
 """
 
 
+SYNTH_WAKE = """\
+1000.000100 |   0)   cat-20   |  ...1. |               |  anon_pipe_read() {
+1000.000101 |   0)   cat-20   |  d..2. |               |    schedule() {
+1000.000102 |   0)   cat-20   |  d..2. |               |  /* sched_switch: prev_comm=cat prev_pid=20 prev_prio=120 prev_state=S ==> next_comm=sh next_pid=21 next_prio=120 */
+ ------------------------------------------
+ 0)   cat-20   =>   sh-21
+ ------------------------------------------
+
+1000.000200 |   0)   sh-21    |  ...1. |               |  anon_pipe_write() {
+1000.000201 |   0)   sh-21    |  d..2. |               |    try_to_wake_up() {
+1000.000202 |   0)   sh-21    |  d..3. |               |  /* sched_waking: comm=cat pid=20 prio=120 target_cpu=000 */
+1000.000203 |   0)   sh-21    |  d..2. |   2.000 us    |    } /* try_to_wake_up */
+1000.000205 |   0)   sh-21    |  ...1. |   5.000 us    |  } /* anon_pipe_write */
+1000.000206 |   1)  <idle>-0  |  d.h2. |               |  /* sched_wakeup: comm=cat pid=20 prio=120 target_cpu=000 */
+ ------------------------------------------
+ 0)   sh-21    =>   cat-20
+ ------------------------------------------
+
+1000.000300 |   0)   cat-20   |  ...1. | ! 199.000 us  |    } /* schedule */
+1000.000301 |   0)   cat-20   |  ...1. | ! 201.000 us  |  } /* anon_pipe_read */
+"""
+
+
 class SyntheticTest(unittest.TestCase):
     def check(self, d, mode):
         self.assertEqual(invariant_errors(d), [])
@@ -153,6 +176,19 @@ class SyntheticTest(unittest.TestCase):
         self.assertEqual(a[0][3], 1)                       # drawn below the schedule() frame
         runs = next(t['runs'] for t in d['tasks'] if t['pid'] == 10)
         self.assertEqual(len(runs), 2)                     # split at switch-in
+
+    def test_wakeup_prefers_waking_event(self):
+        d = build(SYNTH_WAKE)
+        self.check(d, 'abs')
+        self.assertTrue(d['caps']['sched_waking'])
+        self.assertEqual(len(d['wakeups']), 1)                  # sched_wakeup from the IPI is ignored
+        waker, ts, target, ctx, slc, off = d['wakeups'][0]
+        self.assertEqual((d['tasks'][waker]['pid'], d['tasks'][target]['pid'], ctx), (21, 20, 0))
+        self.assertEqual(self.name(d, slc), 'try_to_wake_up')
+        r = d['offcpu'][off]
+        self.assertEqual(d['strings'][r[4]], 'anon_pipe_read')  # what cat was waiting in
+        self.assertEqual(d['strings'][r[5]], 'S')
+        self.assertEqual(r[9], waker)
 
     def test_btf_filters_void_comparator_and_null(self):
         db = ReturnTypeDB()
