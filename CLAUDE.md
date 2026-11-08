@@ -37,14 +37,13 @@ Key flags: `--enable-fold` (collapsible call blocks), `--func-links` (resolve al
 ```bash
 # Self-test: compares refactored output against reference HTML
 # Checks 24 HTML features + byte-level content diff
-# (initAutocomplete/durationFilter checks are stale since the unified filter and fail on the reference too)
 bash test_refactor.sh
 
 # Timeline invariant tests (synthetic format variants + given traces)
 FG_VMLINUX=/vol_1t/raspi/linux/vmlinux python3 tests/test_timeline.py [trace files...]
 ```
 
-Without `--timeline` the output must stay byte-identical to the reference; timeline CLI options are hidden from the info panel when unused.
+Without `--timeline` the output must stay byte-identical to the reference (regenerate `/tmp/funcgraph_reference.html` from the current code before changing anything); timeline CLI options are hidden from the info panel when unused.
 
 Requires a pre-generated reference file at `/tmp/funcgraph_reference.html`. Generate it before any code changes with the same parameters as in `test_refactor.sh`.
 
@@ -158,4 +157,6 @@ ftrace.txt → FtraceParser.parse() → AddressResolver.resolve_batch() → Html
 - Unified filter uses a single text input with `field:value` syntax, parsed by a recursive descent expression parser (`tokenizeFilter` → `parseFilterExpr` → `evalExpr`) supporting AND/OR/NOT and parentheses. Field buttons generate dropdown selectors (checkboxes for enumerable fields, text input for free-form). Dropdowns are mounted on `document.body` with fixed positioning (viewport-clamped) to avoid interactive-element-nesting issues with `<button>`.
 - Latency fields (`irqs_off`, `need_resched`, `hardirq_softirq`, `preempt_depth`) are parsed from the pipe-delimited area between the two `|` separators in latency-mode ftrace output, and output as `data-irqs`, `data-resched`, `data-hirq`, `data-preempt` HTML attributes. Latency field buttons only appear when the trace contains latency data.
 - Graph filter fields (`func:`, `graph:`, `notrace:`) leverage the fold system's hierarchy data. `data-func` attribute is added to every line with a function name. `graph:funcname` matches the target function's entire call tree by precomputing matching fold-ids from entry lines (`precomputeGraphSets`), then checking each line's `data-fold-id` or `data-fold-ancestors` against the set. `notrace:funcname` inverts the logic. `func:funcname` does simple regex match on `data-func` only.
+- Source blocks are de-duplicated: each `.expanded-content` div is empty with `data-src="N"`, the HTML lives in `<script id="fgSrc">` (JSON array) and `fgFill(el)` fills it before any `content.style.display = 'block'`. Any new code that shows an expanded block must call `fgFill` first.
+- Fold ids are `f<base36 entry line index>`; `data-fold-ancestors` is a space-separated list of them.
 - Container uses `width: fit-content; min-width: 100%` to allow long trace lines to expand beyond the viewport, triggering the browser's native horizontal scrollbar.

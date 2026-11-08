@@ -1235,7 +1235,7 @@ class FtraceParser:
                 # 如果pid为None，则使用空字符串
                 pid_str = pid if pid is not None else ""
                 # 使用 line_index 作为唯一性的一部分
-                fold_id = f"{cpu}_{pid_str}_{raw_func_name}_{line_index}_{len(call_stack)}_{indent_level}"
+                fold_id = 'f' + _base36(line_index)
 
                 # 将入口信息推入栈
                 call_stack.append({
@@ -1320,6 +1320,17 @@ class FtraceParser:
                     line_data['fold_id'] = None
                     line_data['fold_type'] = None
                     line_data['call_depth'] = None
+
+
+def _base36(n):
+    """Compact, deterministic fold id component (the entry line index)."""
+    digits = '0123456789abcdefghijklmnopqrstuvwxyz'
+    out = ''
+    while True:
+        n, r = divmod(n, 36)
+        out = digits[r] + out
+        if n == 0:
+            return out
 
 
 def parse_ftrace_file(file_path, verbose=False, enable_fold=False):
@@ -2233,6 +2244,8 @@ class HtmlGenerator:
         # Store all parameters as instance attributes
         self.parsed_lines = parsed_lines
         self.timeline_json = timeline_json
+        self._src_pool = []
+        self._src_index = {}
         self.vmlinux_path = vmlinux_path
         self.faddr2line_path = faddr2line_path
         self.module_dirs = module_dirs or []
@@ -2410,6 +2423,7 @@ class HtmlGenerator:
         </ul>
     </div>
 """
+        html_str += self._source_pool_script()
         html_str += self._generate_javascript()
         html_str += self._timeline_scripts()
         html_str += """</body>
@@ -2427,6 +2441,10 @@ class HtmlGenerator:
             html_str = html_str.replace('<div id="filterPlaceholder"></div>', self.filter_html)
 
         return html_str, self.vmlinux_time, self.module_time
+
+    def _source_pool_script(self):
+        data = json.dumps(self._src_pool, ensure_ascii=False, separators=(',', ':')).replace('<', '\\u003c')
+        return '    <script type="application/json" id="fgSrc">' + data + '</script>\n'
 
     # ---- Timeline view (optional, --timeline) ----
     @staticmethod
@@ -3334,7 +3352,7 @@ class HtmlGenerator:
                 locations = self.func_locations_map.get(func_info_for_call, {})
 
                 # 为expanded-content添加内联样式style="display: none;"，确保初始状态
-                content_parts.append(f'<div class="expanded-content" id="{line_id}_content" style="display: none;">')
+                block_start = len(content_parts)
 
                 if locations:
                     # 确定使用哪个URL
@@ -3427,7 +3445,15 @@ class HtmlGenerator:
                 else:
                     content_parts.append(f'<div class="location-link">Source information unavailable for: {escape_html_preserve_spaces(func_info_for_display)}</div>')
 
-                content_parts.append('</div>')
+                # De-duplicated source block, filled into the DOM on first expand (fgFill)
+                block_html = ''.join(content_parts[block_start:])
+                del content_parts[block_start:]
+                src_idx = self._src_index.get(block_html)
+                if src_idx is None:
+                    src_idx = len(self._src_pool)
+                    self._src_pool.append(block_html)
+                    self._src_index[block_html] = src_idx
+                content_parts.append(f'<div class="expanded-content" id="{line_id}_content" data-src="{src_idx}" style="display: none;"></div>')
 
         return ''.join(content_parts)
 
@@ -3446,6 +3472,13 @@ class HtmlGenerator:
         // Per-file keys: expandedLines, foldedBlocks, filterBoxVisible, keyboardHintShown,
         //   infoPanelExpanded, floatingControlsHidden, floatingTogglePos, viewState, heatmapEnabled
         function lsGet(key) { return localStorage.getItem(_lsPrefix + key); }
+        // Source blocks are de-duplicated in #fgSrc and filled in on first expand
+        let _fgSrcPool = null;
+        function fgFill(el) {
+            if (!el || el.firstChild || el.dataset.src === undefined) return;
+            if (!_fgSrcPool) _fgSrcPool = JSON.parse(document.getElementById('fgSrc').textContent);
+            el.innerHTML = _fgSrcPool[+el.dataset.src] || '';
+        }
         function lsSet(key, val) { localStorage.setItem(_lsPrefix + key, val); }
         function lsRemove(key) { localStorage.removeItem(_lsPrefix + key); }
 
@@ -3522,7 +3555,7 @@ class HtmlGenerator:
                     const container = document.getElementById(lineId + '_container');
 
                     if (content && btn && container) {
-                        content.style.display = 'block';
+                        fgFill(content); content.style.display = 'block';
                         if (btn) btn.textContent = '-';
                         container.classList.add('selected');
                     }
@@ -4208,7 +4241,7 @@ class HtmlGenerator:
                     if (content && btn) {
                         const isExpanded = localStorage.getItem(`expanded_${lineId}`) === 'true';
                         if (isExpanded) {
-                            content.style.display = 'block';
+                            fgFill(content); content.style.display = 'block';
                             btn.textContent = '-';
                             line.classList.add('selected');
                         } else {
@@ -4797,7 +4830,7 @@ class HtmlGenerator:
                 saveExpandedState(lineId, false);
             } else {
                 // 展开当前行
-                content.style.display = 'block';
+                fgFill(content); content.style.display = 'block';
                 if (btn) btn.textContent = '-';
                 container.classList.add('selected');
                 saveExpandedState(lineId, true);
@@ -5502,7 +5535,7 @@ class HtmlGenerator:
                     const isVisible = container.style.display !== 'none';
 
                     if (content && isVisible) {
-                        content.style.display = 'block';
+                        fgFill(content); content.style.display = 'block';
                         if (expandBtn) expandBtn.textContent = '-';
                         container.classList.add('selected');
                         saveExpandedState(lineId, true);
