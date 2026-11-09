@@ -396,6 +396,7 @@ window.addEventListener('keydown', ev => {
         case 'h': case 'H': if (sel >= 0) showDist(sName[sel]); break;
         case 'o': case 'O': toggleAdjusted(); break;
         case 'i': case 'I': toggleInlineView(); break;
+        case 'm': case 'M': setMax(!document.body.classList.contains('tl-max')); break;
         case '?': elHelp.classList.toggle('show'); break;
         case 'Escape':
             if (elHelp.classList.contains('show')) elHelp.classList.remove('show');

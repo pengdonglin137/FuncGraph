@@ -15,7 +15,7 @@
     flex-wrap: wrap;
     align-items: center;
     gap: 8px 14px;
-    padding: 6px 2px 8px;
+    padding: 4px 2px 6px;
 }
 .tl-group { display: inline-flex; align-items: center; gap: 6px; }
 .tl-label { color: var(--text-muted); font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
@@ -72,7 +72,8 @@
 [data-theme="dark"] .tl-errnav .err-label { color: #ff8a80; }
 
 /* capability notes */
-.tl-notes { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 2px 8px; }
+.tl-notes { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 2px 6px; }
+.tl-notes.hide { display: none; }
 .tl-note {
     font-size: 11.5px;
     padding: 3px 9px;
@@ -94,8 +95,20 @@
     border-radius: 8px;
     overflow: hidden;
     background: var(--container-bg);
-    min-height: 260px;
+    min-height: 160px;
 }
+/* drag handle between the canvas and the detail panel */
+.tl-resizer { display: none; flex: 0 0 auto; height: 8px; cursor: row-resize; position: relative; touch-action: none; }
+.tl-resizer.show { display: block; }
+.tl-resizer::after {
+    content: ""; position: absolute; left: 50%; top: 2px; width: 44px; height: 4px; margin-left: -22px;
+    border-radius: 2px; background: var(--border-color);
+}
+.tl-resizer:hover::after, .tl-resizer.drag::after { background: #3b6fd8; }
+body.tl-resizing, body.tl-resizing * { cursor: row-resize !important; user-select: none !important; }
+/* maximized: the timeline takes the whole window */
+body.tl-max.tl-active { padding: 2px; }
+body.tl-max.tl-active .page-header, body.tl-max.tl-active .view-tabs { display: none !important; }
 .tl-head-canvas { display: block; width: 100%; height: 62px; cursor: pointer; flex: 0 0 auto; }
 .tl-scroll {
     position: relative;
@@ -139,9 +152,7 @@
     display: none;
     border: 1px solid var(--border-color);
     border-radius: 8px;
-    margin-top: 8px;
     background: var(--container-bg);
-    max-height: 290px;
     overflow: auto;
     user-select: text;
 }
@@ -223,9 +234,9 @@ table.tl-sum td.err { color: #c62828; }
 @keyframes tlFlash { 0% { background: rgba(59, 111, 216, .45); } 100% { background: transparent; } }
 
 /* text-view filter bar */
-.tl-filterbar { display: flex; align-items: center; gap: 8px; padding: 0 2px 8px; }
+.tl-filterbar { gap: 8px; }
 .tl-ftext {
-    flex: 0 1 520px; border: 1px solid var(--border-color); border-radius: 6px;
+    width: 380px; max-width: 40vw; border: 1px solid var(--border-color); border-radius: 6px;
     background: var(--container-bg); color: var(--text-color); padding: 4px 8px;
     font: 12px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }

@@ -116,6 +116,7 @@ function openDetail(html) {
     const was = elDetail.classList.contains('show');
     elDetail.innerHTML = html;
     elDetail.classList.add('show');
+    elResizer.classList.add('show');
     // sticky table headers sit right below the (sticky) panel head
     const head = elDetail.querySelector('.tl-detail-head');
     const hh = head ? head.offsetHeight : 0;
@@ -125,6 +126,45 @@ function openDetail(html) {
 function hideDetail() {
     if (!elDetail.classList.contains('show')) return;
     elDetail.classList.remove('show');
+    elResizer.classList.remove('show');
+    resize();
+}
+// Drag the handle above the panel to resize it (height kept across reports); double-click resets.
+elResizer.addEventListener('pointerdown', ev => {
+    if (ev.button !== 0) return;
+    ev.preventDefault();
+    const y0 = ev.clientY, h0 = elDetail.offsetHeight;
+    elResizer.setPointerCapture(ev.pointerId);
+    elResizer.classList.add('drag');
+    document.body.classList.add('tl-resizing');
+    let pend = 0;
+    const move = e => {
+        const h = clampDetailH(h0 + (y0 - e.clientY));
+        prefSet('detailFrac', (h / window.innerHeight).toFixed(4));
+        if (!pend) pend = requestAnimationFrame(() => { pend = 0; resize(); });
+    };
+    const up = () => {
+        elResizer.removeEventListener('pointermove', move);
+        elResizer.classList.remove('drag');
+        document.body.classList.remove('tl-resizing');
+        resize();
+    };
+    elResizer.addEventListener('pointermove', move);
+    elResizer.addEventListener('pointerup', up, { once: true });
+    elResizer.addEventListener('pointercancel', up, { once: true });
+});
+elResizer.addEventListener('dblclick', () => { prefSet('detailFrac', null); resize(); });
+
+// Notes strip (hidden state remembered) and maximized layout (no page header / tabs).
+function setNotes(on) {
+    elNotes.classList.toggle('hide', !on);
+    tlRoot.querySelector('[data-act=notes]').classList.toggle('on', on);
+    prefSet('notes', on ? '1' : '0');
+    resize();
+}
+function setMax(on) {
+    document.body.classList.toggle('tl-max', on);
+    tlRoot.querySelector('[data-act=max]').classList.toggle('on', on);
     resize();
 }
 elDetail.addEventListener('click', ev => {
@@ -299,6 +339,8 @@ tlRoot.querySelector('.tl-toolbar').addEventListener('click', ev => {
         case 'errmode': errFilter = errFilter ? 0 : 1; rebuildErrList(); draw(); break;
         case 'fit': fitAll(); break;
         case 'help': elHelp.classList.toggle('show'); break;
+        case 'notes': setNotes(elNotes.classList.contains('hide')); break;
+        case 'max': setMax(!document.body.classList.contains('tl-max')); break;
         case 'adj': toggleAdjusted(); break;
         case 'inl': toggleInlineView(); break;
         case 'an-errors': showErrors(); break;
@@ -381,6 +423,7 @@ elHelp.innerHTML = `
 <li><kbd>E</kbd>/<kbd>Shift+E</kbd> next/prev error · <kbd>/</kbd> search, <kbd>N</kbd> next match</li>
 <li>Click an off-CPU segment: wait chain (who woke the task, wake latency, and who woke the waker)</li>
 <li><kbd>I</kbd>: show / hide inlined functions as dashed frames (extent = first to last traced call inside)</li>
+<li><kbd>M</kbd> or <b>Max</b>: maximize (hide the page header and tabs); drag the bar above the bottom panel to resize it, double-click it to reset</li>
 <li><kbd>O</kbd>: durations as measured / with the tracing overhead subtracted</li>
 <li><kbd>H</kbd>: duration distribution of the selected function · toolbar <b>Errors</b> / <b>Sched latency</b>: summaries</li>
 <li><kbd>Enter</kbd>: open in text view · <kbd>Alt</kbd>+click a text line: show it here</li></ul>
@@ -415,6 +458,15 @@ if (!D.offcpu.length) tlRoot.querySelector('[data-ov=off]').classList.add('na');
 if (!sDurAdj) tlRoot.querySelector('[data-act=adj]').style.display = 'none';
 if (!HAS_INL) tlRoot.querySelector('[data-act=inl]').style.display = 'none';
 else if (typeof lsGet === 'function' && lsGet('tlInline') === '1') toggleInlineView(true);
+{
+    const nn = elNotes.children.length, nb = tlRoot.querySelector('[data-act=notes]');
+    if (!nn) nb.style.display = 'none';
+    else {
+        nb.textContent = 'Notes ' + nn;
+        const on = prefGet('notes') !== '0';
+        elNotes.classList.toggle('hide', !on); nb.classList.toggle('on', on);
+    }
+}
 if (!WAKES.length) tlRoot.querySelector('[data-ov=wk]').classList.add('na');
 if (!D.caps.retval) tlRoot.querySelector('[data-ov=err]').classList.add('na');
 new MutationObserver(() => { palette(); ovDirty = true; draw(); })

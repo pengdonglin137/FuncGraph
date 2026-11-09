@@ -109,12 +109,28 @@ function isDim(i) {
     return false;
 }
 
+// ---- detail panel height (drag handle between canvas and panel) ----
+function prefGet(k) { try { return localStorage.getItem('fgTl.' + k); } catch (e) { return null; } }
+function prefSet(k, v) { try { if (v === null) localStorage.removeItem('fgTl.' + k); else localStorage.setItem('fgTl.' + k, v); } catch (e) { /* private mode */ } }
+function detailDefault() { return Math.round(Math.min(400, Math.max(180, window.innerHeight * 0.32))); }
+// stored as a fraction of the window height, so the split looks the same on other screens
+function detailPx() { const v = +prefGet('detailFrac'); return v > 0 && v < 1 ? Math.round(v * window.innerHeight) : detailDefault(); }
+function clampDetailH(h) {
+    // keep at least 160 px of canvas and 60 px of panel
+    const top = Math.max(0, elStage.getBoundingClientRect().top);
+    return Math.round(Math.max(60, Math.min(h, window.innerHeight - top - 160 - elResizer.offsetHeight - 10)));
+}
+
 // ---- main canvas ----
 function resize() {
     DPR = window.devicePixelRatio || 1;
     const top = elStage.getBoundingClientRect().top;
-    const detailH = elDetail.classList.contains('show') ? elDetail.offsetHeight + 8 : 0;
-    elStage.style.height = Math.max(320, window.innerHeight - Math.max(top, 0) - detailH - 14) + 'px';
+    let detailH = 0;
+    if (elDetail.classList.contains('show')) {
+        elDetail.style.height = clampDetailH(detailPx()) + 'px';
+        detailH = elDetail.offsetHeight + elResizer.offsetHeight;
+    }
+    elStage.style.height = Math.max(160, window.innerHeight - Math.max(top, 0) - detailH - 10) + 'px';
     W = elScroll.clientWidth;
     H = elScroll.clientHeight;
     for (const [cv, w, h] of [[elCv, W, H], [elHead, W, HEAD_H]]) {

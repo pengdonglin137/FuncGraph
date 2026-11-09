@@ -376,20 +376,23 @@ tlRoot.innerHTML = `
     <button class="tl-btn" data-act="an-errors" title="Error summary by syscall / origin / errno">Errors</button>
     <button class="tl-btn" data-act="an-sec" title="Critical sections: irqs-off / preempt-off / BH-off regions">Sections</button>
     <button class="tl-btn" data-act="an-lat" title="Scheduling latency: need-resched windows and what delayed them">Sched latency</button>
+    <button class="tl-btn" data-act="notes" title="Show / hide the notes about this trace">Notes</button>
+    <button class="tl-btn" data-act="max" title="Maximize: hide the page header and tabs (M)">Max</button>
     <button class="tl-btn" data-act="help" title="Help (?)">?</button>
   </span>
-</div>
-<div class="tl-filterbar"><span class="tl-label">Filter</span>
+  <span class="tl-group tl-filterbar"><span class="tl-label">Filter</span>
   <input class="tl-ftext" placeholder="same syntax as the text view, e.g. pid:1234 AND graph:vfs_read" spellcheck="false">
   <span class="tl-fcount"></span>
   <button class="tl-btn" data-act="fhide" title="Hide tracks without matches">Hide unmatched</button>
-  <button class="tl-btn" data-act="fclear">Clear</button></div>
+  <button class="tl-btn" data-act="fclear">Clear</button></span>
+</div>
 <div class="tl-notes"></div>
 <div class="tl-stage">
   <canvas class="tl-head-canvas"></canvas>
   <div class="tl-scroll"><canvas class="tl-canvas"></canvas><div class="tl-spacer"></div></div>
   <div class="tl-help"></div>
 </div>
+<div class="tl-resizer" title="Drag to resize the panel, double-click to reset"></div>
 <div class="tl-detail"></div>
 <div class="tl-tip"></div>
 <div class="tl-toast"></div>`;
@@ -406,6 +409,7 @@ const elSearch = tlRoot.querySelector('.tl-search');
 const elCount = tlRoot.querySelector('.tl-count');
 const elToast = tlRoot.querySelector('.tl-toast');
 const elFbar = tlRoot.querySelector('.tl-filterbar');
+const elResizer = tlRoot.querySelector('.tl-resizer');
 const elFtext = tlRoot.querySelector('.tl-ftext');
 const elFcount = tlRoot.querySelector('.tl-fcount');
 

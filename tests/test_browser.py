@@ -102,6 +102,35 @@ class BrowserSmokeTest(unittest.TestCase):
         self.page.wait_for_timeout(300)
         self.assertEqual(self.ev("document.querySelector('.tl-fcount').textContent"), '')
 
+    def test_detail_panel_resize_and_maximize(self):
+        self.open_timeline()
+        self.page.click('[data-act=an-errors]')
+        self.page.wait_for_timeout(200)
+        box = lambda sel: self.page.locator(sel).bounding_box()
+        h0, st0 = box('.tl-detail')['height'], box('.tl-stage')['height']
+        r = box('.tl-resizer')
+        x, y = r['x'] + r['width'] / 2, r['y'] + 4
+        self.page.mouse.move(x, y)
+        self.page.mouse.down()
+        self.page.mouse.move(x, y - 120, steps=5)
+        self.page.mouse.up()
+        self.page.wait_for_timeout(200)
+        self.assertAlmostEqual(box('.tl-detail')['height'], h0 + 120, delta=3)
+        self.assertAlmostEqual(box('.tl-stage')['height'], st0 - 120, delta=3)
+        self.assertLessEqual(box('.tl-detail')['y'] + box('.tl-detail')['height'], 900 + 1)
+        self.page.dblclick('.tl-resizer')
+        self.page.wait_for_timeout(200)
+        self.assertAlmostEqual(box('.tl-detail')['height'], h0, delta=3)
+        top0 = box('.tl-stage')['y']
+        self.page.click('[data-act=max]')
+        self.page.wait_for_timeout(200)
+        self.assertFalse(self.page.locator('.view-tabs').is_visible())
+        self.assertLess(box('.tl-stage')['y'], top0 - 40)
+        self.page.click('[data-act=max]')
+        self.page.wait_for_timeout(200)
+        self.assertTrue(self.page.locator('.view-tabs').is_visible())
+        self.assertEqual(self.errors, [])
+
     def test_analysis_panels(self):
         self.open_timeline()
         self.page.click('[data-act=an-errors]')
