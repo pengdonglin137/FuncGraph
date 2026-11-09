@@ -720,3 +720,109 @@ Each **need-resched window**, from setting the need-resched flag until the task 
 - Clicking a row selects the window in the timeline.
 
 Needs `latency-format` and timestamps.
+
+## 8. Compare view
+
+```bash
+python3 funcgraph.py --compare before.txt --output cmp.html after.txt
+```
+
+The current trace (`after.txt`) and the base (`before.txt`) are rebuilt the same way and summarized per function; pre-filters apply to both. `--timeline` is not needed.
+
+- **Tags at the top**: changes of traced time (total of outermost calls), calls and error chains. Changes under 5% are grey, increases red, decreases green. A yellow warning appears when the two traces have different time modes (e.g. one without timestamps).
+- **Table**: for every metric three columns: base, current, Δ.
+
+| Metric | Meaning |
+|---|---|
+| calls | number of calls |
+| self time | self time (inclusive minus the traced direct children) |
+| inclusive | total time |
+| mean incl | average total time per call |
+| max | longest call |
+| errors | error origins |
+
+- **Δ colors**: **red** increase, **green** decrease, **grey** under 5%. The bar next to the sorted metric shows the size of the change. **new** after a name: only in the current trace; **gone**: only in the base.
+- **Controls**: function regex filter; **changed only**; sort by `|Δ|`, `Δ`, `Δ%`, `current`, `base`; click a header to choose the metric. With overhead estimates for both traces, **subtract tracing overhead** appears.
+
+The traces should have similar tracing overhead (same options, same machine) for the differences to mean something.
+
+## 9. Export and automation
+
+`--export FILE.json` or `--export FILE.csv` writes the analyses next to the HTML; `--timeline` is not needed:
+
+```bash
+python3 funcgraph.py --export result.json --output report.html ftrace.txt
+```
+
+Durations in the JSON are in ns, times relative to the first event:
+
+| Key | Content |
+|---|---|
+| `meta` | trace name, time mode, capabilities (caps), overhead estimate, number of calls |
+| `functions` | per function `name, calls, total, self, max, p50, p90, p99, errors`, sorted by self |
+| `errors` | per error chain `origin, top, entry, errno, name, fate` (user / handled / escaped) `, verified, frames, task, pid, start` |
+| `sections` | critical sections `kind` (irqs_off / preempt_off / bh_off) `, duration, task, pid, start, started_in, ended_in, max_depth` |
+| `sched_latency` | need-resched windows `task, pid, start, duration, max_preempt, irqs_off` |
+| `atomic_sleep` | sleeping functions in atomic context `function, reasons, parent, task, pid, start` |
+| `off_cpu` | off-CPU segments `task, pid, start, duration, waiting_in, state, preempted, woken_by` |
+
+The CSV contains only the `functions` table.
+
+A CI check:
+
+```bash
+python3 funcgraph.py --export r.json --no-text-view --timeline --output r.html ftrace.txt
+python3 - <<'EOF'
+import json, sys
+d = json.load(open('r.json'))
+f = {x['name']: x for x in d['functions']}
+if f.get('vfs_read', {}).get('p99', 0) > 50_000:            # p99 above 50 us
+    sys.exit('vfs_read p99 regression')
+if any(s['kind'] == 'irqs_off' and s['duration'] > 200_000 for s in d['sections']):
+    sys.exit('irqs off for more than 200 us')
+if d['atomic_sleep']:
+    sys.exit('sleeping function called in atomic context')
+EOF
+```
+
+## 10. FAQ
+
+**The report is too large; the browser is slow or does not open it**
+
+The text view creates DOM for every line; above ~150k lines the console warns. Either narrow the trace with a pre-filter (`--pid`, `--comm`, `--graph`, `--time-range`) or build only the timeline with `--timeline --no-text-view` (measured: 362k lines → 15.7 MB, opens in about a second).
+
+**The timeline has no gaps and says compressed time**
+
+The trace was captured without `funcgraph-abstime`.
+
+**No interrupts, irqs-off or scheduling latency**
+
+`latency-format` was off. Without the flags column the context is inferred from interrupt entry functions and marked `(inferred)`.
+
+**Lots of bogus errors such as `do_raw_spin_unlock = -1`**
+
+Leftover register values of void functions. Give a vmlinux with a `.BTF` section (`CONFIG_DEBUG_INFO_BTF=y`) or `--btf` with `/sys/kernel/btf/vmlinux` copied from the target, and return types filter them out. Kernels with BTF-aware retval do not print `ret=` for void functions at all.
+
+**`funcgraph-args` is on but no arguments appear**
+
+On 6.18 and similar kernels arguments are not printed while `funcgraph-retaddr` is on. Capture with `fgcapture.sh --args`, which handles this.
+
+**Source lines do not match**
+
+The source is a different version than the vmlinux. Check the Source line in the ⓘ info panel, or use `--source-rev` with the revision the vmlinux was built from.
+
+**Some slices are blank in the overview and appear only when zooming in**
+
+A drawing bug of older versions, fixed. Regenerate the report.
+
+**The waker in a wait chain is `<idle>`**
+
+The wakeup came from an interrupt, or the trace has `sched_wakeup` but no `sched_waking`. Capture with `--sched`, which enables `sched_waking` too.
+
+**One trace file per CPU**
+
+Pass them all to funcgraph.py; they are merged by timestamp.
+
+**Source code on a machine without a kernel tree**
+
+Use `--source-url` with `--source-rev`. Building the report needs network access (downloads are cached); the report itself is a single offline file.
