@@ -32,6 +32,8 @@ CROSS_COMPILE=aarch64-linux-gnu- python3 funcgraph.py ftrace.txt --vmlinux vmlin
 
 Key flags: `--enable-fold` (collapsible call blocks), `--func-links` (resolve all function names to source links), `--fast` (use `fastfaddr2line.py` instead of kernel's `faddr2line`), `--filter` (enable filtering UI), `--highlight-code` (Pygments-based C highlighting), `--module-src` (source dirs for out-of-tree modules), `--path-prefix` (strip prefix from module source paths), `--entry-offset` (adjust trace entry point).
 
+`fgreport` (repo root) wraps funcgraph.py: all features on, kernel paths in presets of `~/.config/funcgraph/config.ini` (`fgreport init NAME --vmlinux ... --default`, `[fgreport] preset` marks the default; funcgraph.py ignores that section), output next to the trace, `--no-text-view` above 150k lines. `FG_CONFIG` overrides the config path (tests use it).
+
 ## Testing
 
 ```bash

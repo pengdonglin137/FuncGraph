@@ -71,6 +71,25 @@ python3 funcgraph.py --timeline --enable-fold --filter --func-links --highlight-
 - pyelftools (for `--fast`)
 - Optional: Pygments (for syntax highlighting)
 
+### Quick start: `fgreport`
+
+`fgreport` wraps `funcgraph.py` with all features on and the kernel paths kept in a preset, so a report is one short command:
+
+```bash
+# once per kernel: store vmlinux / sources in ~/.config/funcgraph/config.ini
+./fgreport init pi4 --vmlinux /path/to/vmlinux --kernel-src /path/to/linux \
+    --cross-compile aarch64-linux-gnu- --base-url https://elixir.bootlin.com/linux/v6.18/source --default
+
+./fgreport trace.txt                 # -> trace.html next to the trace (timeline, folding, filter, links, highlighting)
+./fgreport -p vm72 --open trace.txt  # another preset, open in the browser
+./fgreport --lite trace.txt          # quick look: no source blocks or links
+./fgreport -c before.txt after.txt   # with a Compare tab
+./fgreport trace.txt -- --pid 1234   # anything after -- is passed to funcgraph.py
+./fgreport presets                   # list presets (* = default)
+```
+
+It picks `--fast` / `--highlight-code` when pyelftools / Pygments are installed, switches to `--timeline --no-text-view` above 150k lines (`--text` keeps the text view), and prints the full `funcgraph.py` command it runs (`-n` only prints it).
+
 ### Basic Usage
 
 ```bash
@@ -382,6 +401,7 @@ funcgraph.py          # Entry point
 fastfaddr2line.py     # Address resolution tool (standalone)
 fglib/                # Implementation: parser, resolver, report, timeline, btf, prefilter, compare, cli ...
 fgcapture.sh          # Capture helper (run on the target)
+fgreport              # Report helper: funcgraph.py with all features and kernel-path presets
 assets/report/        # Text view JS/CSS (inlined into the HTML)
 assets/timeline/      # Timeline tab JS/CSS
 assets/compare/       # Compare tab

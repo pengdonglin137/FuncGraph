@@ -144,6 +144,8 @@ Capture with `--calibrate`, or pass `--overhead CHILD,SELF` when converting, and
 
 ### 4.1 Common combinations
 
+The shortest way is `fgreport` (README, "Quick start"): store the kernel paths once with `fgreport init`, then `fgreport trace.txt` writes `trace.html` with all features on. Its presets live in the config file of 4.4 and work with `funcgraph.py --preset` as well. Calling `funcgraph.py` directly:
+
 ```bash
 # full report: text view (folding, filter, function links, highlighted source) + timeline
 python3 funcgraph.py --timeline --enable-fold --filter --func-links --highlight-code --fast \

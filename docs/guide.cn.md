@@ -144,6 +144,8 @@ function_graph 在每次函数进入和退出时都执行 hook，这部分时间
 
 ### 4.1 常用组合
 
+最省事的是用 `fgreport`（README 的"快速上手"一节）：内核路径用 `fgreport init` 保存一次，以后 `fgreport trace.txt` 就会打开全部功能生成 `trace.html`。它的预设写在 4.4 节的配置文件里，和 `funcgraph.py --preset` 通用。下面是直接调用 `funcgraph.py` 的写法：
+
 ```bash
 # 完整报告：文本视图（折叠、过滤、函数名链接、源码高亮）+ 时间轴
 python3 funcgraph.py --timeline --enable-fold --filter --func-links --highlight-code --fast \

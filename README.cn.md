@@ -73,6 +73,25 @@ python3 funcgraph.py --timeline --enable-fold --filter --func-links --highlight-
 - pyelftools（`--fast` 需要）
 - 可选：Pygments（用于语法高亮）
 
+### 快速上手：`fgreport`
+
+`fgreport` 是 `funcgraph.py` 的封装：默认打开全部功能，内核路径保存在预设里，生成报告只需一条短命令：
+
+```bash
+# 每个内核做一次：把 vmlinux、源码目录等写进 ~/.config/funcgraph/config.ini
+./fgreport init pi4 --vmlinux /path/to/vmlinux --kernel-src /path/to/linux \
+    --cross-compile aarch64-linux-gnu- --base-url https://elixir.bootlin.com/linux/v6.18/source --default
+
+./fgreport trace.txt                 # 生成 trace.html，放在 trace 旁边（时间轴、折叠、过滤、源码链接、语法高亮）
+./fgreport -p vm72 --open trace.txt  # 换一个预设，并在浏览器中打开
+./fgreport --lite trace.txt          # 快速查看：不生成源码块和链接
+./fgreport -c before.txt after.txt   # 带 Compare 标签页
+./fgreport trace.txt -- --pid 1234   # -- 之后的参数原样传给 funcgraph.py
+./fgreport presets                   # 列出预设（* 表示默认）
+```
+
+装了 pyelftools / Pygments 时自动加 `--fast` / `--highlight-code`；超过 15 万行时自动改用 `--timeline --no-text-view`（`--text` 保留文本视图）；运行前会打印实际执行的 `funcgraph.py` 命令（`-n` 只打印不执行）。
+
 ### 基本用法
 
 ```bash
@@ -385,6 +404,7 @@ funcgraph.py          # 入口
 fastfaddr2line.py     # 地址解析工具（可单独使用）
 fglib/                # 实现：parser、resolver、report、timeline、btf、prefilter、compare、cli 等
 fgcapture.sh          # 采集脚本（在目标机上运行）
+fgreport              # 生成报告的封装：默认全部功能，内核路径用预设保存
 assets/report/        # 文本视图的 JS/CSS（生成时内联进 HTML）
 assets/timeline/      # 时间轴标签页的 JS/CSS
 assets/compare/       # 对比标签页

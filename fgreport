@@ -1,0 +1,215 @@
+#!/usr/bin/env python3
+"""fgreport: funcgraph.py with sensible defaults, so a report is one short command.
+
+    fgreport trace.txt                      # all features, writes trace.html next to the trace
+    fgreport -p pi4 trace.txt               # kernel paths from preset "pi4"
+    fgreport -p pi4 --open trace.txt        # ... and open it in the browser
+    fgreport --lite trace.txt               # text view + timeline only, no source/links (fast)
+    fgreport trace.txt -- --pid 1234        # anything after -- goes to funcgraph.py unchanged
+
+Kernel paths are kept in presets of funcgraph's config file (~/.config/funcgraph/config.ini):
+
+    fgreport init pi4 --vmlinux /vol_1t/raspi/linux/vmlinux --kernel-src /vol_1t/raspi/linux \\
+             --cross-compile aarch64-linux-gnu- --base-url https://elixir.bootlin.com/linux/v6.18/source
+    fgreport init vm72 --vmlinux /vol_1t/Qemu/trim_retval/x86_64/vmlinux \\
+             --kernel-src /vol_1t/Qemu/trim_retval --source-rev HEAD --default
+    fgreport presets                        # list them (* = used when -p is not given)
+
+The preset used without -p: $FG_PRESET, else the one marked with --default.
+"""
+import argparse
+import configparser
+import os
+import shlex
+import subprocess
+import sys
+import webbrowser
+
+HERE = os.path.dirname(os.path.realpath(__file__))
+FUNCGRAPH = os.path.join(HERE, 'funcgraph.py')
+CONFIG = os.path.join(os.path.expanduser('~'), '.config', 'funcgraph', 'config.ini')
+BIG = 150000          # lines; above this the text view is too heavy for browsers
+PRESET_KEYS = ('vmlinux', 'kernel-src', 'base-url', 'source-rev', 'source-url', 'cross-compile', 'llvm',
+               'module-dirs', 'module-srcs', 'path-prefix', 'btf', 'overhead')
+
+
+def die(msg):
+    print(f'fgreport: {msg}', file=sys.stderr)
+    sys.exit(2)
+
+
+def config_path():
+    return os.environ.get('FG_CONFIG') or CONFIG
+
+
+def read_config():
+    cp = configparser.ConfigParser(interpolation=None, inline_comment_prefixes=('#', ';'))
+    cp.optionxform = str
+    p = config_path()
+    if os.path.isfile(p):
+        with open(p, encoding='utf-8') as f:
+            cp.read_file(f)
+    return cp
+
+
+def presets(cp):
+    return [s[7:] for s in cp.sections() if s.startswith('preset ')]
+
+
+def default_preset(cp):
+    if os.environ.get('FG_PRESET'):
+        return os.environ['FG_PRESET']
+    # [fgreport] is ignored by funcgraph.py itself
+    return cp.get('fgreport', 'preset', fallback=None) or None
+
+
+# ---- subcommands ----
+def cmd_init(argv):
+    ap = argparse.ArgumentParser(prog='fgreport init', description='Create or update a preset with kernel paths.')
+    ap.add_argument('name')
+    for k in PRESET_KEYS:
+        ap.add_argument('--' + k, metavar='VALUE')
+    ap.add_argument('--default', action='store_true', help='use this preset when -p is not given')
+    a = ap.parse_args(argv)
+    vals = {k: getattr(a, k.replace('-', '_')) for k in PRESET_KEYS if getattr(a, k.replace('-', '_'))}
+    for k in ('vmlinux', 'kernel-src'):
+        if k in vals and not os.path.exists(vals[k]):
+            print(f'fgreport: warning: {k} {vals[k]} does not exist (yet)', file=sys.stderr)
+    cp = read_config()
+    sec = 'preset ' + a.name
+    if not cp.has_section(sec):
+        cp.add_section(sec)
+    for k, v in vals.items():
+        cp[sec][k] = os.path.abspath(v) if k in ('vmlinux', 'kernel-src') else v
+    if a.default:
+        if not cp.has_section('fgreport'):
+            cp.add_section('fgreport')
+        cp['fgreport']['preset'] = a.name
+    p = config_path()
+    os.makedirs(os.path.dirname(p), exist_ok=True)
+    with open(p, 'w', encoding='utf-8') as f:
+        cp.write(f)
+    print(f'fgreport: preset {a.name} written to {p}' + (' (default)' if a.default else ''))
+
+
+def cmd_presets(_argv):
+    cp = read_config()
+    names = presets(cp)
+    if not names:
+        print(f'no presets in {config_path()}; create one with: fgreport init NAME --vmlinux ... --kernel-src ...')
+        return
+    d = default_preset(cp)
+    for n in names:
+        sec = cp['preset ' + n]
+        print(('* ' if n == d else '  ') + n)
+        for k, v in sec.items():
+            print(f'      {k} = {v}')
+
+
+# ---- report ----
+def have(mod):
+    try:
+        __import__(mod)
+        return True
+    except ImportError:
+        return False
+
+
+def count_lines(path, limit):
+    """Lines of a plain file, stopping at limit (compressed / stdin input: unknown)."""
+    if path == '-' or path.endswith(('.gz', '.xz', '.bz2')):
+        return None
+    n = 0
+    with open(path, 'rb') as f:
+        for _ in f:
+            n += 1
+            if n > limit:
+                break
+    return n
+
+
+def cmd_report(argv):
+    extra = []
+    if '--' in argv:
+        i = argv.index('--')
+        argv, extra = argv[:i], argv[i + 1:]
+    ap = argparse.ArgumentParser(
+        prog='fgreport', description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument('traces', nargs='+', metavar='TRACE', help="trace file(s); '-' for stdin, .gz/.xz/.bz2 work")
+    ap.add_argument('-p', '--preset', help='preset with kernel paths (default: $FG_PRESET or the default preset)')
+    ap.add_argument('-P', '--no-preset', action='store_true', help='use no preset (no vmlinux: no source, links or BTF)')
+    ap.add_argument('-o', '--output', help='output HTML (default: next to the first trace, .html)')
+    ap.add_argument('--open', action='store_true', help='open the report in the browser')
+    ap.add_argument('--lite', action='store_true', help='text view + timeline only: no source blocks, links, highlighting')
+    ap.add_argument('--text', action='store_true', help=f'keep the text view even above {BIG} lines')
+    ap.add_argument('-c', '--compare', metavar='BASE', help='add a Compare tab against this trace')
+    ap.add_argument('-n', '--dry-run', action='store_true', help='print the funcgraph.py command and exit')
+    a = ap.parse_args(argv)
+
+    cp = read_config()
+    preset = None if a.no_preset else (a.preset or default_preset(cp))
+    if preset and not cp.has_section('preset ' + preset):
+        die(f"no preset '{preset}' in {config_path()} (have: {', '.join(presets(cp)) or 'none'}); "
+            f"create it with: fgreport init {preset} --vmlinux ... --kernel-src ...")
+    sec = cp['preset ' + preset] if preset else {}
+
+    cmd = [sys.executable, FUNCGRAPH, '--timeline', '--enable-fold', '--filter']
+    if os.path.isfile(config_path()):
+        cmd += ['--config', config_path()]
+    if preset:
+        cmd += ['--preset', preset]
+    has_vmlinux = 'vmlinux' in sec or '--vmlinux' in extra
+    if has_vmlinux and not a.lite:
+        cmd += ['--func-links']
+        if have('elftools'):
+            cmd += ['--fast']
+        if have('pygments') and ('kernel-src' in sec or 'source-url' in sec or '--kernel-src' in extra):
+            cmd += ['--highlight-code']
+    if a.compare:
+        cmd += ['--compare', a.compare]
+
+    big = False
+    if not a.text:
+        n = count_lines(a.traces[0], BIG) if os.path.isfile(a.traces[0]) else None
+        if n is not None and n > BIG and '--no-text-view' not in extra:
+            big = True
+            cmd += ['--no-text-view']
+
+    out = a.output
+    if not out:
+        first = a.traces[0]
+        if first == '-':
+            out = 'stdin.html'
+        else:
+            base = first
+            for ext in ('.gz', '.xz', '.bz2'):
+                if base.endswith(ext):
+                    base = base[:-len(ext)]
+            out = os.path.splitext(base)[0] + '.html'
+    cmd += ['--output', out] + extra + a.traces
+
+    print('fgreport: ' + ' '.join(shlex.quote(c) for c in cmd[1:]), file=sys.stderr)
+    if big:
+        print(f'fgreport: more than {BIG} lines: building the timeline only (--text keeps the text view, '
+              f'or narrow it: -- --pid N / --time-range A:B / --graph FUNC)', file=sys.stderr)
+    if a.dry_run:
+        return 0
+    rc = subprocess.call(cmd)
+    if rc == 0:
+        print(f'fgreport: {os.path.abspath(out)}', file=sys.stderr)
+        if a.open:
+            webbrowser.open('file://' + os.path.abspath(out))
+    return rc
+
+
+def main():
+    argv = sys.argv[1:]
+    if argv and argv[0] == 'init':
+        return cmd_init(argv[1:])
+    if argv and argv[0] == 'presets':
+        return cmd_presets(argv[1:])
+    return cmd_report(argv)
+
+
+if __name__ == '__main__':
+    sys.exit(main() or 0)
