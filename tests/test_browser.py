@@ -1528,6 +1528,229 @@ class BrowserSmokeTest(unittest.TestCase):
         self.assertTrue(self.ev("!!document.querySelector('.an-hist')"))
         self.assertGreater(self.ev("document.querySelectorAll('.an-list tr').length"), 0)
 
+    def open_detail_stack(self, count=320, errors=False, mode='abs', prefix='frame_'):
+        self.ev("fgSwitchView('text')")
+        self.page.reload()
+        names = [prefix + str(index).zfill(4) for index in range(count)]
+        extra = {'strings': names + ['-12'], 'errnames': {'12': 'ENOMEM'}}
+        if errors:
+            extra.update(errs=[[index, 12, 0 if index == count - 1 else 1, 2, 1, 0] for index in range(count)],
+                         chains=[[count - 1, 0, 12, 2, count, 1, 0]])
+        self.open_range_data(names, mode=mode, starts=list(range(count)), durations=[10000 - index * 2 for index in range(count)],
+                             parents=[-1] + list(range(count - 1)), columns={'depth': list(range(count)), 'ret': [count] * count}, extra=extra)
+        self.ev('index => fgView("timeline").probe().select(index)', count - 1)
+
+    def test_detail_stack_pages_exports_and_preserves_expansion_on_refresh(self):
+        self.open_detail_stack()
+        section = self.page.locator('[data-context-list=stack]')
+        self.assertEqual(section.locator('[data-slice]').count(), 100)
+        self.assertEqual(section.locator('[data-slice]').first.get_attribute('data-slice'), '0')
+        self.assertNotIn('outside trace window', section.inner_text())
+        first = section.locator('[data-slice]').first.element_handle()
+        rows = self.download_csv('[data-context-export=stack]')
+        self.assertEqual(len(rows), 320)
+        self.assertEqual([int(row['recorded_slice_index']) for row in rows], list(range(320)))
+        self.assertTrue(all(row['path_status'] == 'complete' and row['selected_slice_index'] == '319' for row in rows))
+        self.assertEqual(section.locator('[data-slice]').count(), 100)
+        self.page.locator('[data-context-more=stack]').press('Enter')
+        self.assertEqual(section.locator('[data-slice]').count(), 200)
+        self.assertTrue(first.evaluate('(node) => node.isConnected'))
+        self.assertTrue(self.page.locator('[data-context-more=stack]').evaluate('(node) => node === document.activeElement'))
+        walks = self.ev("""() => {
+            const original = Array.prototype.reverse;
+            let walks = 0;
+            Array.prototype.reverse = function() { if (this.length === 320) walks++; return original.call(this); };
+            try {
+                fgNotifyFilter('leaf only', new Set([320]));
+                document.querySelector('[data-act=adj]').click();
+                fgView('timeline').probe().inline(true);
+            } finally { Array.prototype.reverse = original; }
+            return walks;
+        }""")
+        self.assertEqual(walks, 0)
+        self.assertEqual(section.locator('[data-slice]').count(), 200)
+        adjusted = self.download_csv('[data-context-export=stack]')
+        self.assertEqual(float(adjusted[0]['duration_ns']), float(rows[0]['duration_ns']) / 2)
+        self.assertEqual([row['start_ns'] for row in adjusted], [row['start_ns'] for row in rows])
+        self.assertTrue(all(row['duration_basis'] == 'overhead_subtracted_estimate' for row in adjusted))
+        self.page.locator('[data-context-more=stack]').press('Space')
+        self.page.locator('[data-context-more=stack]').press('Enter')
+        self.assertEqual(section.locator('[data-slice]').count(), 320)
+        self.assertTrue(self.page.locator('[data-context-more=stack]').is_disabled())
+
+    def test_detail_error_chain_is_complete_beyond_sixty_four_frames(self):
+        self.open_detail_stack(errors=True)
+        section = self.page.locator('[data-context-list=error]')
+        self.assertIn('320 recorded frames', section.locator('.tl-sec').text_content())
+        self.assertIn('ENOMEM', section.inner_text())
+        self.assertEqual(section.locator('[data-slice]').count(), 100)
+        rows = self.download_csv('[data-context-export=error]')
+        self.assertEqual(len(rows), 320)
+        self.assertEqual([int(row['recorded_slice_index']) for row in rows], list(range(320)))
+        self.assertTrue(all(row['chain_index'] == '0' and row['errno'] == '12' and row['fate'] == 'unknown' for row in rows))
+        self.assertTrue(all(row['return'] == "'-12" for row in rows))
+        self.assertEqual(section.locator('[data-slice]').count(), 100)
+        for expected in [200, 300, 320]:
+            self.page.locator('[data-context-more=error]').press('Enter')
+            self.assertEqual(section.locator('[data-slice]').count(), expected)
+
+    def test_detail_stack_exports_typed_inline_gaps_and_actual_window_boundary(self):
+        self.open_range_data(['root', 'child'], starts=[0, 100], durations=[10000, 1000], parents=[-1, 0],
+                             callers=[None, 'root+0x1/0x20'], columns={'depth': [3, 6]},
+                             extra={'inline': {'2': [['root', 'a.c', 10], ['inline_one', 'b.c', 20], ['inline_two', 'c.c', 30]]}})
+        self.ev("fgView('timeline').probe().select(1)")
+        rows = self.download_csv('[data-context-export=stack]')
+        self.assertEqual([row['kind'] for row in rows], ['outside', 'traced', 'untraced', 'untraced', 'inline', 'inline', 'traced'])
+        self.assertEqual(rows[0]['outside_frame_count'], '3')
+        self.assertEqual([row['depth'] for row in rows if row['kind'] == 'untraced'], ['4', '5'])
+        self.assertEqual([row['source_file'] for row in rows if row['kind'] == 'inline'], ['b.c', 'c.c'])
+        for row in rows:
+            if row['kind'] != 'traced':
+                self.assertTrue(all(row[field] == '' for field in ['recorded_slice_index', 'trace_line', 'duration_ns', 'self_ns', 'start_ns', 'end_ns', 'duration_basis']))
+        before = self.page.locator('[data-context-list=stack]').inner_text()
+        self.ev("fgView('timeline').probe().inline(true)")
+        self.assertEqual(self.page.locator('[data-context-list=stack]').inner_text(), before)
+
+    def open_detail_children(self, count=225, inline=False):
+        self.ev("fgSwitchView('text')")
+        self.page.reload()
+        extra = {'inline': {'2': [['root', 'a.c', 1], ['inline_frame', 'b.c', 2]]}} if inline else None
+        self.open_range_data(['root'] + ['child'] * count, starts=[0] + [1000 + index * 1000 for index in range(count)],
+                             durations=[(count + 2) * 1000] + [500] * count, parents=[-1] + [0] * count,
+                             callers=[None] + ['root+0x1/0x20'] * count if inline else None,
+                             columns={'depth': [0] + [1 if inline else 2] * count}, extra=extra)
+        self.ev("fgView('timeline').probe().select(fgView('timeline').probe().N)")
+
+    def test_detail_ghost_children_are_complete_cached_and_incremental(self):
+        self.open_detail_children()
+        section = self.page.locator('[data-context-list=children]')
+        self.assertEqual(section.locator('[data-slice]').count(), 100)
+        rows = self.download_csv('[data-context-export=children]')
+        self.assertEqual(len(rows), 225)
+        self.assertEqual([int(row['recorded_slice_index']) for row in rows], list(range(1, 226)))
+        self.page.locator('[data-context-more=children]').press('Enter')
+        self.assertEqual(section.locator('[data-slice]').count(), 200)
+        scans = self.ev("""() => {
+            const probe = fgView('timeline').probe(), kids = probe.SYN[probe.NA - probe.N - 1].kids;
+            const original = Array.prototype[Symbol.iterator];
+            let scans = 0;
+            Array.prototype[Symbol.iterator] = function() { if (this === kids) scans++; return original.call(this); };
+            try {
+                fgNotifyFilter('one child only', new Set([2]));
+                document.querySelector('[data-act=adj]').click();
+            } finally { Array.prototype[Symbol.iterator] = original; }
+            return scans;
+        }""")
+        self.assertEqual(scans, 0)
+        self.assertEqual(section.locator('[data-slice]').count(), 200)
+        adjusted = self.download_csv('[data-context-export=children]')
+        self.assertEqual(float(adjusted[0]['duration_ns']), float(rows[0]['duration_ns']) / 2)
+        self.assertEqual([row['start_ns'] for row in adjusted], [row['start_ns'] for row in rows])
+        self.page.locator('[data-context-more=children]').press('Space')
+        self.assertEqual(section.locator('[data-slice]').count(), 225)
+        self.ev("fgNotifyFilter('no matching children', new Set())")
+        self.assertEqual(self.ev("fgView('timeline').probe().sel()"), -1)
+        self.assertFalse(self.page.locator('.tl-detail').is_visible())
+
+    def test_detail_inline_exports_callsite_chain_without_fabricated_timings(self):
+        self.open_detail_children(inline=True)
+        rows = self.download_csv('[data-context-export=inline]')
+        self.assertEqual([row['kind'] for row in rows], ['call_site', 'inline'])
+        self.assertEqual([row['source_file'] for row in rows], ['a.c', 'b.c'])
+        self.assertTrue(all(row['recorded_slice_index'] == '' and row['duration_ns'] == '' for row in rows))
+        self.assertEqual(len(self.download_csv('[data-context-export=children]')), 225)
+        self.assertEqual(self.page.locator('[data-context-list=children] [data-slice]').count(), 100)
+        self.page.locator('[data-context-more=children]').press('Enter')
+        self.page.locator('[data-context-list=children] [data-slice="150"]').press('Space')
+        self.assertEqual(self.ev("fgView('timeline').probe().sel()"), 150)
+        self.assertEqual(self.page.locator('[data-context-list=stack] [data-context-kind=inline]').count(), 1)
+
+    def test_detail_large_synthetic_fanout_only_renders_requested_rows(self):
+        self.open_detail_children(count=150000)
+        self.assertEqual(self.page.locator('[data-context-list=children] [data-slice]').count(), 100)
+        self.assertIn('of 150000 context rows', self.page.locator('.tl-context-footer').inner_text())
+        self.page.locator('[data-context-more=children]').press('Enter')
+        self.assertEqual(self.page.locator('[data-context-list=children] [data-slice]').count(), 200)
+
+    def test_detail_long_inline_chain_is_lazy_and_fully_exportable(self):
+        chain = [['root', 'root.c', 1]] + [['inline_' + str(index), 'inline.c', index + 2] for index in range(1000)]
+        self.open_range_data(['root', 'child'], starts=[0, 100], durations=[10000, 1000], parents=[-1, 0],
+                             callers=[None, 'root+0x1/0x20'], columns={'depth': [0, 1]}, extra={'inline': {'2': chain}})
+        self.ev("fgView('timeline').probe().select(fgView('timeline').probe().N)")
+        section = self.page.locator('[data-context-list=inline]')
+        self.assertEqual(section.locator('.tl-context-row').count(), 100)
+        self.assertIn('of 1001 context rows', section.inner_text())
+        rows = self.download_csv('[data-context-export=inline]')
+        self.assertEqual(len(rows), 1001)
+        self.assertEqual(rows[-1]['function'], 'inline_999')
+        self.assertEqual(rows[-1]['source_line'], '1001')
+        self.assertTrue(all(row['duration_ns'] == '' and row['recorded_slice_index'] == '' for row in rows))
+        self.assertEqual(section.locator('.tl-context-row').count(), 100)
+        self.page.locator('[data-context-more=inline]').press('Enter')
+        self.assertEqual(section.locator('.tl-context-row').count(), 200)
+
+    def test_detail_context_native_navigation(self):
+        self.open_detail_stack(count=3, errors=True)
+        self.page.locator('[data-context-list=error] [data-slice="1"]').press('Space')
+        self.assertEqual(self.ev("fgView('timeline').probe().sel()"), 1)
+        self.assertEqual(self.page.locator('[data-context-list=error] .cur').get_attribute('data-slice'), '1')
+        self.page.locator('[data-context-list=stack] [data-slice="0"]').press('Enter')
+        self.assertEqual(self.ev("fgView('timeline').probe().sel()"), 0)
+        self.assertEqual(self.page.locator('[data-context-list=stack] [data-slice]').count(), 1)
+
+    def test_detail_csv_units_and_formula_protection(self):
+        for mode in ['abs', 'dur', 'count']:
+            with self.subTest(mode=mode):
+                self.open_detail_stack(count=3, mode=mode, prefix='=SUM(1,2)')
+                rows = self.download_csv('[data-context-export=stack]')
+                self.assertEqual(rows[0]['function'], "'=SUM(1,2)0000")
+                unit = 'units' if mode == 'count' else 'ns'
+                self.assertEqual(float(rows[0]['duration_' + unit]), 10 if mode == 'count' else 10000)
+                self.assertEqual(rows[0]['position_basis'], 'relative_timestamp_span' if mode == 'abs' else 'packed_geometry' if mode == 'dur' else 'call_order_geometry')
+                self.assertEqual(rows[0]['time_mode'], mode)
+                if mode == 'count':
+                    self.assertFalse(any(column.endswith('_ns') for column in rows[0]))
+
+    def test_detail_context_reports_inconsistent_chain_metadata(self):
+        self.open_range_data(['root', 'parent', 'origin', 'unrelated'], starts=[0, 1, 2, 20000], durations=[10000, 9000, 1000, 1000],
+                             parents=[-1, 0, 1, -1], columns={'depth': [0, 1, 2, 0]},
+                             extra={'errs': [[2, 12, 0, 2, 0, 0]], 'chains': [[2, 3, 12, 2, 999, 0, 0]]})
+        self.ev("fgView('timeline').probe().select(2)")
+        section = self.page.locator('[data-context-list=error]')
+        self.assertIn('missing chain top', section.inner_text())
+        self.assertIn('3 recorded frames', section.locator('.tl-sec').text_content())
+        rows = self.download_csv('[data-context-export=error]')
+        self.assertEqual([row['recorded_slice_index'] for row in rows], ['0', '1', '2'])
+        self.assertTrue(all(row['path_status'] == 'missing_chain_top' for row in rows))
+        self.assertTrue(all(row['chain_top_slice'] == '3' and row['chain_reported_frames'] == '999' for row in rows))
+
+    def test_detail_context_detects_parent_cycles_without_a_depth_guard(self):
+        self.open_range_data(['root', 'parent', 'leaf'], starts=[0, 1, 2], durations=[10000, 9000, 1000],
+                             parents=[-1, 0, 1], columns={'depth': [0, 1, 2]})
+        self.ev("() => { const probe = fgView('timeline').probe(); probe.sParent[0] = 2; probe.select(2); }")
+        self.assertIn('cycle', self.page.locator('[data-context-list=stack]').inner_text())
+        rows = self.download_csv('[data-context-export=stack]')
+        self.assertEqual(len(rows), 3)
+        self.assertTrue(all(row['path_status'] == 'cycle' for row in rows))
+
+    def test_detail_context_long_names_fit_compact_windows(self):
+        self.open_detail_stack(count=160, prefix='<b>long_function_name</b>' * 15)
+        for theme in ['light', 'dark']:
+            for width, height in [(1500, 900), (320, 700), (390, 844), (800, 420)]:
+                with self.subTest(theme=theme, width=width):
+                    self.ev("theme => document.documentElement.setAttribute('data-theme', theme)", theme)
+                    self.page.set_viewport_size({'width': width, 'height': height})
+                    self.ev("document.querySelector('.tl-detail').scrollTop = 0")
+                    self.page.wait_for_timeout(100)
+                    close = self.page.locator('.tl-slice-head .tl-close').bounding_box()
+                    self.assertGreaterEqual(close['x'], 0)
+                    self.assertLessEqual(close['x'] + close['width'], width)
+                    self.assertEqual(self.ev("getComputedStyle(document.querySelector('.tl-slice-head')).top"), 'auto' if width <= 640 or height <= 600 else '0px')
+                    self.assertEqual(self.page.locator('.tl-context-text b').count(), 0)
+                    self.assertLessEqual(self.page.locator('.tl-context-row').first.evaluate('(node) => node.offsetHeight'), 40)
+                    self.assertLessEqual(self.ev('document.documentElement.scrollWidth'), width)
+                    self.assertTrue(self.page.locator('[data-context-export=stack]').is_enabled())
+
     def test_detail_breakdown_uses_real_parent_links_across_depth_gaps(self):
         self.open_range_data(['parent', 'real_child'], starts=[0, 100], durations=[10000, 1000], parents=[-1, 0],
                              columns={'depth': [0, 3]})

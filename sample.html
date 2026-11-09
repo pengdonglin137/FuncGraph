@@ -1491,6 +1491,8 @@ body.tl-max.tl-active { padding: 2px; }
 }
 .tl-detail-title { font: 600 13px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; word-break: break-all; }
 .tl-detail-head .sp { flex: 1; }
+.tl-slice-head { flex-wrap: wrap; left: 0; z-index: 2; }
+.tl-slice-head .tl-detail-title { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; max-width: 100%; }
 .tl-range-head { flex-wrap: wrap; z-index: 2; }
 .tl-range-actions { display: flex; align-items: center; gap: 8px; margin-left: auto; flex-shrink: 0; }
 .tl-range-footer { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; padding: 8px 12px; color: var(--text-muted); }
@@ -1518,6 +1520,17 @@ body.tl-max.tl-active { padding: 2px; }
 .tl-crumb .d { color: var(--text-muted); }
 .tl-crumb.cur { font-weight: 700; }
 .tl-crumb.ghost { color: var(--text-muted); font-style: italic; cursor: default; }
+.tl-context-list { margin: 0 0 10px; min-width: 0; }
+.tl-context-head, .tl-context-footer { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin: 4px 0; }
+.tl-context-head .tl-sec { margin: 0; }
+.tl-context-footer, .tl-context-note { color: var(--text-muted); font-size: 11px; }
+.tl-context-note { margin: 6px 0; }
+.tl-crumb.tl-context-row { display: flex; align-items: flex-start; gap: 6px; width: 100%; min-width: 0; box-sizing: border-box; padding: 3px 4px; border: none; background: none; color: inherit; font: inherit; text-align: left; white-space: normal; }
+.tl-crumb.tl-context-row:hover { background: var(--container-bg-hover); }
+.tl-context-row.cur { font-weight: 700; }
+.tl-context-row:focus-visible { outline: 2px solid var(--link-color); outline-offset: -2px; }
+.tl-context-row .tl-context-value { flex: 0 0 auto; min-width: 66px; color: var(--text-muted); text-align: right; }
+.tl-context-row .tl-context-text { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; min-width: 0; flex: 1; }
 .tl-link { color: var(--link-color); cursor: pointer; text-decoration: none; }
 .tl-link:hover { text-decoration: underline; }
 .tl-pill { display: inline-block; font-size: 10.5px; padding: 0 6px; border-radius: 8px; margin-right: 4px; font-family: system-ui, sans-serif; font-weight: 600; }
@@ -1648,11 +1661,11 @@ table.tl-sum td.err { color: #c62828; }
 .an-minor { font-size: 11px; color: var(--text-muted); margin-left: 6px; }
 
 @media (max-height: 600px) {
-    .an-window-head, .an-error-head, .an-wait-head, .an-dist-head { top: auto; }
+    .an-window-head, .an-error-head, .an-wait-head, .an-dist-head, .tl-slice-head { top: auto; }
 }
 
 @media (max-width: 640px) {
-    .an-window-head, .an-error-head, .an-wait-head, .an-dist-head { top: auto; }
+    .an-window-head, .an-error-head, .an-wait-head, .an-dist-head, .tl-slice-head { top: auto; }
     .tl-detail-body, .an-dist { grid-template-columns: minmax(0, 1fr); }
 }
 
@@ -1694,11 +1707,11 @@ table.tl-sum td.err { color: #c62828; }
                 <div class="info-item"><div class="info-label">OS:</div><div class="info-value">Linux 6.8.0-138-generic</div></div>
                 <div class="info-item"><div class="info-label">Hostname:</div><div class="info-value">pengdl-pc</div></div>
                 <div class="info-item"><div class="info-label">Processor:</div><div class="info-value">x86_64</div></div>
-                <div class="info-item"><div class="info-label">Generated At:</div><div class="info-value">2026-11-10 04:28:58</div></div>
+                <div class="info-item"><div class="info-label">Generated At:</div><div class="info-value">2026-11-10 04:52:21</div></div>
                 <div class="info-section-divider"></div>
                 <div class="info-section-title">Processing Stats</div>
                 <div class="info-item"><div class="info-label">Parse Time:</div><div class="info-value">0.02s</div></div>
-                <div class="info-item"><div class="info-label">Vmlinux Time:</div><div class="info-value">6.05s</div></div>
+                <div class="info-item"><div class="info-label">Vmlinux Time:</div><div class="info-value">6.29s</div></div>
                 <div class="info-item"><div class="info-label">Modules Time:</div><div class="info-value">0.00s</div></div>
                 <div class="info-item"><div class="info-label">Total Lines:</div><div class="info-value">695</div></div>
                 <div class="info-item"><div class="info-label">Expandable:</div><div class="info-value">442</div></div>
@@ -7333,9 +7346,150 @@ function pill(cls, txt, title) { return '<span class="tl-pill ' + cls + '"' + (t
 function kv(k, v, cls) { return '<span class="k">' + k + '</span><span class="v' + (cls ? ' ' + cls : '') + '">' + v + '</span>'; }
 function lineLink(n, label) { return '<a class="tl-link" data-line="' + n + '">' + (label || 'line ' + n) + '</a>'; }
 
+const DETAIL_PAGE = 100;
+let detailContext = null;
+function detailParents(start, stop) {
+    const ids = [], seen = new Set(), task = sTask[start];
+    let current = start, status = 'complete';
+    while (current >= 0) {
+        if (current >= N || sTask[current] !== task) { status = 'invalid_parent'; break; }
+        if (seen.has(current)) { status = 'cycle'; break; }
+        seen.add(current); ids.push(current);
+        if (current === stop) break;
+        const parent = sParent[current];
+        if (parent >= 0 && !seen.has(parent) && sDepth[parent] >= sDepth[current]) { status = 'invalid_parent'; break; }
+        current = parent;
+    }
+    if (status === 'complete' && stop !== undefined && ids[ids.length - 1] !== stop) status = 'missing_chain_top';
+    return { ids: ids.reverse(), status };
+}
+function detailRealRow(index, level) { return { kind: 'traced', name: nameOf(index), index, owner: index, depth: sDepth[index], level }; }
+function detailList(kind, title, count, createRows, status) {
+    const list = { kind, title, count, createRows, status: status || 'complete', rows: [], visible: Math.min(DETAIL_PAGE, count) };
+    list.iterator = createRows();
+    return list;
+}
+function detailContextData(root) {
+    if (detailContext && detailContext.root === root) return detailContext;
+    const data = { root, lists: new Map(), facts: null };
+    if (root >= N) {
+        data.facts = isGhost(root) ? ghostFacts(root) : inlineFacts(root);
+        const facts = data.facts;
+        data.lists.set('children', detailList('children', 'Traced calls inside (' + facts.kids.length + ')', facts.kids.length, function* () {
+            for (const index of facts.kids) yield detailRealRow(index, 0);
+        }));
+        if (!isGhost(root)) data.lists.set('inline', detailList('inline', 'Inline chain at the call site', facts.ch.length, function* () {
+            for (let position = 0; position < facts.ch.length; position++) {
+                const frame = facts.ch[position];
+                yield { kind: position ? 'inline' : 'call_site', name: frame[0], owner: facts.kids[0], level: position,
+                    file: frame[1], line: frame[2], current: position === facts.k };
+            }
+        }));
+    } else {
+        const path = detailParents(root), first = path.ids[0];
+        const outside = path.status === 'complete' && sDepth[first] > 0 ? sDepth[first] : 0;
+        let count = outside ? 1 : 0;
+        for (const index of path.ids) count += 1 + Math.max(0, gapOf(index)) + Math.max(0, (inlChain(index) || []).length - 1);
+        data.lists.set('stack', detailList('stack', 'Call stack (' + path.ids.length + ' recorded frames)', count, function* () {
+            let level = 0;
+            if (outside) yield { kind: 'outside', name: '… ' + outside + ' frame(s) outside trace window', owner: first, level: 0, missing: outside };
+            for (const index of path.ids) {
+                const gap = Math.max(0, gapOf(index));
+                for (let offset = 0; offset < gap; offset++) yield { kind: 'untraced', name: offset === gap - 1 ? callerFn(index) : '?',
+                    owner: index, depth: sDepth[index] - gap + offset, level: level++ };
+                const chain = inlChain(index);
+                if (chain) for (let frameIndex = 1; frameIndex < chain.length; frameIndex++) {
+                    const frame = chain[frameIndex];
+                    yield { kind: 'inline', name: frame[0], owner: index, level: level++, file: frame[1], line: frame[2] };
+                }
+                yield detailRealRow(index, level++);
+            }
+        }, path.status));
+        if (eChain[root] >= 0) {
+            const chain = CHAINS[eChain[root]], errorPath = detailParents(chain[0], chain[1]);
+            const status = errorPath.status === 'complete' && errorPath.ids.length !== chain[4] ? 'length_mismatch' : errorPath.status;
+            data.lists.set('error', detailList('error', 'Error chain (' + errorPath.ids.length + ' recorded frames, ' + (errName(chain[2]) || chain[2]) + ')',
+                errorPath.ids.length, function* () {
+                    for (let position = 0; position < errorPath.ids.length; position++) yield detailRealRow(errorPath.ids[position], position);
+                }, status));
+        }
+    }
+    detailContext = data;
+    return data;
+}
+function prepareDetailRows(list, limit) {
+    while (list.rows.length < Math.min(limit, list.count)) {
+        const next = list.iterator.next();
+        if (next.done) break;
+        list.rows.push(next.value);
+    }
+}
+function detailRowsHtml(list, rows) {
+    return rows.map(row => {
+        const traced = row.kind === 'traced', current = traced ? row.index === detailContext.root : row.current;
+        const label = traced ? list.kind === 'error' ? String(row.depth) : fmtDur(durOf(row.index)) : row.kind === 'outside' ? '' : row.kind === 'call_site' ? 'call site' : row.kind;
+        const source = row.file ? row.file + ':' + row.line : '';
+        const suffix = list.kind === 'error' ? retOf(row.index) || '' : source;
+        const title = row.name + (suffix ? ' — ' + suffix : '') + (row.kind === 'untraced' ? ' (not traced: skipped depth)' : '');
+        return '<' + (traced ? 'button type="button"' : 'div') + ' class="tl-crumb tl-context-row' + (current ? ' cur' : '') +
+            (traced ? '' : ' inl') + '" data-context-kind="' + row.kind + '"' + (traced ? ' data-slice="' + row.index + '"' : '') +
+            ' title="' + esc(title) + '"><span class="tl-context-value">' + esc(label) + '</span><span class="tl-context-text" style="padding-left:' +
+            Math.min(row.level, 6) * 4 + 'px">' + esc(row.name) + (suffix ? ' <span class="d">' + esc(suffix) + '</span>' : '') + '</span></' + (traced ? 'button' : 'div') + '>';
+    }).join('');
+}
+function detailListHtml(kind) {
+    const list = detailContext.lists.get(kind);
+    prepareDetailRows(list, list.visible);
+    return '<section class="tl-context-list" data-context-list="' + kind + '"><div class="tl-context-head"><span class="tl-sec">' + esc(list.title) +
+        '</span><button class="tl-btn" data-context-export="' + kind + '">Export ' + (kind === 'children' ? 'calls' : kind === 'inline' ? 'inline chain' : kind === 'error' ? 'error chain' : 'stack') +
+        ' CSV</button></div>' + (list.status === 'complete' ? '' : '<div class="tl-context-note">Incomplete context: ' + list.status.replace(/_/g, ' ') +
+            '. Showing only the observed parent path; no missing frames are invented.</div>') +
+        '<div class="tl-crumbs">' + detailRowsHtml(list, list.rows.slice(0, list.visible)) + '</div>' +
+        (list.count > DETAIL_PAGE ? '<div class="tl-context-footer"><span role="status">Showing ' + list.visible + ' of ' + list.count +
+            ' context rows</span><button class="tl-btn" data-context-more="' + kind + '"' + (list.visible >= list.count ? ' disabled' : '') + '>Load more context</button></div>' : '') + '</section>';
+}
+function appendDetailRows(kind) {
+    const list = detailContext.lists.get(kind), start = list.visible;
+    list.visible = Math.min(start + DETAIL_PAGE, list.count);
+    prepareDetailRows(list, list.visible);
+    const section = elDetail.querySelector('[data-context-list="' + kind + '"]');
+    section.querySelector('.tl-crumbs').insertAdjacentHTML('beforeend', detailRowsHtml(list, list.rows.slice(start, list.visible)));
+    section.querySelector('[role=status]').textContent = 'Showing ' + list.visible + ' of ' + list.count + ' context rows';
+    section.querySelector('[data-context-more]').disabled = list.visible >= list.count;
+}
+function detailContextHint() {
+    return '<div class="tl-context-note">Context is unfiltered. Durations follow Overhead; frame durations overlap and must not be summed. ' +
+        'Inline, untraced and outside-window rows are context, not extra measured calls.</div>';
+}
+function exportDetailCsv(kind) {
+    const data = detailContext, list = data.lists.get(kind), unit = MODE === 'count' ? 'units' : 'ns', scale = MODE === 'count' ? 1000 : 1;
+    const columns = ['list', 'position', 'kind', 'function', 'recorded_slice_index', 'owner_slice_index', 'depth', 'display_level',
+        'trace_line', 'exit_trace_line', 'task_index', 'pid', 'comm', 'cpu', 'return', 'call_site', 'args', 'module', 'source_file', 'source_line',
+        'outside_frame_count', 'duration_' + unit, 'self_' + unit, 'start_' + unit, 'end_' + unit, 'time_mode', 'duration_basis', 'position_basis',
+        'selected_slice_index', 'chain_index', 'chain_origin_slice', 'chain_top_slice', 'chain_reported_frames', 'errno', 'fate', 'path_status'];
+    function* rows() {
+        let position = 0;
+        for (const row of list.createRows()) {
+            const traced = row.kind === 'traced', index = row.index, owner = row.owner, task = TRACKS[sTask[owner]];
+            const chainIndex = kind === 'error' ? eChain[data.root] : -1;
+            const chain = chainIndex >= 0 ? CHAINS[chainIndex] : null;
+            yield [kind, position++, row.kind, row.name, traced ? index : '', owner, row.depth === undefined ? '' : row.depth, row.level,
+                traced ? sLine[index] : '', traced && sEline ? sEline[index] || '' : '', sTask[owner], task.pid, task.comm,
+                traced && cpuOf(index) >= 0 ? cpuOf(index) : '', traced ? retOf(index) || '' : '', traced ? callerOf(index) || '' : '',
+                traced ? argsOf(index) || '' : '', traced ? modOf(index) || '' : '', row.file || '', row.line || '', row.missing || '',
+                traced ? durOf(index) / scale : '', traced ? sSelf[index] / scale : '', traced ? sStart[index] / scale : '', traced ? sEnd[index] / scale : '', MODE,
+                traced ? MODE === 'count' ? 'call_order' : adjOn ? 'overhead_subtracted_estimate' : 'measured_duration' : '',
+                traced ? TIMED ? 'relative_timestamp_span' : MODE === 'count' ? 'call_order_geometry' : 'packed_geometry' : '',
+                data.root, chainIndex >= 0 ? chainIndex : '', chain ? chain[0] : '', chain ? chain[1] : '', chain ? chain[4] : '',
+                chain ? chain[2] : '', chain ? ERROR_FATES[chain[3]] : '', list.status];
+        }
+    }
+    downloadTimelineCsv('funcgraph-context-' + kind + '-' + (MODE === 'count' ? 'count' : adjOn ? 'adjusted' : 'raw') + '.csv', columns, rows());
+}
+
 function showInlineDetail(i) {
-    const f = inlineFacts(i);
-    let h = '<div class="tl-detail-head"><span class="tl-detail-title">' + esc(f.fn) + '</span>' + pill('mute', 'inlined') +
+    const f = detailContextData(i).facts;
+    let h = '<div class="tl-detail-head tl-slice-head"><span class="tl-detail-title" title="' + esc(f.fn) + '">' + esc(f.fn) + '</span>' + pill('mute', 'inlined') +
         pill('mute', 'into ' + f.intoFn) + '<span class="sp"></span>' + lineLink(sLine[f.kids[0]], 'Open first call in text view ↵') +
         '<button class="tl-close" title="Close (Esc)">×</button></div><div class="tl-detail-body"><div class="tl-kv">';
     h += kv('traced extent', fmtDur(f.span) + ' &nbsp;<span class="d">from the first traced call inside to the end of the last one</span>');
@@ -7346,21 +7500,13 @@ function showInlineDetail(i) {
     h += kv('between them', fmtDur(f.gap) + ' <span class="d">own inlined code, untraced callees, interrupts</span>');
     if (f.mismatch) h += kv('note', 'containing function ' + esc(f.ch[0][0]) + ' ≠ parent slice ' + esc(nameOf(f.y.p)) + ' (untraced frame between)', 'err');
     h += '<span class="k">limits</span><span class="v d">Inlined code has no entry/exit events: only the traced calls inside it are visible, so the real start may be earlier and the real end later.</span>';
-    h += '</div><div><div class="tl-sec">Inline chain at the call site</div><div class="tl-crumbs">';
-    f.ch.forEach((fr, k) => {
-        h += '<div class="tl-crumb' + (k === f.k ? ' cur' : '') + (k > 0 ? ' inl' : '') + '"><span class="d">' + (k ? 'inline' : 'traced') + '</span>&nbsp; ' +
-            '\u00a0'.repeat(k * 2) + esc(fr[0]) + ' <span class="d">' + esc(fr[1]) + ':' + fr[2] + '</span></div>';
-    });
-    h += '</div><div style="height:8px"></div><div class="tl-sec">Traced calls inside (' + f.kids.length + ')</div><div class="tl-crumbs">';
-    for (const c of f.kids.slice(0, 40)) h += '<div class="tl-crumb" data-slice="' + c + '"><span class="d">' + fmtDur(durOf(c)).padStart(10, '\u00a0') + '</span>&nbsp; ' + esc(nameOf(c)) + '</div>';
-    if (f.kids.length > 40) h += '<div class="tl-crumb ghost">… ' + (f.kids.length - 40) + ' more</div>';
-    h += '</div></div></div>';
+    h += '</div><div>' + detailListHtml('inline') + detailListHtml('children') + detailContextHint() + '</div></div>';
     openDetail(h);
 }
 function showGhostDetail(i) {
-    const f = ghostFacts(i), y = f.y;
+    const f = detailContextData(i).facts, y = f.y;
     const nm = y.name === '?' ? 'unknown frame' : y.name;
-    let h = '<div class="tl-detail-head"><span class="tl-detail-title">' + esc(nm) + '</span>' + pill('mute', 'not traced') +
+    let h = '<div class="tl-detail-head tl-slice-head"><span class="tl-detail-title" title="' + esc(nm) + '">' + esc(nm) + '</span>' + pill('mute', 'not traced') +
         '<span class="sp"></span>' + lineLink(sLine[f.kids[0]], 'Open first call in text view ↵') +
         '<button class="tl-close" title="Close (Esc)">×</button></div><div class="tl-detail-body"><div class="tl-kv">';
     h += kv('extent', fmtDur(f.span) + ' &nbsp;<span class="d">from the first call inside to the end of the last one</span>');
@@ -7373,16 +7519,14 @@ function showGhostDetail(i) {
         '(not traceable, e.g. noinstr entry code or the unwinder, or dropped). ' +
         (y.name === '?' ? 'Its name is unknown.' : 'The name comes from the return address of the calls inside (their caller).') +
         ' Its real start and end are not known.</span>';
-    h += '</div><div><div class="tl-sec">Traced calls inside (' + f.kids.length + ')</div><div class="tl-crumbs">';
-    for (const c of f.kids.slice(0, 40)) h += '<div class="tl-crumb" data-slice="' + c + '"><span class="d">' + fmtDur(durOf(c)).padStart(10, '\u00a0') + '</span>&nbsp; ' + esc(nameOf(c)) + '</div>';
-    if (f.kids.length > 40) h += '<div class="tl-crumb ghost">… ' + (f.kids.length - 40) + ' more</div>';
-    h += '</div></div></div>';
+    h += '</div><div>' + detailListHtml('children') + detailContextHint() + '</div></div>';
     openDetail(h);
 }
 function showDetail(i) {
     range = null;
     AN.kind = null;
     if (i >= N) { if (isGhost(i)) showGhostDetail(i); else showInlineDetail(i); return; }
+    const context = detailContextData(i);
     const f = sFlags[i], d = durOf(i), t = TRACKS[sTask[i]];
     let pills = pill('ctx' + (f & FL.CTX), CTX_NAMES[f & FL.CTX] + (f & FL.CTXINF ? '?' : ''));
     if (f & FL.IRQOFF) pills += pill('warn', 'irqs off');
@@ -7397,7 +7541,7 @@ function showDetail(i) {
     if (f & FL.TRUNC) pills += pill('mute', 'no exit');
     if (f & FL.ORPHAN) pills += pill('mute', 'no entry');
     if (f & FL.EST) pills += pill('mute', 'estimated');
-    let h = '<div class="tl-detail-head"><span class="tl-detail-title">' + esc(nameOf(i)) +
+    let h = '<div class="tl-detail-head tl-slice-head"><span class="tl-detail-title" title="' + esc(nameOf(i)) + '">' + esc(nameOf(i)) +
         (modOf(i) ? ' [' + esc(modOf(i)) + ']' : '') + '</span>' + pills + '<span class="sp"></span>' +
         '<a class="tl-link" data-dist="' + sName[i] + '">Duration distribution (H)</a>&nbsp;&nbsp;' +
         lineLink(sLine[i], 'Open in text view ↵') + '<button class="tl-close" title="Close (Esc)">×</button></div>';
@@ -7424,39 +7568,8 @@ function showDetail(i) {
     h += kv('trace lines', lineLink(sLine[i]) + (sEline && sEline[i] && sEline[i] !== sLine[i] ? ' → ' + lineLink(sEline[i]) : ''));
     h += '</div><details class="tl-cs" open><summary class="tl-sec">Call site source</summary><div class="tl-cs-src"></div></details></div><div>';
     h += breakdownHtml(i);
-    // error chain
-    if (eChain[i] >= 0) {
-        const ch = CHAINS[eChain[i]];
-        h += '<div class="tl-sec">Error chain (' + ch[4] + ' frames, ' + esc(errName(ch[2]) || ch[2]) + ')</div><div class="tl-crumbs">';
-        let k = ch[0], guard = 0;
-        const items = [];
-        while (k >= 0 && guard++ < 64) { items.push(k); if (k === ch[1]) break; k = sParent[k]; }
-        for (const m of items.reverse()) h += '<div class="tl-crumb' + (m === i ? ' cur' : '') + '" data-slice="' + m + '"><span class="d">' + sDepth[m] + '</span> ' + esc(nameOf(m)) + ' <span class="d">' + esc(retOf(m) || '') + '</span></div>';
-        h += '</div><div style="height:8px"></div>';
-    }
-    // call stack
-    h += '<div class="tl-sec">Call stack</div><div class="tl-crumbs">';
-    const stack = [];
-    for (let k = i, g = 0; k >= 0 && g < 128; k = sParent[k], g++) stack.push(k);
-    stack.reverse();
-    if (stack.length && sDepth[stack[0]] > 0) h += '<div class="tl-crumb ghost">… ' + sDepth[stack[0]] + ' frame(s) outside trace window</div>';
-    let ind = 0;
-    for (const m of stack) {
-        // levels the trace skipped (untraced frames), then inline frames of the call site
-        const gp = gapOf(m);
-        for (let L = 1; L <= gp; L++) {
-            const gn = L === gp ? callerFn(m) : '?';
-            h += '<div class="tl-crumb inl" title="not traced: the trace skips this level"><span class="d">' + 'untraced'.padStart(10, '\u00a0') + '</span>&nbsp; ' +
-                '\u00a0'.repeat(Math.min(ind++, 30)) + esc(gn) + '</div>';
-        }
-        const ch = inlChain(m);
-        if (ch && ch.length > 1) for (const fr of ch.slice(1)) {
-            h += '<div class="tl-crumb inl" title="inlined, ' + esc(fr[1]) + ':' + fr[2] + '"><span class="d">' + 'inline'.padStart(10, '\u00a0') + '</span>&nbsp; ' +
-                '\u00a0'.repeat(Math.min(ind++, 30)) + esc(fr[0]) + ' <span class="d">' + esc(fr[1].split('/').pop()) + ':' + fr[2] + '</span></div>';
-        }
-        h += '<div class="tl-crumb' + (m === i ? ' cur' : '') + '" data-slice="' + m + '"><span class="d">' + fmtDur(durOf(m)).padStart(10, '\u00a0') + '</span>&nbsp; ' + '\u00a0'.repeat(Math.min(ind++, 30)) + esc(nameOf(m)) + '</div>';
-    }
-    h += '</div>';
+    if (context.lists.has('error')) h += detailListHtml('error');
+    h += detailListHtml('stack') + detailContextHint();
     // heaviest children
     const kids = directChildren(i);
     if (kids.length) {
@@ -7599,6 +7712,10 @@ function setMax(on) {
     resize();
 }
 elDetail.addEventListener('click', ev => {
+    const contextMore = ev.target.closest('[data-context-more]');
+    if (contextMore) { appendDetailRows(contextMore.dataset.contextMore); return; }
+    const contextExport = ev.target.closest('[data-context-export]');
+    if (contextExport) { exportDetailCsv(contextExport.dataset.contextExport); return; }
     const dl = ev.target.closest('[data-dist]');
     if (dl) { showDist(+dl.dataset.dist); return; }
     const a = ev.target.closest('[data-line]');
@@ -7801,7 +7918,7 @@ function applyTextFilter() {
         elFbar.classList.add('on');
     }
     tlRoot.querySelector('[data-act=fhide]').classList.toggle('on', hideUnmatched);
-    if (sel >= 0 && textHits && !textHits[sel]) {
+    if (sel >= 0 && textHits && !(sel < N ? textHits[sel] : SYN[sel - N].kids.some(index => textHits[index]))) {
         if (AN.kind) setSelection(-1);
         else select(-1);
     }

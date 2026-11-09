@@ -606,10 +606,16 @@ Other visuals:
     | purple | unattributed: a gap not explained by the recorded categories |
 
     Below it: how many real traced calls are inside, and roughly how much is tracing overhead (with an estimate). This breakdown always uses raw geometry, independently of Overhead and the shared filter. If overlapping or inconsistent trace intervals make the categories exceed the recorded interval, a warning gives the excess; percentages then use the category total, not a misleading fraction above 100% of the interval. Call-order and packed geometry are labelled as such, not as elapsed scheduling time.
-  - **Error chain**: the error's path from origin to outermost frame.
-  - **Call stack**: the stack with each frame's duration; inline frames in italics, marked `inline`. If the stack starts before the capture, "… N frame(s) outside trace window".
+  - **Error chain**: the complete recorded propagation path, ordered from the outermost propagation frame to the origin. It no longer silently stops at 64 frames. Inconsistent top/length metadata or invalid/cyclic parent links are reported, not treated as complete paths.
+  - **Call stack**: all recorded ancestors, ordered outermost to selected, without a 128-frame cutoff. Durations belong to recorded calls; inline frames and skipped depths have explicit `inline` / `untraced` labels and no fabricated measurements. "… N frame(s) outside trace window" appears only when the oldest observed ancestor actually starts below depth zero, never because a display limit hid recorded ancestors.
   - **Children**: real direct children, even across skipped depths, grouped by function and ordered by total duration; `×N` = number of calls. Shows up to eight functions, with an explicit top-eight/total label when more exist.
 - Links at the top right: **Duration distribution (H)** (7.2) and **Open in text view ↵**.
+
+**Context lists** initially render 100 rows; **Load more context** appends 100 without replacing existing rows or losing the enabled paging button's focus. The same mechanism covers call stacks, error paths, inline chains and recorded calls inside inline/untraced frames. Recorded-frame rows are native buttons: Tab then Enter/Space selects that call. Long names use two lines with the full name/source in a tooltip; compact-window titles scroll vertically instead of covering the list.
+
+**Export stack / error chain / inline chain / calls CSV** exports the entire selected list, including unloaded rows, without expanding the DOM. Columns retain row kind/order, recorded and owning slice indexes, depth/display level, trace/task indexes, return/caller/arguments/module, inline file/line, explicit outside-window counts, duration/self and original positions. Error paths also retain original chain origin/top/declared length, errno, outcome and `path_status`. Only actual recorded calls have measured columns; resolved inline/call-site, untraced and outside-window rows leave them blank. `_units` denotes call-order steps, `_ns` time values; `time_mode`, `duration_basis` and `position_basis` distinguish adjusted values and packed geometry. CSV uses UTF-8, quoting and spreadsheet-formula protection.
+
+The list contents retain complete context independently of the shared filter. A selected real call still closes when it stops matching; a synthetic frame remains selected while any recorded child matches. Overhead changes numerical duration/self values, never the original positions or cached structure. Inline/filter/Overhead refreshes retain loaded pages for the same selection. Frame durations overlap and must not be summed as if they partitioned the selected interval.
 
 The detail panel and the analysis panels share the bottom area. Drag the bar above the panel to change its height; the canvas grows or shrinks accordingly. Double-click the bar to restore the default (32% of the window height, between 180 and 400 px). The height is stored in the browser as a fraction of the window, so other reports and other window sizes keep the same split.
 
@@ -660,9 +666,11 @@ Tooltip and detail panel of an inline frame:
 | traced calls | traced calls inside and their total time |
 | between them | span minus those calls: the inlined code itself, untraced calls, interrupts |
 | Inline chain at the call site | the full chain, this level in bold |
-| Traced calls inside | each call inside; click to go there |
+| Traced calls inside | every recorded call inside; 100-row pages, keyboard navigation and full CSV export |
 
 In both views the call stacks list the inline frames.
+
+Inline and untraced details cache the selected frame's raw extent facts, so refreshing does not rescan every child. Inline-chain exports distinguish the resolved containing call-site function from actual recorded calls and never assign source-only frames fabricated slice indexes or durations.
 
 ### 6.9 Keyboard and mouse
 
