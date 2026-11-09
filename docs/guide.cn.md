@@ -408,7 +408,7 @@ ftrace 按时间输出所有 CPU 的事件。同时运行的任务越多、切�
 | `func` | 本行的函数名（正则），只匹配这一行 | `func:mutex` |
 | `graph` | 匹配函数的**整棵调用树**（类似 `set_graph_function`） | `graph:vfs_read` |
 | `notrace` | 隐藏匹配函数的整棵调用树（类似 `set_graph_notrace`） | `notrace:__schedule` |
-| `ret` | 返回值；`ret:all` 匹配所有已知的错误码 | `ret:-22`、`ret:EINVAL`、`ret:all` |
+| `ret` | 返回值的数字（正则）；`ret:all` 匹配所有已知的错误码 | `ret:-22`、`ret:-2$`、`ret:all` |
 | `params` | 参数文本（正则） | `params:folio` |
 | `duration` | 耗时（us），支持 `>` `<` `>=` `<=` | `duration:>10` |
 | `irqs` | flags 第 1 位 | `irqs:d` |
