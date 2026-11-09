@@ -16,7 +16,7 @@ function palette() {
         ovBar: '#4f7fd9', ovWin: 'rgba(255,255,255,.10)', ovMask: 'rgba(0,0,0,.35)', axis: '#a7afbc',
         range: 'rgba(80,140,255,.16)', rangeLine: '#6ea0ff', cursor: 'rgba(255,255,255,.35)', selBand: 'rgba(110,160,255,.07)', selLine: 'rgba(130,175,255,.8)', selTag: '#3b6fd8',
         errO: '#e53935', errOh: '#d9822b', errP: '#7d3434', errPh: '#6b4a26', errLine: '#ff6b6b', errLineH: '#f0a050',
-        rs: '#f59e0b', io: '#ef5350', mis: '#c18cf0', dense: 0.75
+        rs: '#f59e0b', io: 'rgba(225,230,240,.75)', mis: '#c18cf0', dense: 0.75
     } : {
         bg: '#ffffff', hdr: '#f3f5f8', hdrText: '#1d2433', sub: '#7a8494', grid: 'rgba(0,0,0,.045)',
         text: '#16202e', textDim: '#3b4555', sel: '#111827', hov: 'rgba(17,24,39,.55)',
@@ -24,7 +24,7 @@ function palette() {
         ovBar: '#3b6fd8', ovWin: 'rgba(59,111,216,.10)', ovMask: 'rgba(255,255,255,.55)', axis: '#5b6573',
         range: 'rgba(59,111,216,.12)', rangeLine: '#3b6fd8', cursor: 'rgba(0,0,0,.30)', selBand: 'rgba(59,111,216,.05)', selLine: 'rgba(59,111,216,.75)', selTag: '#3b6fd8',
         errO: '#d32f2f', errOh: '#e8873a', errP: '#f6b8b8', errPh: '#f8d6b3', errLine: '#c62828', errLineH: '#d9822b',
-        rs: '#f59e0b', io: '#e53935', mis: '#8e44ad', dense: 0.85
+        rs: '#f59e0b', io: '#4b5563', mis: '#8e44ad', dense: 0.85
     };
     colorCache.clear();
     hatch = makeHatch(dark ? 'rgba(0,0,0,.30)' : 'rgba(0,0,0,.20)');
@@ -252,7 +252,8 @@ function drawTrack(t, y, vs, ve, k) {
     ctx.fillRect(0, y, W, HDR);
     // track-level windows in the header band
     if (ov.rs) for (const r of t.rs) bandRect(r[1], r[2], y + HDR - 4, 3, P.rs, vs, k);
-    if (ov.irq) for (const r of t.io) bandRect(r[1], r[2], y + HDR - 1, 1.5, P.io, vs, k);
+    // irqs-off periods: dark grey like the hatching (red is reserved for errors)
+    if (ov.irq) for (const r of t.io) bandRect(r[1], r[2], y + HDR - 2, 2, P.io, vs, k);
     ctx.font = FONT_B;
     ctx.fillStyle = P.hdrText;
     ctx.textBaseline = 'middle';

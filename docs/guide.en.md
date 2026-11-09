@@ -450,12 +450,12 @@ The filter is shared with the timeline (6.6).
 From top to bottom:
 
 1. **Toolbar, first row**: Color (color mode), Overlay (layer switches), function search, error navigation.
-2. **Toolbar, second row**: Fit (show all), Tracks (expand / collapse all tracks), Inline (inline frames), Overhead (measured / subtracted), Errors, Sections, Sched latency (the analysis panels), ? (help and legend).
-3. **Filter bar**: the filter expression shared with the text view, see 6.6.
-4. **Notes**: what this trace lacks and what that means ("No timestamps…", "Arguments are not printed…"). Blue notes are information, yellow ones need attention.
-5. **Overview strip**: the whole trace in miniature. Blue bars show how busy each moment is, red lines are error origins (tall: reached user space, short orange: handled by a caller), the blue frame is the visible range. Click or drag to jump, use the wheel to zoom.
-6. **Time axis**: the right side shows the visible span (`span`) and the absolute start time (`start`), plus `selected` for a range selection; the time under the cursor is shown next to it.
-7. **CPU tracks** (only with timestamps) and **task tracks**.
+2. **Toolbar, second row**: Fit (show all), Tracks (expand / collapse all tracks), Overhead (measured / subtracted), Inline (inline frames), Errors, Sections, Sched latency (the analysis panels), Notes (collapse / expand the notes), Max (hide the page header and tabs, `M`), ? (help and legend), then **Filter**: the filter expression shared with the text view, see 6.6. Narrow windows wrap the toolbar into more rows.
+3. **Notes**: what this trace lacks and what that means ("No timestamps…", "Arguments are not printed…"). Blue notes are information, yellow ones need attention.
+4. **Overview strip**: the whole trace in miniature. Blue bars show how busy each moment is, red lines are error origins (tall: reached user space, short orange: handled by a caller), the blue frame is the visible range. Click or drag to jump, use the wheel to zoom.
+5. **Time axis**: the right side shows the visible span (`span`) and the absolute start time (`start`), plus `selected` for a range selection; the time under the cursor is shown next to it.
+6. **CPU tracks** (only with timestamps) and **task tracks**.
+7. **Bottom panel**: opens when a slice is clicked or an analysis panel is opened; drag the bar above it to resize (6.5).
 
 The **time mode** depends on the columns in the trace and is named at the right of the axis:
 
@@ -505,7 +505,7 @@ Each overlay can be switched off; buttons of overlays without data are hidden.
 | | small **triangle** (red / orange) | an error origin too narrow for a label |
 | | label `func = ENOENT` | error origins get the errno name after the function name |
 | **IRQs off** | **hatching** on a slice | irqs were disabled when the call started |
-| | **thin red line** under the track header | periods with irqs disabled |
+| | **thin dark grey line** under the track header | periods with irqs disabled (real start and end) |
 | **Resched delay** | **amber triangle** in the top right corner of a slice | need-resched was already set when the call started: a reschedule was due but had not happened |
 | | **amber band** under the track header | need-resched window: from setting the flag until the schedule happens, i.e. scheduling latency |
 | **Off-CPU** | grey hatched segment labeled `off-CPU 7.640 ms · do_wait [S]` | the task was not on a CPU; drawn one level below the frame that was open. Label: duration, function it waited in, state at switch-out (`S` interruptible sleep, `D` uninterruptible, `R` still runnable) |
@@ -517,6 +517,11 @@ Each overlay can be switched off; buttons of overlays without data are hidden.
 | | **dotted left edge** | return seen, entry not (the call started before the capture) |
 | | **small purple square** top left | the call site's function is not the parent slice: an untraced frame (notrace, assembly entry, tail call) or inlined code in between |
 | | **red underline** | a sleeping function called in atomic context (7.4) |
+
+Two things that are easy to misread:
+
+- **Hatching shows the state when the call started.** The latency column records the irq state of each printed line, and a slice uses its entry line. Disabling or enabling irqs in the middle of a function (e.g. the calls after `spin_lock_irqsave`) does not show on the slice itself. For how long irqs were really off, look at the dark grey line under the track header or the Sections panel (7.3), which lists each region's start, end and what ran inside.
+- **Two kinds of hatching**: the darker hatching on a slice is irqs off and covers only that slice; the very light grey hatched segment with an `off-CPU …` label, reaching from one level down to the bottom of the track, is time the task was not on a CPU and has nothing to do with interrupts.
 
 Other visuals:
 
