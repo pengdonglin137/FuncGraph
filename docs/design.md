@@ -1,5 +1,7 @@
 # FuncGraph 设计文档
 
+> 使用方法和界面说明见 [guide.cn.md](guide.cn.md)；本文只讲实现。
+>
 > 版本：v0.7 + Timeline（`timeline` 分支）。本文描述当前实现。`docs/plans/` 下的 2026-03-06 文档是那次重构的计划，保留作历史记录，内容已过时。
 
 ## 1. 目标与约束

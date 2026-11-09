@@ -6,6 +6,8 @@
 
 FuncGraph converts `function_graph` ftrace output into an interactive, filterable HTML report for kernel developers and performance engineers. It is optimized for fast triage: source linking, high-speed address resolution, parameter and duration filtering, and keyboard-friendly call folding.
 
+> **User guide** (Chinese, detailed: capture options, every field and color in the views, panels, compare, export, FAQ): [docs/guide.cn.md](docs/guide.cn.md). Design: [docs/design.md](docs/design.md).
+
 ## Cheat Sheet
 
 - Common flags: `--fast`, `--filter`, `--func-links`, `--highlight-code` 🔧
