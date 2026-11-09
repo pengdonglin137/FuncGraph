@@ -439,6 +439,6 @@ Open source project, contributions welcome!
 
 ---
 
-**Version**: v0.8
+**Version**: v0.9.0
 **Last Updated**: 2026-11-09
 **Status**: ✅ Production Ready

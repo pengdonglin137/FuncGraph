@@ -28,6 +28,13 @@ def count_input_lines(path):
         return sum(1 for _ in f)
 
 
+
+class VersionTest(__import__('unittest').TestCase):
+    def test_version_is_semver(self):
+        import re
+        from fglib.constants import APP_VERSION
+        self.assertRegex(APP_VERSION, r'^\d+\.\d+\.\d+$')
+
 class ReportTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
