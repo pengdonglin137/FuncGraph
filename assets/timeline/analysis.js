@@ -1068,6 +1068,188 @@ function directChildren(root) {
     for (let child = tree.first[root]; child >= 0; child = tree.next[child]) children.push(child);
     return children;
 }
+const CHILD_PAGE = 100;
+let childFacts = null, childFiltered = null;
+const childOrders = { groups: null, calls: null };
+const childView = { root: -1, mode: 'groups', name: null, query: '', groupSort: 'inclusive', callSort: 'inclusive' };
+function childData(root, hits) {
+    if (!childFacts || childFacts.root !== root) {
+        childFacts = { root, ids: directChildren(root), bases: new Map() };
+        childFiltered = null; childOrders.groups = null; childOrders.calls = null;
+    }
+    const raw = childFacts;
+    if (!hits && raw.bases.has(sDur)) return raw.bases.get(sDur);
+    if (hits && childFiltered && childFiltered.raw === raw && childFiltered.hits === hits && childFiltered.durations === sDur) return childFiltered;
+    const grouped = new Map(), ids = [];
+    for (const index of raw.ids) {
+        if (hits && !hits[index]) continue;
+        ids.push(index);
+        let group = grouped.get(sName[index]);
+        if (!group) {
+            group = { name: sName[index], ids: [], inclusive: 0, self: 0, max: -Infinity, longest: index };
+            grouped.set(group.name, group);
+        }
+        const duration = durOf(index);
+        group.ids.push(index); group.inclusive += duration; group.self += sSelf[index];
+        if (duration > group.max) { group.max = duration; group.longest = index; }
+    }
+    const groups = Array.from(grouped.values());
+    for (const group of groups) group.mean = group.inclusive / group.ids.length;
+    const data = { raw, hits, durations: sDur, ids, groups, preview: null };
+    if (hits) childFiltered = data;
+    else raw.bases.set(sDur, data);
+    return data;
+}
+function childPreviewHtml(root) {
+    const data = childData(root, null);
+    if (!data.ids.length) return '';
+    if (!data.preview) data.preview = data.groups.slice().sort((left, right) => right.inclusive - left.inclusive || left.ids[0] - right.ids[0]).slice(0, 8);
+    return '<div class="tl-child-summary"><span class="tl-sec">Children (' + data.ids.length + ' call' + (data.ids.length === 1 ? '' : 's') +
+        (data.groups.length > 8 ? '; top 8 of ' + data.groups.length + ' functions' : '') + ')</span>' +
+        '<button class="tl-btn" data-child-open="' + root + '">Explore all children</button></div><div class="tl-crumbs">' +
+        data.preview.map(group => '<button class="tl-crumb tl-child-preview" data-slice="' + group.longest +
+            '" title="Open the longest recorded call of ' + esc(S[group.name]) + '"><span class="d">' + fmtDur(group.inclusive) +
+            '</span><span class="tl-child-preview-name">' + esc(S[group.name]) + '</span>' + (group.ids.length > 1 ?
+                '<span class="d">×' + group.ids.length + '</span>' : '') + '</button>').join('') + '</div>';
+}
+function childOrder(mode) {
+    const data = childData(childView.root, textHits), sort = mode === 'groups' ? childView.groupSort : childView.callSort;
+    const key = JSON.stringify([childView.name, childView.query, sort]), cached = childOrders[mode];
+    if (cached && cached.data === data && cached.key === key) return cached;
+    const query = childView.query.trim().toLowerCase();
+    const groups = data.groups.filter(group => (childView.name === null || group.name === childView.name) && (!query || S[group.name].toLowerCase().includes(query)));
+    const rows = mode === 'groups' ? groups : groups.flatMap(group => group.ids);
+    const value = row => {
+        if (sort === 'name') return S[mode === 'groups' ? row.name : sName[row]];
+        if (mode === 'groups') return sort === 'calls' ? row.ids.length : row[sort];
+        return sort === 'start' ? sStart[row] : sort === 'self' ? sSelf[row] : durOf(row);
+    };
+    rows.sort((left, right) => {
+        const first = value(left), second = value(right);
+        return (typeof first === 'string' ? first.localeCompare(second) : (sort === 'start' ? first - second : second - first)) ||
+            (mode === 'groups' ? left.ids[0] - right.ids[0] : left - right);
+    });
+    const retain = cached && cached.key === key && cached.data.raw === data.raw && cached.data.hits === data.hits;
+    childOrders[mode] = { data, key, rows, visible: Math.min(rows.length, retain ? cached.visible : CHILD_PAGE) };
+    return childOrders[mode];
+}
+function childRows(rows, mode) {
+    const name = value => '<span class="an-child-name" title="' + esc(value) + '">' + esc(value) + '</span>';
+    if (mode === 'groups') return rows.map(group => '<tr><td>' + name(S[group.name]) + '</td><td>' + group.ids.length +
+        '</td><td>' + fmtDur(group.inclusive) + '</td><td>' + fmtDur(group.self) + '</td><td>' + fmtDur(group.mean) + '</td><td>' + fmtDur(group.max) +
+        '</td><td><button class="tl-btn" data-child-show="' + group.longest + '" aria-label="Show longest ' + esc(S[group.name]) +
+        '">Longest</button> <button class="tl-btn" data-child-function="' + group.name + '" aria-label="List calls of ' + esc(S[group.name]) + '">Calls</button></td></tr>').join('');
+    return rows.map(index => '<tr data-child-call="' + index + '"' + (index === sel ? ' class="an-child-selected"' : '') + '><td>' + name(nameOf(index)) +
+        '</td><td>' + fmtDur(durOf(index)) + '</td><td>' + fmtDur(sSelf[index]) + '</td><td>' + fmtDur(sStart[index]) + '</td><td>' +
+        (cpuOf(index) >= 0 ? cpuOf(index) : '—') + '</td><td>' + name(callerOf(index) || '—') + '</td><td><button class="tl-btn" data-child-show="' + index +
+        '">Show</button> <button class="tl-btn" data-child-details="' + index + '">Details</button></td></tr>').join('');
+}
+function updateChildFooter(order) {
+    elDetail.querySelector('.an-child-footer [role=status]').textContent = 'Showing ' + order.visible + ' of ' + order.rows.length +
+        (childView.mode === 'groups' ? ' functions' : ' calls');
+    elDetail.querySelector('[data-child-more]').disabled = order.visible >= order.rows.length;
+}
+function appendChildRows() {
+    const order = childOrder(childView.mode), start = order.visible;
+    order.visible = Math.min(start + CHILD_PAGE, order.rows.length);
+    elDetail.querySelector('.an-child-table tbody').insertAdjacentHTML('beforeend', childRows(order.rows.slice(start, order.visible), childView.mode));
+    updateChildFooter(order);
+}
+function showChildCall(index) {
+    setSelection(index);
+    revealTaskTrack(TRACKS[sTask[index]]);
+    zoomTo(sStart[index], sEnd[index], index);
+    elDetail.querySelectorAll('[data-child-call]').forEach(row => row.classList.toggle('an-child-selected', +row.dataset.childCall === index));
+}
+function exportChildrenCsv(mode) {
+    const order = childOrder(mode), root = childView.root, task = TRACKS[sTask[root]];
+    const unit = MODE === 'count' ? 'units' : 'ns', scale = MODE === 'count' ? 1000 : 1;
+    const prefix = ['parent_slice', 'parent_function', 'parent_task_index', 'parent_pid', 'parent_depth'];
+    const suffix = ['mode', 'duration_basis', 'position_basis', 'relationship_basis', 'shared_filter', 'function_query', 'function_scope'];
+    const columns = prefix.concat(mode === 'groups' ? ['function', 'calls', 'inclusive_' + unit, 'self_' + unit, 'mean_' + unit, 'max_' + unit,
+        'first_slice', 'longest_slice'] : ['slice_index', 'function', 'depth', 'depth_gap', 'inclusive_' + unit, 'self_' + unit, 'start_' + unit, 'end_' + unit,
+        'cpu', 'trace_line', 'exit_line', 'call_site', 'module', 'return_value', 'arguments'], suffix);
+    function* rows() {
+        for (const row of order.rows) {
+            const values = mode === 'groups' ? [S[row.name], row.ids.length, row.inclusive / scale, row.self / scale, row.mean / scale, row.max / scale,
+                row.ids[0], row.longest] : [row, nameOf(row), sDepth[row], sDepth[row] - sDepth[root] - 1, durOf(row) / scale, sSelf[row] / scale,
+                sStart[row] / scale, sEnd[row] / scale, cpuOf(row), sLine[row], sEline && sEline[row] || '', callerOf(row) || '', modOf(row) || '',
+                retOf(row) === null ? '' : retOf(row), argsOf(row) || ''];
+            yield [root, nameOf(root), sTask[root], task.pid, sDepth[root]].concat(values, [MODE,
+                MODE === 'count' ? 'call_order' : adjOn ? 'adjusted_estimate' : 'measured', MODE === 'count' ? 'call_order' : TIMED ? 'recorded_time' : 'packed_duration',
+                'nearest_recorded_parent_not_complete_runtime_callees', window.fgFilterState && window.fgFilterState.text || '',
+                childView.query, childView.name === null ? 'all' : S[childView.name]]);
+        }
+    }
+    downloadTimelineCsv('funcgraph-children-' + mode + '.csv', columns, rows());
+}
+function showChildren(root) {
+    if (root !== undefined && childView.root !== root) Object.assign(childView, { root, mode: 'groups', name: null, query: '', groupSort: 'inclusive', callSort: 'inclusive' });
+    if (childView.root < 0 || childView.root >= N) return;
+    const reuse = AN.kind === 'children' && elDetail.classList.contains('show') && elDetail.querySelector('.an-child-table');
+    AN.kind = 'children';
+    const order = childOrder(childView.mode), data = order.data;
+    if (!reuse) {
+        openDetail('<div class="tl-detail-head an-child-head"><span class="tl-detail-title">Direct recorded children</span>' +
+            '<button class="tl-btn an-child-parent" data-child-parent title="' + esc(nameOf(childView.root)) + '">' + esc(nameOf(childView.root)) +
+            '</button><span class="an-child-actions"><button class="tl-btn" data-child-csv="groups">Export groups CSV</button>' +
+            '<button class="tl-btn" data-child-csv="calls">Export calls CSV</button><button class="tl-close" title="Close (Esc)">×</button></span></div>' +
+            '<div class="an-child-tools"><button class="tl-btn" data-child-mode="groups">Groups</button><button class="tl-btn" data-child-mode="calls">Calls</button>' +
+            '<label>Find <input type="search" data-child-query placeholder="Literal function name" spellcheck="false"></label>' +
+            '<span class="an-child-scope"></span><button class="tl-btn" data-child-reset>All functions / reset</button></div>' +
+            '<div class="an-child-status"></div><table class="tl-sum an-child-table"></table><div class="an-child-footer"><span role="status" aria-live="polite"></span>' +
+            '<button class="tl-btn" data-child-more>Load more</button></div><div class="an-hint">Children use the nearest recorded real parent, including depth gaps, ' +
+            'not a complete runtime callee inventory. Synthetic frames and grandchildren are excluded. The shared filter matches child calls, not the parent. ' +
+            'Groups use function names; inclusive sums can overlap and are not a partition of the parent. Self excludes each child\'s own recorded descendants. ' +
+            'Longest/Show highlights a call without leaving this panel; Details or the parent button opens slice details. ' +
+            'Overhead updates duration/self estimates, never recorded positions. ' + (MODE === 'count' ? 'Values use call-order units, not nanoseconds. ' :
+                TIMED ? '' : 'Positions use packed durations, not elapsed time. ') + 'CSV includes all sorted scoped rows, including unloaded pages.</div>');
+        elDetail.querySelector('[data-child-parent]').onclick = () => select(childView.root, { reveal: true });
+        elDetail.querySelector('[data-child-query]').addEventListener('input', event => { childView.query = event.target.value; showChildren(); });
+        elDetail.querySelector('[data-child-reset]').onclick = () => { childView.query = ''; childView.name = null; showChildren(); };
+        elDetail.querySelectorAll('[data-child-mode]').forEach(button => { button.onclick = () => { childView.mode = button.dataset.childMode; showChildren(); }; });
+        elDetail.querySelectorAll('[data-child-csv]').forEach(button => { button.onclick = () => exportChildrenCsv(button.dataset.childCsv); });
+        elDetail.querySelector('[data-child-more]').onclick = appendChildRows;
+        elDetail.querySelector('.an-child-table').onclick = event => {
+            const sort = event.target.closest('[data-child-sort]'), scope = event.target.closest('[data-child-function]');
+            const show = event.target.closest('[data-child-show]'), details = event.target.closest('[data-child-details]');
+            if (sort) {
+                childView[childView.mode === 'groups' ? 'groupSort' : 'callSort'] = sort.dataset.childSort; showChildren();
+                elDetail.querySelector('[data-child-sort="' + sort.dataset.childSort + '"]').focus({ preventScroll: true });
+            } else if (scope) {
+                childView.name = +scope.dataset.childFunction; childView.mode = 'calls'; showChildren();
+                elDetail.querySelector('[data-child-mode=calls]').focus({ preventScroll: true });
+            }
+            else if (show) showChildCall(+show.dataset.childShow);
+            else if (details) select(+details.dataset.childDetails, { reveal: true });
+        };
+        elDetail.scrollTop = 0;
+    }
+    elDetail.querySelector('[data-child-query]').value = childView.query;
+    elDetail.querySelector('.an-child-scope').textContent = childView.name === null ? '' : S[childView.name];
+    elDetail.querySelector('.an-child-scope').title = childView.name === null ? '' : S[childView.name];
+    elDetail.querySelector('.an-child-status').textContent = data.ids.length + ' of ' + data.raw.ids.length + ' direct recorded calls match the shared filter · ' + data.groups.length + ' functions';
+    elDetail.querySelectorAll('[data-child-mode]').forEach(button => {
+        const selected = button.dataset.childMode === childView.mode;
+        button.classList.toggle('on', selected); button.setAttribute('aria-pressed', String(selected));
+    });
+    const table = elDetail.querySelector('.an-child-table');
+    if (!reuse || table._childOrder !== order) {
+        const columns = childView.mode === 'groups' ? [['name', 'function'], ['calls', 'calls'], ['inclusive', 'inclusive sum'], ['self', 'self sum'],
+            ['mean', 'mean'], ['max', 'max']] : [['name', 'function'], ['inclusive', 'inclusive'], ['self', 'self'], ['start', 'start'], ['', 'CPU'], ['', 'call site']];
+        const sort = childView.mode === 'groups' ? childView.groupSort : childView.callSort;
+        table.innerHTML = '<thead><tr>' + columns.map(([key, label]) => '<th' + (key ? ' aria-sort="' + (key === sort ?
+            (key === 'name' || key === 'start' ? 'ascending' : 'descending') : 'none') + '"><button class="tl-sum-sort" data-child-sort="' + key + '">' + label + '</button>' : '>' + label) +
+            '</th>').join('') + '<th>navigate</th></tr></thead><tbody>' + childRows(order.rows.slice(0, order.visible), childView.mode) + '</tbody>';
+        table._childOrder = order;
+        if (reuse) elDetail.scrollTop = 0;
+    }
+    let empty = elDetail.querySelector('.an-child-empty');
+    if (!empty) { empty = document.createElement('div'); empty.className = 'an-hint an-child-empty'; table.after(empty); }
+    empty.textContent = order.rows.length ? '' : 'No direct recorded children match the current scope. Reset or change the shared filter.';
+    updateChildFooter(order);
+    sizeDetailHead();
+}
 function subtree(root) {
     const tree = callTreeIndex(), descendants = [];
     let current = tree.first[root];

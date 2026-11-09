@@ -227,17 +227,7 @@ function showDetail(i) {
     h += breakdownHtml(i);
     if (context.lists.has('error')) h += detailListHtml('error');
     h += detailListHtml('stack') + detailContextHint();
-    // heaviest children
-    const kids = directChildren(i);
-    if (kids.length) {
-        const agg = new Map();
-        for (const k of kids) { const a = agg.get(sName[k]) || [0, 0, k]; a[0]++; a[1] += durOf(k); agg.set(sName[k], a); }
-        const top = Array.from(agg.entries()).sort((x, y) => y[1][1] - x[1][1]).slice(0, 8);
-        h += '<div style="height:8px"></div><div class="tl-sec">Children (' + kids.length + ' call' + (kids.length === 1 ? '' : 's') +
-            (agg.size > 8 ? '; top 8 of ' + agg.size + ' functions' : '') + ')</div><div class="tl-crumbs">';
-        for (const [nm, a] of top) h += '<div class="tl-crumb" data-slice="' + a[2] + '"><span class="d">' + fmtDur(a[1]).padStart(10, '\u00a0') + '</span>&nbsp; ' + esc(S[nm]) + (a[0] > 1 ? ' <span class="d">×' + a[0] + '</span>' : '') + '</div>';
-        h += '</div>';
-    }
+    h += childPreviewHtml(i);
     h += '</div></div>';
     openDetail(h);
     fillCallSite(i);
@@ -369,6 +359,8 @@ function setMax(on) {
     resize();
 }
 elDetail.addEventListener('click', ev => {
+    const children = ev.target.closest('[data-child-open]');
+    if (children) { showChildren(+children.dataset.childOpen); return; }
     const contextMore = ev.target.closest('[data-context-more]');
     if (contextMore) { appendDetailRows(contextMore.dataset.contextMore); return; }
     const contextExport = ev.target.closest('[data-context-export]');
@@ -679,6 +671,7 @@ function refreshPanel() {
     else if (AN.kind === 'dist') showDist(AN.func);
     else if (AN.kind === 'wait') showWaitChain(AN.off);
     else if (AN.kind === 'tasks') showTasks();
+    else if (AN.kind === 'children') showChildren();
     else if (range) showRangeSummary();
     else if (sel >= 0) showDetail(sel);
 }
@@ -720,6 +713,7 @@ elHelp.innerHTML = `
 <li><kbd>E</kbd>/<kbd>Shift+E</kbd> next/prev error · <kbd>/</kbd> search, <kbd>N</kbd>/<kbd>Shift+N</kbd> next/prev match</li>
 <li>Click an off-CPU segment: wait chain (who woke the task, wake latency, and who woke the waker)</li>
 <li><b>Tasks</b>: find recorded tasks by name / PID / CPU, including tasks without traced calls; export all matching rows</li>
+<li><b>Explore all children</b> in call details: complete parent-scoped groups/calls, longest-call navigation and full CSV</li>
 <li><kbd>I</kbd>: show / hide inlined functions as dashed frames (extent = first to last traced call inside)</li>
 <li><kbd>M</kbd> or <b>Max</b>: maximize (hide the page header and tabs); drag the bar above the bottom panel to resize it, double-click it to reset</li>
 <li><kbd>O</kbd>: durations as measured / with the tracing overhead subtracted</li>

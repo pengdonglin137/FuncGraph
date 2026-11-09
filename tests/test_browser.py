@@ -1712,6 +1712,172 @@ class BrowserSmokeTest(unittest.TestCase):
                              parents=[-1] + list(range(count - 1)), columns={'depth': list(range(count)), 'ret': [count] * count}, extra=extra)
         self.ev('index => fgView("timeline").probe().select(index)', count - 1)
 
+    def open_child_groups(self, count=225, mode='abs', prefix='child_', parent_name='parent'):
+        self.ev("fgSwitchView('text')")
+        self.page.reload()
+        names, starts, durations, parents, depths = [parent_name], [0], [count * 10000 + 1000], [-1], [3]
+        for group in range(count):
+            first = len(names)
+            names += [prefix + str(group).zfill(4), 'grandchild', prefix + str(group).zfill(4), 'grandchild']
+            starts += [group * 10000 + 100, group * 10000 + 200, group * 10000 + 2000, group * 10000 + 2100]
+            durations += [1000, 300, 4000, 500]
+            parents += [0, first, 0, first + 2]
+            depths += [5, 6, 5, 6]
+        self.open_range_data(names, starts=starts, durations=durations, parents=parents, mode=mode,
+                             columns={'depth': depths}, extra={'overhead': {'child': 10, 'self': 5, 'source': 'test'}})
+        self.ev("fgView('timeline').probe().select(0)")
+
+    def test_child_explorer_real_trace_reaches_functions_beyond_top_eight(self):
+        self.open_timeline()
+        parent = self.ev("""() => { const probe = fgView('timeline').probe();
+            for (let index = 0; index < probe.N; index++) if (probe.nameOf(index) === 'path_openat') return index;
+        }""")
+        self.ev("index => fgView('timeline').probe().select(index)", parent)
+        self.assertIn('top 8 of 10 functions', self.page.locator('.tl-detail').text_content())
+        self.page.locator('[data-child-open]').press('Enter')
+        self.assertEqual(self.page.locator('.an-child-table tbody tr').count(), 10)
+        groups = self.download_csv('[data-child-csv=groups]')
+        calls = self.download_csv('[data-child-csv=calls]')
+        self.assertEqual(len(groups), 10)
+        self.assertEqual(len(calls), 10)
+        self.assertEqual({int(row['parent_slice']) for row in calls}, {parent})
+
+    def test_child_explorer_complete_groups_calls_and_longest_navigation(self):
+        self.open_child_groups()
+        self.assertIn('top 8 of 225 functions', self.page.locator('.tl-detail').text_content())
+        self.assertEqual(self.page.locator('.tl-child-preview').first.get_attribute('data-slice'), '3')
+        self.page.locator('[data-child-open]').press('Space')
+        self.assertEqual(self.page.locator('.an-child-table tbody tr').count(), 100)
+        groups = self.download_csv('[data-child-csv=groups]')
+        calls = self.download_csv('[data-child-csv=calls]')
+        self.assertEqual(len(groups), 225)
+        self.assertEqual(len(calls), 450)
+        self.assertEqual(groups[0]['calls'], '2')
+        self.assertEqual(float(groups[0]['inclusive_ns']), 5000)
+        self.assertEqual(float(groups[0]['self_ns']), 4200)
+        self.assertEqual(float(groups[0]['mean_ns']), 2500)
+        self.assertEqual(float(groups[0]['max_ns']), 4000)
+        self.assertEqual(groups[0]['longest_slice'], '3')
+        self.assertEqual({row['function'] for row in calls}, {row['function'] for row in groups})
+        self.assertTrue(all(row['depth_gap'] == '1' for row in calls))
+        self.assertEqual(self.page.locator('.an-child-table tbody tr').count(), 100)
+        self.ev("window.firstChildExplorerRow = document.querySelector('.an-child-table tbody tr')")
+        self.page.locator('[data-child-more]').press('Enter')
+        self.assertEqual(self.page.locator('.an-child-table tbody tr').count(), 200)
+        self.assertTrue(self.ev("window.firstChildExplorerRow === document.querySelector('.an-child-table tbody tr')"))
+        self.assertTrue(self.ev("document.activeElement.hasAttribute('data-child-more')"))
+        self.page.locator('[data-child-show="3"]').press('Enter')
+        self.assertEqual(self.ev("fgView('timeline').probe().sel()"), 3)
+        self.assertEqual(self.page.locator('.an-child-table tbody tr').count(), 200)
+        self.assertIn('Direct recorded children', self.page.locator('.tl-detail-title').inner_text())
+
+    def test_child_explorer_scope_query_sort_and_filter_children_not_parent(self):
+        self.open_child_groups(count=12)
+        self.page.click('[data-child-open]')
+        self.page.locator('[data-child-function="1"]').press('Enter')
+        self.assertEqual(self.ev("document.activeElement.dataset.childMode"), 'calls')
+        self.assertEqual(self.page.locator('.an-child-table tbody tr').count(), 2)
+        self.assertEqual(len(self.download_csv('[data-child-csv=calls]')), 2)
+        self.page.locator('[data-child-sort=start]').press('Enter')
+        self.assertEqual(self.ev("document.activeElement.dataset.childSort"), 'start')
+        self.assertEqual([row['slice_index'] for row in self.download_csv('[data-child-csv=calls]')], ['1', '3'])
+        self.page.click('[data-child-reset]')
+        self.page.fill('[data-child-query]', 'child_0009')
+        self.assertEqual(len(self.download_csv('[data-child-csv=groups]')), 1)
+        self.assertEqual(len(self.download_csv('[data-child-csv=calls]')), 2)
+        self.page.fill('[data-child-query]', '[')
+        self.assertEqual(self.page.locator('.an-child-table tbody tr').count(), 0)
+        self.page.click('[data-child-reset]')
+        self.ev("fgNotifyFilter('only one direct child', new Set([2]))")
+        rows = self.download_csv('[data-child-csv=groups]')
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]['calls'], '1')
+        self.assertEqual(float(rows[0]['inclusive_ns']), 1000)
+        self.assertEqual(float(rows[0]['self_ns']), 700)
+        self.ev("fgNotifyFilter('only grandchild', new Set([3]))")
+        self.assertEqual(self.page.locator('.an-child-table tbody tr').count(), 0)
+        self.assertIn('No direct recorded children', self.page.locator('.tl-detail').inner_text())
+        self.assertTrue(self.page.locator('[data-child-reset]').is_visible())
+        self.ev("fgNotifyFilter('', null)")
+        self.assertEqual(len(self.download_csv('[data-child-csv=calls]')), 24)
+
+    def test_child_explorer_adjustment_cache_and_loaded_pages(self):
+        self.open_child_groups()
+        self.page.click('[data-child-open]')
+        self.page.click('[data-child-more]')
+        self.page.click('[data-act=adj]')
+        self.assertEqual(self.page.locator('.an-child-table tbody tr').count(), 200)
+        rows = self.download_csv('[data-child-csv=groups]')
+        self.assertEqual(float(rows[0]['inclusive_ns']), 2500)
+        self.assertEqual(float(rows[0]['self_ns']), 2100)
+        self.assertEqual(float(rows[0]['max_ns']), 2000)
+        self.assertEqual(rows[0]['duration_basis'], 'adjusted_estimate')
+        writes = self.ev("""() => {
+            const original = Map.prototype.set; let writes = 0;
+            Map.prototype.set = function(key, value) {
+                if (value && typeof value.inclusive === 'number' && Array.isArray(value.ids)) writes++;
+                return original.call(this, key, value);
+            };
+            document.querySelector('[data-child-sort=name]').click();
+            document.querySelector('[data-child-mode=calls]').click();
+            document.querySelector('[data-child-mode=groups]').click();
+            Map.prototype.set = original; return writes;
+        }""")
+        self.assertEqual(writes, 0)
+
+    def test_child_explorer_count_basis_safe_labels_and_compact_layout(self):
+        for mode in ['count', 'compressed']:
+            with self.subTest(mode=mode):
+                self.open_child_groups(count=2, mode=mode, prefix='=unsafe<script>')
+                self.page.click('[data-child-open]')
+                rows = self.download_csv('[data-child-csv=groups]')
+                self.assertTrue(rows[0]['function'].startswith("'=unsafe<script>"))
+                suffix = 'units' if mode == 'count' else 'ns'
+                self.assertEqual(float(rows[0]['inclusive_' + suffix]), 5 if mode == 'count' else 5000)
+                self.assertEqual(rows[0]['position_basis'], 'call_order' if mode == 'count' else 'packed_duration')
+                self.assertEqual(self.page.locator('.an-child-table script').count(), 0)
+                self.assertIn('not a partition', self.page.locator('.tl-detail').inner_text())
+        for theme in ['light', 'dark']:
+            for width, height in [(320, 700), (390, 844), (800, 420), (1500, 900)]:
+                with self.subTest(theme=theme, width=width):
+                    self.ev("theme => document.documentElement.setAttribute('data-theme', theme)", theme)
+                    self.page.set_viewport_size({'width': width, 'height': height})
+                    self.page.wait_for_timeout(60)
+                    self.ev("document.querySelector('.tl-detail').scrollLeft = 5000")
+                    offsets = self.ev("""() => {
+                        const panel = document.querySelector('.tl-detail').getBoundingClientRect();
+                        return ['.an-child-head', '.an-child-tools', '.an-child-footer'].map(selector =>
+                            document.querySelector(selector).getBoundingClientRect().left - panel.left);
+                    }""")
+                    self.assertTrue(all(abs(offset) <= 2 for offset in offsets))
+                    self.assertLessEqual(self.ev("document.documentElement.scrollWidth"), width)
+                    if width <= 640 or height <= 600:
+                        self.assertEqual(self.ev("getComputedStyle(document.querySelector('.an-child-head')).top"), 'auto')
+                        self.assertEqual(self.ev("document.querySelector('.an-child-table th').style.top"), '0px')
+
+    def test_child_explorer_long_parent_and_function_scope_stay_compact(self):
+        label = '<b>very_long_function_name</b>' * 30
+        self.open_child_groups(count=2, prefix=label, parent_name=label + '_parent')
+        self.page.click('[data-child-open]')
+        self.page.click('[data-child-function="1"]')
+        for width, height in [(320, 700), (390, 844), (800, 420), (1500, 900)]:
+            with self.subTest(width=width, height=height):
+                self.page.set_viewport_size({'width': width, 'height': height})
+                self.page.wait_for_timeout(60)
+                bounds = self.ev("""() => {
+                    const panel = document.querySelector('.tl-detail').getBoundingClientRect();
+                    const parent = document.querySelector('.an-child-parent').getBoundingClientRect();
+                    const scope = document.querySelector('.an-child-scope');
+                    return [parent.left - panel.left, parent.right - panel.right, scope.offsetHeight,
+                        scope.title, document.querySelector('.an-child-name').offsetHeight];
+                }""")
+                self.assertGreaterEqual(bounds[0], 0)
+                self.assertLessEqual(bounds[1], 0)
+                self.assertLessEqual(bounds[2], 40)
+                self.assertEqual(bounds[3], label + '0000')
+                self.assertLessEqual(bounds[4], 40)
+        self.assertEqual(self.page.locator('.an-child-parent b').count(), 0)
+
     def test_detail_stack_pages_exports_and_preserves_expansion_on_refresh(self):
         self.open_detail_stack()
         section = self.page.locator('[data-context-list=stack]')

@@ -262,6 +262,24 @@ def an_wait(b, rep):
     shot(pg, 'an_wait')
 
 
+def an_children(b, rep, calls=False):
+    pg = open_page(b, rep['sample' if calls else 'sched'], 'timeline', height=1000)
+    parent = find(pg, '__skb_recv_udp' if calls else 'path_openat')
+    pg.evaluate(f"{PROBE}.select({parent})")
+    pg.click('[data-child-open]')
+    if calls:
+        pg.click('[data-child-mode=calls]')
+        pg.fill('[data-child-query]', '__skb_try_recv_from_queue')
+    handle = box(pg, '.tl-resizer')
+    pg.mouse.move(handle['x'] + handle['width'] / 2, handle['y'] + handle['height'] / 2)
+    pg.mouse.down()
+    pg.mouse.move(handle['x'] + handle['width'] / 2, handle['y'] - 100, steps=5)
+    pg.mouse.up()
+    pg.evaluate(f"{PROBE}.zoomTo({PROBE}.sStart[{parent}], {PROBE}.sEnd[{parent}], {parent})")
+    pg.wait_for_timeout(400)
+    shot(pg, 'an_children_calls' if calls else 'an_children')
+
+
 def an_tasks(b, rep):
     pg = open_page(b, rep['sample'], 'timeline', height=1000)
     pg.click('[data-act=an-tasks]')
@@ -284,6 +302,7 @@ SHOTS = {
     'tl_offcpu': tl_offcpu, 'tl_untraced': tl_untraced, 'tl_detail': tl_detail, 'tl_inline': tl_inline,
     'an_range': an_range, 'an_dist': an_dist, 'an_slowfast': an_slowfast, 'an_sections': panel('an_sections', 'sample', 'sections'),
     'an_errors': panel('an_errors', 'sched', 'errors'), 'an_wait': an_wait, 'an_tasks': an_tasks,
+    'an_children': an_children, 'an_children_calls': lambda browser, reports: an_children(browser, reports, calls=True),
     'an_lat': panel('an_lat', 'sched', 'latency'), 'compare': compare,
 }
 
