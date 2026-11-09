@@ -175,6 +175,12 @@ body.tl-max.tl-active { padding: 2px; }
 .tl-kv .v { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; word-break: break-all; }
 .tl-kv .v.err { color: #c62828; font-weight: 600; }
 [data-theme="dark"] .tl-kv .v.err { color: #ff8a80; }
+.tl-left { min-width: 0; }
+.tl-muted { color: var(--text-muted); font-style: italic; }
+.tl-cs { margin-top: 10px; }
+.tl-cs > summary { cursor: pointer; }
+.tl-cs-src.expanded-content { display: block; margin: 0; overflow-x: auto; user-select: text; border-radius: 4px; }
+.tl-cs-src > div.location-link { display: none; }   /* "caller+off/len:" head, shown in the kv row already */
 .tl-sec { font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--text-muted); margin: 2px 0 5px; }
 .tl-crumbs { display: flex; flex-direction: column; gap: 1px; font: 11.5px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
 .tl-crumb { cursor: pointer; padding: 1px 4px; border-radius: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

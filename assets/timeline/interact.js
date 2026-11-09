@@ -134,6 +134,8 @@ function tipSlice(i) {
     }
     const c = callerOf(i);
     if (c) h += row('caller', esc(c) + (f & FL.MISMATCH ? ' <span class="t-warn">(untraced frame between)</span>' : ''));
+    const csp = c ? callSitePos(i) : null;
+    if (csp) h += row('source', esc(csp.at));
     const il = inlineLine(i);
     if (il) h += row('inlined in', esc(il));
     const a = argsOf(i);

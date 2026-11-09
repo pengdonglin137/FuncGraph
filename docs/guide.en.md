@@ -538,6 +538,7 @@ Other visuals:
 | context | context plus the decoded flags: irqs off, BH off, need-resched kind, preempt N, migrate-off N; `(inferred)` if inferred |
 | return | return value; for errors the errno name, the role (error origin / propagated) and the fate (returned to user space / handled by caller / propagates beyond trace). `unverified: no BTF type` means it was judged by value only |
 | caller | call site; `(untraced frame between)` as for the purple marker |
+| source | source position `file:line` of the call site, i.e. the line that made this call (needs the text view and `--vmlinux`) |
 | inlined in | inline chain around the call site |
 | args | arguments (only with `funcgraph-args`) |
 
@@ -547,6 +548,8 @@ Other visuals:
 
 - Tags next to the title: context (`?` if inferred), irqs off, BH off, need-resched, error origin/propagated, may sleep in atomic context, no exit, no entry, estimated.
 - Left column: duration, self (and its share), start, task, depth, flags, return, call site, args, trace lines (entry and exit line numbers; click to open the text view).
+  - Below **call site**: the source position of the call (`file:line`, click to open the online source); `in FUNC (inlined)` when the call sits in inlined code.
+  - **Call site source**: the call site's source block, the same as when expanding the line in the text view (highlighting, `>line<` marks the call, inline chain in the chain/flat layout of the Source button). Click the title to collapse it; the choice is remembered. It reuses the block the text view already resolved, so the report gets no extra data. Without `--kernel-src` / `--source-rev` / `--source-url` only the position link is shown, with `--no-text-view` neither.
 - Right column:
   - **Where the time went**: a stacked bar splitting the measured duration (the parts add up to it exactly):
 

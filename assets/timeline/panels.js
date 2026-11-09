@@ -45,7 +45,7 @@ function showDetail(i) {
         (modOf(i) ? ' [' + esc(modOf(i)) + ']' : '') + '</span>' + pills + '<span class="sp"></span>' +
         '<a class="tl-link" data-dist="' + sName[i] + '">Duration distribution (H)</a>&nbsp;&nbsp;' +
         lineLink(sLine[i], 'Open in text view ↵') + '<button class="tl-close" title="Close (Esc)">×</button></div>';
-    h += '<div class="tl-detail-body"><div class="tl-kv">';
+    h += '<div class="tl-detail-body"><div class="tl-left"><div class="tl-kv">';
     h += kv('duration', fmtDur(d) + (f & FL.EST ? ' (estimated)' : ''));
     h += kv('self', fmtDur(sSelf[i]) + (d > 0 ? ' (' + (100 * sSelf[i] / d).toFixed(1) + '%)' : ''));
     h += kv('start', '+' + fmtDur(sStart[i]) + (MODE === 'abs' ? ' &nbsp;' + fmtAbs(sStart[i]) + ' s' : ''));
@@ -60,12 +60,12 @@ function showDetail(i) {
         h += kv('return', rv, eRole[i] >= 0 ? 'err' : '');
     }
     const c = callerOf(i);
-    if (c) h += kv('call site', esc(c) + (f & FL.MISMATCH ? '<br><span class="tl-pill warn">caller differs from parent slice: untraced/inlined frame in between</span>' : ''));
+    if (c) h += kv('call site', esc(c) + '<span class="tl-cs-at"></span>' + (f & FL.MISMATCH ? '<br><span class="tl-pill warn">caller differs from parent slice: untraced/inlined frame in between</span>' : ''));
     const a = argsOf(i);
     if (a) h += kv('args', esc(a));
     if (ATOMIC.has(i)) h += kv('context', 'called with ' + esc(atomicText(ATOMIC.get(i))) + ' (sleeping function in atomic context)', 'err');
     h += kv('trace lines', lineLink(sLine[i]) + (sEline && sEline[i] && sEline[i] !== sLine[i] ? ' → ' + lineLink(sEline[i]) : ''));
-    h += '</div><div>';
+    h += '</div><details class="tl-cs" open><summary class="tl-sec">Call site source</summary><div class="tl-cs-src"></div></details></div><div>';
     h += breakdownHtml(i);
     // error chain
     if (eChain[i] >= 0) {
@@ -111,6 +111,65 @@ function showDetail(i) {
     }
     h += '</div></div>';
     openDetail(h);
+    fillCallSite(i);
+}
+// Source of the call site: the text view already holds it (resolved, highlighted, de-duplicated in
+// #fgSrc), so the panel reuses that block (no extra data in the report). Lookup is by trace line id.
+function callSiteBlock(i) {
+    if (D.no_text || typeof fgFill !== 'function' || isSyn(i)) return null;
+    const line = document.getElementById('L' + sLine[i]);
+    const lid = line && line.getAttribute('data-line-id');
+    const content = lid && document.getElementById(lid + '_content');
+    return content && content.dataset.src !== undefined ? content.dataset.src : null;
+}
+// {func, at: 'file:line', href, inl} of the call itself (innermost frame of the block), cached per block
+const csPosCache = new Map();
+function callSitePos(i) {
+    const k = callSiteBlock(i);
+    if (k === null) return null;
+    if (csPosCache.has(k)) return csPosCache.get(k);
+    let r = null;
+    if (typeof _fgSrcPool !== 'undefined') {
+        if (!_fgSrcPool) _fgSrcPool = JSON.parse(document.getElementById('fgSrc').textContent);
+        const tmp = document.createElement('div');
+        tmp.innerHTML = _fgSrcPool[+k] || '';
+        const locs = tmp.querySelectorAll('a.location-link, div.location-link:not(:first-child)');
+        const a = locs[0];
+        if (a) {
+            const txt = a.textContent.replace(/^\(inlined\s+by\)\s*/, '');
+            const m = txt.match(/^(\S+)\s+at\s+(.*)$/);
+            if (m) r = { func: m[1], at: m[2], href: a.getAttribute && a.getAttribute('href'), inl: locs.length > 1 };
+        }
+    }
+    csPosCache.set(k, r);
+    return r;
+}
+function fillCallSite(i) {
+    const box = elDetail.querySelector('.tl-cs');
+    if (!box) return;
+    const k = callSiteBlock(i);
+    if (k === null) { box.remove(); return; }
+    const el = box.querySelector('.tl-cs-src');
+    el.className = 'tl-cs-src expanded-content';
+    el.dataset.src = k;
+    fgFill(el, true);
+    // innermost position (the line of the call) next to the call-site address
+    const pos = callSitePos(i);
+    const at = elDetail.querySelector('.tl-cs-at');
+    const hasCode = !!el.querySelector('.source-line');
+    if (!hasCode) box.remove();          // no --kernel-src / source provider: position link only
+    if (!pos) return;
+    if (at) {
+        const link = document.createElement(pos.href ? 'a' : 'span');
+        link.className = 'tl-link';
+        if (pos.href) { link.href = pos.href; link.target = '_blank'; }
+        link.textContent = pos.at;
+        at.append(document.createElement('br'), link);
+        if (pos.inl) { const s = document.createElement('span'); s.className = 'tl-muted'; s.textContent = '  in ' + pos.func + ' (inlined)'; at.append(s); }
+    }
+    if (!hasCode) return;
+    if (prefGet('csOpen') === '0') box.open = false;
+    box.addEventListener('toggle', () => prefSet('csOpen', box.open ? '1' : '0'));
 }
 function openDetail(html) {
     const was = elDetail.classList.contains('show');

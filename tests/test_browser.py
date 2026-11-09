@@ -102,6 +102,18 @@ class BrowserSmokeTest(unittest.TestCase):
         self.page.wait_for_timeout(300)
         self.assertEqual(self.ev("document.querySelector('.tl-fcount').textContent"), '')
 
+    def test_detail_call_site_source(self):
+        # the detail panel reuses the text view's resolved source block of the call site
+        self.open_timeline()
+        self.page.keyboard.press('e')
+        self.page.wait_for_timeout(300)
+        self.assertTrue(self.ev("!!document.querySelector('.tl-detail.show')"))
+        # the fake kernel has no source tree: position link only, no empty source block
+        self.assertFalse(self.ev("!!document.querySelector('.tl-cs')"))
+        at = self.ev("(document.querySelector('.tl-cs-at .tl-link') || {}).textContent || ''")
+        self.assertRegex(at, r'\.[ch]:\d+$')
+        self.assertTrue(self.ev("(document.querySelector('.tl-cs-at a') || {}).href || ''").startswith('https://example.org/src/'))
+
     def test_detail_panel_resize_and_maximize(self):
         self.open_timeline()
         self.page.click('[data-act=an-errors]')

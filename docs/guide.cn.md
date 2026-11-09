@@ -538,6 +538,7 @@ irqs:d AND duration:>50                       关中断状态下耗时超过 50 
 | context | 上下文，后面附上 flags 的解读：irqs off、BH off、need-resched 类型、preempt N、migrate-off N。`(inferred)` 表示是推断的 |
 | return | 返回值。是错误时后面附上 errno 名字、角色（error origin 错误源头 / propagated 传播）和去向（returned to user space 返回到用户态 / handled by caller 被调用者处理 / propagates beyond trace 传出了采集范围）。`unverified: no BTF type` 表示没有类型信息，只是根据数值判断的 |
 | caller | 调用点。`(untraced frame between)` 的含义同紫色标记 |
+| source | 调用点的源码位置 `文件:行号`，即发起这次调用的那一行（需要文本视图和 `--vmlinux`） |
 | inlined in | 调用点所在的内联函数链 |
 | args | 函数参数（采集时开了 `funcgraph-args` 才有） |
 
@@ -547,6 +548,8 @@ irqs:d AND duration:>50                       关中断状态下耗时超过 50 
 
 - 标题旁的标签：上下文（`?` 表示推断）、irqs off、BH off、need-resched、error origin/propagated、may sleep in atomic context、no exit、no entry、estimated。
 - 左栏：duration、self（及占总耗时的比例）、start、task、depth、flags、return、call site、args、trace lines（入口和出口在 trace 中的行号，点击跳到文本视图）。
+  - **call site** 下面是调用所在的源码位置（`文件:行号`，点击打开在线源码）；调用点在内联代码里时附上 `in 内联函数 (inlined)`。
+  - **Call site source**：调用点的源码块，和文本视图展开一行时看到的完全相同（语法高亮、`>行号<` 标出调用所在行、内联链按 Source 按钮的 chain/flat 布局）。点标题可以收起，状态会被记住。这部分直接复用文本视图已经解析好的源码块，报告不增加数据；没有 `--kernel-src` / `--source-rev` / `--source-url` 时只显示位置链接，`--no-text-view` 时两者都没有。
 - 右栏：
   - **Where the time went**：一条堆叠条，把实测耗时拆成几部分（加起来正好等于实测耗时）：
 
