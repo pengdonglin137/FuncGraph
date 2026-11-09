@@ -616,8 +616,15 @@ For a larger canvas: **Max** in the toolbar (`M`) hides the page header and the 
 
 ### 6.6 Search and filter
 
-- **Search box** (`/`): a function-name regex. Non-matching slices are dimmed and the number of matching calls is shown; Enter or `N` goes to the next match, Shift+Enter or Shift+`N` to the previous one.
+- **Search box** (`/`): a case-insensitive function-name regex over real traced calls, not arguments, call sites or synthetic inline frames. Non-matching slices are dimmed.
+- **Match navigation**: click ◀ / ▶ beside the search box, or press Shift+Enter / Enter inside it; outside the input, Shift+`N` / `N` also works. The status shows `position / total calls`, such as `2 / 17 calls`, or just the total when the current selection is not a match. Navigation wraps in task order, then time order within each task; without a selection, next starts at the first result and previous at the last.
+- **Search status**: typing shows `Searching…`; no matches shows `0 calls`. Invalid syntax shows `Invalid regex`, marks the input red and disables both navigation buttons. It clears stale highlighting and navigation results; Esc clears the search and leaves the input. Repeated navigation reuses cached matches rather than rescanning all slices.
 - **Filter bar**: the same syntax as the text view's unified filter (5.7), kept in sync with it. Non-matching calls are dimmed; error navigation, range summaries and all analysis panels only count matches; the right side shows `N of M calls`. **Hide unmatched** hides tracks without matches, **Clear** removes the filter.
+- **Together**: search counts and navigation only include calls that pass Filter. Changing or clearing the filter updates search results immediately, without jumping into hidden unmatched tracks. Tab to focus controls, then Enter / Space activates them normally. Canvas navigation shortcuts move focus back to the canvas, where Enter opens the selected call in the text view.
+
+![tl_search](img/tl_search.png)
+
+*Search for `recv` and navigate to its second matching call; the counter follows the selected slice.*
 
 ### 6.7 Measured durations and overhead subtraction
 

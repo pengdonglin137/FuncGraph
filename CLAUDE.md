@@ -123,3 +123,4 @@ Data flow: `FtraceParser.parse()` → `AddressResolver.resolve_batch()` → (opt
 - In timeline JS, displayed durations go through `durOf(i)` (measured or overhead-corrected, toggled by `setAdjusted`); geometry always uses `sStart/sEnd`.
 - New CLI options that change nothing when unused must be added to the hidden-when-default list in `util.format_args_info` to keep golden output stable.
 - Text-view filter → timeline: `applyFilter`/`clearFilter` call `fgNotifyFilter(text, Set<lineNumber>|null)`; the timeline registers `window.fgOnFilter`.
+- Timeline function search caches unique real function-name indices and the matching slice list per normalized query. Navigation uses binary search in task/start order; filter changes rebuild only the eligible match list. Invalid expressions clear stale matches, and Enter cancels the pending debounce. Keep the position counter synchronized with selection, and preserve native Enter/Space activation on focused controls.

@@ -1377,6 +1377,9 @@
 }
 .tl-search.bad { border-color: #d64545; }
 .tl-count { color: var(--text-muted); font-size: 11px; min-width: 52px; }
+.tl-count:empty { display: none; }
+.tl-search-nav { display: inline-flex; gap: 2px; }
+.tl-search-nav .tl-btn { padding: 4px 7px; }
 .tl-errnav { display: inline-flex; align-items: center; gap: 0; }
 .tl-errnav .tl-btn { border-radius: 0; }
 .tl-errnav .tl-btn:first-child { border-radius: 6px 0 0 6px; }
@@ -1436,6 +1439,7 @@ body.tl-max.tl-active { padding: 2px; }
 }
 .tl-spacer { width: 1px; }
 .tl-canvas { position: sticky; top: 0; left: 0; display: block; width: 100%; cursor: default; }
+.tl-canvas:focus-visible { outline: 2px solid var(--link-color); outline-offset: -2px; }
 .tl-canvas.grab { cursor: grabbing; }
 .tl-canvas.ptr { cursor: pointer; }
 
@@ -1634,11 +1638,11 @@ table.tl-sum td.err { color: #c62828; }
                 <div class="info-item"><div class="info-label">OS:</div><div class="info-value">Linux 6.8.0-138-generic</div></div>
                 <div class="info-item"><div class="info-label">Hostname:</div><div class="info-value">pengdl-pc</div></div>
                 <div class="info-item"><div class="info-label">Processor:</div><div class="info-value">x86_64</div></div>
-                <div class="info-item"><div class="info-label">Generated At:</div><div class="info-value">2026-11-10 00:43:04</div></div>
+                <div class="info-item"><div class="info-label">Generated At:</div><div class="info-value">2026-11-10 01:13:42</div></div>
                 <div class="info-section-divider"></div>
                 <div class="info-section-title">Processing Stats</div>
                 <div class="info-item"><div class="info-label">Parse Time:</div><div class="info-value">0.02s</div></div>
-                <div class="info-item"><div class="info-label">Vmlinux Time:</div><div class="info-value">5.65s</div></div>
+                <div class="info-item"><div class="info-label">Vmlinux Time:</div><div class="info-value">5.79s</div></div>
                 <div class="info-item"><div class="info-label">Modules Time:</div><div class="info-value">0.00s</div></div>
                 <div class="info-item"><div class="info-label">Total Lines:</div><div class="info-value">695</div></div>
                 <div class="info-item"><div class="info-label">Expandable:</div><div class="info-value">442</div></div>
@@ -4869,7 +4873,6 @@ const ov = { err: true, irq: true, rs: true, off: true, wk: true, preempt: false
 let colorMode = 'ctx';
 let sel = -1, hov = -1, hovOff = null, hovCpu = null;
 let range = null;            // {s, e, track|null}
-let search = null;           // RegExp
 let searchHits = null;       // Uint8Array per name index
 let textHits = null;         // Uint8Array per slice: passes the text-view filter
 let hideUnmatched = false;
@@ -4897,8 +4900,12 @@ tlRoot.innerHTML = `
     <button class="tl-chip" data-ov="mk"><i class="dot" style="background:#8e44ad"></i>Markers</button>
   </span>
   <span class="tl-group">
-    <input class="tl-search" placeholder="/ search function (regex)" spellcheck="false">
-    <span class="tl-count"></span>
+    <input class="tl-search" placeholder="/ search function (regex)" spellcheck="false" aria-label="Search traced function names (regular expression)" aria-describedby="tlSearchStatus" aria-invalid="false">
+    <span class="tl-search-nav">
+      <button class="tl-btn" data-act="searchprev" title="Previous search match (Shift+Enter / Shift+N)" aria-label="Previous search match" disabled>◀</button>
+      <button class="tl-btn" data-act="searchnext" title="Next search match (Enter / N)" aria-label="Next search match" disabled>▶</button>
+    </span>
+    <span class="tl-count" id="tlSearchStatus" role="status" aria-live="polite" aria-atomic="true"></span>
   </span>
   <span class="tl-group tl-errnav">
     <button class="tl-btn" data-act="errprev" title="Previous error origin (Shift+E)">◀</button>
@@ -4926,7 +4933,7 @@ tlRoot.innerHTML = `
 <div class="tl-notes"></div>
 <div class="tl-stage">
   <canvas class="tl-head-canvas"></canvas>
-  <div class="tl-scroll"><canvas class="tl-canvas"></canvas><div class="tl-spacer"></div></div>
+  <div class="tl-scroll"><canvas class="tl-canvas" tabindex="0" aria-label="Interactive function timeline. Press question mark for keyboard shortcuts."></canvas><div class="tl-spacer"></div></div>
   <div class="tl-help"></div>
 </div>
 <div class="tl-resizer" title="Drag to resize the panel, double-click to reset"></div>
@@ -4944,6 +4951,8 @@ const elHelp = tlRoot.querySelector('.tl-help');
 const elNotes = tlRoot.querySelector('.tl-notes');
 const elSearch = tlRoot.querySelector('.tl-search');
 const elCount = tlRoot.querySelector('.tl-count');
+const elSearchPrev = tlRoot.querySelector('[data-act=searchprev]');
+const elSearchNext = tlRoot.querySelector('[data-act=searchnext]');
 const elToast = tlRoot.querySelector('.tl-toast');
 const elFbar = tlRoot.querySelector('.tl-filterbar');
 const elResizer = tlRoot.querySelector('.tl-resizer');
@@ -5637,6 +5646,7 @@ function revealRow(i) {
 }
 function select(i, opts) {
     sel = i;
+    updateSearchLabel();
     opts = opts || {};
     if (i >= 0) {
         if (opts.zoom) zoomTo(sStart[i], sEnd[i], i);
@@ -5929,31 +5939,85 @@ function gotoErr(dir) {
 }
 
 // ---- search ----
-function applySearch(q) {
-    q = q.trim();
-    elSearch.classList.remove('bad');
-    if (!q) { search = null; searchHits = null; elCount.textContent = ''; draw(); return; }
-    try { search = new RegExp(q, 'i'); } catch (e) { elSearch.classList.add('bad'); return; }
-    searchHits = new Uint8Array(S.length);
-    for (let s = 0; s < S.length; s++) if (search.test(S[s])) searchHits[s] = 1;
-    let cnt = 0;
-    for (let i = 0; i < N; i++) if (searchHits[sName[i]]) cnt++;
-    elCount.textContent = cnt + ' calls';
-    draw();
+let searchQuery = '', searchError = '', searchTimer = 0;
+let searchNames = null, searchMatches = [], searchVisibleMatches = [];
+function searchIndex(target) {
+    let low = 0, high = searchVisibleMatches.length;
+    while (low < high) {
+        const middle = (low + high) >>> 1;
+        if (searchVisibleMatches[middle] < target) low = middle + 1;
+        else high = middle;
+    }
+    return low;
 }
-function searchNext(dir) {
-    if (!searchHits) return;
-    const from = sel >= 0 ? sel : -1;
-    // slices are ordered by (task, start); walk in that order
-    for (let s = 1; s <= N; s++) {
-        const i = ((from + dir * s) % N + N) % N;
-        if (searchHits[sName[i]]) { select(i, { reveal: true }); return; }
+function updateSearchLabel() {
+    const invalid = !searchTimer && !!searchError;
+    elSearch.classList.toggle('bad', invalid);
+    elSearch.setAttribute('aria-invalid', String(invalid));
+    elSearch.title = invalid ? searchError : 'Case-insensitive regular expression; searches traced function names';
+    const count = searchVisibleMatches.length;
+    elSearchPrev.disabled = elSearchNext.disabled = !!searchTimer || invalid || !count;
+    if (searchTimer) elCount.textContent = 'Searching…';
+    else if (invalid) elCount.textContent = 'Invalid regex';
+    else if (!searchQuery) elCount.textContent = '';
+    else {
+        const position = searchIndex(sel);
+        elCount.textContent = (position < count && searchVisibleMatches[position] === sel ? (position + 1) + ' / ' : '') + count + ' calls';
     }
 }
-let searchTimer = 0;
-elSearch.addEventListener('input', () => { clearTimeout(searchTimer); searchTimer = setTimeout(() => applySearch(elSearch.value), 150); });
+function rebuildSearchMatches() {
+    searchVisibleMatches = textHits ? searchMatches.filter(index => textHits[index]) : searchMatches;
+    updateSearchLabel();
+}
+function applySearch(query) {
+    clearTimeout(searchTimer);
+    searchTimer = 0;
+    query = query.trim();
+    if (query === searchQuery) { updateSearchLabel(); return !searchError; }
+    searchQuery = query;
+    searchError = '';
+    searchHits = null;
+    searchMatches = [];
+    if (query) {
+        try {
+            const matcher = new RegExp(query, 'i');
+            if (!searchNames) {
+                searchNames = [];
+                const seen = new Uint8Array(S.length);
+                for (let index = 0; index < N; index++) {
+                    const nameIndex = sName[index];
+                    if (!seen[nameIndex]) { seen[nameIndex] = 1; searchNames.push(nameIndex); }
+                }
+            }
+            searchHits = new Uint8Array(S.length);
+            for (const index of searchNames) if (matcher.test(S[index])) searchHits[index] = 1;
+            for (let index = 0; index < N; index++) if (searchHits[sName[index]]) searchMatches.push(index);
+        } catch (error) { searchError = error.message; }
+    }
+    rebuildSearchMatches();
+    draw();
+    return !searchError;
+}
+function searchNext(dir) {
+    if (!applySearch(elSearch.value) || !searchVisibleMatches.length) return;
+    const count = searchVisibleMatches.length;
+    let position = dir > 0 ? 0 : count - 1;
+    if (sel >= 0 && sel < N) {
+        position = searchIndex(sel);
+        if (dir < 0) position--;
+        else if (searchVisibleMatches[position] === sel) position++;
+        position = (position + count) % count;
+    }
+    select(searchVisibleMatches[position], { reveal: true });
+}
+elSearch.addEventListener('input', () => {
+    clearTimeout(searchTimer);
+    if (!elSearch.value.trim()) { applySearch(''); return; }
+    searchTimer = setTimeout(() => applySearch(elSearch.value), 150);
+    updateSearchLabel();
+});
 elSearch.addEventListener('keydown', ev => {
-    if (ev.key === 'Enter') { applySearch(elSearch.value); searchNext(ev.shiftKey ? -1 : 1); ev.preventDefault(); }
+    if (ev.key === 'Enter' && !ev.isComposing) { searchNext(ev.shiftKey ? -1 : 1); ev.preventDefault(); }
     else if (ev.key === 'Escape') { elSearch.value = ''; applySearch(''); elSearch.blur(); }
     ev.stopPropagation();
 });
@@ -5963,6 +6027,7 @@ window.addEventListener('keydown', ev => {
     if (window.fgCurrentView() !== 'timeline') return;
     if (ev.target.matches && ev.target.matches('input, textarea, select')) return;
     ev.stopPropagation();
+    if ((ev.key === 'Enter' || ev.key === ' ') && ev.target.closest && ev.target.closest('button, a[href], summary')) return;
     if (ev.ctrlKey || ev.metaKey || ev.altKey) return;
     const span = view.e - view.s, cx = cursorX >= 0 ? cursorX : W / 2;
     let handled = true;
@@ -5994,7 +6059,10 @@ window.addEventListener('keydown', ev => {
             break;
         default: handled = false;
     }
-    if (handled) ev.preventDefault();
+    if (handled) {
+        ev.preventDefault();
+        if (ev.key !== '/' && window.fgCurrentView() === 'timeline') elCv.focus({ preventScroll: true });
+    }
 }, true);
 
 function rowPos(i) {
@@ -6898,6 +6966,7 @@ function applyTextFilter() {
     }
     tlRoot.querySelector('[data-act=fhide]').classList.toggle('on', hideUnmatched);
     if (sel >= 0 && textHits && !textHits[sel]) select(-1);
+    rebuildSearchMatches();
     rebuildErrList();
     layout();
     draw();
@@ -6942,6 +7011,8 @@ tlRoot.querySelector('.tl-toolbar').addEventListener('click', ev => {
     const b = ev.target.closest('[data-act]');
     if (!b) return;
     switch (b.dataset.act) {
+        case 'searchprev': searchNext(-1); break;
+        case 'searchnext': searchNext(1); break;
         case 'errprev': gotoErr(-1); break;
         case 'errnext': gotoErr(1); break;
         case 'errmode': errFilter = errFilter ? 0 : 1; rebuildErrList(); draw(); break;
@@ -7030,7 +7101,7 @@ elHelp.innerHTML = `
 <li><kbd>Shift</kbd>+drag: summarize a range in this track (<kbd>Shift</kbd>+<kbd>Alt</kbd>: all tracks)</li></ul>
 <h4>Select</h4><ul>
 <li><kbd>↑</kbd> parent · <kbd>↓</kbd> first child · <kbd>[</kbd>/<kbd>]</kbd> siblings</li>
-<li><kbd>E</kbd>/<kbd>Shift+E</kbd> next/prev error · <kbd>/</kbd> search, <kbd>N</kbd> next match</li>
+<li><kbd>E</kbd>/<kbd>Shift+E</kbd> next/prev error · <kbd>/</kbd> search, <kbd>N</kbd>/<kbd>Shift+N</kbd> next/prev match</li>
 <li>Click an off-CPU segment: wait chain (who woke the task, wake latency, and who woke the waker)</li>
 <li><kbd>I</kbd>: show / hide inlined functions as dashed frames (extent = first to last traced call inside)</li>
 <li><kbd>M</kbd> or <b>Max</b>: maximize (hide the page header and tabs); drag the bar above the bottom panel to resize it, double-click it to reset</li>
@@ -7083,6 +7154,18 @@ if (!D.caps.retval) tlRoot.querySelector('[data-ov=err]').classList.add('na');
 new MutationObserver(() => { palette(); ovDirty = true; draw(); })
     .observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
 window.addEventListener('resize', () => { if (window.fgCurrentView() === 'timeline') resize(); });
+if (typeof ResizeObserver !== 'undefined') {
+    let controlsFrame = 0;
+    const controlsObserver = new ResizeObserver(() => {
+        if (controlsFrame || window.fgCurrentView() !== 'timeline') return;
+        controlsFrame = requestAnimationFrame(() => {
+            controlsFrame = 0;
+            if (window.fgCurrentView() === 'timeline') resize();
+        });
+    });
+    controlsObserver.observe(tlRoot.querySelector('.tl-toolbar'));
+    controlsObserver.observe(elNotes);
+}
 
 // probe: read access to the model and a few actions, for tests and the browser console
 const probe = () => ({ N, NA, SYN, S, sName, sStart, sEnd, sDepth, sParent, sTask, nameOf, isGhost, gapOf, TRACKS,

@@ -70,6 +70,7 @@ function revealRow(i) {
 }
 function select(i, opts) {
     sel = i;
+    updateSearchLabel();
     opts = opts || {};
     if (i >= 0) {
         if (opts.zoom) zoomTo(sStart[i], sEnd[i], i);
@@ -362,31 +363,85 @@ function gotoErr(dir) {
 }
 
 // ---- search ----
-function applySearch(q) {
-    q = q.trim();
-    elSearch.classList.remove('bad');
-    if (!q) { search = null; searchHits = null; elCount.textContent = ''; draw(); return; }
-    try { search = new RegExp(q, 'i'); } catch (e) { elSearch.classList.add('bad'); return; }
-    searchHits = new Uint8Array(S.length);
-    for (let s = 0; s < S.length; s++) if (search.test(S[s])) searchHits[s] = 1;
-    let cnt = 0;
-    for (let i = 0; i < N; i++) if (searchHits[sName[i]]) cnt++;
-    elCount.textContent = cnt + ' calls';
-    draw();
+let searchQuery = '', searchError = '', searchTimer = 0;
+let searchNames = null, searchMatches = [], searchVisibleMatches = [];
+function searchIndex(target) {
+    let low = 0, high = searchVisibleMatches.length;
+    while (low < high) {
+        const middle = (low + high) >>> 1;
+        if (searchVisibleMatches[middle] < target) low = middle + 1;
+        else high = middle;
+    }
+    return low;
 }
-function searchNext(dir) {
-    if (!searchHits) return;
-    const from = sel >= 0 ? sel : -1;
-    // slices are ordered by (task, start); walk in that order
-    for (let s = 1; s <= N; s++) {
-        const i = ((from + dir * s) % N + N) % N;
-        if (searchHits[sName[i]]) { select(i, { reveal: true }); return; }
+function updateSearchLabel() {
+    const invalid = !searchTimer && !!searchError;
+    elSearch.classList.toggle('bad', invalid);
+    elSearch.setAttribute('aria-invalid', String(invalid));
+    elSearch.title = invalid ? searchError : 'Case-insensitive regular expression; searches traced function names';
+    const count = searchVisibleMatches.length;
+    elSearchPrev.disabled = elSearchNext.disabled = !!searchTimer || invalid || !count;
+    if (searchTimer) elCount.textContent = 'Searching…';
+    else if (invalid) elCount.textContent = 'Invalid regex';
+    else if (!searchQuery) elCount.textContent = '';
+    else {
+        const position = searchIndex(sel);
+        elCount.textContent = (position < count && searchVisibleMatches[position] === sel ? (position + 1) + ' / ' : '') + count + ' calls';
     }
 }
-let searchTimer = 0;
-elSearch.addEventListener('input', () => { clearTimeout(searchTimer); searchTimer = setTimeout(() => applySearch(elSearch.value), 150); });
+function rebuildSearchMatches() {
+    searchVisibleMatches = textHits ? searchMatches.filter(index => textHits[index]) : searchMatches;
+    updateSearchLabel();
+}
+function applySearch(query) {
+    clearTimeout(searchTimer);
+    searchTimer = 0;
+    query = query.trim();
+    if (query === searchQuery) { updateSearchLabel(); return !searchError; }
+    searchQuery = query;
+    searchError = '';
+    searchHits = null;
+    searchMatches = [];
+    if (query) {
+        try {
+            const matcher = new RegExp(query, 'i');
+            if (!searchNames) {
+                searchNames = [];
+                const seen = new Uint8Array(S.length);
+                for (let index = 0; index < N; index++) {
+                    const nameIndex = sName[index];
+                    if (!seen[nameIndex]) { seen[nameIndex] = 1; searchNames.push(nameIndex); }
+                }
+            }
+            searchHits = new Uint8Array(S.length);
+            for (const index of searchNames) if (matcher.test(S[index])) searchHits[index] = 1;
+            for (let index = 0; index < N; index++) if (searchHits[sName[index]]) searchMatches.push(index);
+        } catch (error) { searchError = error.message; }
+    }
+    rebuildSearchMatches();
+    draw();
+    return !searchError;
+}
+function searchNext(dir) {
+    if (!applySearch(elSearch.value) || !searchVisibleMatches.length) return;
+    const count = searchVisibleMatches.length;
+    let position = dir > 0 ? 0 : count - 1;
+    if (sel >= 0 && sel < N) {
+        position = searchIndex(sel);
+        if (dir < 0) position--;
+        else if (searchVisibleMatches[position] === sel) position++;
+        position = (position + count) % count;
+    }
+    select(searchVisibleMatches[position], { reveal: true });
+}
+elSearch.addEventListener('input', () => {
+    clearTimeout(searchTimer);
+    if (!elSearch.value.trim()) { applySearch(''); return; }
+    searchTimer = setTimeout(() => applySearch(elSearch.value), 150);
+    updateSearchLabel();
+});
 elSearch.addEventListener('keydown', ev => {
-    if (ev.key === 'Enter') { applySearch(elSearch.value); searchNext(ev.shiftKey ? -1 : 1); ev.preventDefault(); }
+    if (ev.key === 'Enter' && !ev.isComposing) { searchNext(ev.shiftKey ? -1 : 1); ev.preventDefault(); }
     else if (ev.key === 'Escape') { elSearch.value = ''; applySearch(''); elSearch.blur(); }
     ev.stopPropagation();
 });
@@ -396,6 +451,7 @@ window.addEventListener('keydown', ev => {
     if (window.fgCurrentView() !== 'timeline') return;
     if (ev.target.matches && ev.target.matches('input, textarea, select')) return;
     ev.stopPropagation();
+    if ((ev.key === 'Enter' || ev.key === ' ') && ev.target.closest && ev.target.closest('button, a[href], summary')) return;
     if (ev.ctrlKey || ev.metaKey || ev.altKey) return;
     const span = view.e - view.s, cx = cursorX >= 0 ? cursorX : W / 2;
     let handled = true;
@@ -427,7 +483,10 @@ window.addEventListener('keydown', ev => {
             break;
         default: handled = false;
     }
-    if (handled) ev.preventDefault();
+    if (handled) {
+        ev.preventDefault();
+        if (ev.key !== '/' && window.fgCurrentView() === 'timeline') elCv.focus({ preventScroll: true });
+    }
 }, true);
 
 function rowPos(i) {

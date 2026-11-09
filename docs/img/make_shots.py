@@ -137,6 +137,17 @@ def tl_compact(b, rep):
     shot(pg, 'tl_compact')
 
 
+def tl_search(b, rep):
+    pg = open_page(b, rep['sample'], 'timeline')
+    pg.fill('.tl-search', 'recv')
+    pg.press('.tl-search', 'Enter')
+    pg.press('.tl-search', 'Enter')
+    pg.evaluate('document.activeElement.blur()')
+    pg.keyboard.press('f')
+    pg.wait_for_timeout(400)
+    shot(pg, 'tl_search')
+
+
 def tl_irqoff(b, rep):
     pg = open_page(b, rep['sample'], 'timeline')
     zoom(pg, find(pg, 'do_softirq'), pad=0.25, select=False)
@@ -238,7 +249,7 @@ def compare(b, rep):
 
 
 SHOTS = {
-    'text_view': text_view, 'tl_layout': tl_layout, 'tl_compact': tl_compact, 'tl_errors': tl_errors, 'tl_irqoff': tl_irqoff,
+    'text_view': text_view, 'tl_layout': tl_layout, 'tl_compact': tl_compact, 'tl_search': tl_search, 'tl_errors': tl_errors, 'tl_irqoff': tl_irqoff,
     'tl_offcpu': tl_offcpu, 'tl_untraced': tl_untraced, 'tl_detail': tl_detail, 'tl_inline': tl_inline,
     'an_range': an_range, 'an_dist': an_dist, 'an_sections': panel('an_sections', 'sample', 'sections'),
     'an_errors': panel('an_errors', 'sched', 'errors'), 'an_wait': an_wait,

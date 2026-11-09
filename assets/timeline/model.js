@@ -403,7 +403,6 @@ const ov = { err: true, irq: true, rs: true, off: true, wk: true, preempt: false
 let colorMode = 'ctx';
 let sel = -1, hov = -1, hovOff = null, hovCpu = null;
 let range = null;            // {s, e, track|null}
-let search = null;           // RegExp
 let searchHits = null;       // Uint8Array per name index
 let textHits = null;         // Uint8Array per slice: passes the text-view filter
 let hideUnmatched = false;
@@ -431,8 +430,12 @@ tlRoot.innerHTML = `
     <button class="tl-chip" data-ov="mk"><i class="dot" style="background:#8e44ad"></i>Markers</button>
   </span>
   <span class="tl-group">
-    <input class="tl-search" placeholder="/ search function (regex)" spellcheck="false">
-    <span class="tl-count"></span>
+    <input class="tl-search" placeholder="/ search function (regex)" spellcheck="false" aria-label="Search traced function names (regular expression)" aria-describedby="tlSearchStatus" aria-invalid="false">
+    <span class="tl-search-nav">
+      <button class="tl-btn" data-act="searchprev" title="Previous search match (Shift+Enter / Shift+N)" aria-label="Previous search match" disabled>◀</button>
+      <button class="tl-btn" data-act="searchnext" title="Next search match (Enter / N)" aria-label="Next search match" disabled>▶</button>
+    </span>
+    <span class="tl-count" id="tlSearchStatus" role="status" aria-live="polite" aria-atomic="true"></span>
   </span>
   <span class="tl-group tl-errnav">
     <button class="tl-btn" data-act="errprev" title="Previous error origin (Shift+E)">◀</button>
@@ -460,7 +463,7 @@ tlRoot.innerHTML = `
 <div class="tl-notes"></div>
 <div class="tl-stage">
   <canvas class="tl-head-canvas"></canvas>
-  <div class="tl-scroll"><canvas class="tl-canvas"></canvas><div class="tl-spacer"></div></div>
+  <div class="tl-scroll"><canvas class="tl-canvas" tabindex="0" aria-label="Interactive function timeline. Press question mark for keyboard shortcuts."></canvas><div class="tl-spacer"></div></div>
   <div class="tl-help"></div>
 </div>
 <div class="tl-resizer" title="Drag to resize the panel, double-click to reset"></div>
@@ -478,6 +481,8 @@ const elHelp = tlRoot.querySelector('.tl-help');
 const elNotes = tlRoot.querySelector('.tl-notes');
 const elSearch = tlRoot.querySelector('.tl-search');
 const elCount = tlRoot.querySelector('.tl-count');
+const elSearchPrev = tlRoot.querySelector('[data-act=searchprev]');
+const elSearchNext = tlRoot.querySelector('[data-act=searchnext]');
 const elToast = tlRoot.querySelector('.tl-toast');
 const elFbar = tlRoot.querySelector('.tl-filterbar');
 const elResizer = tlRoot.querySelector('.tl-resizer');

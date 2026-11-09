@@ -384,6 +384,7 @@ function applyTextFilter() {
     }
     tlRoot.querySelector('[data-act=fhide]').classList.toggle('on', hideUnmatched);
     if (sel >= 0 && textHits && !textHits[sel]) select(-1);
+    rebuildSearchMatches();
     rebuildErrList();
     layout();
     draw();
@@ -428,6 +429,8 @@ tlRoot.querySelector('.tl-toolbar').addEventListener('click', ev => {
     const b = ev.target.closest('[data-act]');
     if (!b) return;
     switch (b.dataset.act) {
+        case 'searchprev': searchNext(-1); break;
+        case 'searchnext': searchNext(1); break;
         case 'errprev': gotoErr(-1); break;
         case 'errnext': gotoErr(1); break;
         case 'errmode': errFilter = errFilter ? 0 : 1; rebuildErrList(); draw(); break;
@@ -516,7 +519,7 @@ elHelp.innerHTML = `
 <li><kbd>Shift</kbd>+drag: summarize a range in this track (<kbd>Shift</kbd>+<kbd>Alt</kbd>: all tracks)</li></ul>
 <h4>Select</h4><ul>
 <li><kbd>↑</kbd> parent · <kbd>↓</kbd> first child · <kbd>[</kbd>/<kbd>]</kbd> siblings</li>
-<li><kbd>E</kbd>/<kbd>Shift+E</kbd> next/prev error · <kbd>/</kbd> search, <kbd>N</kbd> next match</li>
+<li><kbd>E</kbd>/<kbd>Shift+E</kbd> next/prev error · <kbd>/</kbd> search, <kbd>N</kbd>/<kbd>Shift+N</kbd> next/prev match</li>
 <li>Click an off-CPU segment: wait chain (who woke the task, wake latency, and who woke the waker)</li>
 <li><kbd>I</kbd>: show / hide inlined functions as dashed frames (extent = first to last traced call inside)</li>
 <li><kbd>M</kbd> or <b>Max</b>: maximize (hide the page header and tabs); drag the bar above the bottom panel to resize it, double-click it to reset</li>
@@ -569,6 +572,18 @@ if (!D.caps.retval) tlRoot.querySelector('[data-ov=err]').classList.add('na');
 new MutationObserver(() => { palette(); ovDirty = true; draw(); })
     .observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
 window.addEventListener('resize', () => { if (window.fgCurrentView() === 'timeline') resize(); });
+if (typeof ResizeObserver !== 'undefined') {
+    let controlsFrame = 0;
+    const controlsObserver = new ResizeObserver(() => {
+        if (controlsFrame || window.fgCurrentView() !== 'timeline') return;
+        controlsFrame = requestAnimationFrame(() => {
+            controlsFrame = 0;
+            if (window.fgCurrentView() === 'timeline') resize();
+        });
+    });
+    controlsObserver.observe(tlRoot.querySelector('.tl-toolbar'));
+    controlsObserver.observe(elNotes);
+}
 
 // probe: read access to the model and a few actions, for tests and the browser console
 const probe = () => ({ N, NA, SYN, S, sName, sStart, sEnd, sDepth, sParent, sTask, nameOf, isGhost, gapOf, TRACKS,

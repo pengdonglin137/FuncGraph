@@ -71,6 +71,9 @@
 }
 .tl-search.bad { border-color: #d64545; }
 .tl-count { color: var(--text-muted); font-size: 11px; min-width: 52px; }
+.tl-count:empty { display: none; }
+.tl-search-nav { display: inline-flex; gap: 2px; }
+.tl-search-nav .tl-btn { padding: 4px 7px; }
 .tl-errnav { display: inline-flex; align-items: center; gap: 0; }
 .tl-errnav .tl-btn { border-radius: 0; }
 .tl-errnav .tl-btn:first-child { border-radius: 6px 0 0 6px; }
@@ -130,6 +133,7 @@ body.tl-max.tl-active { padding: 2px; }
 }
 .tl-spacer { width: 1px; }
 .tl-canvas { position: sticky; top: 0; left: 0; display: block; width: 100%; cursor: default; }
+.tl-canvas:focus-visible { outline: 2px solid var(--link-color); outline-offset: -2px; }
 .tl-canvas.grab { cursor: grabbing; }
 .tl-canvas.ptr { cursor: pointer; }
 

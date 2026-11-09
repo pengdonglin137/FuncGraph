@@ -174,6 +174,147 @@ class BrowserSmokeTest(unittest.TestCase):
         self.page.click('.view-tab[data-view=compare]')
         self.page.wait_for_selector('.cmp-table')
 
+    def test_timeline_search_previous_starts_at_last_and_wraps(self):
+        self.open_timeline()
+        total = self.ev("fgView('timeline').probe().N")
+        self.page.fill('.tl-search', '.*')
+        self.page.press('.tl-search', 'Shift+Enter')
+        self.assertEqual(self.ev("fgView('timeline').probe().sel()"), total - 1)
+        self.assertEqual(self.page.locator('.tl-count').inner_text(), f'{total} / {total} calls')
+        self.page.press('.tl-search', 'Enter')
+        self.assertEqual(self.ev("fgView('timeline').probe().sel()"), 0)
+        self.assertEqual(self.page.locator('.tl-count').inner_text(), f'1 / {total} calls')
+
+    def test_timeline_search_invalid_and_empty_results_do_not_reuse_old_hits(self):
+        self.open_timeline()
+        self.page.fill('.tl-search', '.*')
+        self.page.press('.tl-search', 'Enter')
+        selected = self.ev("fgView('timeline').probe().sel()")
+        self.page.fill('.tl-search', '[')
+        self.page.press('.tl-search', 'Enter')
+        self.assertEqual(self.ev("fgView('timeline').probe().sel()"), selected)
+        self.assertEqual(self.page.locator('.tl-search').get_attribute('aria-invalid'), 'true')
+        self.assertEqual(self.page.locator('.tl-count').inner_text(), 'Invalid regex')
+        self.assertTrue(self.page.locator('[data-act=searchnext]').is_disabled())
+        self.page.fill('.tl-search', '^not_a_captured_function$')
+        self.page.press('.tl-search', 'Enter')
+        self.assertEqual(self.ev("fgView('timeline').probe().sel()"), selected)
+        self.assertEqual(self.page.locator('.tl-count').inner_text(), '0 calls')
+        self.assertEqual(self.page.locator('.tl-search').get_attribute('aria-invalid'), 'false')
+        self.assertTrue(self.page.locator('[data-act=searchprev]').is_disabled())
+        self.page.press('.tl-search', 'Escape')
+        self.assertEqual(self.page.locator('.tl-search').input_value(), '')
+        self.assertEqual(self.page.locator('.tl-count').inner_text(), '')
+
+    def test_timeline_search_tests_function_names_once_and_cancels_pending_work(self):
+        self.open_timeline()
+        names = self.ev("""() => {
+            const probe = fgView('timeline').probe();
+            window.testedSearchNames = [];
+            const originalTest = RegExp.prototype.test;
+            RegExp.prototype.test = function(text) {
+                if (this.source === '^__arm64_sys_openat$') window.testedSearchNames.push(text);
+                return originalTest.call(this, text);
+            };
+            return [...new Set([...probe.sName.slice(0, probe.N)].map(index => probe.S[index]))];
+        }""")
+        self.page.fill('.tl-search', '^__arm64_sys_openat$')
+        self.page.press('.tl-search', 'Enter')
+        self.assertEqual(sorted(self.ev('window.testedSearchNames')), sorted(names))
+        self.page.wait_for_timeout(300)
+        self.page.press('.tl-search', 'Enter')
+        self.assertEqual(len(self.ev('window.testedSearchNames')), len(names))
+        self.ev("fgNotifyFilter('', null)")
+        self.assertEqual(len(self.ev('window.testedSearchNames')), len(names))
+
+    def test_timeline_search_tracks_shared_filter_and_refreshes_count(self):
+        self.open_timeline()
+        total = self.ev("fgView('timeline').probe().N")
+        self.page.fill('.tl-search', '.*')
+        self.page.press('.tl-search', 'Enter')
+        self.ev("""() => {
+            const data = JSON.parse(document.getElementById('tlData').textContent);
+            fgNotifyFilter('one call', new Set([data.cols.line[data.n - 1]]));
+        }""")
+        self.assertEqual(self.page.locator('.tl-count').inner_text(), '1 calls')
+        self.page.press('.tl-search', 'Enter')
+        self.assertEqual(self.ev("fgView('timeline').probe().sel()"), total - 1)
+        self.assertEqual(self.page.locator('.tl-count').inner_text(), '1 / 1 calls')
+        self.ev("fgNotifyFilter('', null)")
+        self.assertEqual(self.page.locator('.tl-count').inner_text(), f'{total} / {total} calls')
+        self.ev("fgNotifyFilter('no calls', new Set())")
+        self.assertEqual(self.page.locator('.tl-count').inner_text(), '0 calls')
+        self.assertTrue(self.page.locator('[data-act=searchnext]').is_disabled())
+
+    def test_timeline_search_buttons_and_selection_counter(self):
+        self.open_timeline()
+        self.assertEqual(self.page.locator('[data-act=searchnext]').count(), 1)
+        self.assertTrue(self.page.locator('[data-act=searchnext]').is_disabled())
+        matches = self.ev("""() => {
+            const probe = fgView('timeline').probe();
+            return Array.from({length: probe.N}, (unused, index) => index)
+                .filter(index => /^(mutex_unlock|__arm64_sys_openat)$/.test(probe.nameOf(index)));
+        }""")
+        self.assertGreaterEqual(len(matches), 2)
+        self.page.fill('.tl-search', '^(mutex_unlock|__arm64_sys_openat)$')
+        self.page.press('.tl-search', 'Enter')
+        self.assertEqual(self.ev("fgView('timeline').probe().sel()"), matches[0])
+        self.page.click('[data-act=searchnext]')
+        self.assertEqual(self.ev("fgView('timeline').probe().sel()"), matches[1])
+        self.page.press('[data-act=searchprev]', 'Enter')
+        self.assertEqual(self.ev("fgView('timeline').probe().sel()"), matches[0])
+        self.assertEqual(self.ev('fgCurrentView()'), 'timeline')
+        self.ev("index => fgView('timeline').probe().select(index)", matches[-1])
+        self.assertEqual(self.page.locator('.tl-count').inner_text(), f'{len(matches)} / {len(matches)} calls')
+        self.page.press('[data-act=searchnext]', 'Space')
+        self.assertEqual(self.ev("fgView('timeline').probe().sel()"), matches[0])
+        self.ev("fgView('timeline').probe().select(1)")
+        self.assertEqual(self.page.locator('.tl-count').inner_text(), f'{len(matches)} calls')
+        self.page.click('[data-act=searchnext]')
+        self.assertEqual(self.ev("fgView('timeline').probe().sel()"), matches[1])
+
+    def test_timeline_search_shortcuts_flush_pending_query_and_keep_input_focus(self):
+        self.open_timeline()
+        self.page.keyboard.press('/')
+        self.assertTrue(self.ev("document.activeElement.matches('.tl-search')"))
+        pending = self.ev("""() => {
+            const input = document.querySelector('.tl-search');
+            input.value = '  ^MUTEX_UNLOCK$  ';
+            input.dispatchEvent(new Event('input', {bubbles: true}));
+            input.blur();
+            return document.querySelector('.tl-count').textContent;
+        }""")
+        self.assertEqual(pending, 'Searching…')
+        self.page.keyboard.press('n')
+        self.assertEqual(self.ev("fgView('timeline').probe().sel()"), 0)
+        self.assertTrue(self.ev("document.activeElement.matches('.tl-canvas')"))
+        self.assertEqual(self.page.locator('.tl-count').inner_text(), '1 / 1 calls')
+        self.page.keyboard.press('/')
+        self.page.press('.tl-search', 'Escape')
+        self.page.wait_for_timeout(300)
+        self.assertEqual(self.page.locator('.tl-count').inner_text(), '')
+        self.assertTrue(self.page.locator('[data-act=searchnext]').is_disabled())
+
+    def test_timeline_control_enter_keeps_native_button_activation(self):
+        self.open_timeline()
+        self.ev("fgView('timeline').probe().select(0)")
+        self.page.press('[data-act=help]', 'Enter')
+        self.assertEqual(self.ev('fgCurrentView()'), 'timeline')
+        self.assertTrue(self.page.locator('.tl-help').is_visible())
+
+    def test_timeline_search_status_wrap_keeps_canvas_dimensions_in_sync(self):
+        self.page.set_viewport_size({'width': 1400, 'height': 900})
+        self.open_timeline()
+        for query in ['.*', '^not_a_captured_function$', '']:
+            with self.subTest(query=query):
+                self.page.fill('.tl-search', query)
+                self.page.wait_for_timeout(250)
+                canvas, client = self.ev("""() => [
+                    document.querySelector('.tl-canvas').getBoundingClientRect().height,
+                    document.querySelector('.tl-scroll').clientHeight]
+                """)
+                self.assertAlmostEqual(canvas, client, delta=1)
+
     def test_compare_changed_only_covers_every_metric(self):
         baseline = [2, 100, 50, 70, 0]
         rows = [['unchanged'] + baseline + baseline]
@@ -356,6 +497,7 @@ class BrowserSmokeTest(unittest.TestCase):
         self.page.wait_for_timeout(300)
         self.assertTrue(self.ev("document.querySelector('.tl-detail').classList.contains('show')"))
         self.assertIn('error', self.ev("document.querySelector('.tl-detail-head').textContent"))
+        self.assertTrue(self.ev("document.activeElement.matches('.tl-canvas')"))
         self.page.keyboard.press('Enter')
         self.page.wait_for_timeout(300)
         self.assertFalse(self.ev("document.body.dataset.view === 'timeline'"))
