@@ -84,7 +84,8 @@ The package installs `funcgraph`, `fgreport`, `fastfaddr2line`, and `fgcapture.s
 the base install works without Python dependencies, while `[all]` adds pyelftools
 and Pygments. Pushing a matching `vX.Y.Z` tag automatically tests, builds, and
 publishes the wheel and source package as a GitHub Release (not PyPI).
-See [Building and releasing](docs/releasing.md) for details.
+See [Building and releasing](docs/releasing.md) for the release checklist,
+verification commands, and troubleshooting.
 
 ### Quick start: `fgreport`
 

@@ -86,7 +86,7 @@ fgreport -P trace.txt
 基础包不依赖第三方 Python 库，`[all]` 额外安装 pyelftools 和 Pygments。
 推送与代码版本一致的 `vX.Y.Z` 标签，会自动测试、构建 wheel 和源码包，
 并发布到 GitHub Release（不发布到 PyPI）。构建及发布步骤见
-[发布说明](docs/releasing.md)。
+[中文发布操作清单](docs/releasing.cn.md)（含版本标签、自动打包、发布验证和故障处理）。
 
 ### 快速上手：`fgreport`
 

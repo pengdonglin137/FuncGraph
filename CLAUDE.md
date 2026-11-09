@@ -46,10 +46,17 @@ tests/run.sh --golden                # afterwards: byte-for-byte comparison on r
 - Optional env: `FG_VMLINUX`/`FG_KERNEL_SRC` (real BTF + agreement with the kernel's faddr2line), `FG_TRACES` (extra traces for timeline invariants). Browser tests need Playwright + Chromium and are skipped otherwise; JS syntax tests need `node`.
 - `golden.py` configs use `/vol_1t/Qemu/x86_64/linux-6.18` and `/vol_1t/raspi/linux` (override with `FG_X86_KERNEL`/`FG_PI4_KERNEL`); `FG_ROOT` runs another checkout (e.g. a `git worktree` of the old version) to record the baseline.
 - Refactors must keep golden output identical; intended output changes must be explained in the commit. `FG_GOLDEN_KEEP=1` keeps the current outputs in `$FG_GOLDEN_DIR/current` for field-level comparison.
-- CI (`.github/workflows/ci.yml`) runs `tests/run.sh` on Python 3.8 and 3.12 (browser tests on 3.12 only) and then publishes `site/index.html` + `sample.html` to GitHub Pages. Kernel-tree tests (golden, `FG_VMLINUX`) only run locally.
+- CI (`.github/workflows/ci.yml`) reuses `test-and-package.yml` to test and package on Python 3.8 and 3.12 (browser tests on 3.12 only), including fresh-environment wheel/sdist installation checks. Successful `master` pushes also publish `site/index.html` + `sample.html` to GitHub Pages. Kernel-tree tests (golden, `FG_VMLINUX`) only run locally.
 - Browser tests and debugging: `fgView('timeline').probe()` exposes the model read-only (`N`, `NA`, `SYN`, `sStart`, `nameOf`, `isGhost`, `select`, `zoomTo`, ...). Headless Chromium hides scrollbars by default; layout tests need `ignore_default_args=['--hide-scrollbars']`.
 - Guide screenshots (`docs/img/*.png`) come from `python3 docs/img/make_shots.py [names]` (uses sample.html and repo fixtures); rerun after UI changes.
 - After output-affecting changes regenerate `sample.html` from `samples/sample_io.txt` (command in README "Sample") and retake `sample.png` / `samples/sample_text.png`.
+
+## Releasing
+
+- Follow **docs/releasing.cn.md** (Chinese) or **docs/releasing.md** (English) for the release checklist, verification, troubleshooting, and the verified v0.9.1 record.
+- `fglib/constants.py:APP_VERSION` is the single version source. A pushed tag must exactly equal `v` + `APP_VERSION`; `release.yml` publishes wheel, sdist, and `SHA256SUMS` to GitHub Releases, not PyPI.
+- A branch push is not a release request: do not create a version tag unless a release is requested. Only `master` pushes trigger branch CI; feature branches need a PR or manual CI run.
+- Check the actual CI/release runs and downloaded attachments before declaring success. No triggered run is not a passing run. Never move a published version tag; reruns use the original tagged commit, so source fixes need a new version/tag.
 
 ## Dependencies
 
