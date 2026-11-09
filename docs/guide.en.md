@@ -737,15 +737,21 @@ Every region in task context with **irqs off**, **preemption off** or **BH off**
 
 | Column | Meaning |
 |---|---|
-| duration | length; red above 100 us |
+| duration | length; red above 100 us in timestamped modes |
 | start / task | start time and task |
 | started in / ended in | the traced function on top of the stack when the flag changed. `top level`: outside any function; `switched out / end`: the task was switched out or the capture ended; `interrupt`: an interrupt came in (so irqs had been re-enabled in untraced code) |
 | max depth | maximum preempt depth (preempt off only) |
-| top self time inside | the 3 functions with the most self time inside: what ran while the section was held |
+| top self (est.) | the 3 highest self-time estimates from matching calls inside the region; sorting compares the first function's estimate |
 
 The preempt depth is relative to a baseline: the lowest preempt depth seen in task context (1 on both 6.18 and 7.2), shown in the panel text.
 
 Precision: enabling/disabling irqs or preemption is usually inlined code that does not appear in the trace, so a region's ends are only known up to the two traced calls around the flag change. Clicking a row selects the region in the timeline.
+
+**Filtering and duration basis:** the shared filter retains only sections overlapping matching real calls, not every section on a track with any match. Kind-button counts and the current kind's total / max use these complete retained sections. Without a filter, recorded sections remain even when no traced call covers them. Start/end coordinates and their function names stay as recorded, without clipping them to the filter. Self time sums only matching calls, apportioned by their overlap fraction; it is not exact on-CPU time or causal attribution. Overhead updates self estimates, **never section positions or lengths**.
+
+**Sorting, pagination and export:** duration, self estimate and (for preempt off) max depth sort descending; start / task sort ascending. Header buttons support Enter / Space. Initially 200 rows load; **Load more** appends another 200. Sorting resets to the first page and reuses cached estimates. **Export CSV** exports **every section** in the current kind, filter and sort order, including unloaded rows. Fields include the original `section_index`, task, start/end coordinates, window duration, start/end functions and source trace lines, top-three self estimates, `time_mode`, `self_duration_basis`, `window_duration_basis` and `filter`. Missing contributors are left blank.
+
+Time columns use `_ns`, or `_units` in count mode (call-order units, not nanoseconds). `window_duration_basis` distinguishes `timestamp_span`, `packed_estimate` and `call_order`; `self_duration_basis` distinguishes `measured`, `overhead_subtracted_estimate` and `call_order`. Without timestamps, packed / count coordinates are not real scheduling latency or wall-clock section lengths. Compact windows wrap the header, keep export/close reachable and scroll the header with the detail content so it cannot cover the table.
 
 ### 7.4 Error summary (Errors)
 
@@ -807,13 +813,15 @@ The waker is taken from `sched_waking` when available: it fires in the waker's c
 
 ![an_lat](img/an_lat.png)
 
-*Sched latency panel (tests/data/pi4_sched.txt): each need-resched window with its length, the deepest preempt off inside, irqs-off time and the function with most self time.*
+*Sched latency panel (tests/data/pi4_sched.txt): each need-resched window with its length, deepest preempt off, and self-time estimates for irqs-off calls and the leading functions.*
 
 Each **need-resched window**, from setting the need-resched flag until the task is switched out or the flag is cleared:
 
-- Tags: number of windows, total, longest. Below them, the functions with the most self time over all windows: who delays the reschedule.
-- Columns: latency (red above 100 us), start, task, max preempt (maximum preempt depth in the window), irqs-off (time with irqs disabled in the window), top self time inside, ended by (flag cleared / switched out / trace end).
+- Tags: number of windows, total, longest. Below them, the top 8 functions by estimated self time across **all matching functions in every retained window**, not just each window's top three. These are investigation leads, not proof that a function caused the delay.
+- Columns: latency (red above 100 us in timestamped modes), start, task, max preempt off (maximum preempt depth above the trace baseline), irqs-off self (est.) (proportional self estimate for matching calls whose entry has irqs disabled, **not an exact irqs-off interval length**), top self (est.) (the three leading functions and estimates), ended by (flag cleared / switched out / trace end). Every header sorts: start / task / ended by ascend, the others descend; ties keep original window-index order.
 - Clicking a row selects the window in the timeline.
+- Initially 300 rows load; **Load more** appends 300. **Export CSV** exports all windows in the current filter and sort order, including unloaded rows. Fields include `window_index`, original coordinates and window duration, maximum preempt depth, whether irqs-off was observed, `irqoff_self_estimate_ns`, end reason, top-three self estimates and the same mode, estimation-basis and filter metadata as Sections. Count-mode duration fields use `_units` instead.
+- As in Sections, filtering tests real-call overlap per window; count / total / max use retained windows' original lengths, while self estimates include matching calls only. Overhead changes only self estimates. A per-track, per-depth overlap index avoids full-track scans for every window; sorting and pagination reuse the prepared statistics.
 
 Needs `latency-format` and timestamps.
 

@@ -299,55 +299,214 @@ elDetail.addEventListener('click', event => {
 }, true);
 
 // ---- 3. scheduling latency: need-resched windows and who delayed them ----
+const WINDOW_INDEX = new Map();
+const WINDOW_ENDS = ['flag cleared', 'switched out', 'trace end'];
+let latencyCache = null, sectionCache = null;
+function windowRows(track) {
+    let indexed = WINDOW_INDEX.get(track);
+    if (indexed) return indexed;
+    indexed = [];
+    for (const row of TRACKS[track].rowsT) {
+        const ids = row.filter(index => index < N);
+        if (!ids.length) continue;
+        const ends = new Float64Array(ids.length);
+        let maximum = -Infinity;
+        for (let position = 0; position < ids.length; position++) {
+            maximum = Math.max(maximum, sEnd[ids[position]]);
+            ends[position] = maximum;
+        }
+        indexed.push({ ids, ends });
+    }
+    WINDOW_INDEX.set(track, indexed);
+    return indexed;
+}
+function visitWindow(track, start, end, visit) {
+    if (end <= start) return;
+    for (const row of windowRows(track)) {
+        let low = 0, high = row.ids.length;
+        while (low < high) {
+            const middle = (low + high) >>> 1;
+            if (row.ends[middle] < start) low = middle + 1;
+            else high = middle;
+        }
+        for (let position = low; position < row.ids.length; position++) {
+            const index = row.ids[position], begin = sStart[index], finish = sEnd[index];
+            if (begin >= end) break;
+            if (finish <= start && !(begin === finish && begin >= start)) continue;
+            if (visit(index) === false) return;
+        }
+    }
+}
+function windowMatches(track, start, end) {
+    if (!textHits) return true;
+    let matched = false;
+    visitWindow(track, start, end, index => {
+        if (textHits[index]) { matched = true; return false; }
+    });
+    return matched;
+}
+function windowProfile(record, aggregate) {
+    if (record.profile) return record.profile;
+    const blame = new Map();
+    let matched = false, irq = 0;
+    visitWindow(record.track, record.start, record.end, index => {
+        if (!matchOk(index)) return;
+        matched = true;
+        const geometry = sEnd[index] - sStart[index];
+        const part = geometry > 0 ? sSelf[index] * (Math.min(sEnd[index], record.end) - Math.max(sStart[index], record.start)) / geometry : 0;
+        if (part <= 0) return;
+        blame.set(sName[index], (blame.get(sName[index]) || 0) + part);
+        if (sFlags[index] & FL.IRQOFF) irq += part;
+    });
+    if (aggregate) for (const [name, value] of blame) aggregate.set(name, (aggregate.get(name) || 0) + value);
+    const top = Array.from(blame.entries()).sort((left, right) => right[1] - left[1] || left[0] - right[0]).slice(0, 3);
+    record.profile = { top, irq, matched };
+    return record.profile;
+}
+function windowRecord(raw, index, section) {
+    const offset = section ? 2 : 1, start = raw[offset], end = raw[offset + 1];
+    return { raw, index, track: raw[0], start, end, duration: end - start, depth: raw[section ? 6 : 3], profile: null };
+}
+function latencyWindows() {
+    if (latencyCache && latencyCache.hits === textHits && latencyCache.durations === sDur) return latencyCache;
+    const rows = [], aggregate = new Map();
+    let total = 0, maximum = 0;
+    D.resched.forEach((raw, index) => {
+        const record = windowRecord(raw, index, false);
+        if (record.duration <= 0) return;
+        const profile = windowProfile(record, aggregate);
+        if (textHits && !profile.matched) return;
+        rows.push(record);
+        total += record.duration;
+        maximum = Math.max(maximum, record.duration);
+    });
+    const top = Array.from(aggregate.entries()).sort((left, right) => right[1] - left[1] || left[0] - right[0]).slice(0, 8);
+    latencyCache = { hits: textHits, durations: sDur, groups: [rows], orders: [], total, maximum, top };
+    return latencyCache;
+}
+function sectionWindows() {
+    if (sectionCache && sectionCache.hits === textHits && sectionCache.durations === sDur) return sectionCache;
+    const groups = [[], [], []], totals = [0, 0, 0], maxima = [0, 0, 0];
+    SECTIONS.forEach((raw, index) => {
+        const record = windowRecord(raw, index, true), kind = raw[1];
+        if (record.duration < 0 || !windowMatches(record.track, record.start, record.end)) return;
+        groups[kind].push(record);
+        totals[kind] += record.duration;
+        maxima[kind] = Math.max(maxima[kind], record.duration);
+    });
+    sectionCache = { hits: textHits, durations: sDur, groups, orders: [], totals, maxima };
+    return sectionCache;
+}
+function windowSortAscending(key) { return key === 'start' || key === 'task' || key === 'end'; }
+function windowSortValue(record, key) {
+    if (key === 'dur') return record.duration;
+    if (key === 'start') return record.start;
+    if (key === 'task') return trackLabel(TRACKS[record.track]);
+    if (key === 'pre') return record.depth;
+    if (key === 'end') return record.raw[5];
+    const profile = windowProfile(record);
+    return key === 'irq' ? profile.irq : profile.top.length ? profile.top[0][1] : 0;
+}
+function windowOrder(data, kind, key, page) {
+    let order = data.orders[kind];
+    if (!order) { order = { rows: data.groups[kind].slice(), key: null, visible: 0 }; data.orders[kind] = order; }
+    if (order.key !== key) {
+        const direction = windowSortAscending(key) ? 1 : -1;
+        order.rows.sort((left, right) => {
+            const leftValue = windowSortValue(left, key), rightValue = windowSortValue(right, key);
+            return (leftValue < rightValue ? -direction : leftValue > rightValue ? direction : 0) || left.index - right.index;
+        });
+        order.key = key;
+        order.visible = Math.min(page, order.rows.length);
+    }
+    return order;
+}
+function windowTableHead(columns, key, attr) {
+    return '<tr>' + columns.map(([field, label, left]) => '<th' + (left ? ' style="text-align:left"' : '') +
+        (field ? ' data-' + attr + '="' + field + '" aria-sort="' + (field === key ? (windowSortAscending(key) ? 'ascending' : 'descending') : 'none') +
+            '"><button class="tl-sum-sort">' + label + '</button>' : '>' + label) + '</th>').join('') + '</tr>';
+}
+function windowActions(enabled) {
+    return '<span class="an-window-actions"><button class="tl-btn" data-act="window-csv"' + (enabled ? '' : ' disabled') +
+        '>Export CSV</button><button class="tl-close" title="Close (Esc)">×</button></span></div>';
+}
+function windowFooter(order, section) {
+    return '<div class="an-window-footer"><span role="status">Showing ' + order.visible + ' of ' + order.rows.length +
+        (section ? ' sections' : ' windows') + '</span><button class="tl-btn" data-act="window-more"' +
+        (order.visible >= order.rows.length ? ' disabled' : '') + '>Load more</button></div>';
+}
+function windowTimeHint() {
+    return TIMED ? '' : '<div class="an-hint">No timestamps: ' + (MODE === 'count' ? 'call-order units' : 'packed coordinates') +
+        ' describe trace order, not measured scheduling latency or wall-clock section lengths.</div>';
+}
+function windowTopHtml(profile) {
+    return profile.top.map(([name, value]) => esc(S[name]) + ' <span class="d">' + fmtDur(value) + '</span>').join(', ') || '—';
+}
+function latencyRows(rows) {
+    return rows.map(record => {
+        const profile = windowProfile(record);
+        return '<tr data-win="' + record.start + ',' + record.end + ',' + record.track + '"><td class="' +
+            (TIMED && record.duration > 100000 ? 'err' : '') + '">' + fmtDur(record.duration) + '</td><td>' + fmtDur(record.start) + '</td>' +
+            '<td style="text-align:left">' + esc(trackLabel(TRACKS[record.track])) + '</td><td>' + (record.depth || '') + '</td>' +
+            '<td>' + (profile.irq ? fmtDur(profile.irq) : '') + '</td><td style="text-align:left">' + windowTopHtml(profile) + '</td>' +
+            '<td>' + (WINDOW_ENDS[record.raw[5]] || '') + '</td></tr>';
+    }).join('');
+}
+function appendWindowRows() {
+    const section = AN.kind === 'sec';
+    const data = section ? sectionWindows() : latencyWindows();
+    const order = windowOrder(data, section ? AN.secKind : 0, section ? AN.secSort : AN.latSort, section ? 200 : 300);
+    const start = order.visible;
+    order.visible = Math.min(start + (section ? 200 : 300), order.rows.length);
+    const rows = order.rows.slice(start, order.visible);
+    elDetail.querySelector('.an-window-table tbody').insertAdjacentHTML('beforeend', section ? sectionRows(rows) : latencyRows(rows));
+    elDetail.querySelector('.an-window-footer [role=status]').textContent = 'Showing ' + order.visible + ' of ' + order.rows.length + (section ? ' sections' : ' windows');
+    elDetail.querySelector('[data-act=window-more]').disabled = order.visible >= order.rows.length;
+}
+function exportWindowCsv() {
+    const section = AN.kind === 'sec';
+    const data = section ? sectionWindows() : latencyWindows();
+    const order = windowOrder(data, section ? AN.secKind : 0, section ? AN.secSort : AN.latSort, section ? 200 : 300);
+    if (!order.rows.length) return;
+    const unit = MODE === 'count' ? 'units' : 'ns', scale = MODE === 'count' ? 1000 : 1;
+    const basis = MODE === 'count' ? 'call_order' : adjOn ? 'overhead_subtracted_estimate' : 'measured';
+    const columns = [section ? 'section_index' : 'window_index', 'task', 'pid', 'start_' + unit, 'end_' + unit, 'window_duration_' + unit, 'max_preempt_depth'];
+    columns.push(...(section ? ['kind', 'started_in', 'ended_in', 'start_line', 'end_line'] : ['irqoff_seen', 'irqoff_self_estimate_' + unit, 'ended_by']));
+    for (let rank = 1; rank <= 3; rank++) columns.push('top_' + rank + '_function', 'top_' + rank + '_self_estimate_' + unit);
+    columns.push('time_mode', 'self_duration_basis', 'window_duration_basis', 'filter');
+    function* rows() {
+        for (const record of order.rows) {
+            const raw = record.raw, task = TRACKS[record.track], profile = windowProfile(record);
+            const values = [record.index, trackLabel(task), task.pid, record.start / scale, record.end / scale, record.duration / scale, record.depth];
+            values.push(...(section ? [SEC_NAMES[raw[1]], raw[4] >= 0 ? nameOf(raw[4]) : 'top level',
+                raw[5] >= 0 ? nameOf(raw[5]) : raw[8] < 0 ? 'switched out / end' : 'interrupt', raw[7], raw[8]] :
+                [raw[4], profile.irq / scale, WINDOW_ENDS[raw[5]] || '']));
+            for (let rank = 0; rank < 3; rank++) values.push(...(profile.top[rank] ? [S[profile.top[rank][0]], profile.top[rank][1] / scale] : ['', '']));
+            values.push(MODE, basis, TIMED ? 'timestamp_span' : MODE === 'count' ? 'call_order' : 'packed_estimate', (window.fgFilterState || {}).text || '');
+            yield values;
+        }
+    }
+    downloadTimelineCsv('funcgraph-' + (section ? 'sections' : 'latency') + '-' + (MODE === 'count' ? 'count' : adjOn ? 'adjusted' : 'raw') + '.csv', columns, rows());
+}
 function showLatency() {
     AN.kind = 'lat';
-    const wins = [];
-    for (const r of D.resched) {   // [task, start, end, maxPreempt, irqoff, closedBy]
-        const t = TRACKS[r[0]];
-        if (textHits && !t.hits) continue;
-        const dur = r[2] - r[1];
-        if (dur <= 0) continue;
-        // the deepest-in-time culprit: largest self time inside the window on this task
-        const blame = new Map();
-        let irqT = 0;
-        for (let i = t.lo; i >= 0 && i < t.hi; i++) {
-            if (sEnd[i] <= r[1] || sStart[i] >= r[2]) continue;
-            const g = sEnd[i] - sStart[i];
-            const part = g > 0 ? sSelf[i] * (Math.min(sEnd[i], r[2]) - Math.max(sStart[i], r[1])) / g : 0;
-            blame.set(sName[i], (blame.get(sName[i]) || 0) + part);
-            if (sFlags[i] & FL.IRQOFF) irqT += part;
-        }
-        const top = Array.from(blame.entries()).sort((a, b) => b[1] - a[1]).slice(0, 3);
-        wins.push({ r, dur, top, irqT });
-    }
-    const agg = new Map();
-    for (const w of wins) for (const [nm, v] of w.top) agg.set(nm, (agg.get(nm) || 0) + v);
-    const k = AN.latSort;
-    wins.sort((a, b) => k === 'start' ? a.r[1] - b.r[1] : k === 'pre' ? b.r[3] - a.r[3] : b.dur - a.dur);
-    const totalLat = wins.reduce((s, w) => s + w.dur, 0);
-    let h = '<div class="tl-detail-head"><span class="tl-detail-title">Scheduling latency</span>' +
-        pill('warn', wins.length + ' need-resched windows') + pill('mute', 'total ' + fmtDur(totalLat)) +
-        (wins.length ? pill('mute', 'max ' + fmtDur(Math.max(...wins.map(w => w.dur)))) : '') +
-        '<span class="sp"></span><button class="tl-close" title="Close (Esc)">×</button></div>';
-    if (!wins.length) {
-        h += '<div style="padding:12px">' + (D.caps.latency ? 'No pending need-resched windows in this trace.' :
-            'Needs <code>options/latency-format</code> (need-resched flag) and timestamps.') + '</div>';
+    const data = latencyWindows(), order = windowOrder(data, 0, AN.latSort, 300);
+    let h = '<div class="tl-detail-head an-window-head"><span class="tl-detail-title">Scheduling latency</span>' +
+        pill('warn', order.rows.length + ' need-resched windows') + pill('mute', 'total ' + fmtDur(data.total)) +
+        (order.rows.length ? pill('mute', 'max ' + fmtDur(data.maximum)) : '') + (textHits ? pill('warn', 'filtered') : '') +
+        (adjOn ? pill('warn', 'self: overhead subtracted') : '') + windowActions(order.rows.length);
+    if (!order.rows.length) {
+        h += '<div class="an-hint">' + (!D.caps.latency ? 'Needs <code>options/latency-format</code> (need-resched flag) and timestamps.' :
+            textHits ? 'No need-resched windows overlap calls matching the current filter.' : 'No pending need-resched windows in this trace.') + '</div>';
         openDetail(h); return;
     }
-    const topAgg = Array.from(agg.entries()).sort((a, b) => b[1] - a[1]).slice(0, 8);
-    h += '<div class="an-hint" style="padding:6px 12px 0">Window = need-resched set until the task schedules (or is switched out). ' +
-        'Blame = self time spent inside the window; irqs-off/preempt-disabled code delays the reschedule.</div>' +
-        '<div class="an-blame">' + topAgg.map(([nm, v]) => `<span class="an-chip"><span class="k">${esc(S[nm])}</span>${fmtDur(v)}</span>`).join('') + '</div>';
-    h += '<table class="tl-sum an-tbl"><thead>' + tblHead([['dur', 'latency'], ['start', 'start'], ['task', 'task', 1],
-        ['pre', 'max preempt off'], ['irq', 'irqs-off'], ['top', 'top self time inside', 1], ['end', 'ended by']], k, 'lsort') + '</thead><tbody>';
-    for (const w of wins.slice(0, 300)) {
-        const r = w.r;
-        h += `<tr data-win="${r[1]},${r[2]},${r[0]}"><td class="${w.dur > 100000 ? 'err' : ''}">${fmtDur(w.dur)}</td><td>${fmtDur(r[1])}</td>` +
-            `<td style="text-align:left">${esc(trackLabel(TRACKS[r[0]]))}</td><td>${r[3] || ''}</td><td>${w.irqT ? fmtDur(w.irqT) : ''}</td>` +
-            `<td style="text-align:left">${w.top.map(([nm, v]) => esc(S[nm]) + ' <span class="d">' + fmtDur(v) + '</span>').join(', ')}</td>` +
-            `<td>${['flag cleared', 'switched out', 'trace end'][r[5]] || ''}</td></tr>`;
-    }
-    h += '</tbody></table>';
+    h += windowTimeHint() + '<div class="an-hint" style="padding:6px 12px 0">Window = need-resched set until the task schedules (or is switched out). ' +
+        'Self times are proportional overlap estimates from matching calls, not exact on-CPU or causal attribution. ' +
+        'Overhead changes self estimates, not window positions or lengths. Overview sums every matching function across windows.</div>' +
+        '<div class="an-blame">' + data.top.map(([name, value]) => '<span class="an-chip"><span class="k">' + esc(S[name]) + '</span>' + fmtDur(value) + '</span>').join('') + '</div>';
+    h += '<table class="tl-sum an-tbl an-window-table"><thead>' + windowTableHead([['dur', 'latency'], ['start', 'start'], ['task', 'task', 1],
+        ['pre', 'max preempt off'], ['irq', 'irqs-off self (est.)'], ['top', 'top self (est.)', 1], ['end', 'ended by']], AN.latSort, 'lsort') +
+        '</thead><tbody>' + latencyRows(order.rows.slice(0, order.visible)) + '</tbody></table>' + windowFooter(order, false);
     openDetail(h);
 }
 
@@ -357,9 +516,18 @@ elDetail.addEventListener('change', ev => {
     }
 });
 elDetail.addEventListener('click', ev => {
+    const action = ev.target.closest('[data-act]');
+    if (action && (AN.kind === 'lat' || AN.kind === 'sec')) {
+        if (action.dataset.act === 'window-more') { appendWindowRows(); ev.stopImmediatePropagation(); return; }
+        if (action.dataset.act === 'window-csv') { exportWindowCsv(); ev.stopImmediatePropagation(); return; }
+    }
     const th = ev.target.closest('th[data-esort], th[data-lsort]');
     if (th) {
-        if (th.dataset.esort) { AN.errSort = th.dataset.esort; showErrors(); } else { AN.latSort = th.dataset.lsort; showLatency(); }
+        if (th.dataset.esort) { AN.errSort = th.dataset.esort; showErrors(); }
+        else {
+            AN.latSort = th.dataset.lsort; showLatency();
+            elDetail.querySelector('th[data-lsort="' + AN.latSort + '"] button').focus({ preventScroll: true });
+        }
         ev.stopImmediatePropagation(); return;
     }
     const ec = ev.target.closest('tr[data-chains]');
@@ -573,44 +741,54 @@ function slowFast(ids) {
 
 // ---- critical sections: irqs-off / preempt-off / BH-off ----
 AN.secKind = 0;
+AN.secSort = 'dur';
+function sectionRows(rows) {
+    return rows.map(record => {
+        const raw = record.raw;
+        return '<tr data-sec="' + record.index + '"><td class="' + (TIMED && record.duration > 100000 ? 'err' : '') + '">' + fmtDur(record.duration) + '</td><td>' + fmtDur(record.start) + '</td>' +
+            '<td style="text-align:left">' + esc(trackLabel(TRACKS[record.track])) + '</td><td style="text-align:left">' +
+            (raw[4] >= 0 ? esc(nameOf(raw[4])) : '<span class="d">top level</span>') + '</td><td style="text-align:left">' +
+            (raw[5] >= 0 ? esc(nameOf(raw[5])) : '<span class="d">' + (raw[8] < 0 ? 'switched out / end' : 'interrupt') + '</span>') + '</td>' +
+            (AN.secKind === 1 ? '<td>' + record.depth + '</td>' : '') +
+            '<td style="text-align:left">' + windowTopHtml(windowProfile(record)) + '</td></tr>';
+    }).join('');
+}
 function showSections() {
     AN.kind = 'sec';
-    const counts = [0, 0, 0], tot = [0, 0, 0], mx = [0, 0, 0];
-    for (const r of SECTIONS) { const d = r[3] - r[2]; counts[r[1]]++; tot[r[1]] += d; if (d > mx[r[1]]) mx[r[1]] = d; }
-    let h = '<div class="tl-detail-head"><span class="tl-detail-title">Critical sections</span><span class="tl-seg an-seckind">';
-    for (let k = 0; k < 3; k++) h += `<button data-sk="${k}" class="${k === AN.secKind ? 'on' : ''}">${SEC_NAMES[k]} (${counts[k]})</button>`;
-    h += '</span>' + pill('mute', 'total ' + fmtDur(tot[AN.secKind])) + pill('warn', 'max ' + fmtDur(mx[AN.secKind])) +
-        (textHits ? pill('warn', 'filtered') : '') + '<span class="sp"></span><button class="tl-close" title="Close (Esc)">×</button></div>';
+    const data = sectionWindows(), order = windowOrder(data, AN.secKind, AN.secSort, 200);
+    let h = '<div class="tl-detail-head an-window-head"><span class="tl-detail-title">Critical sections</span><span class="tl-seg an-seckind">';
+    for (let kind = 0; kind < 3; kind++) h += '<button data-sk="' + kind + '" class="' + (kind === AN.secKind ? 'on' : '') + '">' + SEC_NAMES[kind] + ' (' + data.groups[kind].length + ')</button>';
+    h += '</span>' + pill('mute', 'total ' + fmtDur(data.totals[AN.secKind])) + pill('warn', 'max ' + fmtDur(data.maxima[AN.secKind])) +
+        (textHits ? pill('warn', 'filtered') : '') + (adjOn ? pill('warn', 'self: overhead subtracted') : '') + windowActions(order.rows.length);
     if (!D.caps.latency) {
-        openDetail(h + '<div style="padding:12px">Needs <code>options/latency-format</code> (irqs-off / preempt-depth / BH flags).</div>'); return;
+        openDetail(h + '<div class="an-hint">Needs <code>options/latency-format</code> (irqs-off / preempt-depth / BH flags).</div>'); return;
     }
-    const list = SECTIONS.map((r, k) => k).filter(k => SECTIONS[k][1] === AN.secKind && (!textHits || TRACKS[SECTIONS[k][0]].hits))
-        .sort((a, b) => (SECTIONS[b][3] - SECTIONS[b][2]) - (SECTIONS[a][3] - SECTIONS[a][2]));
-    h += '<div class="an-hint" style="padding:6px 12px 0">Regions where a task ran with ' + SEC_NAMES[AN.secKind] + ' (task context; preempt depth above the trace baseline ' + (D.preempt_base || 0) + '). ' +
-        'The flag changes inside untraced code, so start/end are the traced frames around the change.</div>';
-    h += '<table class="tl-sum an-tbl"><thead><tr><th>duration</th><th>start</th><th style="text-align:left">task</th><th style="text-align:left">started in</th><th style="text-align:left">ended in</th>' +
-        (AN.secKind === 1 ? '<th>max depth</th>' : '') + '<th style="text-align:left">top self time inside</th></tr></thead><tbody>';
-    for (const k of list.slice(0, 200)) {
-        const r = SECTIONS[k], t = TRACKS[r[0]];
-        const blame = new Map();
-        for (let i = t.lo; i >= 0 && i < t.hi; i++) {
-            if (sEnd[i] <= r[2] || sStart[i] >= r[3]) continue;
-            const g = sEnd[i] - sStart[i];
-            if (g > 0) blame.set(sName[i], (blame.get(sName[i]) || 0) + sSelfRaw[i] * (Math.min(sEnd[i], r[3]) - Math.max(sStart[i], r[2])) / g);
-        }
-        const top = Array.from(blame.entries()).sort((a, b) => b[1] - a[1]).slice(0, 3);
-        h += `<tr data-sec="${k}"><td class="${r[3] - r[2] > 100000 ? 'err' : ''}">${fmtDur(r[3] - r[2])}</td><td>${fmtDur(r[2])}</td>` +
-            `<td style="text-align:left">${esc(trackLabel(t))}</td><td style="text-align:left">${r[4] >= 0 ? esc(nameOf(r[4])) : '<span class="d">top level</span>'}</td>` +
-            `<td style="text-align:left">${r[5] >= 0 ? esc(nameOf(r[5])) : '<span class="d">' + (r[8] < 0 ? 'switched out / end' : 'interrupt') + '</span>'}</td>` +
-            (AN.secKind === 1 ? `<td>${r[6]}</td>` : '') +
-            `<td style="text-align:left">${top.map(([nm, v]) => esc(S[nm]) + ' <span class="d">' + fmtDur(v) + '</span>').join(', ')}</td></tr>`;
+    h += windowTimeHint() + '<div class="an-hint" style="padding:6px 12px 0">Regions where a task ran with ' + SEC_NAMES[AN.secKind] + ' (task context; preempt depth above the trace baseline ' + (D.preempt_base || 0) + '). ' +
+        'The flag changes inside untraced code, so start/end are the traced frames around the change. ' +
+        'Self times are proportional overlap estimates from matching calls, not exact on-CPU or causal attribution. Overhead changes self estimates, not section positions or lengths.</div>';
+    if (!order.rows.length) {
+        openDetail(h + '<div class="an-hint">' + (textHits ? 'No sections overlap calls matching the current filter.' : 'No sections of this kind in this trace.') + '</div>'); return;
     }
-    if (list.length > 200) h += `<tr><td colspan="7">… ${list.length - 200} more</td></tr>`;
-    openDetail(h + '</tbody></table>');
+    const columns = [['dur', 'duration'], ['start', 'start'], ['task', 'task', 1], [null, 'started in', 1], [null, 'ended in', 1]];
+    if (AN.secKind === 1) columns.push(['pre', 'max depth']);
+    columns.push(['top', 'top self (est.)', 1]);
+    h += '<table class="tl-sum an-tbl an-window-table"><thead>' + windowTableHead(columns, AN.secSort, 'ssort') +
+        '</thead><tbody>' + sectionRows(order.rows.slice(0, order.visible)) + '</tbody></table>' + windowFooter(order, true);
+    openDetail(h);
 }
 elDetail.addEventListener('click', ev => {
     const sk = ev.target.closest('[data-sk]');
-    if (sk) { AN.secKind = +sk.dataset.sk; showSections(); ev.stopImmediatePropagation(); return; }
+    if (sk) {
+        AN.secKind = +sk.dataset.sk; showSections();
+        elDetail.querySelector('[data-sk="' + AN.secKind + '"]').focus({ preventScroll: true });
+        ev.stopImmediatePropagation(); return;
+    }
+    const sort = ev.target.closest('th[data-ssort]');
+    if (sort) {
+        AN.secSort = sort.dataset.ssort; showSections();
+        elDetail.querySelector('th[data-ssort="' + AN.secSort + '"] button').focus({ preventScroll: true });
+        ev.stopImmediatePropagation(); return;
+    }
     const sr = ev.target.closest('tr[data-sec]');
     if (sr) {
         const r = SECTIONS[+sr.dataset.sec], t = TRACKS[r[0]];

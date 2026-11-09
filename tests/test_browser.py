@@ -174,7 +174,7 @@ class BrowserSmokeTest(unittest.TestCase):
         self.page.click('.view-tab[data-view=compare]')
         self.page.wait_for_selector('.cmp-table')
 
-    def open_range_data(self, names, mode='abs', starts=None, durations=None, parents=None, callers=None):
+    def open_range_data(self, names, mode='abs', starts=None, durations=None, parents=None, callers=None, extra=None, columns=None):
         count = len(names)
         strings = list(dict.fromkeys(names + ([caller for caller in callers if caller is not None] if callers else [])))
         string_ids = {name: index for index, name in enumerate(strings)}
@@ -194,6 +194,10 @@ class BrowserSmokeTest(unittest.TestCase):
                             ret=None, caller=[string_ids.get(caller, -1) for caller in callers] if callers else None,
                             args=None, module=None, cpu=None,
                             adj=[duration / 2 for duration in durations])
+        if columns:
+            data['cols'].update(columns)
+        if extra:
+            data.update(extra)
         self.ev("data => { document.getElementById('tlData').textContent = JSON.stringify(data); }", data)
         self.open_timeline()
 
@@ -207,6 +211,192 @@ class BrowserSmokeTest(unittest.TestCase):
         self.page.mouse.up()
         self.page.keyboard.up('Alt')
         self.page.keyboard.up('Shift')
+
+    def test_window_panels_filter_overlapping_calls_and_adjust_self_not_positions(self):
+        extra = {'resched': [[0, 0, 1000, 2, 1, 0], [0, 2000, 3000, 3, 0, 0]],
+                 'sections': [[0, 0, 0, 1000, 0, 1, 0, 1, 2], [0, 0, 2000, 3000, 2, 2, 0, 3, 4],
+                              [0, 1, 2000, 3000, 2, 2, 3, 3, 4]]}
+        self.open_range_data(['inside', 'same_window', 'elsewhere'], starts=[0, 400, 2000],
+                             durations=[400, 600, 1000], columns={'flags': [4, 0, 0]}, extra=extra)
+        self.ev("fgNotifyFilter('inside only', new Set([1]))")
+        for action, rows in [('latency', 'tr[data-win]'), ('sections', 'tr[data-sec]')]:
+            with self.subTest(action=action):
+                self.ev(f"fgView('timeline').probe().{action}()")
+                self.assertEqual(self.page.locator(rows).count(), 1)
+                self.assertIn('inside 400 ns', self.page.locator(rows).first.inner_text())
+                self.assertNotIn('same_window', self.page.locator(rows).first.locator('td').nth(5).inner_text())
+                raw = self.download_csv('[data-act=window-csv]')[0]
+                self.page.click('[data-act=adj]')
+                adjusted = self.download_csv('[data-act=window-csv]')[0]
+                self.assertEqual(float(raw['top_1_self_estimate_ns']), 400)
+                self.assertEqual(float(adjusted['top_1_self_estimate_ns']), 200)
+                self.assertEqual(adjusted['self_duration_basis'], 'overhead_subtracted_estimate')
+                self.assertEqual(raw['start_ns'], adjusted['start_ns'])
+                self.assertEqual(raw['end_ns'], adjusted['end_ns'])
+                self.assertEqual(raw['window_duration_ns'], adjusted['window_duration_ns'])
+                self.assertEqual(raw['window_duration_basis'], 'timestamp_span')
+                self.assertEqual(raw['filter'], 'inside only')
+                if action == 'latency':
+                    self.assertEqual(float(adjusted['irqoff_self_estimate_ns']), 200)
+                else:
+                    self.assertEqual(adjusted['ended_in'], 'same_window')
+                    self.assertEqual(self.page.locator('[data-sk="0"]').inner_text(), 'irqs off (1)')
+                    self.assertEqual(self.page.locator('[data-sk="1"]').inner_text(), 'preempt off (0)')
+                self.page.click('[data-act=adj]')
+        self.ev("fgNotifyFilter('no calls', new Set())")
+        for action in ['latency', 'sections']:
+            self.ev(f"fgView('timeline').probe().{action}()")
+            self.assertIn('current filter', self.page.locator('.tl-detail').inner_text())
+            self.assertTrue(self.page.locator('[data-act=window-csv]').is_disabled())
+
+    def test_window_latency_overview_aggregates_functions_outside_each_top_three(self):
+        names = ['a1', 'b1', 'c1', 'common', 'a2', 'b2', 'c2', 'common']
+        starts = [0, 1100, 2200, 3300, 20000, 21100, 22200, 23300]
+        self.open_range_data(names, starts=starts, durations=[1000, 900, 800, 700] * 2,
+                             extra={'resched': [[0, 0, 5000, 0, 0, 0], [0, 20000, 25000, 0, 0, 0]]})
+        self.ev("fgView('timeline').probe().latency()")
+        self.assertEqual(self.page.locator('.an-blame .an-chip .k').first.inner_text(), 'common')
+        self.assertIn('1.400 us', self.page.locator('.an-blame .an-chip').first.inner_text())
+        self.assertNotIn('common', self.page.locator('tr[data-win]').first.inner_text())
+
+    def test_window_panels_paginate_export_and_sort_without_reaggregating(self):
+        count = 650
+        extra = {'resched': [[0, index * 2000, index * 2000 + 1000, index % 4, 0, index % 3] for index in range(count)],
+                 'sections': [[0, 0, index * 2000, index * 2000 + 1000, index, index, 0, index + 1, index + 1]
+                              for index in range(count)]}
+        self.open_range_data(['function'] * count, starts=[index * 2000 for index in range(count)], extra=extra)
+        for action, selector, page_size, sort_attr in [('latency', 'tr[data-win]', 300, 'lsort'),
+                                                     ('sections', 'tr[data-sec]', 200, 'ssort')]:
+            with self.subTest(action=action):
+                self.ev(f"fgView('timeline').probe().{action}()")
+                self.assertEqual(self.page.locator(selector).count(), page_size)
+                first = self.page.locator(selector).first.element_handle()
+                self.page.click('[data-act=window-more]')
+                self.assertTrue(first.evaluate('(node) => node.isConnected'))
+                self.assertEqual(self.page.locator(selector).count(), page_size * 2)
+                exported = self.download_csv('[data-act=window-csv]')
+                self.assertEqual(len(exported), count)
+                self.ev("""() => {
+                    window.windowAggregateWrites = 0;
+                    const originalSet = Map.prototype.set;
+                    Map.prototype.set = function(key, value) {
+                        if (typeof key === 'number' && typeof value === 'number') window.windowAggregateWrites++;
+                        return originalSet.call(this, key, value);
+                    };
+                }""")
+                self.page.locator(f'th[data-{sort_attr}=start] button').press('Enter')
+                self.assertEqual(self.ev('window.windowAggregateWrites'), 0)
+                self.assertEqual(self.page.locator(selector).count(), page_size)
+                self.assertEqual(self.page.locator(f'th[data-{sort_attr}=start]').get_attribute('aria-sort'), 'ascending')
+                while self.page.locator('[data-act=window-more]').is_enabled():
+                    self.page.click('[data-act=window-more]')
+                self.assertEqual(self.page.locator(selector).count(), count)
+        self.ev("fgNotifyFilter('last call', new Set([650]))")
+        self.assertEqual(self.page.locator('tr[data-sec]').count(), 1)
+        self.assertEqual(len(self.download_csv('[data-act=window-csv]')), 1)
+
+    def test_window_panels_sort_preempt_irq_top_end_and_task_columns(self):
+        windows = [[0, 0, 1000, 1, 1, 2], [0, 2000, 3000, 3, 1, 0], [0, 4000, 5000, 2, 0, 1]]
+        self.open_range_data(['first', 'second', 'third'], starts=[0, 2000, 4000], durations=[100, 200, 300],
+                             columns={'flags': [4, 4, 0]},
+                             extra={'resched': windows,
+                                    'sections': [[0, kind, raw[1], raw[2], index, index, raw[3], index + 1, index + 1]
+                                                 for kind in [0, 1] for index, raw in enumerate(windows)]})
+        self.ev("fgView('timeline').probe().latency()")
+        for key, order in [('pre', [1, 2, 0]), ('irq', [1, 0, 2]), ('top', [2, 1, 0]), ('end', [1, 2, 0]), ('task', [0, 1, 2])]:
+            with self.subTest(key=key):
+                self.page.locator(f'th[data-lsort={key}] button').click()
+                self.assertTrue(self.page.locator(f'th[data-lsort={key}] button').evaluate('(node) => node === document.activeElement'))
+                rows = self.download_csv('[data-act=window-csv]')
+                self.assertEqual([int(row['window_index']) for row in rows], order)
+        self.ev("fgView('timeline').probe().sections()")
+        for key, order in [('top', [2, 1, 0]), ('start', [0, 1, 2]), ('task', [0, 1, 2]), ('dur', [0, 1, 2])]:
+            with self.subTest(section_sort=key):
+                self.page.locator(f'th[data-ssort={key}] button').press('Enter')
+                self.assertTrue(self.page.locator(f'th[data-ssort={key}] button').evaluate('(node) => node === document.activeElement'))
+                rows = self.download_csv('[data-act=window-csv]')
+                self.assertEqual([int(row['section_index']) for row in rows], order)
+        self.page.locator('[data-sk="1"]').press('Space')
+        self.page.locator('th[data-ssort=pre] button').press('Enter')
+        self.assertEqual([int(row['section_index']) for row in self.download_csv('[data-act=window-csv]')], [4, 5, 3])
+
+    def test_window_overlap_index_keeps_long_calls_zero_boundaries_and_skips_ghosts(self):
+        self.open_range_data(['long', 'short', 'later', 'point'], starts=[0, 500, 2000, 5000],
+                             durations=[10000, 100, 100, 0],
+                             extra={'resched': [[0, 5000, 6000, 0, 0, 0]],
+                                    'sections': [[0, 0, 5000, 6000, 0, 0, 0, 1, 1]]})
+        for action in ['latency', 'sections']:
+            self.ev(f"fgView('timeline').probe().{action}()")
+            self.assertEqual(float(self.download_csv('[data-act=window-csv]')[0]['top_1_self_estimate_ns']), 1000)
+        self.ev("fgNotifyFilter('point', new Set([4]))")
+        self.assertEqual(len(self.download_csv('[data-act=window-csv]')), 1)
+        self.assertEqual(self.download_csv('[data-act=window-csv]')[0]['top_1_function'], '')
+        self.ev("fgSwitchView('text')")
+        self.page.reload()
+        self.open_range_data(['parent', 'child'], starts=[0, 1000], durations=[10000, 1000], parents=[-1, 0],
+                             columns={'depth': [0, 3]},
+                             extra={'resched': [[0, 0, 10000, 0, 0, 0]]})
+        self.assertGreater(self.ev("fgView('timeline').probe().NA"), 2)
+        self.ev("fgView('timeline').probe().latency()")
+        row = self.download_csv('[data-act=window-csv]')[0]
+        self.assertEqual(float(row['top_1_self_estimate_ns']) + float(row['top_2_self_estimate_ns']), 10000)
+
+    def test_window_panels_preserve_untraced_intervals_until_a_call_filter_is_applied(self):
+        self.open_range_data(['elsewhere'], starts=[10000], extra={'resched': [[0, 0, 1000, 0, 0, 0]],
+                             'sections': [[0, 0, 0, 1000, -1, -1, 0, 1, -1]]})
+        for action in ['latency', 'sections']:
+            self.ev(f"fgView('timeline').probe().{action}()")
+            self.assertEqual(len(self.download_csv('[data-act=window-csv]')), 1)
+        self.ev("fgNotifyFilter('elsewhere', new Set([1]))")
+        self.assertEqual(self.page.locator('tr[data-sec]').count(), 0)
+        self.assertEqual(self.page.locator('[data-sk="0"]').inner_text(), 'irqs off (0)')
+        self.ev("fgView('timeline').probe().latency()")
+        self.assertEqual(self.page.locator('tr[data-win]').count(), 0)
+
+    def test_window_csv_units_quoting_and_compact_actions(self):
+        for mode in ['abs', 'rel', 'packed', 'count']:
+            if mode != 'abs':
+                self.ev("fgSwitchView('text')")
+                self.page.reload()
+            self.open_range_data(['=SUM(1,2)'], mode=mode,
+                                 extra={'resched': [[0, 0, 1000, 1, 0, 0]],
+                                        'sections': [[0, 0, 0, 1000, 0, 0, 0, 1, 1]]})
+            for action in ['latency', 'sections']:
+                self.ev(f"fgView('timeline').probe().{action}()")
+                row = self.download_csv('[data-act=window-csv]')[0]
+                self.assertEqual(row['top_1_function'], "'=SUM(1,2)")
+                self.assertEqual(row['time_mode'], mode)
+                self.assertEqual(row['self_duration_basis'], 'call_order' if mode == 'count' else 'measured')
+                self.assertEqual(row['window_duration_basis'], 'call_order' if mode == 'count' else 'packed_estimate' if mode == 'packed' else 'timestamp_span')
+                if mode in ['count', 'packed']:
+                    self.assertIn('not measured scheduling latency', self.page.locator('.tl-detail').inner_text())
+                unit = 'units' if mode == 'count' else 'ns'
+                self.assertEqual(float(row['window_duration_' + unit]), 1 if mode == 'count' else 1000)
+                for width, height in [(390, 844), (320, 700), (800, 420), (1500, 900)]:
+                    self.page.set_viewport_size({'width': width, 'height': height})
+                    self.ev("document.querySelector('.tl-detail').scrollTop = 0")
+                    self.page.wait_for_timeout(100)
+                    for selector in ['[data-act=window-csv]', '.tl-close']:
+                        bounds = self.page.locator(selector).bounding_box()
+                        self.assertGreaterEqual(bounds['x'], 0)
+                        self.assertLessEqual(bounds['x'] + bounds['width'], width)
+                        self.assertGreaterEqual(bounds['y'], 0)
+                        self.assertLessEqual(bounds['y'] + bounds['height'], height)
+                    if width <= 640 or height <= 600:
+                        self.assertEqual(self.page.locator('.an-window-head').evaluate('(node) => getComputedStyle(node).position'), 'static')
+                    row = self.page.locator('tr[data-win], tr[data-sec]').first
+                    row.scroll_into_view_if_needed()
+                    bounds, detail = row.bounding_box(), self.page.locator('.tl-detail').bounding_box()
+                    self.assertGreaterEqual(bounds['y'], detail['y'])
+                    self.assertLessEqual(bounds['y'] + bounds['height'], detail['y'] + detail['height'])
+
+    def test_window_latency_many_windows_does_not_spread_arguments(self):
+        count = 150000
+        self.open_range_data(['parent'], durations=[count * 1000],
+                             extra={'resched': [[0, index * 1000, (index + 1) * 1000, 0, 0, 0] for index in range(count)]})
+        self.ev("fgView('timeline').probe().latency()")
+        self.assertEqual(self.page.locator('tr[data-win]').count(), 300)
+        self.assertIn('150000', self.page.locator('.tl-detail-head').inner_text())
 
     def test_range_replaces_analysis_state_and_resets_search_position(self):
         self.open_timeline()
