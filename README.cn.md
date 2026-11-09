@@ -5,6 +5,8 @@
 ![FuncGraph 可视化示例](sample.png)
 
 
+> **在线试用**：[首页](https://pengdonglin137.github.io/FuncGraph/) · [示例报告](https://pengdonglin137.github.io/FuncGraph/sample.html)（在浏览器中直接打开，无需安装）。
+>
 > **详细使用指南**：[中文](docs/guide.cn.md) · [English](docs/guide.en.md)（采集选项、各视图字段与配色的含义、分析面板、对比、导出、常见问题）。设计文档：[docs/design.md](docs/design.md)。
 
 ## FuncGraph 是什么？
@@ -32,7 +34,7 @@ FuncGraph 将 `function_graph` 的 ftrace 输出转换为交互式、可过滤�
 
 ## 示例
 
-[sample.html](https://pengdonglin137.github.io/FuncGraph/sample.html)（[在线打开](https://pengdonglin137.github.io/FuncGraph/sample.html)，2.7 MB；仓库里的文件可在本地打开）是 [samples/sample_io.txt](samples/sample_io.txt) 的报告。采集的是一个进程（[samples/demo_io.c](samples/demo_io.c)）：读一个文件的 4 KB，写 4 KB 到另一个文件，通过 loopback 给自己发一个 UDP 包再收回来，最后在空队列上再调一次 `recvfrom`（返回 `-EAGAIN`）。只跟踪这四个系统调用，从入口函数（`__x64_sys_*`）开始，带参数、返回值、调用点和调度事件；打开文件、创建 socket 都在它们之前完成，不跟踪，所以这五次调用在 110 us 内首尾相接：共 695 行，442 次调用。
+[sample.html](sample.html)（[在线打开](https://pengdonglin137.github.io/FuncGraph/sample.html)，2.7 MB）是 [samples/sample_io.txt](samples/sample_io.txt) 的报告。采集的是一个进程（[samples/demo_io.c](samples/demo_io.c)）：读一个文件的 4 KB，写 4 KB 到另一个文件，通过 loopback 给自己发一个 UDP 包再收回来，最后在空队列上再调一次 `recvfrom`（返回 `-EAGAIN`）。只跟踪这四个系统调用，从入口函数（`__x64_sys_*`）开始，带参数、返回值、调用点和调度事件；打开文件、创建 socket 都在它们之前完成，不跟踪，所以这五次调用在 110 us 内首尾相接：共 695 行，442 次调用。
 
 可以看的地方：
 - **时间轴**：`__x64_sys_sendto`（上面的截图）依次经过 `udp_sendmsg -> ip_output -> loopback_xmit`，接收端（`net_rx_action -> udp_rcv`）在同一次调用末尾的软中断里执行（绿色）。*Where the time went*：被跟踪的子调用占 65%，软中断占 35%。
@@ -243,11 +245,13 @@ fgcapture.sh --args -g vfs_read,vfs_write -d 1       # 采参数（不开 retadd
 - **时间轴分析面板**：*Errors* 按 syscall、源头函数和 errno 分组汇总错误链（点击依次跳到每次出现）；*Sched latency* 列出 need-resched 窗口及窗口内各函数的自身耗时；`H` 显示选中函数的耗时分布（直方图、p50/p90/p99、最慢的调用）。
 - **耗时去向**：详情面板把一次调用的实测耗时拆成自身代码、被跟踪的子调用、打断它的中断/软中断、以及阻塞或被抢占的 off-CPU 时间。
 - **快慢对比与调用点**：耗时分布面板（`H`）按调用点分组，并比较最慢 10% 与最快一半调用的子树差异（例如慢的 `kmem_cache_alloc` 都走进了 `___slab_alloc`）。
-- **临界区**（*Sections*）：列出 task 上下文中每一段关中断、关抢占、关软中断的区间，显示在哪里开始和结束、期间运行了什么；trace 的 preempt 基线会自动识别。
+- **临界区**（*Sections*）：列出 task 上下文中每一段关中断、关抢占、关软中断的区间，显示在哪里开始和结束、期间运行了什么；function_graph 记录时自己会多算一层抢占，时间轴里各处都会识别并扣除。
 - **原子上下文中睡眠**：在关中断、关抢占或中断上下文里调用会睡眠的函数（`mutex_lock`、`__might_sleep`、`wait_for_completion` 等）时，在切片上标出并列入 *Errors*。
 - **调度频繁时**：文本视图的 *Order* 按钮按任务分组排列（每个任务的行连在一起，上下文切换替换为一行摘要，带离开时长）；时间轴把挤在一起的唤醒画成小标记，只为悬停或选中的任务画完整箭头。
 - **唤醒与等待链**（需要 `sched_waking`/`sched_wakeup`）：画出唤醒者指向被唤醒任务的箭头；点击 off-CPU 段可看到谁在哪个函数里唤醒了它、唤醒延迟，以及唤醒者自己之前在等什么。
 - **开销修正**：有开销估计值时，按 `O`（或 *Overhead* 按钮）把提示、面板和汇总切换成扣除开销后的耗时，切片位置始终保持实测值。两份 trace 都有估计值时，Compare 也提供同样的切换。
+- **未跟踪帧**：内核打印的调用深度一下跳了两级或更多时（某一帧进入了但没有入口记录，例如 arm64 上包着 `irq_enter_rcu` 的 `el1_interrupt`），这些调用仍归到外层调用下，缺的那一层画成虚线的 `untraced` 帧，名字取自它们的调用者，调用栈没有空洞，self 时间也不会算错。
+- **选中的调用**：参照 Perfetto，在所有轨道和时间标尺上标出起止并显示时长。详情面板显示调用点的 `文件:行号` 和源码块（复用文本视图的），以及 irqs off、preempt off、BH off、need-resched 等标签。拖动面板上方的横条可调整高度；按 `M` 隐藏页头，留出更多空间。
 - **内联帧**：位于内联代码中的调用点会带上内联链。时间轴的 *Inline* 按钮（`I`）在"只看被跟踪帧"和"被跟踪帧 + 内联帧"之间切换（内联帧用虚线；范围是其中第一个到最后一个被跟踪调用，真实的内联代码可能开始得更早、结束得更晚）。调用栈总是列出内联帧；源码块可以显示为可折叠的内联链或平铺（*Source* 按钮）。
 - **带 BTF 感知 funcgraph-retval 的内核**（如 7.2 `trim_retval` 补丁）：识别 `ret=true/false`、无符号值和 `(trunc)`、void 函数不打印 `ret=`、ERR_PTR 打印为 errno；此时直接依据内核自身的类型判断错误路径，不需要主机 BTF。`fgcapture.sh --args` 会先探测参数能否和 retaddr 一起输出及读取速度，可以时保留全部时间轴选项。
 - **更灵活的用法**：`--vmlinux` 可选；`--config`/`--preset` 从 INI 文件读取默认参数；输入支持 `-`（stdin）、`.gz/.xz/.bz2` 和多个文件按时间戳合并；`--source-url`/`--source-rev` 从 URL 或 git 指定版本获取源码并检查版本是否一致；`--export` 把分析结果导出为 JSON/CSV。
@@ -264,7 +268,7 @@ cd /sys/kernel/tracing
 echo 0 > tracing_on
 
 # 启用推荐选项
-echo 1 > options/funcgraph-retaddr    # 返回地址（必需）
+echo 1 > options/funcgraph-retaddr    # 返回地址（调用点、源码映射）
 echo 1 > options/funcgraph-proc       # 进程名和 PID
 echo 1 > options/funcgraph-retval     # 返回值
 echo 1 > options/funcgraph-args       # 函数参数
@@ -278,6 +282,8 @@ echo 1 > tracing_on; sleep 1; echo 0 > tracing_on
 # 保存结果
 cat trace > ~/ftrace.txt
 ```
+
+上面的 `fgcapture.sh` 会自动完成这些设置，并检查内核支持哪些选项。`funcgraph-args` 能否和 `funcgraph-retaddr` 同时使用取决于内核：6.18 上开了 retaddr 就不打印参数（而且读取很慢，要先用 `set_graph_function` 缩小范围），带 BTF 打印改进的 7.2 上两者可以同时使用。
 
 ### 选项说明
 
@@ -330,10 +336,8 @@ cat trace > ~/ftrace.txt
 
 ### 2. 生成 HTML
 ```bash
-cd /vol_1t/Qemu/x86_64/funcgraph_visualization
-
 python3 funcgraph.py ~/ftrace.txt \
-    --vmlinx /path/to/vmlinux \
+    --vmlinux /path/to/vmlinux \
     --kernel-src /path/to/kernel \
     --base-url https://elixir.bootlin.com/linux/v6.18/source \
     --filter \

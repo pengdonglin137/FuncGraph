@@ -8,6 +8,8 @@
 
 FuncGraph converts `function_graph` ftrace output into an interactive, filterable HTML report for kernel developers and performance engineers. It is optimized for fast triage: source linking, high-speed address resolution, parameter and duration filtering, and keyboard-friendly call folding.
 
+> **Try it online**: [home page](https://pengdonglin137.github.io/FuncGraph/) · [sample report](https://pengdonglin137.github.io/FuncGraph/sample.html) (opens in the browser, no install).
+>
 > **User guide** (detailed: capture options, every field and color in the views, panels, compare, export, FAQ): [English](docs/guide.en.md) · [中文](docs/guide.cn.md). Design: [docs/design.md](docs/design.md).
 
 ## Cheat Sheet
@@ -31,7 +33,7 @@ FuncGraph converts `function_graph` ftrace output into an interactive, filterabl
 
 ## Sample
 
-[sample.html](https://pengdonglin137.github.io/FuncGraph/sample.html) ([open online](https://pengdonglin137.github.io/FuncGraph/sample.html), 2.7 MB; the copy in the repo opens locally) is the report of [samples/sample_io.txt](samples/sample_io.txt): one process ([samples/demo_io.c](samples/demo_io.c)) reads 4 KB of a file, writes 4 KB to another file, sends a UDP datagram to itself over loopback and receives it, then calls `recvfrom` once more on the empty queue (`-EAGAIN`). Only these four system calls are traced, from their entry points (`__x64_sys_*`), with arguments, return values, call sites and scheduler events; the file and socket setup happens before them and is not traced, so the five calls follow each other within 110 us: 695 lines, 442 calls.
+[sample.html](sample.html) ([open online](https://pengdonglin137.github.io/FuncGraph/sample.html), 2.7 MB) is the report of [samples/sample_io.txt](samples/sample_io.txt): one process ([samples/demo_io.c](samples/demo_io.c)) reads 4 KB of a file, writes 4 KB to another file, sends a UDP datagram to itself over loopback and receives it, then calls `recvfrom` once more on the empty queue (`-EAGAIN`). Only these four system calls are traced, from their entry points (`__x64_sys_*`), with arguments, return values, call sites and scheduler events; the file and socket setup happens before them and is not traced, so the five calls follow each other within 110 us: 695 lines, 442 calls.
 
 What to look at:
 - **Timeline**: `__x64_sys_sendto` (the screenshot above) runs `udp_sendmsg -> ip_output -> loopback_xmit`, and the receive side (`net_rx_action -> udp_rcv`) runs in the softirq at the end of the same call (green). *Where the time went*: 65% traced callees, 35% softirq.
@@ -241,13 +243,16 @@ fgcapture.sh --args -g vfs_read,vfs_write -d 1       # arguments (no retaddr; re
 - **Timeline panels**: *Errors* groups error chains by syscall, origin function and errno (click to step through occurrences); *Sched latency* lists need-resched windows with the self time spent inside them; `H` shows the duration distribution (histogram, p50/p90/p99, slowest calls) of the selected function.
 - **Where the time went**: the detail panel splits a call's measured duration into own code, traced callees, interrupts/softirqs that hit it, and blocked/preempted off-CPU time.
 - **Slow vs fast and call sites**: the duration panel (`H`) groups calls by call site and compares the subtrees of the slowest 10% with the fastest half (e.g. slow `kmem_cache_alloc` calls go through `___slab_alloc`).
-- **Critical sections** (*Sections*): every irqs-off, preempt-off and BH-off region in task context with where it started and ended and what ran inside; the preempt baseline of the trace is detected automatically.
+- **Critical sections** (*Sections*): every irqs-off, preempt-off and BH-off region in task context with where it started and ended and what ran inside; function_graph itself adds one preempt level to every line, which is detected and subtracted everywhere in the timeline.
 - **Sleeping in atomic context**: calls of sleeping functions (`mutex_lock`, `__might_sleep`, `wait_for_completion`, ...) with irqs off, preemption disabled or from an interrupt are flagged on the slice and listed in *Errors*.
 - **Busy schedulers**: the text view's *Order* button groups lines by task (each task's lines together, context switches replaced by a summary with the time off-CPU); the timeline draws bunched wakeups as small markers and shows the full arrows for the hovered/selected task.
 - **Wakeups and wait chains** (with `sched_waking`/`sched_wakeup`): arrows from the waker to the woken task; clicking an off-CPU segment shows who woke it, from which function, the wake latency, and what the waker itself was waiting for.
 - **Overhead correction**: with an estimate, `O` (or the *Overhead* button) switches tooltips, panels and summaries to durations with the overhead subtracted. Slice positions always stay as measured. Compare offers the same switch when both traces have an estimate.
+- **Untraced frames**: when the kernel's call depth jumps by two or more levels (a frame entered without a recorded entry, e.g. arm64 `el1_interrupt` around `irq_enter_rcu`), the calls still belong to the enclosing call and the missing level is drawn as a dashed `untraced` frame named after their caller, so the stack has no hole and self times stay right.
+- **Selected call**: as in Perfetto, its start and end are marked over all tracks and on the time ruler with its duration. The detail panel shows the call site's `file:line` and its source block (reused from the text view), and tags such as irqs off, preempt off, BH off, need-resched. Drag the bar above the panel to resize it; `M` hides the page header for more room.
 - **Inline frames**: call sites inside inlined code get their inline chain. The timeline's *Inline* button (`I`) switches between traced frames only and traced + inline frames (dashed; their extent is the first to last traced call inside, the real inlined code may start earlier and end later). Call stacks always list the inline frames; source blocks can be shown as a collapsible inline chain or flat (*Source* button).
 - **Kernels with BTF-aware funcgraph-retval** (e.g. the 7.2 `trim_retval` patches): `ret=true/false`, unsigned and `(trunc)` values, no `ret=` for void functions and ERR_PTRs as errnos are understood; error paths are then verified from the kernel's own typing, without host BTF. `fgcapture.sh --args` probes whether args can be printed together with retaddr and how fast, and keeps all timeline options when they can.
+- **Flexible usage**: `--vmlinux` is optional; `--config`/`--preset` read defaults from an INI file; input can be `-` (stdin), `.gz/.xz/.bz2` or several files merged by timestamp; `--source-url`/`--source-rev` fetch sources from a URL or a git revision and check that they match; `--export` writes the analyses as JSON/CSV.
 - **Large traces**: above ~150k lines the text view becomes too heavy for browsers; use a pre-filter or `--timeline --no-text-view` (362k lines: 15.7 MB, opens in about a second).
 
 ## Capturing Trace
@@ -261,7 +266,7 @@ cd /sys/kernel/tracing
 echo 0 > tracing_on
 
 # Enable recommended options
-echo 1 > options/funcgraph-retaddr    # Return address (required)
+echo 1 > options/funcgraph-retaddr    # Return address (call sites, source mapping)
 echo 1 > options/funcgraph-proc       # Process name and PID
 echo 1 > options/funcgraph-retval     # Return value
 echo 1 > options/funcgraph-args       # Function parameters
@@ -275,6 +280,8 @@ echo 1 > tracing_on; sleep 1; echo 0 > tracing_on
 # Save result
 cat trace > ~/ftrace.txt
 ```
+
+`fgcapture.sh` (above) does this for you and checks what the kernel supports. Whether `funcgraph-args` works together with `funcgraph-retaddr` depends on the kernel: on 6.18 arguments are dropped while retaddr is on (and reading is slow, so narrow it with `set_graph_function`), on 7.2 with the BTF printing changes both work.
 
 ### Option Description
 
@@ -327,8 +334,6 @@ cat trace > ~/ftrace.txt
 
 ### 2. Generate HTML
 ```bash
-cd /vol_1t/Qemu/x86_64/funcgraph_visualization
-
 python3 funcgraph.py ~/ftrace.txt \
     --vmlinux /path/to/vmlinux \
     --kernel-src /path/to/kernel \
