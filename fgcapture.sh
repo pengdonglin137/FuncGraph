@@ -127,17 +127,26 @@ for o in funcgraph-duration funcgraph-cpu funcgraph-overhead funcgraph-irqs; do 
 ARGS_RETADDR=0 ARGS_SLOW=1
 if [ $ARGS = 1 ]; then
     echo nop > $T/current_tracer; echo > $T/trace
+    # the probe must not be limited by -g/-n (vfs_read would only be seen inside the graph functions)
+    echo > $T/set_graph_function; [ -e $T/set_graph_notrace ] && echo > $T/set_graph_notrace
     echo vfs_read > $T/set_ftrace_filter          # one function only: cheap even where args are slow
     for o in funcgraph-args funcgraph-retaddr funcgraph-proc; do setopt $o 1; done
     echo function_graph > $T/current_tracer
     echo 1 > $T/tracing_on; cat /proc/version > /dev/null; head -c 1 /etc/hostname > /dev/null; echo 0 > $T/tracing_on
     t0=$(date +%s%N); cat $T/trace > $SAVE/probe; t1=$(date +%s%N)
-    n=$(grep -vc '^#' $SAVE/probe); [ "$n" -gt 0 ] || n=1
-    per_us=$(( (t1 - t0) / 1000 / n ))
-    grep -q 'vfs_read(file=.*<-' $SAVE/probe && ARGS_RETADDR=1
-    [ $per_us -lt 1000 ] && ARGS_SLOW=0
-    echo "fgcapture: funcgraph-args probe: ${per_us} us/line, args with retaddr: $([ $ARGS_RETADDR = 1 ] && echo yes || echo no)"
+    n=$(grep -vc '^#' $SAVE/probe)
+    if [ "$n" -gt 0 ]; then
+        per_us=$(( (t1 - t0) / 1000 / n ))
+        grep -q 'vfs_read(file=.*<-' $SAVE/probe && ARGS_RETADDR=1
+        [ $per_us -lt 1000 ] && ARGS_SLOW=0
+        echo "fgcapture: funcgraph-args probe: ${per_us} us/line, args with retaddr: $([ $ARGS_RETADDR = 1 ] && echo yes || echo no)"
+    else
+        per_us=unknown
+        echo "fgcapture: funcgraph-args probe saw no vfs_read call; assuming slow args without retaddr" >&2
+    fi
     echo nop > $T/current_tracer; echo > $T/trace; echo > $T/set_ftrace_filter
+    setlist set_graph_function "$GRAPH"
+    [ -e $T/set_graph_notrace ] && setlist set_graph_notrace "$NOTRACE"
     if [ $ARGS_SLOW = 1 ] && [ -z "$GRAPH$PIDS" ] && [ ${#CMD[@]} = 0 ]; then
         die "--args needs -g, -p or a command on this kernel: reading the trace would take ${per_us} us per line"
     fi

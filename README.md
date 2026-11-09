@@ -27,6 +27,34 @@ FuncGraph converts `function_graph` ftrace output into an interactive, filterabl
 - Keyboard-friendly navigation and accessible fold controls
 - **Timeline tab** (`--timeline`): per-task flame chart over time with context, irqs-off, scheduling-delay, off-CPU and error-path coloring
 
+## Sample
+
+[sample.html](sample.html) (3 MB, open it locally) is the report of [samples/sample_io.txt](samples/sample_io.txt): one process ([samples/demo_io.c](samples/demo_io.c)) reads 4 KB of a file, writes 4 KB to another file, sends a UDP datagram to itself over loopback and receives it, then calls `recvfrom` once more on the empty queue (`-EAGAIN`). Only these four system calls are traced, from their entry points (`__x64_sys_*`), with arguments, return values, call sites and scheduler events: 799 lines, 530 calls.
+
+What to look at:
+- **Timeline**: `__x64_sys_sendto` (the screenshot above) runs `udp_sendmsg -> ip_output -> loopback_xmit`, and the receive side (`net_rx_action -> udp_rcv`) runs in the softirq at the end of the same call (green). *Where the time went*: 66% traced callees, 33% softirq.
+- **Errors**: one chain, `udp_recvmsg -11 EAGAIN` returned to user space by `__x64_sys_recvfrom`.
+- **Text view**: arguments on every line; expanding a line shows the call site's source with its inline chain ([samples/sample_text.png](samples/sample_text.png)).
+
+How it was made:
+
+```bash
+# on the target (QEMU x86_64, kernel 7.2), as root
+gcc -O2 -static -o /tmp/demo_io samples/demo_io.c
+dd if=/dev/urandom of=/tmp/demo_in.bin bs=4096 count=1
+dd if=/dev/zero of=/tmp/demo_out.bin bs=4096 count=1
+cat /tmp/demo_in.bin /tmp/demo_out.bin > /dev/null      # page cache warm
+fgcapture.sh --args --sched --calibrate \
+    -g __x64_sys_read,__x64_sys_write,__x64_sys_sendto,__x64_sys_recvfrom \
+    -o sample_io.txt -- /tmp/demo_io
+
+# on the host
+python3 funcgraph.py --timeline --enable-fold --filter --func-links --highlight-code --fast \
+    --vmlinux vmlinux --kernel-src linux --source-rev HEAD \
+    --base-url https://elixir.bootlin.com/linux/latest/source \
+    --output sample.html samples/sample_io.txt
+```
+
 ---
 
 <!-- Installation & Usage continues below -->
@@ -353,8 +381,10 @@ assets/compare/       # Compare tab
 assets/views/         # Tab switching shared by the extra views
 tests/                # Self-tests (tests/run.sh) and fixtures from a Raspberry Pi 4
 docs/design.md        # Design document
-ftrace.txt            # Example data
-sample.png            # Screenshot
+samples/              # Sample trace (sample_io.txt), its workload (demo_io.c), screenshots
+sample.html           # Report of samples/sample_io.txt (see Sample)
+sample.png            # Screenshot of sample.html
+ftrace.txt            # Older x86 example trace (used by the tests)
 ```
 
 ## Tests

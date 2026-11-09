@@ -28,6 +28,34 @@ FuncGraph 将 `function_graph` 的 ftrace 输出转换为交互式、可过滤�
 - 键盘友好导航与可访问折叠控制
 - **时间轴标签页**（`--timeline`）：按任务的时序火焰图，按上下文、关中断、调度延迟、off-CPU 和错误路径配色
 
+## 示例
+
+[sample.html](sample.html)（3 MB，请在本地打开）是 [samples/sample_io.txt](samples/sample_io.txt) 的报告。采集的是一个进程（[samples/demo_io.c](samples/demo_io.c)）：读一个文件的 4 KB，写 4 KB 到另一个文件，通过 loopback 给自己发一个 UDP 包再收回来，最后在空队列上再调一次 `recvfrom`（返回 `-EAGAIN`）。只跟踪这四个系统调用，从入口函数（`__x64_sys_*`）开始，带参数、返回值、调用点和调度事件：共 799 行，530 次调用。
+
+可以看的地方：
+- **时间轴**：`__x64_sys_sendto`（上面的截图）依次经过 `udp_sendmsg -> ip_output -> loopback_xmit`，接收端（`net_rx_action -> udp_rcv`）在同一次调用末尾的软中断里执行（绿色）。*Where the time went*：被跟踪的子调用占 66%，软中断占 33%。
+- **错误**：一条错误链，`udp_recvmsg -11 EAGAIN`，由 `__x64_sys_recvfrom` 返回到用户态。
+- **文本视图**：每行带参数；展开一行可以看到调用点的源码和内联链（[samples/sample_text.png](samples/sample_text.png)）。
+
+生成方法：
+
+```bash
+# 在目标机上（QEMU x86_64，内核 7.2），root 权限
+gcc -O2 -static -o /tmp/demo_io samples/demo_io.c
+dd if=/dev/urandom of=/tmp/demo_in.bin bs=4096 count=1
+dd if=/dev/zero of=/tmp/demo_out.bin bs=4096 count=1
+cat /tmp/demo_in.bin /tmp/demo_out.bin > /dev/null      # 预热 page cache
+fgcapture.sh --args --sched --calibrate \
+    -g __x64_sys_read,__x64_sys_write,__x64_sys_sendto,__x64_sys_recvfrom \
+    -o sample_io.txt -- /tmp/demo_io
+
+# 在主机上
+python3 funcgraph.py --timeline --enable-fold --filter --func-links --highlight-code --fast \
+    --vmlinux vmlinux --kernel-src linux --source-rev HEAD \
+    --base-url https://elixir.bootlin.com/linux/latest/source \
+    --output sample.html samples/sample_io.txt
+```
+
 ---
 
 <!-- Installation & Usage continues below -->
@@ -357,8 +385,10 @@ assets/compare/       # 对比标签页
 assets/views/         # 附加视图共用的标签切换
 tests/                # 自测（tests/run.sh）和树莓派 4 采集的样例
 docs/design.md        # 设计文档
-ftrace.txt            # 示例数据
-sample.png            # 截图
+samples/              # 示例 trace（sample_io.txt）、采集用的程序（demo_io.c）、截图
+sample.html           # samples/sample_io.txt 的报告（见“示例”一节）
+sample.png            # sample.html 的截图
+ftrace.txt            # 旧的 x86 示例 trace（测试使用）
 ```
 
 ## 测试
