@@ -261,6 +261,7 @@ for (let c = 0; c < CHAINS.length; c++) if (!CHAINS[c][6]) TRACKS[sTask[CHAINS[c
 let tMax = 1;
 for (let i = 0; i < N; i++) if (sEnd[i] > tMax) tMax = sEnd[i];
 for (const r of D.offcpu) if (r[2] !== null && r[2] > tMax) tMax = r[2];
+const OPEN_OFF = new Set(D.offcpu.filter(record => record[2] === null));
 for (const r of D.offcpu) if (r[2] === null) r[2] = tMax;
 // wakeups: [waker_task, ts, target_task, ctx, waker_slice, offcpu_index]
 const WAKES = D.wakeups || [];

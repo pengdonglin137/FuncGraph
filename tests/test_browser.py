@@ -633,9 +633,181 @@ class BrowserSmokeTest(unittest.TestCase):
     def test_wait_panel_survives_refresh_with_retained_range(self):
         self.open_timeline()
         self.ev("fgView('timeline').probe().range(0, 1000000)")
-        self.ev("fgView('timeline').probe().wait(JSON.parse(document.getElementById('tlData').textContent).offcpu[0])")
+        self.ev("() => { const probe = fgView('timeline').probe(); probe.wait(probe.TRACKS.find(track => track.off.length).off[0]); }")
         self.ev("fgNotifyFilter('', null)")
         self.assertTrue(self.page.locator('.tl-detail-title').inner_text().startswith('Wait chain'))
+
+    def open_wait_data(self, count=125, mode='abs', offcpu=None, wakeups=None, caps=None, task_names=None, task_kinds=None):
+        self.ev("fgSwitchView('text')")
+        self.page.reload()
+        names = task_names or ['waiter', '<b>source</b>']
+        tasks = [dict(pid=index + 1, comm=name, kind=task_kinds[index] if task_kinds else 0, cpu=index)
+                 for index, name in enumerate(names)]
+        records = offcpu if offcpu is not None else [
+            [index % len(tasks), (count - index) * 3000, (count - index) * 3000 + 1000,
+             0, 0, -1, 0, 1, 0, -1] for index in range(count)]
+        wakes = wakeups if wakeups is not None else [
+            [(index + 1) % len(tasks), record[2] - 100, record[0], 0, -1, index]
+            for index, record in enumerate(records[:-1])]
+        extra = dict(tasks=tasks, offcpu=records, wakeups=wakes)
+        if caps is not None:
+            extra['caps'] = caps
+        self.open_range_data(['waiting_function'] * len(tasks), mode=mode,
+                             durations=[max(count * 4000, 1000000)] * len(tasks),
+                             columns={'task': list(range(len(tasks)))}, extra=extra)
+        self.ev("() => { const probe = fgView('timeline').probe(); probe.wait(probe.TRACKS[0].off[0]); }")
+
+    def test_wait_chain_escapes_task_names_and_keeps_observed_root_without_sched(self):
+        self.open_wait_data(count=2, caps={'sched_events': False})
+        self.assertEqual(self.page.locator('tr[data-wait]').count(), 2)
+        self.assertEqual(self.page.locator('tr[data-wait="0"] td').nth(3).locator('b').count(), 0)
+        self.assertIn('<b>source</b>', self.page.locator('tr[data-wait="0"] td').nth(3).inner_text())
+        self.assertIn('temporal', self.page.locator('.an-wait-hint').inner_text())
+        self.open_wait_data(count=1, wakeups=[], caps={'sched_events': False})
+        self.assertEqual(self.page.locator('tr[data-wait]').count(), 1)
+        self.assertIn('fgcapture.sh --sched', self.page.locator('.an-wait-hint').inner_text())
+
+    def test_wait_chain_many_intervals_resolves_only_requested_pages(self):
+        self.open_wait_data(count=150000)
+        self.assertEqual(self.page.locator('tr[data-wait]').count(), 100)
+        self.assertIn('Showing 100+', self.page.locator('.an-wait-footer').inner_text())
+        self.page.locator('[data-act=wait-more]').press('Enter')
+        self.assertEqual(self.page.locator('tr[data-wait]').count(), 200)
+        self.assertIn('Showing 200+', self.page.locator('.an-wait-footer').inner_text())
+        self.assertEqual(self.page.locator('tr[data-wait]').last.get_attribute('data-wait'), '199')
+
+    def test_wait_chain_paginates_exports_and_refreshes_without_rewalking(self):
+        self.open_wait_data(count=225)
+        self.assertEqual(self.page.locator('tr[data-wait]').count(), 100)
+        first = self.page.locator('tr[data-wait]').first.element_handle()
+        rows = self.download_csv('[data-act=wait-csv]')
+        self.assertEqual(len(rows), 225)
+        self.assertEqual(rows[0]['link_kind'], 'selected')
+        self.assertEqual(rows[1]['link_kind'], 'temporal')
+        self.assertEqual(int(rows[1]['prior_resume_to_wake_ns']), 2900)
+        self.assertEqual(rows[-1]['terminal_reason'], 'wakeup-not-recorded')
+        self.assertEqual(self.page.locator('tr[data-wait]').count(), 100)
+        self.page.locator('[data-act=wait-more]').press('Enter')
+        self.assertEqual(self.page.locator('tr[data-wait]').count(), 200)
+        self.assertTrue(first.evaluate('(node) => node.isConnected'))
+        self.assertTrue(self.page.locator('[data-act=wait-more]').evaluate('(node) => node === document.activeElement'))
+        self.page.locator('[data-act=wait-more]').press('Enter')
+        self.assertEqual(self.page.locator('tr[data-wait]').count(), 225)
+        self.assertTrue(self.page.locator('[data-act=wait-more]').is_disabled())
+        writes = self.ev("""() => {
+            let writes = 0;
+            const original = Set.prototype.add;
+            Set.prototype.add = function(value) { if (typeof value === 'number') writes++; return original.call(this, value); };
+            fgNotifyFilter('no calls', new Set());
+            document.querySelector('[data-act=adj]').click();
+            Set.prototype.add = original;
+            return writes;
+        }""")
+        self.assertEqual(writes, 0)
+        self.assertEqual(self.page.locator('tr[data-wait]').count(), 225)
+        self.assertEqual(self.download_csv('[data-act=wait-csv]'), rows)
+
+    def test_wait_chain_keyboard_navigation_preserves_panel(self):
+        self.open_wait_data(count=3)
+        self.page.locator('.an-wait-hint summary').press('Enter')
+        self.assertTrue(self.page.locator('.an-wait-hint details').evaluate('(node) => node.open'))
+        self.assertIn('Overhead', self.page.locator('.an-wait-hint').inner_text())
+        self.page.locator('tr[data-wait="1"] button').press('Enter')
+        self.assertTrue(self.page.locator('.tl-detail-title').inner_text().startswith('Wait chain'))
+        start, end = self.ev("fgView('timeline').probe().view()")
+        self.assertLessEqual(start, 6000)
+        self.assertGreaterEqual(end, 7000)
+        self.page.locator('tr[data-wait="2"] button').press('Space')
+        self.assertTrue(self.page.locator('.tl-detail.show').is_visible())
+
+    def test_wait_chain_reports_all_termination_reasons_and_gap_boundary(self):
+        root = [0, 70000000, 80000000, 0, 0, -1, 0, 1, 0, -1]
+        prior = [1, 24000000, 25000000, 0, 0, -1, 0, 1, 0, -1]
+        cases = [
+            ('boundary', [root, prior], [[1, 75000000, 0, 0, -1, 0]], 2, 'wakeup-not-recorded'),
+            ('gap', [root, prior], [[1, 75000001, 0, 0, -1, 0]], 1, 'gap-exceeded'),
+            ('interrupt', [root, prior], [[1, 75000000, 0, 2, -1, 0]], 1, 'interrupt-context'),
+            ('no prior', [root], [[1, 75000000, 0, 0, -1, 0]], 1, 'no-prior-wait'),
+            ('missing', [root], [], 1, 'wakeup-not-recorded'),
+            ('cycle', [[0, 0, 0, 0, 0, -1, 0, 1, 0, -1]], [[0, 0, 0, 0, -1, 0]], 1, 'cycle'),
+        ]
+        for label, records, wakes, length, reason in cases:
+            with self.subTest(label=label):
+                self.open_wait_data(offcpu=records, wakeups=wakes)
+                self.assertEqual(self.page.locator('tr[data-wait]').count(), length)
+                self.assertIn('Stopped:', self.page.locator('.an-wait-footer').inner_text())
+                self.assertEqual(self.download_csv('[data-act=wait-csv]')[-1]['terminal_reason'], reason)
+        self.open_wait_data(count=2, task_kinds=[0, 1])
+        self.assertEqual(self.download_csv('[data-act=wait-csv]')[0]['terminal_reason'], 'non-task-context')
+
+    def test_wait_chain_indexes_unordered_ends_stable_ties_and_excludes_open_waits(self):
+        records = [[0, 9000, 10000, 0, 0, -1, 0, 1, 0, -1],
+                   [1, 0, 6000, 0, 0, -1, 0, 1, 0, -1],
+                   [1, 0, 8000, 0, 0, -1, 0, 1, 0, -1],
+                   [1, 0, 7000, 0, 0, -1, 0, 1, 0, -1],
+                   [1, 0, 8000, 0, 0, -1, 0, 1, 0, -1],
+                   [1, 0, None, 0, 0, -1, 0, -1, 0, -1]]
+        self.open_wait_data(offcpu=records, wakeups=[[0, 9200, 0, 0, -1, 0], [1, 9500, 0, 0, -1, 0],
+                                                   [0, 900000, 1, 2, -1, 5]])
+        self.assertEqual(self.page.locator('tr[data-wait]').evaluate_all('(rows) => rows.map(row => +row.dataset.wait)'), [0, 2])
+        self.ev("() => { const probe = fgView('timeline').probe(); probe.wait(probe.TRACKS[1].off[4]); }")
+        row = self.download_csv('[data-act=wait-csv]')[0]
+        self.assertEqual(row['end_status'], 'trace_end_lower_bound')
+        self.assertEqual(row['wait_end_ns'], '')
+        self.assertEqual(row['wake_latency_ns'], '')
+        self.assertEqual(row['resume_cpu'], '')
+        self.assertIn('≥', self.page.locator('tr[data-wait]').inner_text())
+
+    def test_wait_chain_csv_formula_protection_and_count_mode_units(self):
+        for mode in ['abs', 'count']:
+            with self.subTest(mode=mode):
+                self.open_wait_data(count=2, mode=mode, task_names=['=SUM(1,2)', '@source'])
+                rows = self.download_csv('[data-act=wait-csv]')
+                self.assertEqual(rows[0]['comm'], "'=SUM(1,2)")
+                self.assertEqual(rows[0]['waker_comm'], "'@source")
+                self.assertEqual(rows[0]['filter_scope'], 'all_tasks')
+                self.assertEqual(rows[0]['duration_basis'], 'call_order' if mode == 'count' else 'recorded_timestamps')
+                if mode == 'count':
+                    self.assertEqual(len(rows), 1)
+                    self.assertEqual(rows[0]['waited_units'], '1')
+                    self.assertEqual(rows[0]['terminal_reason'], 'no-timestamps')
+                    self.assertFalse(any(name.endswith('_ns') for name in rows[0]))
+                    self.assertEqual(self.page.locator('.an-wait-table .err').count(), 0)
+                    self.assertNotIn('ms', self.page.locator('.an-wait-hint').inner_text())
+
+    def test_wait_chain_compact_layout_keeps_controls_and_rows_reachable(self):
+        self.open_wait_data(count=3, task_names=['very_long_task_name_' * 20, 'source'])
+        for theme in ['light', 'dark']:
+            for width, height in [(1500, 900), (320, 700), (800, 420)]:
+                with self.subTest(theme=theme, width=width):
+                    self.ev("theme => document.documentElement.setAttribute('data-theme', theme)", theme)
+                    self.page.set_viewport_size({'width': width, 'height': height})
+                    self.ev("() => { const panel = document.querySelector('.tl-detail'); panel.scrollTop = 0; panel.scrollLeft = panel.scrollWidth; }")
+                    self.page.wait_for_timeout(100)
+                    bounds = self.ev("""() => {
+                        const panel = document.querySelector('.tl-detail').getBoundingClientRect();
+                        const close = document.querySelector('.an-wait-head .tl-close').getBoundingClientRect();
+                        const head = document.querySelector('.an-wait-head');
+                        return {left: panel.left, right: panel.right, bottom: panel.bottom,
+                                closeLeft: close.left, closeRight: close.right, closeBottom: close.bottom,
+                                top: getComputedStyle(head).top, tableTop: document.querySelector('.an-wait-table th').style.top,
+                                pageWidth: document.documentElement.scrollWidth};
+                    }""")
+                    self.assertGreaterEqual(bounds['closeLeft'], bounds['left'])
+                    self.assertLessEqual(bounds['closeRight'], bounds['right'])
+                    self.assertLessEqual(bounds['closeBottom'], bounds['bottom'])
+                    self.assertLessEqual(bounds['pageWidth'], width)
+                    self.assertLessEqual(self.ev("document.querySelector('tr[data-wait]').offsetHeight"), 48)
+                    self.assertGreaterEqual(self.ev("document.querySelector('tr[data-wait] button').offsetWidth"), 140)
+                    if width <= 640 or height <= 600:
+                        self.assertEqual(bounds['top'], 'auto')
+                        self.assertEqual(bounds['tableTop'], '0px')
+                    self.assertFalse(self.page.locator('.an-wait-hint details').evaluate('(node) => node.open'))
+                    self.page.locator('tr[data-wait="2"] button').press('Enter')
+                    self.assertTrue(self.page.locator('.tl-detail.show').is_visible())
+        self.page.locator('.an-wait-head .tl-close').click()
+        self.assertFalse(self.page.locator('.tl-detail').is_visible())
+
 
     def test_range_pagination_sorting_and_cache(self):
         self.open_range_data([f'function_{index:04d}' for index in range(650)])

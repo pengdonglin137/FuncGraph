@@ -816,8 +816,13 @@ One row per wait, starting with the clicked off-CPU segment:
 | waker was in | what the waker was doing: the first frame above `try_to_wake_up`, `__wake_up*` and similar, e.g. `anon_pipe_write` |
 | wake latency | time from the wakeup until the task ran again; red above 1 ms |
 | run again on | CPU it resumed on |
+| link gap | for a temporal candidate: time from this row's resume to the wakeup in the preceding row; the selected wait has no link gap |
 
-If the waker itself had been waiting before, the next row shows what it waited for, and so on. The chain ends at wakeups from idle or interrupt context.
+The selected row and its associated wakeup are recorded observations. Each further row is only a **temporal candidate**, not proof that its wait caused the preceding wait: it is the waker's latest completed off-CPU interval ending at or before the wakeup in the preceding row, with a gap of **at most 50 ms**. The notice above the table always shows this distinction; expand it for the detailed explanation. If several wakeup events are associated with one wait, the last recorded event is displayed. The footer explains why traversal stops: missing wakeup, idle/CPU-only waker, interrupt context, no prior completed wait, a gap above 50 ms, or a repeated interval. Without timestamps only the selected interval is shown; no temporal links are inferred.
+
+**Load more waits** appends 100 rows without replacing the existing rows. **Export chain CSV** resolves and exports the entire chain, including rows not yet displayed, with original off-CPU/task indexes, raw timestamps or call-order units, link gaps, the 50 ms limit, and the terminal reason. Export does not expand the table. All tasks remain in scope regardless of the text filter; Overhead never changes recorded scheduling geometry or latency. Clicking a row, or pressing Enter/Space on its task button, reveals its task and waker and zooms to the interval without replacing the panel.
+
+An interval still open at trace end shows **≥** before its duration; this is a lower bound. Its resume CPU and wake latency are not known, and CSV leaves the end/resume/latency fields empty with `end_status=trace_end_lower_bound`. Recorded waiting information remains available even without scheduler events; the panel then also explains how to capture them. Long task/function names cannot push the close/export controls outside compact windows; wide tables scroll inside the panel.
 
 The waker is taken from `sched_waking` when available: it fires in the waker's context. `sched_wakeup` can fire in an IPI on the target CPU, and the waker would then look like idle. Enable `sched_waking` when capturing; `fgcapture.sh --sched` does.
 

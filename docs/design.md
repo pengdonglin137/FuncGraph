@@ -221,7 +221,7 @@ lost[]    [cpu, count, line]
 
 - `assets/views/boot.js` 在全局作用域执行。附加视图注册到 `window.fgViews[name] = {el, init}`，第一次切换到该视图时才调用 `init()`。它提供 `fgSwitchView()`、`fgCurrentView()`，以及在文本行上 Alt+点击跳到时间轴。报告里视图代码在前、boot.js 在后。新增标签页只需在 `HtmlGenerator._views()` 加一项并写一个注册脚本。
 - 时间轴的 `model.js`、`render.js`、`interact.js`、`analysis.js`、`panels.js` 按顺序拼接到 `function __tlBoot(){...}` 中，共享同一个作用域，返回 `{resize, revealLine, draw}`。
-  - **analysis**：错误汇总（syscall → 源头 → errno）、函数耗时分布（对数直方图、分位数、最慢调用）、调度延迟归因（need-resched 窗口内的自身耗时）、等待链（off-CPU → 唤醒者 → 唤醒者之前的等待）。
+  - **analysis**：错误汇总（syscall → 源头 → errno）、函数耗时分布（对数直方图、分位数、最慢调用）、调度延迟归因（need-resched 窗口内的自身耗时）、等待链（off-CPU → 记录中的唤醒者 → 唤醒者此前等待的时间关联候选，并非已证实的因果链）。等待链按任务惰性建立已结束 off-CPU 的结束时间索引，二分查找前驱；相同结束时间保留原始首项选择。缓存当前根区间的增量遍历和访问集合，每页追加 100 行，刷新不重走链，CSV 补齐全部后续项但不展开表格。50 ms 间隔阈值和停止原因显式展示；文本过滤和 Overhead 不改变调度几何。`model.js` 的 `OPEN_OFF` 在补齐 trace 末尾几何之前保存原始未闭合区间，不能将其作为已恢复的前驱，也不能据其计算恢复 CPU 或唤醒延迟。
   - 显示用的耗时统一经过 `durOf(i)`；`setAdjusted()` 在实测值和扣除开销后的值之间切换（快捷键 `O`）。切片的位置和宽度始终用实测的 `sStart/sEnd`。
   - **model**：解码列数据到 TypedArray，计算自身耗时，建立轨道和每个深度的行索引，构建 CPU 轨道数据，生成 DOM 骨架。
   - **合成切片**：下标 `>= N` 的切片不是 trace 里的调用，按顺序追加：内联帧（`buildInline`，`FL.INL`，只在 Inline 视图的 `rowsI` 里）和未跟踪帧（`buildGhosts`，`FL.GHOST`，`rowsT` 和 `rowsI` 里都有）。未跟踪帧填补父子之间缺的深度，名字取自里面那些调用的返回地址（它们的调用者），缺多层时外层名字为 `?`；范围是里面第一个到最后一个调用，相邻且同名的合并成一个。`SYN[i - N]` 保存它们的信息（`kids`、`p`，未跟踪帧另有 `ghost/level/gap/name`）。统计和导航用的 `for (i < N)` 循环只看真实切片。

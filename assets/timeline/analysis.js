@@ -711,11 +711,23 @@ elDetail.addEventListener('click', ev => {
 }, true);
 
 // ---- 4. wait chain: off-CPU segment -> who woke it -> what the waker was waiting for ----
-function offBefore(tid, t) {
-    // latest off-CPU segment of task tid that ended at or before t
-    let best = null;
-    for (const r of TRACKS[tid].off) if (r[2] <= t && (!best || r[2] > best[2])) best = r;
-    return best;
+const WAIT_PAGE = 100, WAIT_MAX_GAP = 50e6;
+const waitOffIndexes = new Map();
+let waitCache = null;
+function offBefore(task, time) {
+    let records = waitOffIndexes.get(task);
+    if (!records) {
+        records = TRACKS[task].off.filter(record => !OPEN_OFF.has(record));
+        records.sort((left, right) => left[2] - right[2] || OFF_IDX.get(right) - OFF_IDX.get(left));
+        waitOffIndexes.set(task, records);
+    }
+    let lower = 0, upper = records.length;
+    while (lower < upper) {
+        const middle = (lower + upper) >>> 1;
+        if (records[middle][2] <= time) lower = middle + 1;
+        else upper = middle;
+    }
+    return lower ? records[lower - 1] : null;
 }
 const RE_WAKE_INTERNAL = /^(?:try_to_wake_up|ttwu_\w+|wake_up\w*|__wake_up\w*|autoremove_wake_function|default_wake_function|woken_wake_function|pollwake|ep_poll_callback|complete\w*|swake_up\w*|wake_q_\w+|signal_wake_up\w*|_raw_spin_\w+|raw_spin_rq_\w+|preempt_count_\w+|select_task_rq\w*)$/;
 function wakeSite(i) {
@@ -724,55 +736,122 @@ function wakeSite(i) {
     while (k >= 0 && RE_WAKE_INTERNAL.test(nameOf(k).split('.')[0])) k = sParent[k];
     return k >= 0 ? nameOf(k) : nameOf(i);
 }
+function extendWaitChain(data, limit) {
+    while (data.next && data.steps.length < limit) {
+        const record = data.next, index = OFF_IDX.get(record), wake = WAKE_OF_OFF.get(index);
+        data.steps.push({ off: record, wake: wake, gap: data.gap });
+        data.seen.add(index);
+        data.next = null;
+        if (!TIMED) { data.stop = ['no-timestamps', 'Timestamps are unavailable; temporal links cannot be inferred.']; break; }
+        if (!wake) { data.stop = ['wakeup-not-recorded', 'Wakeup not recorded for the last wait.']; break; }
+        if (wake[3] !== 0) { data.stop = ['interrupt-context', 'The last wakeup came from interrupt context.']; break; }
+        if (TRACKS[wake[0]].kind !== 0) { data.stop = ['non-task-context', 'The last waker was idle or a CPU-only track.']; break; }
+        const previous = offBefore(wake[0], wake[1]);
+        if (!previous) { data.stop = ['no-prior-wait', 'No earlier completed wait was recorded for the last waker.']; break; }
+        const gap = wake[1] - previous[2];
+        if (gap > WAIT_MAX_GAP) { data.stop = ['gap-exceeded', 'The last waker resumed ' + fmtDur(gap) + ' before waking the task (limit 50 ms).']; break; }
+        if (data.seen.has(OFF_IDX.get(previous))) { data.stop = ['cycle', 'A repeated wait was reached; temporal traversal stopped.']; break; }
+        data.next = previous;
+        data.gap = gap;
+    }
+}
+function waitRows(data, start, end) {
+    let html = '';
+    for (let index = start; index < end; index++) {
+        const step = data.steps[index], record = step.off, wake = step.wake;
+        const open = OPEN_OFF.has(record), label = trackLabel(TRACKS[record[0]]);
+        const who = wake ? esc(trackLabel(TRACKS[wake[0]])) + (wake[3] ? ' <span class="tl-pill ctx' + wake[3] + '">' + CTX_NAMES[wake[3]] + '</span>' : '') : '<span class="d">not recorded</span>';
+        const latency = wake && !open ? record[2] - wake[1] : null;
+        html += '<tr data-wait="' + OFF_IDX.get(record) + '"><td><button class="an-site-btn" title="' + esc(label) + '" aria-label="Show wait ' + (index + 1) + ': ' + esc(label) + '">' +
+            (index + 1) + '. ' + esc(label) + '</button></td><td>' + (open ? '≥ ' : '') + fmtDur(record[2] - record[1]) + '</td><td>' +
+            (record[4] >= 0 ? esc(S[record[4]]) : '') + (record[5] >= 0 ? ' <span class="d">[' + esc(S[record[5]]) + ']</span>' : '') + '</td><td>' +
+            who + '</td><td>' + (wake && wake[4] >= 0 ? esc(wakeSite(wake[4])) : '') + '</td><td class="' +
+            (TIMED && latency > 1e6 ? 'err' : '') + '">' + (latency === null ? 'not recorded' : fmtDur(latency)) + '</td><td>' +
+            (!open && record[7] >= 0 ? 'CPU ' + record[7] : 'not recorded') + '</td><td>' + (step.gap === null ? 'selected wait' : fmtDur(step.gap)) + '</td></tr>';
+    }
+    return html;
+}
+function waitStatus(data) {
+    return 'Showing ' + Math.min(data.visible, data.steps.length) + (data.next ? '+' : ' of ' + data.steps.length) + ' waits · ' +
+        (data.next ? 'More temporal links available.' : 'Stopped: ' + data.stop[1]);
+}
+function updateWaitFooter(data) {
+    elDetail.querySelector('.an-wait-footer [role=status]').textContent = waitStatus(data);
+    elDetail.querySelector('[data-act=wait-more]').disabled = data.visible >= data.steps.length && !data.next;
+}
 function showWaitChain(off) {
     AN.kind = 'wait';
     AN.off = off;
-    const steps = [];
-    let cur = off, guard = 0;
-    while (cur && guard++ < 10) {
-        const idx = OFF_IDX.get(cur);
-        const w = WAKE_OF_OFF.get(idx);
-        steps.push({ off: cur, w: w });
-        if (!w) break;
-        const waker = TRACKS[w[0]];
-        if (waker.kind !== 0 || w[3] !== 0) break;          // woken from idle / irq context: chain ends
-        cur = offBefore(w[0], w[1]);
-        if (cur && w[1] - cur[2] > 50e6) break;            // waker ran long before waking: not a chain
+    if (!waitCache || waitCache.off !== off) {
+        waitCache = { off: off, steps: [], next: off, gap: null, seen: new Set(), visible: WAIT_PAGE, stop: null };
+        extendWaitChain(waitCache, WAIT_PAGE);
     }
-    const t = TRACKS[off[0]];
-    let h = '<div class="tl-detail-head"><span class="tl-detail-title">Wait chain · ' + esc(trackLabel(t)) + '</span>' +
-        pill(off[8] ? 'warn' : 'mute', (off[8] ? 'preempted ' : 'blocked ') + fmtDur(off[2] - off[1])) +
+    const data = waitCache, label = trackLabel(TRACKS[off[0]]);
+    let html = '<div class="tl-detail-head an-wait-head"><span class="tl-detail-title" title="' + esc(label) + '">Wait chain · ' + esc(label) + '</span>' +
+        pill(off[8] ? 'warn' : 'mute', (off[8] ? 'preempted ' : 'blocked ') + (OPEN_OFF.has(off) ? '≥ ' : '') + fmtDur(off[2] - off[1])) +
         (off[4] >= 0 ? pill('mute', 'in ' + S[off[4]]) : '') + (off[5] >= 0 ? pill('mute', 'state ' + S[off[5]]) : '') +
-        '<span class="sp"></span><button class="tl-close" title="Close (Esc)">×</button></div>';
-    if (!D.caps.sched_events) {
-        h += '<div style="padding:12px">Who woke the task is unknown: enable <code>events/sched/sched_wakeup</code> ' +
-            '(and <code>sched_switch</code>), e.g. <code>fgcapture.sh --sched</code>.</div>';
-        openDetail(h); return;
+        '<span class="an-wait-actions"><button class="tl-btn" data-act="wait-csv">Export chain CSV</button>' +
+        '<button class="tl-close" title="Close (Esc)">×</button></span></div>';
+    html += '<div class="an-hint an-wait-hint">' +
+        (!D.caps.sched_events ? '<div>Capture sched_switch and sched_waking (fgcapture.sh --sched) to record wakeups.</div>' : '') +
+        '<details><summary>' + (TIMED ? 'Further rows: temporal candidates, not proven dependencies · ≤ 50 ms · all tasks' :
+            'No timestamps: temporal links unavailable · all tasks') + '</summary>' +
+        '<div>Recorded wakeups identify who woke each task. Further rows are temporal candidates, not proven causal dependencies: ' +
+        'the waker’s latest completed wait ending at most 50 ms before it woke the preceding task. “Link gap” is the time from that prior resume to the wakeup in the preceding row. ' +
+        'Wake latency is from wakeup to the recorded resume; ≥ marks a wait still open at trace end. ' +
+        'All tasks are included, independently of the text filter and Overhead. Click a row or activate its task button to show it.</div></details></div>';
+    html += '<table class="tl-sum an-tbl an-wait-table"><thead><tr><th>task</th><th>waited</th><th>waiting in</th>' +
+        '<th>woken by</th><th>waker was in</th><th>wake latency</th><th>run again on</th><th>link gap</th></tr></thead><tbody>' +
+        waitRows(data, 0, Math.min(data.visible, data.steps.length)) + '</tbody></table>' +
+        '<div class="an-wait-footer"><span role="status">' + esc(waitStatus(data)) + '</span><button class="tl-btn" data-act="wait-more"' +
+        (data.visible >= data.steps.length && !data.next ? ' disabled' : '') + '>Load more waits</button></div>';
+    openDetail(html);
+}
+function appendWaitRows() {
+    if (AN.kind !== 'wait' || !waitCache) return;
+    const data = waitCache, start = Math.min(data.visible, data.steps.length);
+    data.visible += WAIT_PAGE;
+    extendWaitChain(data, data.visible);
+    elDetail.querySelector('.an-wait-table tbody').insertAdjacentHTML('beforeend', waitRows(data, start, Math.min(data.visible, data.steps.length)));
+    updateWaitFooter(data);
+}
+function exportWaitCsv() {
+    if (AN.kind !== 'wait' || !waitCache) return;
+    const data = waitCache, unit = MODE === 'count' ? 'units' : 'ns', scale = MODE === 'count' ? 1000 : 1;
+    extendWaitChain(data, Infinity);
+    const columns = ['step', 'offcpu_index', 'task_index', 'pid', 'comm', 'wait_start_' + unit, 'wait_end_' + unit, 'waited_' + unit,
+        'end_status', 'waiting_function', 'state', 'preempted', 'waker_task_index', 'waker_pid', 'waker_comm', 'wake_time_' + unit,
+        'waker_context', 'waker_function', 'wake_latency_' + unit, 'resume_cpu', 'link_kind', 'prior_resume_to_wake_' + unit,
+        'max_link_gap_' + unit, 'terminal_reason', 'time_mode', 'duration_basis', 'filter_scope'];
+    function* rows() {
+        for (let index = 0; index < data.steps.length; index++) {
+            const step = data.steps[index], record = step.off, wake = step.wake, task = TRACKS[record[0]];
+            const waker = wake ? TRACKS[wake[0]] : null, open = OPEN_OFF.has(record);
+            yield [index + 1, OFF_IDX.get(record), record[0], task.pid, task.comm, record[1] / scale, open ? '' : record[2] / scale,
+                (record[2] - record[1]) / scale, open ? 'trace_end_lower_bound' : 'recorded_resume', record[4] >= 0 ? S[record[4]] : '',
+                record[5] >= 0 ? S[record[5]] : '', record[8], wake ? wake[0] : '', waker ? waker.pid : '', waker ? waker.comm : '',
+                wake ? wake[1] / scale : '', wake ? CTX_NAMES[wake[3]] : '', wake && wake[4] >= 0 ? wakeSite(wake[4]) : '',
+                wake && !open ? (record[2] - wake[1]) / scale : '', !open && record[7] >= 0 ? record[7] : '', index ? 'temporal' : 'selected',
+                step.gap === null ? '' : step.gap / scale, TIMED ? WAIT_MAX_GAP : '', index === data.steps.length - 1 ? data.stop[0] : '',
+                MODE, MODE === 'count' ? 'call_order' : 'recorded_timestamps', 'all_tasks'];
+        }
     }
-    h += '<table class="tl-sum an-tbl"><thead><tr><th style="text-align:left">task</th><th>waited</th><th style="text-align:left">waiting in</th>' +
-        '<th style="text-align:left">woken by</th><th style="text-align:left">waker was in</th><th>wake latency</th><th>run again on</th></tr></thead><tbody>';
-    for (const st of steps) {
-        const r = st.off, w = st.w;
-        const who = w ? trackLabel(TRACKS[w[0]]) + (w[3] ? ' <span class="tl-pill ctx' + w[3] + '">' + CTX_NAMES[w[3]] + '</span>' : '') : '<span class="d">not recorded</span>';
-        const inFn = w && w[4] >= 0 ? esc(wakeSite(w[4])) : '';
-        const lat = w ? r[2] - w[1] : 0;
-        h += `<tr data-wait="${OFF_IDX.get(r)}"><td style="text-align:left">${esc(trackLabel(TRACKS[r[0]]))}</td><td>${fmtDur(r[2] - r[1])}</td>` +
-            `<td style="text-align:left">${r[4] >= 0 ? esc(S[r[4]]) : ''}${r[5] >= 0 ? ' <span class="d">[' + esc(S[r[5]]) + ']</span>' : ''}</td>` +
-            `<td style="text-align:left">${who}</td><td style="text-align:left">${inFn}</td>` +
-            `<td class="${lat > 1e6 ? 'err' : ''}">${w ? fmtDur(lat) : ''}</td><td>${r[7] >= 0 ? 'CPU ' + r[7] : ''}</td></tr>`;
-    }
-    h += '</tbody></table><div class="an-hint">Wake latency = time from the wakeup to running again. ' +
-        'Each further row is what the waker itself was waiting for before it woke this task. Click a row to show it.</div>';
-    openDetail(h);
+    downloadTimelineCsv('funcgraph-wait-chain-' + (MODE === 'count' ? 'count' : 'raw') + '.csv', columns, rows());
+    updateWaitFooter(data);
 }
 elDetail.addEventListener('click', ev => {
+    const action = ev.target.closest('[data-act]');
+    if (action && AN.kind === 'wait') {
+        if (action.dataset.act === 'wait-more') { appendWaitRows(); ev.stopImmediatePropagation(); return; }
+        if (action.dataset.act === 'wait-csv') { exportWaitCsv(); ev.stopImmediatePropagation(); return; }
+    }
     const tr = ev.target.closest('tr[data-wait]');
     if (!tr) return;
     const r = D.offcpu[+tr.dataset.wait];
     const w = WAKE_OF_OFF.get(+tr.dataset.wait);
     const t = TRACKS[r[0]];
     t.hidden = false; t.collapsed = false;
-    if (w) { TRACKS[w[0]].hidden = false; }
+    if (w) { TRACKS[w[0]].hidden = false; TRACKS[w[0]].collapsed = false; }
     layout();
     elScroll.scrollTop = Math.max(0, t.y - 4);
     zoomTo(w ? Math.min(w[1], r[1]) : r[1], r[2], -1);
