@@ -163,7 +163,9 @@ function setNotes(on) {
     resize();
 }
 function setMax(on) {
+    // only in the timeline; the classes sit on the elements (see views.css)
     document.body.classList.toggle('tl-max', on);
+    window.fgPageChrome().top.forEach(e => e.classList.toggle('fg-off', on));
     tlRoot.querySelector('[data-act=max]').classList.toggle('on', on);
     resize();
 }

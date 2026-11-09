@@ -21,6 +21,22 @@
         return apis[name];
     }
     window.fgView = ensure;
+    // Page chrome, looked up once: querySelectorAll over a 1M-element text view costs ~40 ms per call.
+    let chrome = null;
+    function pageChrome() {
+        if (chrome) return chrome;
+        const one = s => document.querySelector(s);
+        const tabs = one('.view-tabs');
+        chrome = {
+            hide: [one('.controls'), document.getElementById('content'), document.getElementById('progressBar'),
+                   document.getElementById('floatingToggle'), document.getElementById('keyboardHint')].filter(Boolean),
+            wide: [one('.container')].filter(Boolean),
+            top: [one('.page-header'), tabs].filter(Boolean),
+            tabs: tabs ? Array.from(tabs.querySelectorAll('.view-tab')) : [],
+        };
+        return chrome;
+    }
+    window.fgPageChrome = pageChrome;
     window.fgSwitchView = function (which) {
         if (which !== 'text' && !views[which]) return;
         if (which === current) { if (which !== 'text') (ensure(which).resize || (() => {}))(); return; }
@@ -29,9 +45,16 @@
             const el = document.getElementById(v.el);
             if (el) el.classList.toggle('fg-view-on', name === which);
         }
-        document.body.classList.toggle('tl-active', which !== 'text');
+        const off = which !== 'text';
+        const pc = pageChrome();
+        pc.hide.forEach(e => e.classList.toggle('fg-off', off));
+        pc.wide.forEach(e => e.classList.toggle('fg-wide', off));
+        // body class only for body's own rules (no descendant selectors on it)
+        document.body.classList.toggle('tl-active', off);
+        const max = off && document.body.classList.contains('tl-max');
+        pc.top.forEach(e => e.classList.toggle('fg-off', max));
         document.body.dataset.view = which;
-        document.querySelectorAll('.view-tab').forEach(b => b.classList.toggle('active', b.dataset.view === which));
+        pc.tabs.forEach(b => b.classList.toggle('active', b.dataset.view === which));
         current = which;
         set('view', which);
         if (which === 'text') {

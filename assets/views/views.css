@@ -34,12 +34,13 @@
     color: var(--text-muted);
 }
 
-body.tl-active .controls,
-body.tl-active #content,
-body.tl-active .progress-bar,
-body.tl-active #floatingToggle,
-body.tl-active .keyboard-hint { display: none !important; }
-body.tl-active .container { width: auto !important; min-width: 0 !important; }
+/* Classes go on the affected elements themselves, never on an ancestor of #content:
+   a class change on <body> makes the browser re-match the whole text view (1M elements
+   in a 50k-line report). #content is hidden with content-visibility so its layout is
+   kept and switching back is cheap. */
+.fg-off { display: none !important; }
+#content.fg-off { display: block !important; content-visibility: hidden; }
+.container.fg-wide { width: auto !important; min-width: 0 !important; }
 .fg-view { display: none; }
 .fg-view.fg-view-on { display: flex; }
 
