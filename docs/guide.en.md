@@ -564,6 +564,10 @@ Other visuals:
   - **Children**: the children with the most time, `×N` = number of calls.
 - Links at the top right: **Duration distribution (H)** (7.2) and **Open in text view ↵**.
 
+The detail panel and the analysis panels share the bottom area. Drag the bar above the panel to change its height; the canvas grows or shrinks accordingly. Double-click the bar to restore the default (32% of the window height, between 180 and 400 px). The height is stored in the browser as a fraction of the window, so other reports and other window sizes keep the same split.
+
+For a larger canvas: **Max** in the toolbar (`M`) hides the page header and the view tabs, press it again to restore them. **Notes N** collapses or expands the notes about this trace below the toolbar (missing options, overhead estimate, ...); the choice is remembered.
+
 ### 6.6 Search and filter
 
 - **Search box** (`/`): a function-name regex. Non-matching slices are dimmed and the number of matching calls is shown; Enter or `N` goes to the next match, Shift+Enter or Shift+`N` to the previous one.
@@ -624,6 +628,8 @@ In both views the call stacks list the inline frames.
 | `H` | duration distribution of the selected function |
 | `O` | measured / overhead subtracted |
 | `I` | hide / show inline frames |
+| `M` | maximize (hide page header and tabs) / restore |
+| drag / double-click the bar above the panel | resize the bottom panel / reset it |
 | Enter | open the selected call in the text view |
 | Esc | close the help; clear selection and range |
 | `?` | help and legend |
