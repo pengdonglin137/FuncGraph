@@ -821,7 +821,8 @@ The current trace (`after.txt`) and the base (`before.txt`) are rebuilt the same
 | errors | error origins |
 
 - **Δ colors**: **red** increase, **green** decrease, **grey** under 5%. The bar next to the sorted metric shows the size of the change. **new** after a name: only in the current trace; **gone**: only in the base.
-- **Controls**: function regex filter; **changed only**; sort by `|Δ|`, `Δ`, `Δ%`, `current`, `base`; click a header to choose the metric. With overhead estimates for both traces, **subtract tracing overhead** appears.
+- **Controls**: function regex filter; **changed only** retains changes in any of calls, inclusive time, self time, maximum duration, or errors; sort by `|Δ|`, `Δ`, `Δ%`, `current`, `base`; click a header to choose the metric. With overhead estimates for both traces, **subtract tracing overhead** appears. An empty result displays an explanation.
+- **Narrow windows and scrolling**: table height adapts to the viewport and controls above it. Function names stay pinned when scrolling horizontally, and headers stay pinned vertically. Use Tab to focus the table region and arrow keys to scroll; hover over a truncated function name to see it in full.
 
 The traces should have similar tracing overhead (same options, same machine) for the differences to mean something.
 

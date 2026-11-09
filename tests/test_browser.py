@@ -16,7 +16,8 @@ class BrowserSmokeTest(unittest.TestCase):
     def setUpClass(cls):
         cls.k = helpers.FakeKernel()
         cls.k.run(helpers.fixture('pi4_sched'), '--enable-fold', '--filter', '--func-links',
-                  '--base-url', 'https://example.org/src', '--timeline', out='report.html')
+                  '--base-url', 'https://example.org/src', '--timeline',
+                  '--compare', helpers.fixture('pi4_default'), out='report.html')
         cls.url = 'file://' + cls.k.dir + '/report.html'
         cls.pw = sync_playwright().start()
         try:
@@ -79,6 +80,63 @@ class BrowserSmokeTest(unittest.TestCase):
         self.page.click('.view-tab[data-view=timeline]')
         self.page.wait_for_timeout(400)
         self.assertTrue(self.ev("document.body.dataset.view === 'timeline'"))
+
+    def open_compare(self, rows=None, adjusted=None):
+        if rows is not None:
+            self.ev("""({rows, adjusted}) => {
+                const node = document.getElementById('cmpData');
+                const data = JSON.parse(node.textContent);
+                data.rows = rows;
+                data.rows_adj = adjusted;
+                if (adjusted) data.overhead = [{child: 10, self: 5}, {child: 10, self: 5}];
+                node.textContent = JSON.stringify(data);
+            }""", {'rows': rows, 'adjusted': adjusted})
+        self.page.click('.view-tab[data-view=compare]')
+        self.page.wait_for_selector('.cmp-table')
+
+    def test_compare_changed_only_covers_every_metric(self):
+        baseline = [2, 100, 50, 70, 0]
+        rows = [['unchanged'] + baseline + baseline]
+        metrics = ['calls', 'inclusive', 'self', 'max', 'errors']
+        for index, metric in enumerate(metrics):
+            current = baseline.copy()
+            current[index] += 1
+            rows.append([metric] + baseline + current)
+        self.open_compare(rows)
+        names = self.page.locator('.cmp-table tbody td.l').all_text_contents()
+        self.assertEqual(set(names), set(metrics))
+        self.assertEqual(self.page.locator('.cmp-count').inner_text(), '5 of 6 functions')
+        self.page.uncheck('.cmp-changed')
+        self.assertEqual(self.page.locator('.cmp-count').inner_text(), '6 of 6 functions')
+
+    def test_compare_empty_filter_has_explanation(self):
+        self.open_compare()
+        self.page.fill('.cmp-q', '^not_a_captured_function$')
+        self.page.wait_for_function("document.querySelector('.cmp-count').textContent.startsWith('0 of ')")
+        self.assertEqual(self.page.locator('.cmp-empty').count(), 1)
+        self.assertTrue(self.page.locator('.cmp-empty').is_visible())
+        self.assertIn('No functions match', self.page.locator('.cmp-empty').inner_text())
+        self.page.fill('.cmp-q', '')
+        self.page.wait_for_function("!document.querySelector('.cmp-count').textContent.startsWith('0 of ')")
+        self.assertFalse(self.page.locator('.cmp-empty').is_visible())
+
+    def test_compare_responsive_height_and_sticky_function_names(self):
+        self.open_compare()
+        for width, height in [(1280, 720), (800, 600), (390, 844)]:
+            with self.subTest(width=width, height=height):
+                self.page.set_viewport_size({'width': width, 'height': height})
+                self.page.wait_for_timeout(100)
+                bounds = self.page.locator('.cmp-wrap').bounding_box()
+                self.assertLessEqual(bounds['y'] + bounds['height'], height + 1)
+                positions = self.ev("""() => {
+                    const wrap = document.querySelector('.cmp-wrap');
+                    wrap.scrollLeft = wrap.scrollWidth - wrap.clientWidth;
+                    return [wrap.getBoundingClientRect().left,
+                            document.querySelector('.cmp-table tbody td.l').getBoundingClientRect().left,
+                            document.querySelector('.cmp-table th.l').getBoundingClientRect().left];
+                }""")
+                self.assertAlmostEqual(positions[0], positions[1], delta=2)
+                self.assertAlmostEqual(positions[0], positions[2], delta=2)
 
     def test_timeline_error_navigation_and_jump_to_text(self):
         self.open_timeline()

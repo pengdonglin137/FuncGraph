@@ -49,7 +49,8 @@ window.fgViews.compare = { el: 'compareView', init: function () {
         <span class="cmp-count"></span>
       </div>
       <div class="cmp-note">Durations include tracing overhead; compare traces captured with the same options. Self time = inclusive minus traced children.</div>
-      <div class="cmp-wrap"><table class="cmp-table"><thead></thead><tbody></tbody></table></div>`;
+      <div class="cmp-empty" role="status" hidden>No functions match the current filters.</div>
+      <div class="cmp-wrap" tabindex="0" role="region" aria-label="Function comparison table"><table class="cmp-table"><thead></thead><tbody></tbody></table></div>`;
     const tot = (i) => D.rows.reduce((s, r) => s + r[i], 0);
     const pill = (label, b, c, time) => {
         const d = c - b, p = pct(b, c);
@@ -63,6 +64,11 @@ window.fgViews.compare = { el: 'compareView', init: function () {
         (D.modes[0] !== D.modes[1] ? `<span class="cmp-pill warn">time modes differ: ${D.modes[0]} vs ${D.modes[1]}</span>` : '');
 
     const thead = root.querySelector('thead'), tbody = root.querySelector('tbody');
+    const wrap = root.querySelector('.cmp-wrap');
+    function resize() {
+        const top = Math.max(0, wrap.getBoundingClientRect().top);
+        wrap.style.maxHeight = Math.max(160, window.innerHeight - top - 12) + 'px';
+    }
     function header() {
         let h = '<tr><th rowspan="2" data-k="name" class="l">function</th>';
         for (const c of COLS.slice(1)) h += `<th colspan="3" data-k="${c.k}" class="${c.k === sortKey ? 'on' : ''}">${c.t}</th>`;
@@ -75,7 +81,8 @@ window.fgViews.compare = { el: 'compareView', init: function () {
         const col = COLS.find(c => c.k === sortKey) || COLS[2];
         let rows = ROWS;
         if (query) rows = rows.filter(r => query.test(r[0]));
-        if (onlyChanged) rows = rows.filter(r => r[1] !== r[6] || r[3] !== r[8]);
+        if (onlyChanged) rows = rows.filter(row => row[1] !== row[6] || row[2] !== row[7] ||
+            row[3] !== row[8] || row[4] !== row[9] || row[5] !== row[10]);
         const key = r => {
             if (col.k === 'name') return r[0];
             const b = val(col, r, 'b'), c = val(col, r, 'c');
@@ -105,6 +112,8 @@ window.fgViews.compare = { el: 'compareView', init: function () {
         if (rows.length > limit) h += `<tr><td class="l more" colspan="${1 + 3 * (COLS.length - 1)}">… ${rows.length - limit} more (click to show)</td></tr>`;
         tbody.innerHTML = h;
         root.querySelector('.cmp-count').textContent = rows.length + ' of ' + ROWS.length + ' functions';
+        root.querySelector('.cmp-empty').hidden = rows.length !== 0;
+        resize();
     }
     thead.addEventListener('click', ev => {
         const th = ev.target.closest('th[data-k]');
@@ -137,6 +146,7 @@ window.fgViews.compare = { el: 'compareView', init: function () {
         }, 150);
     });
     root.querySelector('.cmp-q').addEventListener('keydown', ev => ev.stopPropagation());
+    window.addEventListener('resize', () => { if (window.fgCurrentView() === 'compare') resize(); });
     render();
-    return { resize: () => {} };
+    return { resize: resize };
 } };
