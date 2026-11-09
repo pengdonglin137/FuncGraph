@@ -178,9 +178,11 @@ class BrowserSmokeTest(unittest.TestCase):
         self.page.goto('file://' + self.k.dir + '/thin_wide.html', wait_until='load')
         self.page.wait_for_timeout(500)
         # middle of the first call row (track header 20 px + half a 17 px row)
+        # compared with an empty spot of the same canvas (a deeper row without calls)
         painted = self.ev("""(() => { const cv = document.querySelector('.tl-canvas'), d = window.devicePixelRatio || 1;
-            const px = cv.getContext('2d').getImageData(Math.round(cv.width / 2), Math.round(28 * d), 1, 1).data;
-            return !(px[0] > 245 && px[1] > 245 && px[2] > 245); })()""")
+            const g = cv.getContext('2d'), x = Math.round(cv.width / 2);
+            const a = g.getImageData(x, Math.round(28 * d), 1, 1).data, e = g.getImageData(x, Math.round(80 * d), 1, 1).data;
+            return Math.abs(a[0] - e[0]) + Math.abs(a[1] - e[1]) + Math.abs(a[2] - e[2]) > 30; })()""")
         self.assertTrue(painted, 'wide slice not drawn at full view')
 
     def test_wakeup_overlay_toggle(self):
