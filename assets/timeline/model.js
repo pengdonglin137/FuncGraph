@@ -134,7 +134,9 @@ for (const r of D.errs) {
     const i = r[0];
     eErr[i] = r[1]; eRole[i] = r[2]; eFate[i] = r[3]; eVer[i] = r[4]; eChain[i] = r[5];
 }
-const CHAINS = D.chains;   // [origin, top, errno, fate, length, verified]
+const CHAINS = D.chains;   // [origin, top, errno, fate, length, verified, minor]
+let showMinor = false;     // minor: handled at once by a function whose negative returns never propagate
+function chainShown(c) { return showMinor || !CHAINS[c][6]; }
 function errName(e) { return D.errnames[String(e)] || ''; }
 
 // ---- tracks ----
@@ -193,7 +195,7 @@ function applyView() {
 applyView();
 for (const r of D.resched) TRACKS[r[0]].rs.push(r);   // [task, start, end, maxPreempt, irqoff, closedBy]
 for (const r of D.irqoff) TRACKS[r[0]].io.push(r);    // [task, start, end]
-for (let c = 0; c < CHAINS.length; c++) TRACKS[sTask[CHAINS[c][0]]].errs.push(c);
+for (let c = 0; c < CHAINS.length; c++) if (!CHAINS[c][6]) TRACKS[sTask[CHAINS[c][0]]].errs.push(c);
 
 let tMax = 1;
 for (let i = 0; i < N; i++) if (sEnd[i] > tMax) tMax = sEnd[i];

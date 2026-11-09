@@ -312,7 +312,7 @@ elHead.addEventListener('wheel', ev => {
 let errList = [], errPos = -1;
 function rebuildErrList() {
     errList = [];
-    for (let c = 0; c < CHAINS.length; c++) if ((!errFilter || CHAINS[c][3] === 1) && (!textHits || textHits[CHAINS[c][0]])) errList.push(c);
+    for (let c = 0; c < CHAINS.length; c++) if (chainShown(c) && (!errFilter || CHAINS[c][3] === 1) && (!textHits || textHits[CHAINS[c][0]])) errList.push(c);
     errList.sort((a, b) => sStart[CHAINS[a][0]] - sStart[CHAINS[b][0]]);
     errPos = -1;
     updateErrLabel();

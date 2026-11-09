@@ -94,7 +94,7 @@ function baseColor(i) {
 function sliceStyle(i) {
     // returns [fill, textColor, borderColor|null]
     if (i >= N) return [dark ? 'rgba(120,130,150,.22)' : 'rgba(110,120,140,.13)', P.textDim, dark ? 'rgba(170,180,200,.7)' : 'rgba(90,100,120,.6)'];
-    if (ov.err && eRole[i] >= 0) {
+    if (ov.err && eRole[i] >= 0 && (showMinor || eChain[i] < 0 || !CHAINS[eChain[i]][6])) {
         const handled = eFate[i] === 0;
         if (eRole[i] === 0) return [handled ? P.errOh : P.errO, '#ffffff', null];
         return [handled ? P.errPh : P.errP, dark ? '#ffe3e3' : '#5a1010', handled ? P.errLineH : P.errLine];
@@ -441,7 +441,7 @@ function drawSlice(i, x0, x1, y, h, labels) {
     if (labels && w > 26) {
         const nm = nameOf(i);
         let txt = i >= N ? 'inline ' + nm : nm;
-        if (ov.err && eRole[i] === 0) { const en = errName(eErr[i]); txt += ' = ' + (en || eErr[i]); }
+        if (ov.err && eRole[i] === 0 && (showMinor || !CHAINS[eChain[i]][6])) { const en = errName(eErr[i]); txt += ' = ' + (en || eErr[i]); }
         const maxc = Math.floor((w - 8) / charW);
         if (maxc >= 3) {
             if (txt.length > maxc) txt = txt.slice(0, maxc - 1) + '…';
@@ -512,7 +512,7 @@ function renderHead() {
     }
     hctx.globalAlpha = 1;
     if (ov.err) for (const ch of CHAINS) {
-        if (errFilter && ch[3] !== 1) continue;
+        if ((errFilter && ch[3] !== 1) || (ch[6] && !showMinor)) continue;
         hctx.fillStyle = ch[3] === 0 ? P.errOh : P.errO;
         hctx.fillRect(Math.round(sStart[ch[0]] * k0), 1, 1.5, ch[3] === 1 ? OV_H - 4 : 8);
     }

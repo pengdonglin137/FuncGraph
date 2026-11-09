@@ -943,6 +943,16 @@ class TimelineBuilder:
             self.chains.append([i, top, e, fate, len(members), 1 if all(verified[k] for k in members) else 0])
             for k in members:
                 chain_of[k] = cid
+        # Minor: a single-frame origin handled right away by its caller, by a function whose
+        # negative returns never propagate anywhere in the trace. Typically signed values that
+        # are not errnos (e.g. memcg_state_val_in_pages page deltas) or normal probing (-ENOEXEC
+        # from binfmt handlers). Kept, but separated from the errors that matter.
+        propagating = set()
+        for c in self.chains:
+            if c[4] > 1:
+                propagating.add(self.s_name[c[0]])
+        for c in self.chains:
+            c.append(1 if (c[3] == 0 and c[4] == 1 and self.s_name[c[0]] not in propagating) else 0)
         for i in range(n):
             e = err[i]
             if e is None:

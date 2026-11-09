@@ -88,7 +88,7 @@ def build_timeline_data(parsed_lines, vmlinux_path, module_dirs, args):
     data = builder.to_data()
     st = data['stats']
     print(f"Timeline: {st['slices']} slices, {st['tasks']} tasks, mode={data['mode']}, "
-          f"{len(data['chains'])} error chains, {st['offcpu']} off-CPU, {time.time() - t0:.2f}s")
+          f"{sum(1 for c in data['chains'] if not c[6])} error chains (+{sum(c[6] for c in data['chains'])} minor), {st['offcpu']} off-CPU, {time.time() - t0:.2f}s")
     if data['n'] == 0:
         print("Note: no function_graph calls found; timeline tab omitted", file=sys.stderr)
         return None

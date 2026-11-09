@@ -250,6 +250,14 @@ class SyntheticTest(unittest.TestCase):
         self.assertEqual(rets['is_ok'], 'false')
         self.assertNotIn('void_fn', rets)
 
+    def test_minor_errors(self):
+        t = ("1000.000100 |   0)   sh-7     |  ...1. |               |  mod_state() { /* <-x+0x1/0x2 */\n"
+             "1000.000101 |   0)   sh-7     |  ...1. |   1.000 us    |    pages_delta(); /* <-mod_state+0x1/0x2 ret=-4 */\n"
+             "1000.000103 |   0)   sh-7     |  ...1. |   3.000 us    |  } /* mod_state ret=0 */\n") + SYNTH_FULL.split('\n', 1)[1]
+        d = build(t)
+        minor = {self.name(d, c[0]): c[6] for c in d['chains']}
+        self.assertEqual(minor, {'pages_delta': 1, 'path_openat': 0})   # never propagated vs reaches user
+
     def test_btf_filters_void_comparator_and_null(self):
         db = ReturnTypeDB()
         db.funcs.update({'do_raw_spin_unlock': ('void', 0), 'search_cmp_ftr_reg': ('sint', 4),

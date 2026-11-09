@@ -26,6 +26,8 @@ def function_stats(data, adjusted=False):
             self_t[p] -= dur[i]
     errs = {}
     for ch in data['chains']:
+        if len(ch) > 6 and ch[6]:
+            continue          # minor: not counted as an error
         errs[ch[0]] = errs.get(ch[0], 0) + 1
     out = {}
     for i in range(n):
@@ -70,7 +72,7 @@ def compare(cur_data, base_lines, rettypes=None, overhead=None, base_name='base'
         'modes': [base['mode'], cur_data['mode']],
         'calls': [base['n'], cur_data['n']],
         'window': [window(base), window(cur_data)],
-        'errors': [len(base['chains']), len(cur_data['chains'])],
+        'errors': [sum(1 for c in base['chains'] if not c[6]), sum(1 for c in cur_data['chains'] if not c[6])],
         # row: name, base[calls, incl, self, max, err], cur[calls, incl, self, max, err]
         'rows': rows,
     }

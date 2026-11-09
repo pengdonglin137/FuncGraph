@@ -251,3 +251,4 @@ table.tl-sum td.err { color: #c62828; }
 .an-bd-legend .d { color: var(--text-muted); }
 .an-tbl tr[data-sec] td, .an-tbl tr[data-site] td, .an-tbl tr.an-atomic td { cursor: pointer; }
 .tl-crumb.inl { font-style: italic; color: var(--text-muted); cursor: default; }
+.an-minor { font-size: 11px; color: var(--text-muted); margin-left: 6px; }

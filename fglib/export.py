@@ -60,9 +60,10 @@ def build(d, errno_map=None, trace_name=''):
     errors = []
     for ch in d['chains']:
         o, top, e, fate, ln, ver = ch[:6]
+        minor = bool(ch[6]) if len(ch) > 6 else False
         comm, pid = task(c['task'][o])
         errors.append({'origin': name(o), 'top': name(top), 'entry': entry_of(top), 'errno': e,
-                       'name': errno_map.get(e, ''), 'fate': FATES[fate], 'verified': bool(ver), 'frames': ln,
+                       'name': errno_map.get(e, ''), 'fate': FATES[fate], 'verified': bool(ver), 'frames': ln, 'minor': minor,
                        'task': comm, 'pid': pid, 'start': start[o]})
     sections = []
     for r in d.get('sections', []):

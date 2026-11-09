@@ -23,9 +23,11 @@ function showErrors() {
     AN.kind = 'errors';
     const groups = new Map();
     let total = 0;
+    let minor = 0;
     for (let c = 0; c < CHAINS.length; c++) {
         const ch = CHAINS[c], o = ch[0];
         if (!matchOk(o)) continue;
+        if (!chainShown(c)) { minor++; continue; }
         total++;
         const sc = syscallOf(ch[1]);
         const key = sysLabel(sc) + '\u0000' + nameOf(o) + '\u0000' + ch[2];
@@ -48,7 +50,9 @@ function showErrors() {
         k === 'errno' ? a.errno - b.errno : k === 'user' ? b.fate[1] - a.fate[1] : b.count - a.count);
     let h = '<div class="tl-detail-head"><span class="tl-detail-title">Errors</span>' +
         pill('err', total + ' error chains') + pill('mute', rows.length + ' groups') +
-        (textHits ? pill('warn', 'filtered') : '') + (D.btf ? '' : pill('warn', 'no BTF: unverified')) +
+        (textHits ? pill('warn', 'filtered') : '') + (D.btf || D.caps.retval_btf ? '' : pill('warn', 'no BTF: unverified')) +
+        (minor || showMinor ? '<label class="an-minor"><input type="checkbox" data-act="minor"' + (showMinor ? ' checked' : '') + '> show ' +
+            (showMinor ? '' : minor + ' ') + 'minor (handled at once, never propagated)</label>' : '') +
         '<span class="sp"></span><button class="tl-close" title="Close (Esc)">×</button></div>';
     if (!rows.length) {
         if (ATOMIC.size) h += '<div style="padding:12px" class="err">' + ATOMIC.size + ' sleeping function call(s) in atomic context, see the slice markers.</div>';
@@ -215,6 +219,11 @@ function showLatency() {
     openDetail(h);
 }
 
+elDetail.addEventListener('change', ev => {
+    if (ev.target.dataset && ev.target.dataset.act === 'minor') {
+        showMinor = ev.target.checked; rebuildErrList(); draw(); showErrors();
+    }
+});
 elDetail.addEventListener('click', ev => {
     const th = ev.target.closest('th[data-esort], th[data-lsort]');
     if (th) {
