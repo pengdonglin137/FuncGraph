@@ -116,21 +116,18 @@ function detailDefault() { return Math.round(Math.min(400, Math.max(180, window.
 // stored as a fraction of the window height, so the split looks the same on other screens
 function detailPx() { const v = +prefGet('detailFrac'); return v > 0 && v < 1 ? Math.round(v * window.innerHeight) : detailDefault(); }
 function clampDetailH(h) {
-    // keep at least 160 px of canvas and 60 px of panel
-    const top = Math.max(0, elStage.getBoundingClientRect().top);
-    return Math.round(Math.max(60, Math.min(h, window.innerHeight - top - 160 - elResizer.offsetHeight - 10)));
+    const notesMin = elNotes.classList.contains('hide') ? 0 : 28;
+    return Math.round(Math.max(60, Math.min(h, tlRoot.clientHeight - 160 - 32 - notesMin - elResizer.offsetHeight)));
 }
 
 // ---- main canvas ----
 function resize() {
     DPR = window.devicePixelRatio || 1;
-    const top = elStage.getBoundingClientRect().top;
-    let detailH = 0;
+    const top = Math.max(0, tlRoot.getBoundingClientRect().top);
+    tlRoot.style.height = Math.max(288, window.innerHeight - top - 12) + 'px';
     if (elDetail.classList.contains('show')) {
         elDetail.style.height = clampDetailH(detailPx()) + 'px';
-        detailH = elDetail.offsetHeight + elResizer.offsetHeight;
     }
-    elStage.style.height = Math.max(160, window.innerHeight - Math.max(top, 0) - detailH - 10) + 'px';
     W = elScroll.clientWidth;
     H = elScroll.clientHeight;
     for (const [cv, w, h] of [[elCv, W, H], [elHead, W, HEAD_H]]) {

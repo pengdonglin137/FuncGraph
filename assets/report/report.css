@@ -61,8 +61,13 @@
             border-radius: 4px;
             box-shadow: none;
             transition: background-color 0.3s;
+            width: auto;
+            min-width: 0;
+        }
+        #content {
             width: fit-content;
             min-width: 100%;
+            background: var(--container-bg);
         }
         /* Compact single-line page header */
         .page-header {
@@ -102,8 +107,12 @@
             gap: 4px;
             flex-wrap: wrap;
         }
+        .header-stats > span {
+            white-space: nowrap;
+        }
         .header-actions {
             display: flex;
+            flex-shrink: 0;
             gap: 4px;
             margin-left: auto;
         }
@@ -1177,6 +1186,13 @@
             .page-header {
                 font-size: 11px;
                 padding: 4px 6px;
+            }
+            .page-header > .header-sep {
+                display: none;
+            }
+            .header-stats {
+                order: 1;
+                flex: 0 0 100%;
             }
             .line-container {
                 font-size: 11px;

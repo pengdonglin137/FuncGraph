@@ -3,7 +3,7 @@
    ============================================================ */
 #timelineView {
     flex-direction: column;
-    min-height: 420px;
+    min-height: 0;
     font: 12px system-ui, -apple-system, "Segoe UI", sans-serif;
     color: var(--text-color);
     user-select: none;
@@ -12,15 +12,23 @@
 /* toolbar */
 .tl-toolbar {
     display: flex;
+    flex: 0 1 auto;
+    min-height: 32px;
+    max-height: 30vh;
+    box-sizing: border-box;
+    overflow: auto;
     flex-wrap: wrap;
     align-items: center;
     gap: 8px 14px;
     padding: 4px 2px 6px;
 }
-.tl-group { display: inline-flex; align-items: center; gap: 6px; }
+.tl-group { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px; min-width: 0; max-width: 100%; }
 .tl-label { color: var(--text-muted); font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
 .tl-seg {
     display: inline-flex;
+    flex-wrap: wrap;
+    max-width: 100%;
+    box-sizing: border-box;
     border: 1px solid var(--border-color);
     border-radius: 6px;
     overflow: hidden;
@@ -72,9 +80,11 @@
 [data-theme="dark"] .tl-errnav .err-label { color: #ff8a80; }
 
 /* capability notes */
-.tl-notes { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 2px 6px; }
+.tl-notes { display: flex; flex: 0 1 auto; flex-wrap: wrap; gap: 6px; padding: 0 2px 6px; min-height: 28px; max-height: 15vh; box-sizing: border-box; overflow: auto; }
 .tl-notes.hide { display: none; }
 .tl-note {
+    min-width: 0;
+    overflow-wrap: anywhere;
     font-size: 11.5px;
     padding: 3px 9px;
     border-radius: 5px;
@@ -88,7 +98,8 @@
 /* canvas area */
 .tl-stage {
     position: relative;
-    flex: 1 1 auto;
+    flex: 1 0 160px;
+    box-sizing: border-box;
     display: flex;
     flex-direction: column;
     border: 1px solid var(--border-color);
@@ -111,6 +122,7 @@ body.tl-max.tl-active { padding: 2px; }
 .tl-head-canvas { display: block; width: 100%; height: 62px; cursor: pointer; flex: 0 0 auto; }
 .tl-scroll {
     position: relative;
+    min-height: 0;
     flex: 1 1 auto;
     overflow-y: auto;
     overflow-x: hidden;
@@ -148,6 +160,7 @@ body.tl-max.tl-active { padding: 2px; }
 /* detail panel */
 .tl-detail {
     flex: 0 0 auto;
+    box-sizing: border-box;
     display: none;
     border: 1px solid var(--border-color);
     border-radius: 8px;
@@ -169,8 +182,8 @@ body.tl-max.tl-active { padding: 2px; }
 .tl-detail-title { font: 600 13px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; word-break: break-all; }
 .tl-detail-head .sp { flex: 1; }
 .tl-close { cursor: pointer; color: var(--text-muted); font-size: 16px; padding: 0 4px; background: none; border: none; }
-.tl-detail-body { display: grid; grid-template-columns: minmax(280px, 1fr) minmax(280px, 1.2fr); gap: 4px 28px; padding: 10px 12px 12px; }
-.tl-kv { display: grid; grid-template-columns: 96px 1fr; gap: 3px 10px; align-content: start; }
+.tl-detail-body { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr); gap: 4px 28px; padding: 10px 12px 12px; }
+.tl-kv { display: grid; grid-template-columns: 96px minmax(0, 1fr); gap: 3px 10px; align-content: start; }
 .tl-kv .k { color: var(--text-muted); }
 .tl-kv .v { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; word-break: break-all; }
 .tl-kv .v.d { word-break: normal; }
@@ -214,7 +227,10 @@ table.tl-sum td.err { color: #c62828; }
     right: 12px;
     top: 70px;
     z-index: 20;
-    width: 330px;
+    width: min(330px, calc(100% - 24px));
+    max-height: calc(100% - 82px);
+    box-sizing: border-box;
+    overflow: auto;
     background: var(--container-bg);
     border: 1px solid var(--border-color);
     border-radius: 8px;
@@ -269,3 +285,7 @@ table.tl-sum td.err { color: #c62828; }
 .an-tbl tr[data-sec] td, .an-tbl tr[data-site] td, .an-tbl tr.an-atomic td { cursor: pointer; }
 .tl-crumb.inl { font-style: italic; color: var(--text-muted); cursor: default; }
 .an-minor { font-size: 11px; color: var(--text-muted); margin-left: 6px; }
+
+@media (max-width: 640px) {
+    .tl-detail-body, .an-dist { grid-template-columns: minmax(0, 1fr); }
+}

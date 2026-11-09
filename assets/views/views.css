@@ -7,6 +7,8 @@
 }
 .view-tab {
     appearance: none;
+    min-width: 0;
+    overflow-wrap: anywhere;
     border: 1px solid transparent;
     border-bottom: none;
     background: transparent;
@@ -44,3 +46,7 @@
 .fg-view { display: none; }
 .fg-view.fg-view-on { display: flex; }
 
+@media (max-width: 640px) {
+    .view-tab { flex: 1 1 0; padding: 7px 6px 6px; }
+    .view-tab .tab-badge { margin-left: 0; }
+}

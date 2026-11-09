@@ -130,6 +130,13 @@ def tl_errors(b, rep):
     shot(pg, 'tl_errors', {'x': c['x'], 'y': c['y'], 'width': c['width'], 'height': 430})
 
 
+def tl_compact(b, rep):
+    pg = open_page(b, rep['sched'], 'timeline', width=390, height=844, notes=True)
+    pg.evaluate(f"{PROBE}.select(0)")
+    pg.wait_for_timeout(400)
+    shot(pg, 'tl_compact')
+
+
 def tl_irqoff(b, rep):
     pg = open_page(b, rep['sample'], 'timeline')
     zoom(pg, find(pg, 'do_softirq'), pad=0.25, select=False)
@@ -231,7 +238,7 @@ def compare(b, rep):
 
 
 SHOTS = {
-    'text_view': text_view, 'tl_layout': tl_layout, 'tl_errors': tl_errors, 'tl_irqoff': tl_irqoff,
+    'text_view': text_view, 'tl_layout': tl_layout, 'tl_compact': tl_compact, 'tl_errors': tl_errors, 'tl_irqoff': tl_irqoff,
     'tl_offcpu': tl_offcpu, 'tl_untraced': tl_untraced, 'tl_detail': tl_detail, 'tl_inline': tl_inline,
     'an_range': an_range, 'an_dist': an_dist, 'an_sections': panel('an_sections', 'sample', 'sections'),
     'an_errors': panel('an_errors', 'sched', 'errors'), 'an_wait': an_wait,
@@ -250,7 +257,7 @@ def main():
     }
     os.makedirs(OUT, exist_ok=True)
     with sync_playwright() as p:
-        b = p.chromium.launch()
+        b = p.chromium.launch(ignore_default_args=['--hide-scrollbars'])
         for n in names:
             SHOTS[n](b, rep)
         b.close()

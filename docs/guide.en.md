@@ -275,6 +275,7 @@ Rules:
 
 - **Header**: total lines, expandable lines, resolved kernel functions; `Filtered: N` while a filter is active. On the right: **Theme** (dark/light), **?** (shortcuts) and **ⓘ** (info panel: environment, processing times, source origin and version check, the options used).
 - **Tabs**: Text / Timeline / Compare.
+- The header stays within the window width even when trace lines are very long. On narrow screens, statistics move to a separate row so Theme, ? and ⓘ remain reachable. Trace content keeps its original formatting and can still scroll horizontally.
 - **Top toolbar** (stays at the top while scrolling):
 
 | Button | Action |
@@ -466,6 +467,12 @@ From top to bottom:
 5. **Time axis**: the right side shows the visible span (`span`) and the absolute start time (`start`), plus `selected` for a range selection; the time under the cursor is shown next to it.
 6. **CPU tracks** (only with timestamps) and **task tracks**. Time counts from the earliest event in the trace (possibly a scheduler event before the first call), so the first call need not be at 0; the initial view and Fit show the first call to the end, pan left to see earlier events.
 7. **Bottom panel**: opens when a slice is clicked or an analysis panel is opened; drag the bar above it to resize (6.5).
+
+In narrow or short windows, toolbar buttons wrap, and the toolbar and notes scroll vertically within their own areas instead of pushing the canvas and detail panel off screen. Slice details use one column on narrow screens. Collapse **Notes**, or use **Max / M**, for more canvas space; the preferred panel height remains remembered.
+
+![tl_compact](img/tl_compact.png)
+
+*Timeline in a 390 × 844 window: independently scrolling toolbar, notes and details keep the canvas visible.*
 
 The **time mode** depends on the columns in the trace and is named at the right of the axis:
 

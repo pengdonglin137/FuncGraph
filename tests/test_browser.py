@@ -22,7 +22,7 @@ class BrowserSmokeTest(unittest.TestCase):
         cls.url = 'file://' + cls.k.dir + '/report.html'
         cls.pw = sync_playwright().start()
         try:
-            cls.browser = cls.pw.chromium.launch()
+            cls.browser = cls.pw.chromium.launch(ignore_default_args=['--hide-scrollbars'])
         except Exception as e:      # browser binaries not installed
             cls.pw.stop()
             cls.k.close()
@@ -68,6 +68,85 @@ class BrowserSmokeTest(unittest.TestCase):
         self.page.click('.filter-btn')
         self.page.wait_for_timeout(300)
         self.assertIn('Filtered:', self.ev("document.querySelector('.header-stats').innerText"))
+
+    def test_page_header_stays_in_viewport_with_wide_trace(self):
+        for width, height in [(1500, 900), (800, 600), (390, 844), (320, 700)]:
+            self.page.set_viewport_size({'width': width, 'height': height})
+            for view in ['text', 'timeline', 'compare']:
+                with self.subTest(width=width, view=view):
+                    self.ev('view => fgSwitchView(view)', view)
+                    self.ev('window.scrollTo(0, 0)')
+                    self.page.wait_for_timeout(100)
+                    bounds = self.ev("""() => {
+                        const header = document.querySelector('.page-header').getBoundingClientRect();
+                        const actions = document.querySelector('.header-actions').getBoundingClientRect();
+                        return [header.left, header.right, header.height, actions.right,
+                                document.documentElement.clientWidth];
+                    }""")
+                    self.assertGreaterEqual(bounds[0], 0)
+                    self.assertLessEqual(bounds[1], bounds[4] + 1)
+                    self.assertLessEqual(bounds[3], bounds[4] + 1)
+                    self.assertLessEqual(bounds[2], 80)
+                    if view == 'text':
+                        self.assertGreater(self.ev('document.documentElement.scrollWidth'), width)
+                    else:
+                        self.assertLessEqual(self.ev('document.documentElement.scrollWidth'), width)
+
+    def test_timeline_compact_layout_keeps_canvas_and_detail_reachable(self):
+        self.open_timeline()
+        self.ev("fgView('timeline').probe().select(0)")
+        for width, height in [(1500, 900), (800, 600), (390, 844), (320, 700), (800, 420)]:
+            with self.subTest(width=width, height=height):
+                self.page.set_viewport_size({'width': width, 'height': height})
+                self.ev('window.scrollTo(0, 0)')
+                self.page.wait_for_timeout(100)
+                bounds = self.ev("""() => {
+                    const stage = document.querySelector('.tl-stage').getBoundingClientRect();
+                    const detail = document.querySelector('.tl-detail');
+                    const toolbar = document.querySelector('.tl-toolbar');
+                    const notes = document.querySelector('.tl-notes');
+                    return {stageHeight: stage.height, detailBottom: detail.getBoundingClientRect().bottom,
+                            detailOverflow: detail.scrollWidth - detail.clientWidth,
+                            toolbarOverflow: toolbar.scrollWidth - toolbar.clientWidth,
+                            notesOverflow: notes.scrollWidth - notes.clientWidth,
+                            pageWidth: document.documentElement.scrollWidth,
+                            pageHeight: document.documentElement.scrollHeight};
+                }""")
+                self.assertGreaterEqual(bounds['stageHeight'], 160)
+                self.assertLessEqual(bounds['detailBottom'], height + 1)
+                self.assertLessEqual(bounds['detailOverflow'], 1)
+                self.assertLessEqual(bounds['toolbarOverflow'], 1)
+                self.assertLessEqual(bounds['notesOverflow'], 1)
+                self.assertLessEqual(bounds['pageWidth'], width)
+                self.assertLessEqual(bounds['pageHeight'], height)
+
+    def test_timeline_compact_controls_resize_and_maximize_in_both_themes(self):
+        self.open_timeline()
+        self.ev("fgView('timeline').probe().select(0)")
+        for theme in ['light', 'dark']:
+            for width, height in [(320, 700), (800, 420)]:
+                with self.subTest(theme=theme, width=width, height=height):
+                    self.ev("theme => document.documentElement.setAttribute('data-theme', theme)", theme)
+                    self.page.set_viewport_size({'width': width, 'height': height})
+                    self.page.click('[data-act=notes]')
+                    self.assertFalse(self.page.locator('.tl-notes').is_visible())
+                    self.page.click('[data-act=max]')
+                    self.assertFalse(self.page.locator('.view-tabs').is_visible())
+                    handle = self.page.locator('.tl-resizer').bounding_box()
+                    center = handle['x'] + handle['width'] / 2
+                    self.page.mouse.move(center, handle['y'] + 4)
+                    self.page.mouse.down()
+                    self.page.mouse.move(center, 0, steps=5)
+                    self.page.mouse.up()
+                    self.page.wait_for_timeout(100)
+                    self.assertGreaterEqual(self.page.locator('.tl-stage').bounding_box()['height'], 160)
+                    detail = self.page.locator('.tl-detail').bounding_box()
+                    self.assertLessEqual(detail['y'] + detail['height'], height + 1)
+                    self.page.dblclick('.tl-resizer')
+                    self.page.click('[data-act=max]')
+                    self.page.click('[data-act=notes]')
+                    self.assertTrue(self.page.locator('.view-tabs').is_visible())
+                    self.assertTrue(self.page.locator('.tl-notes').is_visible())
 
     def test_fold_hides_children(self):
         self.page.query_selector('.fold-entry .fold-icon').click()
