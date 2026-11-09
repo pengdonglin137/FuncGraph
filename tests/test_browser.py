@@ -1,4 +1,5 @@
 """Headless browser smoke test of a generated report (skipped without Playwright + Chromium)."""
+import os
 import unittest
 
 import helpers
@@ -166,6 +167,21 @@ class BrowserSmokeTest(unittest.TestCase):
         self.page.wait_for_timeout(300)
         self.assertTrue(self.ev("""(() => { const n = Array.from(document.querySelectorAll('#content .line-container')).map(l => +l.dataset.lineNumber);
             return n.every((x, i) => i === 0 || x > n[i - 1]) && !document.querySelector('.task-gap, .task-group-head'); })()"""))
+
+    def test_wide_slice_after_thin_one_is_drawn(self):
+        # compressed time: a 1 ns call, then a 100 us call starting in the same pixel at full view
+        trace = os.path.join(self.k.dir, 'thin_wide.txt')
+        with open(trace, 'w') as f:
+            f.write(' 0)   a-1     |   0.001 us    |  thin();\n'
+                    ' 0)   a-1     | ! 100.000 us  |  wide();\n')
+        self.k.run(trace, '--timeline', '--no-text-view', out='thin_wide.html')
+        self.page.goto('file://' + self.k.dir + '/thin_wide.html', wait_until='load')
+        self.page.wait_for_timeout(500)
+        # middle of the first call row (track header 20 px + half a 17 px row)
+        painted = self.ev("""(() => { const cv = document.querySelector('.tl-canvas'), d = window.devicePixelRatio || 1;
+            const px = cv.getContext('2d').getImageData(Math.round(cv.width / 2), Math.round(28 * d), 1, 1).data;
+            return !(px[0] > 245 && px[1] > 245 && px[2] > 245); })()""")
+        self.assertTrue(painted, 'wide slice not drawn at full view')
 
     def test_wakeup_overlay_toggle(self):
         self.open_timeline()

@@ -393,7 +393,10 @@ function drawRow(row, ry, h, vs, ve, k, labels) {
             const px = Math.floor(x0);
             if (dx0 >= 0 && px <= dx1 + 1) { if (px + 1 > dx1) dx1 = px + 1; ddim = ddim && isDim(i); }
             else { flush(); dx0 = px; dx1 = px + 1; dcol = sliceStyle(i)[0]; ddim = isDim(i); }
-            const jj = lbStart(row, vs + (px + 1) / k, j + 1);
+            // skip the other thin slices that start in this pixel. Slices of a row do not overlap,
+            // so only the last one starting here can be wide: never skip that one.
+            let jj = lbStart(row, vs + (px + 1) / k, j + 1);
+            if (jj - 1 > j && (sEnd[row[jj - 1]] - sStart[row[jj - 1]]) * k >= 1.5) jj = jj - 1;
             j = jj > j ? jj : j + 1;
             continue;
         }
