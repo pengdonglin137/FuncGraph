@@ -1,5 +1,5 @@
 /* FuncGraph Timeline: detail panel, range summary, wiring, init */
-function pill(cls, txt) { return '<span class="tl-pill ' + cls + '">' + esc(txt) + '</span>'; }
+function pill(cls, txt, title) { return '<span class="tl-pill ' + cls + '"' + (title ? ' title="' + esc(title) + '"' : '') + '>' + esc(txt) + '</span>'; }
 function kv(k, v, cls) { return '<span class="k">' + k + '</span><span class="v' + (cls ? ' ' + cls : '') + '">' + v + '</span>'; }
 function lineLink(n, label) { return '<a class="tl-link" data-line="' + n + '">' + (label || 'line ' + n) + '</a>'; }
 
@@ -58,6 +58,10 @@ function showDetail(i) {
     if (f & FL.IRQOFF) pills += pill('warn', 'irqs off');
     if (f & FL.BHOFF) pills += pill('warn', 'BH off');
     if ((f >> FL.RS_SHIFT) & 7) pills += pill('warn', 'need-resched');
+    // preemption: the preempt-count digit above the trace's baseline (the tracer itself may add one)
+    const pd = preemptOff(f);
+    if (pd > 0) pills += pill('warn', 'preempt off' + (pd > 1 ? ' ×' + pd : ''), 'preempt count ' + ((f >> FL.PR_SHIFT) & 15) + ', baseline of this trace ' + PBASE);
+    if ((f >> FL.MG_SHIFT) & 15) pills += pill('warn', 'migrate off', 'migrate_disable() depth ' + ((f >> FL.MG_SHIFT) & 15));
     if (eRole[i] >= 0) pills += pill('err', eRole[i] === 0 ? 'error origin' : 'error propagated');
     if (ATOMIC.has(i)) pills += pill('err', 'may sleep in atomic context');
     if (f & FL.TRUNC) pills += pill('mute', 'no exit');
@@ -73,7 +77,8 @@ function showDetail(i) {
     h += kv('start', '+' + fmtDur(sStart[i]) + (MODE === 'abs' ? ' &nbsp;' + fmtAbs(sStart[i]) + ' s' : ''));
     h += kv('task', esc(trackLabel(t)) + (cpuOf(i) >= 0 ? ' &nbsp;on CPU ' + cpuOf(i) : ''));
     h += kv('depth', String(sDepth[i]));
-    if (f & FL.LAT) h += kv('flags', esc(ctxFlagText(f).replace(/^ · /, '') || 'none'));
+    if (f & FL.LAT) h += kv('flags', esc(ctxFlagText(f).replace(/^ · /, '').replace(' (preempt off)', '') || 'none') +
+        ((f >> FL.PR_SHIFT) & 15 ? ' <span class="d">(baseline ' + PBASE + ': ' + (pd > 0 ? 'preemption disabled ' + pd + ' level' + (pd > 1 ? 's' : '') : 'preemptible') + ')</span>' : ''));
     const r = retOf(i);
     if (r !== null) {
         let rv = esc(r);

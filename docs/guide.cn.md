@@ -547,7 +547,7 @@ irqs:d AND duration:>50                       关中断状态下耗时超过 50 
 
 **点击切片**会在下方打开详情面板：
 
-- 标题旁的标签：上下文（`?` 表示推断）、irqs off、BH off、need-resched、error origin/propagated、may sleep in atomic context、no exit、no entry、estimated。
+- 标题旁的标签：上下文（`?` 表示推断）、irqs off、BH off、need-resched、preempt off（抢占计数高于这份 trace 的基线，`×N` 表示多关了几层；基线是任务上下文里出现过的最小值，跟踪器本身可能加 1，悬停标签可看到具体数值）、migrate off、error origin/propagated、may sleep in atomic context、no exit、no entry、estimated。
 - 左栏：duration、self（及占总耗时的比例）、start、task、depth、flags、return、call site、args、trace lines（入口和出口在 trace 中的行号，点击跳到文本视图）。
   - **call site** 下面是调用所在的源码位置（`文件:行号`，点击打开在线源码）；调用点在内联代码里时附上 `in 内联函数 (inlined)`。
   - **Call site source**：调用点的源码块，和文本视图展开一行时看到的完全相同（语法高亮、`>行号<` 标出调用所在行、内联链按 Source 按钮的 chain/flat 布局）。点标题可以收起，状态会被记住。这部分直接复用文本视图已经解析好的源码块，报告不增加数据；没有 `--kernel-src` / `--source-rev` / `--source-url` 时只显示位置链接，`--no-text-view` 时两者都没有。
