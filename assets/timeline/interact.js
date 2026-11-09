@@ -53,7 +53,7 @@ function clampView() {
     if (view.s < -pad) { view.s = -pad; view.e = view.s + span; }
     if (view.e > tMax + pad) { view.e = tMax + pad; view.s = view.e - span; }
 }
-function fitAll() { view.s = 0; view.e = tMax; draw(); }
+function fitAll() { view.s = tCall; view.e = tMax; draw(); }
 function zoomTo(s, e, revealSlice) {
     const span = Math.max(e - s, MODE === 'count' ? 2000 : 50);
     const pad = span * 0.08;
@@ -253,7 +253,7 @@ window.addEventListener('mousemove', ev => {
             const a = view.s + drag.x0 / k, b = view.s + mx / k;
             range = { s: Math.max(0, Math.min(a, b)), e: Math.min(tMax, Math.max(a, b)), track: drag.track };
         } else if (drag.mode === 'ov') {
-            centerOn(mx / W * tMax);
+            centerOn(ovT(mx));
         }
         hideTip();
         draw();
@@ -321,7 +321,7 @@ elHead.addEventListener('mousedown', ev => {
     const [mx, my] = localXY(ev, elHead);
     if (my > OV_H) return;
     drag = { mode: 'ov', x0: mx, moved: true };
-    centerOn(mx / W * tMax);
+    centerOn(ovT(mx));
     draw();
     ev.preventDefault();
 });

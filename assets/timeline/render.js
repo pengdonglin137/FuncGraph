@@ -216,9 +216,8 @@ function drawSelSpan(vs, k) {
     // ruler: bracket from start to end of the selected slice with its duration (and position in the overview)
     if (sel < 0 || range) return;
     const s = sStart[sel], e = sEnd[sel];
-    const k0 = W / tMax;
     hctx.fillStyle = P.selTag;
-    hctx.fillRect(Math.round(s * k0), 0, Math.max(1.5, (e - s) * k0), OV_H);
+    hctx.fillRect(Math.round(ovX(s)), 0, Math.max(1.5, (e - s) * ovK()), OV_H);
     const x0 = (s - vs) * k, x1 = (e - vs) * k;
     if (x1 < 0 || x0 > W) return;
     const y = OV_H + 2, hh = HEAD_H - OV_H - 3;
@@ -547,12 +546,11 @@ function drawOff(r, y, vs, k) {
 let ovDirty = true, ovDens = null, ovMax = 1;
 function buildOverview() {
     ovDens = new Float32Array(Math.max(1, Math.ceil(W)));
-    const k0 = W / tMax;
     for (const t of ORDER) {
         if (t.kind !== 0 && ORDER.some(x => x.kind === 0)) continue;
         if (!t.rowsT.length) continue;
         for (const i of t.rowsT[0]) {
-            const a = sStart[i] * k0, b = sEnd[i] * k0;
+            const a = Math.max(0, ovX(sStart[i])), b = ovX(sEnd[i]);
             const pa = Math.floor(a), pb = Math.min(ovDens.length - 1, Math.floor(b));
             for (let p = pa; p <= pb; p++) ovDens[p] += Math.min(b, p + 1) - Math.max(a, p);
         }
@@ -567,7 +565,6 @@ function renderHead() {
     hctx.setTransform(DPR, 0, 0, DPR, 0, 0);
     hctx.fillStyle = P.hdr;
     hctx.fillRect(0, 0, W, HEAD_H);
-    const k0 = W / tMax;
     hctx.fillStyle = P.ovBar;
     hctx.globalAlpha = 0.55;
     for (let p = 0; p < ovDens.length; p++) {
@@ -579,9 +576,9 @@ function renderHead() {
     if (ov.err) for (const ch of CHAINS) {
         if ((errFilter && ch[3] !== 1) || (ch[6] && !showMinor)) continue;
         hctx.fillStyle = ch[3] === 0 ? P.errOh : P.errO;
-        hctx.fillRect(Math.round(sStart[ch[0]] * k0), 1, 1.5, ch[3] === 1 ? OV_H - 4 : 8);
+        hctx.fillRect(Math.round(ovX(sStart[ch[0]])), 1, 1.5, ch[3] === 1 ? OV_H - 4 : 8);
     }
-    const wx0 = view.s * k0, wx1 = Math.max(wx0 + 2, view.e * k0);
+    const wx0 = Math.max(0, ovX(view.s)), wx1 = Math.max(wx0 + 2, ovX(view.e));
     hctx.fillStyle = P.ovMask;
     hctx.fillRect(0, 0, wx0, OV_H);
     hctx.fillRect(wx1, 0, W - wx1, OV_H);

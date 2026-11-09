@@ -978,10 +978,17 @@ class TimelineBuilder:
     # -- serialization --------------------------------------------------
     def to_data(self):
         n = len(self.s_task)
-        if n:
-            t0 = min(self.s_start)
-        else:
-            t0 = 0
+        timed = self.mode in ('abs', 'rel')
+        # Time origin: the earliest timestamp of anything drawn, not only of the calls. Sched events
+        # and context switches before the first traced call (an off-CPU period that began earlier,
+        # a need-resched window, a wakeup) would otherwise get negative times.
+        starts = [min(self.s_start)] if n else []
+        if timed:
+            starts += [r[1] for r in self.offcpu if r[1] is not None]
+            starts += [r[1] for r in self.resched] + [r[1] for r in self.irqoff] + [r[2] for r in self.sections]
+            starts += [w[1] for w in self.wake_events if w[1] is not None]
+            starts += [a for t in self.task_list for a, b, c in t.runs if a is not None]
+        t0 = min(starts) if starts else 0
         # global order: task, start, depth
         order = sorted(range(n), key=lambda i: (self.s_task[i], self.s_start[i], self.s_depth[i]))
         remap = [0] * n
@@ -1041,7 +1048,6 @@ class TimelineBuilder:
             e = row[1]
             if e in self.errno_map:
                 errnames[str(e)] = self.errno_map[e]
-        timed = self.mode in ('abs', 'rel')
 
         def rel(v):
             return (v - t0) if v is not None else None

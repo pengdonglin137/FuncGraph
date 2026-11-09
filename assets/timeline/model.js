@@ -387,8 +387,18 @@ function lbStart(row, t, lo) {  // first j >= lo with start >= t
     return lo;
 }
 
+// The time origin is the earliest event (sched events may precede the first traced call);
+// Fit and the initial view start at the first call so leading idle time does not shrink the calls.
+let tCall = tMax;
+for (let i = 0; i < N; i++) if (sStart[i] < tCall) tCall = sStart[i];
+if (tCall >= tMax) tCall = 0;
+
 // ---- view state ----
-const view = { s: 0, e: tMax };
+const view = { s: tCall, e: tMax };
+// overview strip: covers the calls ([tCall, tMax]); ovX(t) / ovT(x) convert time <-> strip x
+function ovK() { return W / Math.max(1, tMax - tCall); }
+function ovX(t) { return (t - tCall) * ovK(); }
+function ovT(x) { return tCall + x / ovK(); }
 const ov = { err: true, irq: true, rs: true, off: true, wk: true, preempt: false, mk: true };
 let colorMode = 'ctx';
 let sel = -1, hov = -1, hovOff = null, hovCpu = null;

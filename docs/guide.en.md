@@ -462,7 +462,7 @@ From top to bottom:
 3. **Notes**: what this trace lacks and what that means ("No timestamps…", "Arguments are not printed…"). Blue notes are information, yellow ones need attention.
 4. **Overview strip**: the whole trace in miniature. Blue bars show how busy each moment is, red lines are error origins (tall: reached user space, short orange: handled by a caller), the blue frame is the visible range. Click or drag to jump, use the wheel to zoom.
 5. **Time axis**: the right side shows the visible span (`span`) and the absolute start time (`start`), plus `selected` for a range selection; the time under the cursor is shown next to it.
-6. **CPU tracks** (only with timestamps) and **task tracks**.
+6. **CPU tracks** (only with timestamps) and **task tracks**. Time counts from the earliest event in the trace (possibly a scheduler event before the first call), so the first call need not be at 0; the initial view and Fit show the first call to the end, pan left to see earlier events.
 7. **Bottom panel**: opens when a slice is clicked or an analysis panel is opened; drag the bar above it to resize (6.5).
 
 The **time mode** depends on the columns in the trace and is named at the right of the axis:

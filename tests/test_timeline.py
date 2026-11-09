@@ -251,6 +251,21 @@ class SyntheticTest(unittest.TestCase):
         self.assertEqual(rets['is_ok'], 'false')
         self.assertNotIn('void_fn', rets)
 
+    def test_no_negative_times(self):
+        # sched events before the first traced call (off-CPU, need-resched, wakeups) define the origin too
+        for f in ('pi4_sched', 'vm72_full'):
+            d = build(open(helpers.fixture(f)).read())
+            st, _ = decode(d)
+            vals = st + [r[1] for r in d['offcpu']] + [r[1] for r in d['resched']] + [r[1] for r in d['irqoff']]
+            vals += [r[2] for r in d['sections']] + [w[1] for w in d['wakeups']]
+            vals += [a for t in d['tasks'] for a, b, c in t['runs']]
+            self.assertGreaterEqual(min(vals), 0, f)
+            self.assertEqual(min(vals), 0, f)
+        t = ("1000.000100 |   0)   sh-7     |  d..5. |               |  /* sched_waking: comm=x pid=9 prio=120 target_cpu=001 */\n"
+             "1000.000100 |   0)   sh-7     |  dN.1. |   1.000 us    |  e(); /* <-x+0x1/0x2 */\n"
+             "1000.000500 |   0)   sh-7     |  ...1. |   1.000 us    |  f(); /* <-x+0x1/0x2 */\n")
+        self.assertGreaterEqual(min(r[1] for r in build(t)['resched']), 0)
+
     def test_event_lines_do_not_open_sections(self):
         # sched_waking is printed with irqs off before the task's first call: no irqs-off section
         t = ("1000.000100 |   0)   sh-7     |  d..5. |               |  /* sched_waking: comm=x pid=9 prio=120 target_cpu=001 */\n"
