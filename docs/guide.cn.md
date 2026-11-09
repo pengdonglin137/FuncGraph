@@ -720,3 +720,111 @@ preempt 深度是相对基线计算的。trace 中进程上下文的最小 preem
 - 点击一行，会在时间轴上框选这个窗口。
 
 需要 `latency-format` 和时间戳才能计算。
+
+## 8. 对比视图
+
+```bash
+python3 funcgraph.py --compare before.txt --output cmp.html after.txt
+```
+
+当前 trace（这里是 `after.txt`）和基准 trace（`before.txt`）会按相同的方式重建调用、按函数汇总。预过滤参数会同时作用于两份 trace。不需要 `--timeline` 也能生成对比视图。
+
+- **顶部标签**：traced time（最外层调用的总时长）、calls、error chains 三项的变化，`+` 表示增加、`-` 表示减少。变化小于 5% 显示为灰色，增加为红色，减少为绿色。两份 trace 的时间模式不同时（例如一份有时间戳一份没有），会显示黄色警告。
+- **表格**：每个指标都有三列：基准值、当前值、差值 Δ。
+
+| 指标 | 含义 |
+|---|---|
+| calls | 调用次数 |
+| self time | 自身耗时（总耗时减去被跟踪的直接子调用） |
+| inclusive | 总耗时 |
+| mean incl | 平均每次调用的总耗时 |
+| max | 最长的一次 |
+| errors | 错误源头次数 |
+
+- **Δ 列的颜色**：**红色**表示增加，**绿色**表示减少，**灰色**表示变化不到 5%。排序列旁边的横条长度表示变化幅度。函数名后的 **new** 表示只在当前 trace 里出现，**gone** 表示只在基准里出现。
+- **控件**：函数名正则过滤；**changed only** 只显示有变化的函数；排序方式：`|Δ|`（变化的绝对值）、`Δ`、`Δ%`、`current`、`base`；点击表头切换排序的指标。两份 trace 都有开销估计值时，会出现 **subtract tracing overhead** 选项。
+
+需要注意：两份 trace 的跟踪开销要相近（用相同的选项、在同一台机器上采集），差值才有意义。
+
+## 9. 导出与自动化
+
+`--export FILE.json` 或 `--export FILE.csv` 会在生成 HTML 的同时导出分析结果，不需要开 `--timeline`：
+
+```bash
+python3 funcgraph.py --export result.json --output report.html ftrace.txt
+```
+
+JSON 中的耗时单位都是 ns，时间都相对第一个事件：
+
+| 键 | 内容 |
+|---|---|
+| `meta` | trace 名、时间模式、能力（caps）、开销估计值、调用总数 |
+| `functions` | 每个函数的 `name, calls, total, self, max, p50, p90, p99, errors`，按 self 从大到小排序 |
+| `errors` | 每条错误链：`origin, top, entry, errno, name, fate`（user 返回用户态 / handled 被处理 / escaped 传出采集范围）`, verified, frames, task, pid, start` |
+| `sections` | 临界区：`kind`（irqs_off / preempt_off / bh_off）`, duration, task, pid, start, started_in, ended_in, max_depth` |
+| `sched_latency` | need-resched 窗口：`task, pid, start, duration, max_preempt, irqs_off` |
+| `atomic_sleep` | 原子上下文中调用的睡眠函数：`function, reasons, parent, task, pid, start` |
+| `off_cpu` | off-CPU 段：`task, pid, start, duration, waiting_in, state, preempted, woken_by` |
+
+CSV 只包含 `functions` 表。
+
+用在 CI 中的例子：
+
+```bash
+python3 funcgraph.py --export r.json --no-text-view --timeline --output r.html ftrace.txt
+python3 - <<'EOF'
+import json, sys
+d = json.load(open('r.json'))
+f = {x['name']: x for x in d['functions']}
+if f.get('vfs_read', {}).get('p99', 0) > 50_000:            # p99 超过 50 us
+    sys.exit('vfs_read p99 regression')
+if any(s['kind'] == 'irqs_off' and s['duration'] > 200_000 for s in d['sections']):
+    sys.exit('irqs off for more than 200 us')
+if d['atomic_sleep']:
+    sys.exit('sleeping function called in atomic context')
+EOF
+```
+
+## 10. 常见问题
+
+**报告太大，浏览器打不开或者很慢**
+
+文本视图为每一行生成 DOM。超过约 15 万行时，命令行会给出提示。可以：
+- 用预过滤缩小范围：`--pid`、`--comm`、`--graph`、`--time-range`；
+- 只生成时间轴：`--timeline --no-text-view`。实测 36 万行的 trace 生成的报告是 15.7 MB，约 1 秒打开。
+
+**时间轴上没有空隙，横轴写着 compressed time**
+
+采集时没有开 `funcgraph-abstime`。
+
+**看不到中断、关中断、调度延迟**
+
+没有开 `latency-format`。没有 flags 列时，上下文只能根据中断入口函数名推断，标为 `(inferred)`。
+
+**有很多看起来不对的错误，比如 `do_raw_spin_unlock = -1`**
+
+这是 void 函数返回值寄存器里的残留值。提供带 `.BTF` 段的 vmlinux（需要 `CONFIG_DEBUG_INFO_BTF=y`），或者用 `--btf` 指定从目标机复制的 `/sys/kernel/btf/vmlinux`，工具就会按返回类型过滤掉这类误报。使用带 BTF 感知 retval 的内核时，内核本身就不会为 void 函数打印 `ret=`。
+
+**开了 `funcgraph-args` 但参数没有输出**
+
+在 6.18 等内核上，开着 `funcgraph-retaddr` 时参数不会输出。用 `fgcapture.sh --args` 采集，它会自动处理。
+
+**源码行看起来对不上**
+
+源码版本和 vmlinux 不一致。看一下 ⓘ 信息面板里的 Source 一行，或者用 `--source-rev` 指定构建 vmlinux 时用的那个版本。
+
+**全局视图里有些切片空白，放大后才出现**
+
+旧版本绘制时有这个 bug，已经修复。重新生成报告即可。
+
+**等待链里唤醒者是 `<idle>`**
+
+那次唤醒是从中断里触发的，或者 trace 里只有 `sched_wakeup` 没有 `sched_waking`。采集时用 `--sched`，它会同时开启 `sched_waking`。
+
+**每个 CPU 一份 trace 文件**
+
+直接把它们都传给 funcgraph.py，会按时间戳合并。
+
+**在没有内核源码的机器上看源码**
+
+用 `--source-url` 加 `--source-rev` 从网上获取源码。生成报告时需要网络，下载的文件会缓存；生成的报告本身是单个离线文件。
