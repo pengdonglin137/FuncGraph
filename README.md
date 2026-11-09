@@ -274,7 +274,7 @@ fgcapture.sh --args -g vfs_read,vfs_write -d 1       # arguments (no retaddr; re
 ## Analysis features
 
 - **Pre-filter** (`--pid`, `--comm`, `--cpu`, `--time-range`, `--graph`, `--notrace`): applied before conversion and keeps whole call trees, so big traces shrink before the HTML is built.
-- **Compare tab** (`--compare BASE`): per-function calls, self time, inclusive time, mean, max and error counts with differences; sort by absolute/relative change, filter by regex. Pre-filters apply to both traces.
+- **Compare tab** (`--compare BASE`): per-function calls, self time, inclusive time, mean, max and error counts with differences; sort by absolute/relative change, filter by regex, and export all matching results as CSV in the browser. Pinned function names and headers keep wide tables readable in narrow windows. Pre-filters apply to both traces.
 - **Timeline panels**: *Errors* groups error chains by syscall, origin function and errno (click to step through occurrences); *Sched latency* lists need-resched windows with the self time spent inside them; `H` shows the duration distribution (histogram, p50/p90/p99, slowest calls) of the selected function.
 - **Where the time went**: the detail panel splits a call's measured duration into own code, traced callees, interrupts/softirqs that hit it, and blocked/preempted off-CPU time.
 - **Slow vs fast and call sites**: the duration panel (`H`) groups calls by call site and compares the subtrees of the slowest 10% with the fastest half (e.g. slow `kmem_cache_alloc` calls go through `___slab_alloc`).

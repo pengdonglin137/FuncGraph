@@ -806,7 +806,7 @@ Needs `latency-format` and timestamps.
 python3 funcgraph.py --compare before.txt --output cmp.html after.txt
 ```
 
-The current trace (`after.txt`) and the base (`before.txt`) are rebuilt the same way and summarized per function; pre-filters apply to both. `--timeline` is not needed.
+The current trace (`after.txt`) and the base (`before.txt`) are rebuilt the same way and summarized per function; pre-filters apply to both. `--timeline` is not needed: sorting controls and browser CSV export work independently.
 
 - **Tags at the top**: changes of traced time (total of outermost calls), calls and error chains. Changes under 5% are grey, increases red, decreases green. A yellow warning appears when the two traces have different time modes (e.g. one without timestamps).
 - **Table**: for every metric three columns: base, current, Δ.
@@ -823,6 +823,9 @@ The current trace (`after.txt`) and the base (`before.txt`) are rebuilt the same
 - **Δ colors**: **red** increase, **green** decrease, **grey** under 5%. The bar next to the sorted metric shows the size of the change. **new** after a name: only in the current trace; **gone**: only in the base.
 - **Controls**: function regex filter; **changed only** retains changes in any of calls, inclusive time, self time, maximum duration, or errors; sort by `|Δ|`, `Δ`, `Δ%`, `current`, `base`; click a header to choose the metric. With overhead estimates for both traces, **subtract tracing overhead** appears. An empty result displays an explanation.
 - **Narrow windows and scrolling**: table height adapts to the viewport and controls above it. Function names stay pinned when scrolling horizontally, and headers stay pinned vertically. Use Tab to focus the table region and arrow keys to scroll; hover over a truncated function name to see it in full.
+- **Export CSV**: downloads every matching function in the current regex, changed-only, sort, and overhead-adjustment state, not just the loaded rows. No report regeneration is needed. Pending filter input is applied before export; invalid regexes show an explanation and disable export, as do empty results. Press Enter to apply a filter immediately.
+- **CSV format**: `function` is followed by `base_`, `current_`, and `delta_` columns for each metric; deltas are current minus base. Duration column names end in `_ns` (nanoseconds); calls and errors are counts. Files use UTF-8 with a BOM and escape commas, quotes, and line breaks. Formula-like function names are prefixed with an apostrophe for spreadsheet safety. The filename distinguishes `raw` from `adjusted` durations; summary pills always retain measured values.
+- **Large tables**: initially loads up to 400 rows; the bottom prompt appends up to 1000 at a time without replacing existing rows or sorting again. Filtering, sorting, and overhead changes recompute the result. Delta bars share a scale across all matching results, so loading more rows does not change earlier bars.
 
 The traces should have similar tracing overhead (same options, same machine) for the differences to mean something.
 

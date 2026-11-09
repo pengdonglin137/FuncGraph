@@ -1,4 +1,5 @@
 """Headless browser smoke test of a generated report (skipped without Playwright + Chromium)."""
+import csv
 import os
 import unittest
 
@@ -137,6 +138,138 @@ class BrowserSmokeTest(unittest.TestCase):
                 }""")
                 self.assertAlmostEqual(positions[0], positions[1], delta=2)
                 self.assertAlmostEqual(positions[0], positions[2], delta=2)
+
+    def test_compare_csv_exports_all_matches_and_pending_filter(self):
+        rows = [[f'worker_{index:04d}', 2, 100, 50, 70, 0,
+                 2, 200 + index, 100 + index, 120 + index, 0] for index in range(605)]
+        rows.append(['other_function', 2, 100, 50, 70, 0, 2, 2000, 1500, 1700, 0])
+        self.open_compare(rows)
+        self.assertEqual(self.page.locator('.cmp-export').count(), 1)
+        with self.page.expect_download() as pending:
+            self.ev("""() => {
+                const input = document.querySelector('.cmp-q');
+                input.value = '^worker_';
+                input.dispatchEvent(new Event('input', {bubbles: true}));
+                document.querySelector('.cmp-export').click();
+            }""")
+        download = pending.value
+        self.assertEqual(download.suggested_filename, 'funcgraph-compare-raw.csv')
+        with open(download.path(), encoding='utf-8-sig', newline='') as stream:
+            exported = list(csv.DictReader(stream))
+        self.assertEqual(len(exported), 605)
+        self.assertEqual(len(exported[0]), 19)
+        self.assertEqual(exported[0]['function'], 'worker_0604')
+        self.assertEqual(exported[-1]['function'], 'worker_0000')
+        self.assertEqual(exported[0]['base_self_ns'], '50')
+        self.assertEqual(exported[0]['current_self_ns'], '704')
+        self.assertEqual(exported[0]['delta_self_ns'], '654')
+        self.assertEqual(self.page.locator('.cmp-table tbody tr').count(), 401)
+        self.assertEqual(self.page.locator('.cmp-count').inner_text(), '605 of 606 functions')
+
+    def test_compare_csv_adjusted_values_and_escaping(self):
+        names = ['worker,"quoted"\nnext_line', '=SUM(1,2)', '处理函数']
+        rows = [[name, 2, 100, 50, 70, 0, 2, 150, 80, 90, 1] for name in names]
+        adjusted = [[name, 2, 90, 40, 60, 0, 2, 130, 65, 80, 1] for name in names]
+        self.open_compare(rows, adjusted)
+        self.assertEqual(self.page.locator('.cmp-export').count(), 1)
+        self.page.check('.cmp-adj input')
+        self.assertIn('summary pills stay measured', self.page.locator('.cmp-note').inner_text())
+        with self.page.expect_download() as pending:
+            self.page.click('.cmp-export')
+        download = pending.value
+        self.assertEqual(download.suggested_filename, 'funcgraph-compare-adjusted.csv')
+        with open(download.path(), encoding='utf-8-sig', newline='') as stream:
+            exported = list(csv.DictReader(stream))
+        self.assertEqual([row['function'] for row in exported], [names[0], "'" + names[1], names[2]])
+        for row in exported:
+            self.assertEqual(row['base_incl_ns'], '90')
+            self.assertEqual(row['current_incl_ns'], '130')
+            self.assertEqual(row['base_self_ns'], '40')
+            self.assertEqual(row['delta_self_ns'], '25')
+            self.assertEqual(row['delta_mean_ns'], '20')
+            self.assertEqual(row['delta_err'], '1')
+
+    def test_compare_invalid_regex_and_empty_results_disable_export(self):
+        self.open_compare([['worker', 2, 100, 50, 70, 0, 2, 150, 80, 90, 1]])
+        self.assertEqual(self.page.locator('.cmp-export').count(), 1)
+        self.ev("""() => {
+            const input = document.querySelector('.cmp-q');
+            input.value = '[';
+            input.dispatchEvent(new Event('input', {bubbles: true}));
+            document.querySelector('.cmp-export').click();
+        }""")
+        self.assertTrue(self.page.locator('.cmp-export').is_disabled())
+        self.assertEqual(self.page.locator('.cmp-q').get_attribute('aria-invalid'), 'true')
+        self.assertTrue(self.page.locator('.cmp-filter-error').is_visible())
+        self.assertIn('Invalid regular expression', self.page.locator('.cmp-filter-error').inner_text())
+        self.assertEqual(self.page.locator('.cmp-table tbody tr').count(), 1)
+        self.page.fill('.cmp-q', '^missing$')
+        self.page.wait_for_function("document.querySelector('.cmp-count').textContent.startsWith('0 of ')")
+        self.assertTrue(self.page.locator('.cmp-export').is_disabled())
+        self.assertFalse(self.page.locator('.cmp-filter-error').is_visible())
+        self.page.fill('.cmp-q', '^worker$')
+        self.page.press('.cmp-q', 'Enter')
+        self.assertFalse(self.page.locator('.cmp-export').is_disabled())
+
+    def test_compare_load_more_reuses_sorted_rows_and_existing_nodes(self):
+        rows = [[f'worker_{index:04d}', 2, 100, 50, 70, 0,
+                 2, 200 + index, 100 + index, 120 + index, 0] for index in range(1205)]
+        self.open_compare(rows)
+        self.ev("""() => {
+            window.firstCompareRow = document.querySelector('.cmp-table tbody tr');
+            window.compareSortCalls = 0;
+            const originalSort = Array.prototype.sort;
+            Array.prototype.sort = function(...args) {
+                const row = Array.isArray(this[0]) ? this[0] : this[0] && this[0].row;
+                if (this.length === 1205 && row && row[0].startsWith('worker_')) window.compareSortCalls++;
+                return originalSort.apply(this, args);
+            };
+        }""")
+        self.page.click('.cmp-table .more')
+        self.assertEqual(self.page.locator('.cmp-table tbody tr').count(), 1205)
+        self.assertEqual(self.ev('window.compareSortCalls'), 0)
+        self.assertTrue(self.ev("window.firstCompareRow === document.querySelector('.cmp-table tbody tr')"))
+
+    def test_compare_cached_results_follow_every_sort_mode(self):
+        self.open_compare([
+            ['added', 0, 0, 0, 0, 0, 2, 200, 100, 150, 0],
+            ['grown', 1, 100, 50, 100, 0, 5, 500, 250, 150, 0],
+            ['shrunk', 10, 1000, 500, 150, 0, 4, 400, 200, 150, 0],
+        ])
+        self.page.click('.cmp-table th[data-k=calls]')
+        expected_orders = {
+            'absdiff': ['shrunk', 'grown', 'added'],
+            'diff': ['grown', 'added', 'shrunk'],
+            'pct': ['added', 'grown', 'shrunk'],
+            'cur': ['grown', 'shrunk', 'added'],
+            'base': ['shrunk', 'grown', 'added'],
+        }
+        for mode, expected in expected_orders.items():
+            with self.subTest(mode=mode):
+                self.page.click(f'.cmp-sortby button[data-v={mode}]')
+                names = self.page.locator('.cmp-table tbody td.l[title]').evaluate_all(
+                    'cells => cells.map(cell => cell.title)')
+                self.assertEqual(names, expected)
+        self.page.click('.cmp-table th[data-k=name]')
+        names = self.page.locator('.cmp-table tbody td.l[title]').evaluate_all(
+            'cells => cells.map(cell => cell.title)')
+        self.assertEqual(names, ['added', 'grown', 'shrunk'])
+
+    def test_compare_only_report_has_styled_controls_and_exports(self):
+        self.k.run(helpers.fixture('pi4_sched'), '--compare', helpers.fixture('pi4_default'),
+                   out='compare_only.html')
+        self.page.goto('file://' + self.k.dir + '/compare_only.html', wait_until='load')
+        self.page.click('.view-tab[data-view=compare]')
+        self.assertEqual(self.page.locator('#tlData').count(), 0)
+        self.assertEqual(self.ev("getComputedStyle(document.querySelector('.cmp-sortby')).display"), 'flex')
+        self.assertEqual(self.ev("getComputedStyle(document.querySelector('.cmp-sortby button.on')).backgroundColor"),
+                         'rgb(59, 111, 216)')
+        self.assertEqual(self.ev("getComputedStyle(document.querySelector('.cmp-export')).borderRadius"), '6px')
+        with self.page.expect_download() as pending:
+            self.page.click('.cmp-export')
+        with open(pending.value.path(), encoding='utf-8-sig', newline='') as stream:
+            exported = list(csv.DictReader(stream))
+        self.assertGreater(len(exported), 100)
 
     def test_timeline_error_navigation_and_jump_to_text(self):
         self.open_timeline()
