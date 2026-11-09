@@ -1,5 +1,6 @@
 /* FuncGraph Timeline: data model + DOM skeleton.
  * model/render/interact/panels.js are concatenated (in that order) inside function __tlBoot() and share its scope. */
+yield 'Reading Timeline data…';
 const tlRoot = document.getElementById('timelineView');
 const D = JSON.parse(document.getElementById('tlData').textContent);
 const N = D.n, C = D.cols, S = D.strings;
@@ -16,6 +17,7 @@ const CTX_NAMES = ['task', 'softirq', 'hardirq', 'NMI'];
 const RESCHED_NAMES = ['', 'need-resched (n)', 'need-resched + preempt (N)', 'preempt-resched (p)',
     'lazy (l)', 'lazy + preempt (L)', 'need + lazy (b)', 'need + lazy + preempt (B)'];
 
+yield 'Preparing call columns…';
 // ---- slice columns ----
 // Real slices are 0..N-1. Inline frames (see buildInline) are appended as synthetic
 // slices N..NA-1; loops over i < N therefore only see traced calls.
@@ -63,6 +65,7 @@ function setAdjusted(on) {
     computeSelf();
 }
 
+yield 'Building inline frames…';
 // ---- inline frames ----
 // D.inline: caller string index -> chain outer->inner [[function, file, line], ...];
 // chain[0] is the traced function containing the call site, chain[1..] are inlined into it.
@@ -73,10 +76,11 @@ const SYN = [];               // per synthetic slice: {k, chain, kids: [real chi
 let NA = N;
 const sLd = new Int32Array(N);  // depth in the inline view (traced frames + inline frames above)
 let sLdAll = sLd;
-(function buildInline() {
+yield* (function* buildInline() {
     const open = new Map();   // parent key -> [{key, sid}] per inline level (index k-1)
     const synth = [];         // [task, start, end, nameStr, depthLevel, ctxFlags, firstLine, p, chain, k]
     for (let i = 0; i < N; i++) {
+        if (i > 0 && (i & 8191) === 0) yield 'Building inline frames…';
         const p = sParent[i];
         const ch = inlChain(i);
         const n = ch ? ch.length - 1 : 0;
@@ -124,6 +128,7 @@ let sLdAll = sLd;
     });
     sLdAll = ld;
 })();
+yield 'Building untraced frames…';
 // ---- untraced frames (depth gaps) ----
 // The kernel's depth sometimes jumps by more than one level: a frame was entered but its entry was
 // not recorded (arm64: arch_stack_walk around unwind_*, el1_interrupt around irq_enter_rcu, ...).
@@ -199,6 +204,7 @@ let showMinor = false;     // minor: handled at once by a function whose negativ
 function chainShown(c) { return showMinor || !CHAINS[c][6]; }
 function errName(e) { return D.errnames[String(e)] || ''; }
 
+yield 'Indexing task tracks…';
 // ---- tracks ----
 const TRACKS = D.tasks.map((t, i) => ({
     id: i, pid: t.pid, comm: t.comm, comms: t.comms || [], kind: t.kind, cpu: t.cpu, runs: t.runs || [],
@@ -280,6 +286,7 @@ const ORDER = TRACKS.filter(t => t.lo >= 0 || t.off.length).sort((a, b) => {
     if (a.kind === 1) return (a.cpu || 0) - (b.cpu || 0);
     return b.busy - a.busy;
 });
+yield 'Preparing scheduling context…';
 // ---- CPU tracks: which task ran on each CPU, plus irq/softirq strips ----
 const CPU_SEGS = new Map();   // cpu -> {s: Float64Array, e: Float64Array, t: Int32Array}
 const CPU_IRQ = new Map();    // cpu -> [[s, e, ctx], ...]
@@ -417,6 +424,7 @@ let hideUnmatched = false;
 let errFilter = 1;           // 1: reaches user space, 0: all
 let cursorX = -1;
 
+yield 'Drawing Timeline…';
 // ---- DOM skeleton ----
 tlRoot.innerHTML = `
 <div class="tl-toolbar">

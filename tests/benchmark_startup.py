@@ -55,10 +55,26 @@ def measure(browser, report, mode, timeout):
             page.wait_for_timeout(250)
         timing = page.evaluate('''async mode => {
             const start = performance.now();
-            if (mode === 'switch') fgSwitchView('timeline');
+            const ready = mode === 'switch' ? fgSwitchView('timeline') : null;
             const sync = mode === 'switch' ? performance.now() - start : null;
+            const staged = document.getElementById('timelineView').getAttribute('aria-busy') === 'true';
+            let feedback = null;
+            if (staged) {
+                await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+                feedback = performance.now() - (mode === 'switch' ? start : 0);
+            }
+            if (mode === 'switch') await ready;
+            else if (staged) await new Promise(resolve => {
+                const el = document.getElementById('timelineView');
+                const observer = new MutationObserver(() => {
+                    if (el.getAttribute('aria-busy') === 'true') return;
+                    observer.disconnect(); resolve();
+                });
+                if (el.getAttribute('aria-busy') !== 'true') resolve();
+                else observer.observe(el, {attributes:true, attributeFilter:['aria-busy']});
+            });
             await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
-            return {start:mode === 'switch' ? start : 0, sync_ms:sync,
+            return {start:mode === 'switch' ? start : 0, sync_ms:sync, staged, feedback_ms:feedback,
                 frame_ms:performance.now() - (mode === 'switch' ? start : 0)};
         }''', mode)
         page.wait_for_timeout(50)

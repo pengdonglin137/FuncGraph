@@ -130,6 +130,186 @@ class BrowserSmokeTest(unittest.TestCase):
         self.ev('toggleTheme()')
         self.assertEqual(self.ev("document.documentElement.getAttribute('data-theme')"), 'light')
 
+    def stage_timeline(self, slow=False):
+        self.ev('''slow => {
+            const original = fgViews.timeline.steps;
+            fgViews.timeline.staged = true;
+            window.stageFactories = 0; window.stageClosed = 0;
+            fgViews.timeline.steps = function* () {
+                stageFactories++;
+                try {
+                    if (slow) for (let phase = 0; phase < 20; phase++) {
+                        yield 'Test preparation phase ' + phase;
+                        const end = performance.now() + 10;
+                        while (performance.now() < end) {}
+                    }
+                    return yield* original();
+                } finally { stageClosed++; }
+            };
+        }''', slow)
+
+    def test_large_saved_timeline_automatically_stages_before_initial_paint(self):
+        with open(os.path.join(self.k.dir, 'report.html'), encoding='utf-8') as stream:
+            report = stream.read()
+        marker = '<script type="application/json" id="tlData">'
+        self.assertEqual(report.count(marker), 1)
+        report = report.replace(marker, marker + ' ' * (1024 * 1024), 1)
+        report = report.replace('</body>', '''<script>
+            window.addEventListener('DOMContentLoaded', () => {
+                window.largeStartup = {staged:fgViews.timeline.staged,
+                    busy:document.getElementById('timelineView').getAttribute('aria-busy'),
+                    canvas:!!document.querySelector('.tl-canvas')};
+            });
+        </script></body>''', 1)
+        with open(os.path.join(self.k.dir, 'large.html'), 'w', encoding='utf-8') as stream:
+            stream.write(report)
+        self.load_startup_report(saved='timeline', filename='large.html')
+        self.assertEqual(self.ev('largeStartup'), dict(staged=True, busy='true', canvas=False))
+        self.assertEqual(self.ev('startupFacts.textFocus'), 0)
+        self.page.wait_for_selector('.tl-canvas')
+        self.assertEqual(self.ev('fgCurrentView()'), 'timeline')
+        self.assertFalse(self.page.locator('#timelineView').get_attribute('aria-busy'))
+
+    def test_staged_status_wraps_in_compact_light_and_dark_viewports(self):
+        self.stage_timeline(slow=True)
+        for width in [320, 390, 800, 1500]:
+            for theme in ['light', 'dark']:
+                with self.subTest(width=width, theme=theme):
+                    self.page.set_viewport_size({'width': width, 'height': 700})
+                    self.ev('theme => document.documentElement.setAttribute("data-theme", theme)', theme)
+                    self.ev("() => { fgSwitchView('timeline'); }")
+                    self.assertEqual(self.page.locator('#timelineView').get_attribute('aria-busy'), 'true')
+                    self.assertTrue(self.page.locator('.fg-loading-status[role=status]').is_visible())
+                    bounds = self.page.locator('.fg-loading button').bounding_box()
+                    self.assertGreaterEqual(bounds['x'], 0)
+                    self.assertLessEqual(bounds['x'] + bounds['width'], width)
+                    self.assertLessEqual(bounds['y'] + bounds['height'], 700)
+                    self.assertLessEqual(self.ev('document.documentElement.scrollWidth'), width)
+                    self.page.locator('.fg-loading button').focus()
+                    self.page.keyboard.press('Space')
+                    self.assertEqual(self.ev('fgCurrentView()'), 'text')
+
+    def test_staged_timeline_has_paintable_status_and_awaitable_cached_api(self):
+        self.stage_timeline()
+        initial = self.ev('''() => {
+            window.stageReady = fgSwitchView('timeline');
+            const repeated = fgSwitchView('timeline');
+            requestAnimationFrame(() => requestAnimationFrame(() => {
+                window.stagePaint = {
+                    busy:document.getElementById('timelineView').getAttribute('aria-busy'),
+                    status:document.querySelector('.fg-loading-status').textContent,
+                    canvas:!!document.querySelector('.tl-canvas')
+                };
+            }));
+            return {same:repeated === stageReady, promise:typeof stageReady.then === 'function',
+                busy:document.getElementById('timelineView').getAttribute('aria-busy')};
+        }''')
+        self.assertEqual(initial, dict(same=True, promise=True, busy='true'))
+        self.assertTrue(self.ev('async () => (await stageReady) === fgView("timeline")'))
+        self.assertEqual(self.ev('stagePaint'), dict(busy='true', status='Reading Timeline data…', canvas=False))
+        self.assertEqual(self.ev('[stageFactories, stageClosed]'), [1, 1])
+        self.assertFalse(self.page.locator('#timelineView').get_attribute('aria-busy'))
+        self.assertEqual(self.page.locator('.fg-loading').count(), 0)
+        self.assertGreater(self.ev('fgView("timeline").probe().N'), 100)
+        self.ev("fgSwitchView('text')")
+        self.assertTrue(self.ev('''() => {
+            const api = fgSwitchView('timeline');
+            return !api.then && api === fgView('timeline');
+        }'''))
+        self.assertEqual(self.ev('stageFactories'), 1)
+
+    def test_staged_cancel_button_restores_text_scroll_and_discards_pending_model(self):
+        self.stage_timeline(slow=True)
+        initial_scroll = self.ev("() => { window.scrollTo(0, 450); return scrollY; }")
+        self.ev("() => { window.cancelledStage = fgSwitchView('timeline'); }")
+        self.page.locator('.fg-loading button').click()
+        self.assertTrue(self.ev('async () => await cancelledStage === null'))
+        self.page.wait_for_timeout(100)
+        self.assertEqual(self.ev('fgCurrentView()'), 'text')
+        self.assertAlmostEqual(self.ev('scrollY'), initial_scroll, delta=2)
+        self.assertTrue(self.ev("document.activeElement.matches('.view-tab[data-view=text]')"))
+        self.assertEqual(self.page.locator('.tl-canvas').count(), 0)
+        self.assertEqual(self.ev('[stageFactories, stageClosed]'), [1, 1])
+        self.assertTrue(self.ev("typeof fgOnFilter === 'undefined'"))
+        self.ev("fgViews.timeline.steps = () => __tlSteps()")
+        self.ev("fgSwitchView('timeline')")
+        self.assertEqual(self.page.locator('.tl-toolbar').count(), 1)
+
+    def test_staged_escape_and_compare_switch_cancel_without_stale_activation(self):
+        self.stage_timeline(slow=True)
+        self.ev("() => { window.escapeStage = fgSwitchView('timeline'); }")
+        self.page.keyboard.press('Escape')
+        self.assertTrue(self.ev('async () => await escapeStage === null'))
+        self.assertEqual(self.ev('fgCurrentView()'), 'text')
+        self.ev("() => { window.compareStage = fgSwitchView('timeline'); fgSwitchView('compare'); }")
+        self.assertTrue(self.ev('async () => await compareStage === null'))
+        self.page.wait_for_timeout(100)
+        self.assertEqual(self.ev('fgCurrentView()'), 'compare')
+        self.assertGreater(self.page.locator('.cmp-table tbody tr').count(), 0)
+        self.assertEqual(self.page.locator('.tl-canvas').count(), 0)
+        self.assertEqual(self.ev('[stageFactories, stageClosed]'), [2, 2])
+
+    def test_staged_direct_probe_finishes_same_iterator_exactly_once(self):
+        self.stage_timeline()
+        self.assertTrue(self.ev('''async () => {
+            const ready = fgSwitchView('timeline');
+            const api = fgView('timeline');
+            return api.probe().N > 100 && await ready === api;
+        }'''))
+        self.page.wait_for_timeout(100)
+        self.assertEqual(self.ev('[stageFactories, stageClosed]'), [1, 1])
+        self.assertEqual(self.page.locator('.tl-toolbar').count(), 1)
+        self.assertFalse(self.page.locator('#timelineView').get_attribute('aria-busy'))
+
+    def test_staged_timeline_uses_filter_updated_during_preparation(self):
+        self.stage_timeline()
+        expected = self.ev('''() => {
+            const data = JSON.parse(document.getElementById('tlData').textContent);
+            const lines = new Set(data.cols.line.slice(0, 3));
+            window.filterStage = fgSwitchView('timeline');
+            fgNotifyFilter('func:pending', lines);
+            return data.cols.line.filter((line, index) => lines.has(line) ||
+                (data.cols.eline && lines.has(data.cols.eline[index]))).length;
+        }''')
+        self.assertTrue(self.ev('async () => !!(await filterStage)'))
+        count = self.ev("fgView('timeline').probe().N")
+        self.assertEqual(self.page.locator('.tl-fcount').inner_text(),
+                         f'{expected} of {count} calls')
+        self.assertEqual(self.page.locator('.tl-ftext').input_value(), 'func:pending')
+
+    def test_staged_alt_click_reveals_requested_line_after_ready(self):
+        self.stage_timeline()
+        line = self.page.locator('.line-container.expandable').first
+        number = int(line.get_attribute('data-line-number'))
+        expected = self.ev("line => JSON.parse(document.getElementById('tlData').textContent).cols.line.indexOf(line)", number)
+        self.assertGreaterEqual(expected, 0)
+        line.locator('.line-content').click(modifiers=['Alt'])
+        self.page.wait_for_selector('.tl-detail.show')
+        self.assertEqual(self.ev('fgView("timeline").probe().sel()'), expected)
+        self.assertEqual(self.ev('[stageFactories, stageClosed]'), [1, 1])
+
+    def test_staged_failure_is_escaped_and_returns_to_text(self):
+        unsafe = '<img src=x onerror=alert(1)>'
+        self.ev('''message => {
+            fgViews.timeline.staged = true;
+            fgViews.timeline.steps = function* () { yield 'Starting…'; throw new Error(message); };
+            window.failedStage = fgSwitchView('timeline');
+        }''', unsafe)
+        self.page.wait_for_selector('.fg-loading-status[role=alert]')
+        self.assertTrue(self.ev('async () => await failedStage === null'))
+        self.assertIn(unsafe, self.page.locator('.fg-loading-status').inner_text())
+        self.assertEqual(self.page.locator('.fg-loading img').count(), 0)
+        self.assertFalse(self.page.locator('#timelineView').get_attribute('aria-busy'))
+        self.assertEqual(len(self.errors), 1)
+        self.assertIn('[timeline] startup failed:', self.errors.pop())
+        self.page.locator('.fg-loading button').focus()
+        self.page.keyboard.press('Enter')
+        self.assertEqual(self.ev('fgCurrentView()'), 'text')
+        self.assertTrue(self.ev("document.activeElement.matches('.view-tab[data-view=text]')"))
+        self.ev("fgViews.timeline.steps = () => __tlSteps()")
+        self.ev("fgSwitchView('timeline')")
+        self.assertEqual(self.page.locator('.tl-toolbar').count(), 1)
+
     def test_text_view_lazy_expand(self):
         line = self.page.query_selector('.line-container.expandable')
         lid = line.get_attribute('data-line-id')

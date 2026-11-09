@@ -335,8 +335,22 @@ def compare(b, rep):
     shot(pg, 'compare', {'x': 0, 'y': 0, 'width': W, 'height': 560})
 
 
+def tl_loading(browser, reports):
+    page = open_page(browser, reports['sample'])
+    page.evaluate('''() => {
+        const originalFrame = window.requestAnimationFrame;
+        window.requestAnimationFrame = () => 0;
+        try {
+            fgViews.timeline.staged = true;
+            fgSwitchView('timeline');
+        } finally { window.requestAnimationFrame = originalFrame; }
+    }''')
+    shot(page, 'tl_loading', {'x': 0, 'y': 0, 'width': W, 'height': 420})
+    page.evaluate("fgSwitchView('text')")
+
+
 SHOTS = {
-    'text_view': text_view, 'tl_layout': tl_layout, 'tl_compact': tl_compact, 'tl_search': tl_search, 'tl_errors': tl_errors, 'tl_dense': tl_dense, 'tl_irqoff': tl_irqoff,
+    'text_view': text_view, 'tl_loading': tl_loading, 'tl_layout': tl_layout, 'tl_compact': tl_compact, 'tl_search': tl_search, 'tl_errors': tl_errors, 'tl_dense': tl_dense, 'tl_irqoff': tl_irqoff,
     'tl_offcpu': tl_offcpu, 'tl_untraced': tl_untraced, 'tl_detail': tl_detail, 'tl_inline': tl_inline,
     'an_range': an_range, 'an_dist': an_dist, 'an_slowfast': an_slowfast, 'an_sections': panel('an_sections', 'sample', 'sections'),
     'an_errors': panel('an_errors', 'sched', 'errors'), 'an_wait': an_wait, 'an_tasks': an_tasks,

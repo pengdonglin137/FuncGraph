@@ -981,7 +981,13 @@ The text view creates DOM for every line; above ~150k lines the console warns. E
 
 When keeping Text, leave the report on **Timeline** or **Compare** before reopening it. The saved tab is read early enough to suppress Text rendering before trace lines are parsed; the theme is restored then too, and initialization does not focus hidden text rows. Text and source content remain available for filtering, folding and navigation when switching back. A `#Lnumber` link takes precedence and opens Text; `--no-text-view` reports still default to Timeline.
 
-This primarily improves cold reopening on a non-Text tab. It does not virtualize the text DOM, move Timeline preprocessing off the main thread, or eliminate synchronous work on the first switch from Text. For a large report without saved state, pre-filtering or `--no-text-view` is still recommended. See the [design measurements](design.md#8-性能数据) for a reproducible benchmark and its scope.
+When the embedded **Timeline JSON is at least 1 MiB**, the first opening also uses **staged preparation**. A status announces reading data, preparing columns, building inline/untraced frames, indexing tracks and drawing. This threshold concerns JSON characters, not the HTML file size or trace line count. Small reports and already initialized timelines keep their synchronous path.
+
+![Cancellable Timeline preparation](img/tl_loading.png)
+
+The screenshot pauses the real sample's first preparation stage; it does not depict an already usable Timeline. **Back to Text** or **Escape** returns to the previous Text scroll position and focuses its tab. Switching to Text or Compare also cancels pending preparation; reopening starts fresh rather than reusing an incomplete model. Alt-clicking a Text line waits for completion before selecting it, and a canceled request cannot later switch the view back. Preparation failures show a safe error message and the same return button. Native buttons support Enter/Space, including before Timeline shortcuts are installed.
+
+Preparation stays on the **main thread**, yielding between model phases and batches of 8,192 inline calls. The cooperative 8 ms work budget is not a hard limit: JSON parsing, sorting, individual phases, style/layout and garbage collection can still block. Painting the status and allowing cancellation do **not** mean the canvas is ready, nor guarantee a shorter total startup time. The full Text DOM is still present. For a large report without saved state, pre-filtering or `--no-text-view` remains recommended. See the [design measurements](design.md#8-性能数据) for separate feedback, full-readiness and long-task timings.
 
 **The timeline has no gaps and says compressed time**
 

@@ -45,6 +45,32 @@
 .container.fg-wide { width: auto !important; min-width: 0 !important; }
 .fg-view { display: none; }
 .fg-view.fg-view-on { display: flex; }
+.fg-loading {
+    display: flex;
+    flex: 1;
+    flex-wrap: wrap;
+    align-items: center;
+    align-content: center;
+    gap: 16px;
+    box-sizing: border-box;
+    min-height: 160px;
+    padding: 24px;
+    font: 14px system-ui, -apple-system, "Segoe UI", sans-serif;
+    color: var(--text-color);
+    background: var(--container-bg);
+}
+.fg-loading-status { min-width: 0; overflow-wrap: anywhere; }
+.fg-loading button {
+    appearance: none;
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    padding: 6px 12px;
+    font: inherit;
+    color: var(--text-color);
+    background: var(--container-bg);
+    cursor: pointer;
+}
+.fg-loading button:hover { background: var(--container-bg-hover); }
 
 @media (max-width: 640px) {
     .view-tab { flex: 1 1 0; padding: 7px 6px 6px; }

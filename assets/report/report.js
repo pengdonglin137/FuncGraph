@@ -1857,6 +1857,7 @@
 
         // 添加键盘快捷键支持
         document.addEventListener('keydown', function(event) {
+            if (typeof fgCurrentView === 'function' && fgCurrentView() !== 'text') return;
             
             // 检查是否在输入框中
             if (event.target.matches('input, textarea, select')) {

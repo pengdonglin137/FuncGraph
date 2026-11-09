@@ -299,7 +299,7 @@ fgcapture.sh --args -g vfs_read,vfs_write -d 1       # 采参数（不开 retadd
 - **内联帧**：位于内联代码中的调用点会带上内联链。时间轴的 *Inline* 按钮（`I`）在"只看被跟踪帧"和"被跟踪帧 + 内联帧"之间切换（内联帧用虚线；范围是其中第一个到最后一个被跟踪调用，真实的内联代码可能开始得更早、结束得更晚）。调用栈总是列出内联帧；源码块可以显示为可折叠的内联链或平铺（*Source* 按钮）。
 - **带 BTF 感知 funcgraph-retval 的内核**（如 7.2 `trim_retval` 补丁）：识别 `ret=true/false`、无符号值和 `(trunc)`、void 函数不打印 `ret=`、ERR_PTR 打印为 errno；此时直接依据内核自身的类型判断错误路径，不需要主机 BTF。`fgcapture.sh --args` 会先探测参数能否和 retaddr 一起输出及读取速度，可以时保留全部时间轴选项。
 - **更灵活的用法**：`--vmlinux` 可选；`--config`/`--preset` 从 INI 文件读取默认参数；输入支持 `-`（stdin）、`.gz/.xz/.bz2` 和多个文件按时间戳合并；`--source-url`/`--source-rev` 从 URL 或 git 指定版本获取源码并检查版本是否一致；`--export` 把分析结果导出为 JSON/CSV。
-- **大 trace**：超过约 15 万行时文本视图对浏览器负担太重，请用预过滤或 `--timeline --no-text-view`（36 万行：15.7 MB，约 1 秒打开）。重开停留在 Timeline/Compare 的报告时，会在解析文本行之前抑制 Text 渲染，避免先绘制整个文本页再切换；文本和源码仍完整保留，行号锚点仍优先打开 Text。这不等于文本虚拟化或后台解析，首开基准见 [性能数据](docs/design.md#8-性能数据)。
+- **大 trace**：超过约 15 万行时文本视图对浏览器负担太重，请用预过滤或 `--timeline --no-text-view`（36 万行：15.7 MB，约 1 秒打开）。重开停留在 Timeline/Compare 的报告时，会在解析文本行之前抑制 Text 渲染，避免先绘制整个文本页再切换。Timeline JSON 达到 1 MiB 时，首次打开时间轴显示准备阶段；**Back to Text**、**Escape** 或切换标签页可在工作块之间取消，完成的模型会缓存。文本和源码仍完整保留，行号锚点仍优先打开 Text。这是主线程协作式准备，不是文本虚拟化或后台解析，较大的单阶段和 GC 仍可能阻塞；实测效果与完整就绪耗时的取舍见 [性能数据](docs/design.md#8-性能数据)。
 
 ## 抓取 Trace
 

@@ -219,9 +219,10 @@ lost[]    [cpu, count, line]
 
 ## 7. 附加视图与时间轴前端
 
-- `assets/views/early.js` 在 head 内、任何 trace 行之前运行：沿用原有标题哈希存储命名空间，预先恢复主题，按生成器声明的可用视图/默认视图读取初始标签页。只有恢复 Timeline/Compare（或 `--no-text-view` 默认 Timeline）时才临时添加局部 `#content { content-visibility:hidden }` 规则；普通文本首开、未知保存值和行号锚点不隐藏 Text。`boot.js` 在 DOMContentLoaded 完成切换，并在 finally 移除临时规则；`--no-text-view` 默认优先于保存状态和锚点，不再为识别它提前复制整块 Timeline JSON。文本键盘初始化仍准备索引/选中行，但仅在 Text 当前可见时调用 focus，避免强制渲染跳过的子树；主题不在报告尾部和 load 再次重设。文本、源码、原始 JSON 和 Timeline 分析语义不变，未实现文本虚拟化或异步模型构建。
-- `assets/views/boot.js` 在全局作用域执行。附加视图注册到 `window.fgViews[name] = {el, init}`，第一次切换到该视图时才调用 `init()`。它提供 `fgSwitchView()`、`fgCurrentView()`，以及在文本行上 Alt+点击跳到时间轴。报告里视图代码在前、boot.js 在后。新增标签页只需在 `HtmlGenerator._views()` 加一项并写一个注册脚本。
-- 时间轴的 `model.js`、`render.js`、`interact.js`、`analysis.js`、`panels.js` 按顺序拼接到 `function __tlBoot(){...}` 中，共享同一个作用域，返回 `{resize, revealLine, draw}`。
+- `assets/views/early.js` 在 head 内、任何 trace 行之前运行：沿用原有标题哈希存储命名空间，预先恢复主题，按生成器声明的可用视图/默认视图读取初始标签页。只有恢复 Timeline/Compare（或 `--no-text-view` 默认 Timeline）时才临时添加局部 `#content { content-visibility:hidden }` 规则；普通文本首开、未知保存值和行号锚点不隐藏 Text。`boot.js` 在 DOMContentLoaded 发起切换，并在 finally 移除临时规则；`--no-text-view` 默认优先于保存状态和锚点，不再为识别它提前复制整块 Timeline JSON。文本键盘初始化仍准备索引/选中行，但仅在 Text 当前可见时调用 focus，避免强制渲染跳过的子树；主题不在报告尾部和 load 再次重设。文本、源码、原始 JSON 和 Timeline 分析语义不变，未实现文本虚拟化。
+- `assets/views/boot.js` 在全局作用域执行。附加视图注册到 `window.fgViews[name] = {el, init}`，第一次切换到该视图时才初始化。Timeline 另注册 `steps`、`staged`；通过 `tlData` 单文本节点的 length 判断是否达到 1 MiB，避免只为判大小复制整块 JSON。小报告和缓存 API 保持同步；大报告的 `fgSwitchView('timeline')` 返回 readiness Promise，重复切换共享同一个 Promise，完整初始化/resize 后 resolve API，取消/失败 resolve null。`await` 同时兼容两条路径。保留同步 `__tlBoot()` 和 `fgView('timeline')`；后者遇到 pending 会取消计时器并同步耗尽同一个 iterator，不另起一份模型。测响应性时不能用它提前强制完成。
+- 时间轴的 `model.js`、`render.js`、`interact.js`、`analysis.js`、`panels.js` 按顺序拼接到 `function* __tlSteps(){...}` 中，共享同一个作用域，返回 `{resize, revealLine, draw, probe}`；`__tlBoot()` 同步耗尽该生成器。纯模型准备阶段 yield 状态，内联循环每 8192 个真实调用也 yield；8ms 是协作预算，不截断原子阶段或 GC。首个工作块在两次 rAF 后的独立任务执行，让状态和返回按钮先获得绘制机会；后续块让出事件循环。最后一次 yield 在 DOM skeleton 之前，挂载 DOM、注册全局事件直到返回 API 之间不暂停。状态使用 role=status、aria-live、aria-busy，错误使用转义文本和 role=alert；按钮/布局均使用局部选择器，不新增祖先状态后代规则。
+  - 切回 Text、Compare、返回按钮或 pending 时 Escape 会清定时器、关闭 iterator、移除 loading/busy，并丢弃半成品。返回按钮/Escape 恢复 Text 滚动并将焦点放回 Text tab；重新打开重新构建。共享过滤以完成时的最新状态应用，Alt+点击等待 readiness 且核对当前视图，取消不会异步夺回页面。文本全局快捷键在非 Text 视图直接返回，避免 Timeline 键盘监听尚未注册时吞掉原生 Enter/Space。
   - **analysis**：错误汇总（syscall → 源头 → errno）、函数耗时分布（对数直方图、分位数、最慢调用）、调度延迟归因（need-resched 窗口内的自身耗时）、等待链（off-CPU → 记录中的唤醒者 → 唤醒者此前等待的时间关联候选，并非已证实的因果链）。等待链按任务惰性建立已结束 off-CPU 的结束时间索引，二分查找前驱；相同结束时间保留原始首项选择。缓存当前根区间的增量遍历和访问集合，每页追加 100 行，刷新不重走链，CSV 补齐全部后续项但不展开表格。50 ms 间隔阈值和停止原因显式展示；文本过滤和 Overhead 不改变调度几何。`model.js` 的 `OPEN_OFF` 在补齐 trace 末尾几何之前保存原始未闭合区间，不能将其作为已恢复的前驱，也不能据其计算恢复 CPU 或唤醒延迟。
   - 显示用的耗时统一经过 `durOf(i)`；`setAdjusted()` 在实测值和扣除开销后的值之间切换（快捷键 `O`）。切片的位置和宽度始终用实测的 `sStart/sEnd`。
   - **真实调用树与分解**：按 `0..N-1` 的真实父子关系惰性构建 `first/next` 索引（约 `8*N` 字节），只连接同任务、深度递增的边。`subtree` 以迭代前序遍历返回真实后代，不沿可视化行搜索，也没有 256 层截断；直接子调用同样跨过深度缺口。原始耗时分解最多缓存 256 个结果，不受共享过滤、Overhead 或 Inline 影响。缺少分类显示 unattributed，分类合计超出原始区间时提示不一致并改用分类合计作为百分比分母。
@@ -315,7 +316,7 @@ previous 增加每真实切片 4 字节持久索引；任务根头部只在构�
 | 同一 traceB，先加载 Text，再首次调用 `fgSwitchView('timeline')` | 切换开始至双 rAF：375.8 → 381.4ms；这条路径的同步预处理/布局仍在，本轮不宣称加速 |
 | demo：371997 行、283143 个真实调用 / 283338 个含合成帧的切片，约 18.0 MB，`--timeline --no-text-view` 默认打开 | 导航至双 rAF：357.8 → 368.8ms；最长长任务均为 129ms。该路径原本没有巨大 Text DOM，不能套用恢复大文本报告的提速比例 |
 
-双 rAF 是首次绘制机会的代理，不是实际合成器完成显示的时间，也不是整个报告的交互延迟；`blocked_ms` 是所述窗口内的自定义超过 50ms 部分之和，不是 Lighthouse TBT。大文本报告只增加一个 head script 元素；逐行 Text DOM、源码池、Timeline JSON（除生成耗时 `stats.build_time`）均完整核对不变，不通过删除数据或功能提速。首次没有保存状态的 Text 报告仍会渲染逐行 DOM；JSON 解析、typed arrays、inline/ghost 和绘图行预处理仍为同步，后续优化需要分别测量，文本虚拟列表尚未实现。
+双 rAF 是首次绘制机会的代理，不是实际合成器完成显示的时间，也不是整个报告的交互延迟；`blocked_ms` 是所述窗口内的自定义超过 50ms 部分之和，不是 Lighthouse TBT。这个预启动版本的大文本报告只增加一个 head script 元素；逐行 Text DOM、源码池、Timeline JSON（除生成耗时 `stats.build_time`）均完整核对不变，不通过删除数据或功能提速。首次没有保存状态的 Text 报告仍会渲染逐行 DOM；在该版本中 JSON 解析、typed arrays、inline/ghost 和绘图行预处理仍为同步，后续优化需要分别测量，文本虚拟列表尚未实现。
 
 输入标识：traceB SHA-256 `5954b07778c00623e0bb7324cd5e78130bb5188463ab7a3ca061eb89b2f1ab62`；demo SHA-256 `b2375370c5bafba8de3bea2cf6bd8fff67e2435a71be2505a35cc9be72411ae7`。traceB 生成参数为 `--timeline --enable-fold --filter --func-links --fast --vmlinux /vol_1t/raspi/linux/vmlinux --kernel-src /vol_1t/raspi/linux`，demo 另加 `--no-text-view`，均设置 `CROSS_COMPILE=aarch64-linux-gnu-`。
 
@@ -329,6 +330,24 @@ python3 tests/benchmark_startup.py /tmp/before.html /tmp/after.html \
 python3 tests/benchmark_startup.py /tmp/before-no-text.html /tmp/after-no-text.html \
     --mode auto --rounds 3 --output /tmp/startup-no-text.json
 ```
+
+### 8.2 首次切换的可取消分阶段准备（2026-11-10）
+
+对照 `9f2b6b4b425a` 与分阶段准备版本，同样使用上节两个真实输入及参数、Chromium 145.0.7632.6、1500×900、浅色主题，每项三轮交替独立 context，无其它浏览器/测试重负载。`benchmark_startup.py` 已改为等待 readiness 完整结束再取双 rAF，另外单独记录状态反馈机会，不把 loading 当成已经可用的时间轴。
+
+| 场景 | 修改前 → 修改后，中位数 |
+|---|---|
+| traceB，加载 Text 后首次切换 Timeline | 同步调用返回 415.7 → 1.7ms；新版状态反馈双 rAF 105.2ms；**完整就绪双 rAF 433.4 → 596.8ms**；最长主线程长任务 416 → 141ms；窗口内各长任务超过 50ms 部分之和 366 → 211ms |
+| 同一 traceB，恢复已保存 Timeline | 导航至完整就绪双 rAF 1673.2 → 1648.9ms；新版反馈机会 1617.3ms；最长长任务 254 → 191ms，超过 50ms 部分之和 204 → 141ms |
+| demo，`--no-text-view` 默认 Timeline | 导航至完整就绪双 rAF 358.6 → 357.3ms；新版反馈机会 231.3ms；旧版最长长任务 127ms、超过 50ms 部分之和 77ms；新版窗口中未观测到 >=50ms 的 longtask 条目（记为 0，不代表没有主线程工作） |
+
+结论是减少一次连续冻结并提供取消入口，**不是全面降低总就绪时间**：traceB 首次切换完整就绪反而增加约 163ms，恢复和 no-text 的总时间近似持平。对照过每个工作块都等待 rAF 的版本，其首次切换完整就绪中位数约 715ms；保留最初的绘制机会，后续只让出事件循环，减少多余等待，仍无法消除浏览器 GC 和样式重算。
+
+另用 CDP Tracing/CPU profiler 诊断旧版首次切换：JSON.parse 约 4.5–5ms，UpdateLayoutTree 约 113–115ms，GC incremental embedder tracing 约 174ms；profile 本身有干扰，不能和上表无干扰计时混算。瓶颈不是单独的 JSON.parse，因此没有为此盲目增加 Worker 或只优化临时 Map。准备仍在主线程，8ms 预算不保证任何单阶段、原生 sort、样式/布局或 GC 都能在 8ms 内返回。
+
+代码不改变原始模型算法，仅增加 yield 边界。七组真实内核 golden 按精确嵌入资源白名单比较；真实报告另外核对完整解码列、inline/ghost 成员/父节点、Text/Inline 行索引、off-CPU 的 inline 深度和调度几何，不以删除文本/源码/切片换取响应性。
+
+后续结构性方向见 [大报告 sidecar 与按需加载方案](plans/2026-11-10-sidecar-lazy-loading.md)：**只有最终 HTML 的未压缩 UTF-8 字节数超过可配置阈值时才自动 sidecar，小报告保留单文件**。sidecar、文本按块/虚拟化和 Worker 尚未实现；仅把 JSON 外置不能消除百万级常驻文本 DOM。这与当前 1 MiB Timeline JSON 的分阶段启动阈值是两件独立的事。
 
 生成耗时的优化：源码块按（位置文本，URL）缓存渲染结果（55183 次调用只有 3207 种）；`fastfaddr2line.py` 用 `struct` 直接读 `.symtab`（4s → 0.1s，与 pyelftools 结果逐项一致）；函数名解析与返回地址解析并行。剩余时间主要是 addr2line 本身。
 

@@ -33,7 +33,13 @@ def read_asset(rel):
 def timeline_script():
     """The timeline closure (registered as a view by views/boot.js)."""
     parts = ''.join(read_asset(p) for p in TIMELINE_JS_PARTS)
-    return 'function __tlBoot() {\n' + parts + '\n}\n'
+    return ('function* __tlSteps() {\n' + parts + '\n}\n'
+            'function __tlBoot() {\n'
+            '    const steps = __tlSteps();\n'
+            '    let result;\n'
+            '    do { result = steps.next(); } while (!result.done);\n'
+            '    return result.value;\n'
+            '}\n')
 
 
 def all_asset_paths():
