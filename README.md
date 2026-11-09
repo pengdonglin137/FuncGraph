@@ -2,7 +2,7 @@
 
 [![ci](https://github.com/pengdonglin137/FuncGraph/actions/workflows/ci.yml/badge.svg)](https://github.com/pengdonglin137/FuncGraph/actions/workflows/ci.yml)
 
-![FuncGraph Visualization Example](sample.png)
+[![FuncGraph Visualization Example (click to open the sample report)](sample.png)](https://pengdonglin137.github.io/FuncGraph/sample.html)
 
 ## What is FuncGraph?
 

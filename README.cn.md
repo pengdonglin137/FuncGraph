@@ -2,7 +2,7 @@
 
 [![ci](https://github.com/pengdonglin137/FuncGraph/actions/workflows/ci.yml/badge.svg)](https://github.com/pengdonglin137/FuncGraph/actions/workflows/ci.yml)
 
-![FuncGraph 可视化示例](sample.png)
+[![FuncGraph 可视化示例（点击打开示例报告）](sample.png)](https://pengdonglin137.github.io/FuncGraph/sample.html)
 
 
 > **在线试用**：[首页](https://pengdonglin137.github.io/FuncGraph/) · [示例报告](https://pengdonglin137.github.io/FuncGraph/sample.html)（在浏览器中直接打开，无需安装）。
