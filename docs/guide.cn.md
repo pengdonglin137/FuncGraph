@@ -139,3 +139,126 @@ function_graph 在每次函数进入和退出时都执行 hook，这部分时间
 | QEMU x86_64，7.2 | 约 0.2 us | 约 0.1 us |
 
 用 `--calibrate` 采集，或者转换时用 `--overhead CHILD,SELF` 手动指定开销，报告里就可以切换显示扣除开销后的耗时（见 6.7 节）。
+
+## 4. 生成报告
+
+### 4.1 常用组合
+
+```bash
+# 完整报告：文本视图（折叠、过滤、函数名链接、源码高亮）+ 时间轴
+python3 funcgraph.py --timeline --enable-fold --filter --func-links --highlight-code --fast \
+    --vmlinux vmlinux --kernel-src linux/ \
+    --base-url https://elixir.bootlin.com/linux/v6.18/source \
+    --output report.html ftrace.txt
+
+# 没有 vmlinux：只看 trace 本身和时间轴，没有源码信息
+python3 funcgraph.py --timeline --enable-fold --filter --output report.html ftrace.txt
+
+# 很大的 trace（十几万行以上）：只生成时间轴
+python3 funcgraph.py --timeline --no-text-view --vmlinux vmlinux --output report.html ftrace.txt
+
+# 先缩小范围再生成：只保留 pid 1234 中 vfs_read 的调用树
+python3 funcgraph.py --timeline --pid 1234 --graph vfs_read --vmlinux vmlinux --output report.html ftrace.txt
+```
+
+### 4.2 参数分组说明
+
+**源码定位**
+
+| 参数 | 含义 |
+|---|---|
+| `--vmlinux PATH` | 用于地址到源码的解析、函数名链接和 BTF。可选 |
+| `--kernel-src DIR` | 内核源码根目录，用来显示源码内容和计算相对路径 |
+| `--fast` | 使用自带的 `fastfaddr2line.py` 解析地址（需要 pyelftools），比内核脚本快得多 |
+| `--base-url URL` | 在线源码的根地址，例如 bootlin。源码位置会变成可点击的链接 |
+| `--func-links` | 把文本视图里的函数名也解析成源码链接 |
+| `--highlight-code` | 源码块使用 C 语法高亮（需要 Pygments） |
+| `--module-dirs DIR...` / `--module-srcs DIR...` | 内核模块 `.ko` 文件所在目录 / 模块源码目录 |
+| `--module-url URL:mod1,mod2` | 指定某些模块使用的在线源码地址，可以重复多次 |
+| `--path-prefix PATH...` | 编译时的路径前缀，从 DWARF 文件名中去掉 |
+| `--entry-offset N` | 函数入口地址的偏移量，用于 `-fpatchable-function-entry` 编译的内核 |
+
+**源码来源**（默认读取 faddr2line 能找到的本地文件）
+
+| 参数 | 含义 |
+|---|---|
+| `--source-rev REV` | 从 `--kernel-src` 这个 git 仓库读取指定版本的文件（`git show REV:path`）。本地工作区已切到其他分支时使用 |
+| `--source-url TEMPLATE` | 从 URL 下载源码文件，模板中 `{path}` 是文件路径，`{rev}` 是 `--source-rev` 的值 |
+| `--source-cache DIR` | 下载文件的缓存目录，默认 `~/.cache/funcgraph/src` |
+
+```bash
+--source-url 'https://raw.githubusercontent.com/torvalds/linux/{rev}/{path}' --source-rev v6.18
+--source-url 'https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git/plain/{path}?h={rev}' --source-rev v6.18.5
+```
+
+使用这两种来源时，工具会检查源码版本是否和 vmlinux 一致，结果显示在命令行输出和报告的 ⓘ 信息面板里，例如 `90% match the function names`。检查方法：内联链里外层帧的那一行应当调用了内层函数，所以内层函数名应该出现在那一行。版本正确时实测匹配率是 86% 到 94%，错误时是 26% 到 59%。低于 75% 时会警告"probably a different version than the vmlinux"，这时源码行号可能对不上。
+
+**报告内容**
+
+| 参数 | 含义 |
+|---|---|
+| `--enable-fold` | 文本视图支持折叠调用块 |
+| `--filter` | 文本视图显示统一过滤器 |
+| `--timeline` | 生成 Timeline 标签页 |
+| `--compare BASE` | 生成 Compare 标签页，和 BASE 这份 trace 比较 |
+| `--no-text-view` | 不生成逐行的文本视图，也不解析地址，只生成 Timeline/Compare。用于很大的 trace |
+| `--btf FILE...` / `--no-btf` | 指定 BTF 来源（例如从目标机复制的 `/sys/kernel/btf/vmlinux`）/ 不使用 BTF |
+| `--overhead CHILD[,SELF]` | 跟踪开销估计值（纳秒）。默认从 `fgcapture.sh --calibrate` 写入的文件头读取 |
+| `--export FILE.json\|FILE.csv` | 另外导出分析结果（见第 9 节） |
+| `--output FILE` | 输出的 HTML 文件，默认 `ftrace_viz.html` |
+
+**预过滤**：在转换前执行，保留完整的调用树，不会从中间截断。
+
+| 参数 | 含义 |
+|---|---|
+| `--pid 1,2` | 只保留这些任务 |
+| `--comm RE[,RE]` | 只保留进程名匹配这些正则的任务 |
+| `--cpu 0,1` | 只保留这些 CPU |
+| `--time-range START:END` | 只保留在这个时间窗口内开始的调用（连同它们的子调用）。可以写绝对秒数，如 `2003249.69:2003249.70`；也可以写相对第一个时间戳的偏移并带单位，如 `+2ms:+5ms`；两端都可以省略 |
+| `--graph RE[,RE]` | 只保留这些函数的调用树 |
+| `--notrace RE[,RE]` | 去掉这些函数的调用树 |
+
+### 4.3 输入方式
+
+```bash
+python3 funcgraph.py ftrace.txt                  # 普通文件
+python3 funcgraph.py ftrace.txt.gz               # 自动解压 .gz / .xz / .bz2
+ssh target cat /sys/kernel/tracing/trace | python3 funcgraph.py -   # 从 stdin 读取
+python3 funcgraph.py cpu0.txt cpu1.txt cpu2.txt  # 多个文件按时间戳合并
+```
+
+多个文件都有 `funcgraph-abstime` 时间戳时按时间合并；只要有一个文件没有时间戳，就按给出的顺序直接拼接，命令行会提示。
+
+### 4.4 配置文件和预设
+
+把每次都一样的参数写进 INI 文件，工具会按 `--config` 指定的文件、`./funcgraph.ini`、`~/.config/funcgraph/config.ini` 的顺序查找：
+
+```ini
+[default]
+fast = true
+filter = true
+enable-fold = true
+
+[preset pi4]
+vmlinux = /vol_1t/raspi/linux/vmlinux
+kernel-src = /vol_1t/raspi/linux
+base-url = https://elixir.bootlin.com/linux/v6.18/source
+cross-compile = aarch64-linux-gnu-
+timeline = true
+
+[preset vm72]
+vmlinux = /vol_1t/Qemu/trim_retval/x86_64/vmlinux
+kernel-src = /vol_1t/Qemu/trim_retval
+source-rev = HEAD
+timeline = true
+```
+
+```bash
+python3 funcgraph.py --preset pi4 --output r.html ftrace.txt
+```
+
+规则：
+- `[default]` 段总是生效，`--preset NAME` 再叠加 `[preset NAME]` 段，命令行参数优先级最高。
+- 键名就是长参数名去掉 `--`。开关类参数写 `true` 或 `false`；多值参数用空格分隔，例如 `module-dirs = a b`。
+- `cross-compile` 和 `llvm` 会设置对应的环境变量（环境里已经设置了的话不覆盖）。
+- 写错的键名会直接报错。`--no-config` 忽略所有配置文件。
