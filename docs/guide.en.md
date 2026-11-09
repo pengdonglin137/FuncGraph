@@ -262,3 +262,183 @@ Rules:
 - Keys are the long option names without `--`. Switches take `true` or `false`; list options take space-separated values (`module-dirs = a b`).
 - `cross-compile` and `llvm` set the matching environment variables unless they are already set.
 - Unknown keys are an error. `--no-config` ignores all config files.
+
+## 5. Text view
+
+### 5.1 Layout
+
+- **Header**: total lines, expandable lines, resolved kernel functions; `Filtered: N` while a filter is active. On the right: **Theme** (dark/light), **?** (shortcuts) and **ⓘ** (info panel: environment, processing times, source origin and version check, the options used).
+- **Tabs**: Text / Timeline / Compare.
+- **Top toolbar** (stays at the top while scrolling):
+
+| Button | Action |
+|---|---|
+| Filter | show / hide the filter box |
+| Top | back to the top |
+| Expand All / Collapse All | open / close all source blocks |
+| Copy | copy the visible lines as plain text |
+| Heatmap | duration coloring on / off, legend on the right |
+| Order: time / by task | line order: as captured (all CPUs interleaved by time) or grouped by task, see 5.6 |
+| Source: chain / flat | layout of source blocks, see 5.5 |
+
+### 5.2 Columns of a trace line
+
+A line with all options enabled:
+
+```
+2003237.699097 |   0)  true-130265   |  d.h1. | + 12.500 us   |    link_path_walk(); /* <-path_lookupat+0x84/0x180 ret=-2 */
+└─ timestamp ─┘   └CPU┘ └─ task ───┘     └flags┘ └─ duration ─┘   └ indent + function ┘ └─ call site ─────────┘ └return┘
+```
+
+| Column | Option | Meaning |
+|---|---|---|
+| timestamp | `funcgraph-abstime` | time of the event in seconds, microsecond resolution |
+| CPU | `funcgraph-cpu` | CPU of the event |
+| task | `funcgraph-proc` | `name-pid`; `<idle>-0` is the idle task |
+| flags | `latency-format` | 5 characters, see below |
+| duration | `funcgraph-duration` | duration of the function: on the call line for leaves, on the `}` line for others. The leading mark is the duration class, see below |
+| function | | indented by call depth. `func() {` is an entry, `func();` a leaf (entry and return in one line), `}` a return |
+| `/* <-caller+off/len */` | `funcgraph-retaddr` | call site: offset inside the calling function; `len` is the caller's size |
+| `ret=` | `funcgraph-retval` | return value, see 5.3 |
+
+**Flags column** (the latency-format definition of tracefs):
+
+| Position | Char | Meaning |
+|---|---|---|
+| 1 interrupts | `d` | irqs disabled |
+| | `D` | irqs and softirqs (BH) disabled |
+| | `b` | only BH disabled |
+| | `.` | neither |
+| 2 need-resched | `N` | TIF_NEED_RESCHED set and the preempt count asks for a reschedule |
+| | `n` | only TIF_NEED_RESCHED |
+| | `p` | only the preempt count asks for it |
+| | `L` / `l` | lazy need-resched (PREEMPT_LAZY); `L` also with the preempt request |
+| | `B` / `b` | need-resched and lazy both set (`B` also with the preempt request) |
+| | `.` | no reschedule pending |
+| 3 context | `h` | hard interrupt |
+| | `s` | softirq |
+| | `H` | hard interrupt inside a softirq |
+| | `z` / `Z` | NMI / NMI inside a hard interrupt |
+| | `.` | task context |
+| 4 preempt depth | `0`–`f` | low 4 bits of preempt_count, `.` for 0 |
+| 5 migrate-disable depth | `0`–`f` | nesting of migrate_disable, `.` for 0 |
+
+Note: the preempt depth is read inside the tracing hook, and the tracing path usually adds one. On 6.18 and 7.2 the normal value in task context is therefore `1`, not `.`. The timeline analyses detect this baseline automatically (7.3).
+
+**Duration marks** (kernel `trace_find_mark()`):
+
+| Mark | Duration | Heat level | Heatmap color |
+|---|---|---|---|
+| (space) | ≤ 10 us | 1 | very light green |
+| `+` | > 10 us | 2 | light green |
+| `!` | > 100 us | 3 | yellow |
+| `#` | > 1 ms | 4 | amber |
+| `*` | > 10 ms | 5 | orange |
+| `@` | > 100 ms | 6 | red |
+| `$` | > 1 s | 7 | dark red |
+
+With the heatmap on, the whole line background has the color of its level.
+
+### 5.3 Syntax colors
+
+| Element | Color (light theme) |
+|---|---|
+| CPU number | bold red |
+| timestamps and duration numbers | blue |
+| unit `us` | bold purple |
+| function name | bold purple; a link with `--func-links` |
+| module function name | bold teal |
+| hex values (arguments, addresses) | dark blue |
+| comments `/* ... */` | grey italic |
+| brackets, semicolons | bold dark grey |
+| `ret=` with a known errno (e.g. -2) | **red on light red**, followed by the name: `ret=-2 /* ENOENT */` |
+| other `ret=` values | bold grey |
+
+The format of return values depends on the kernel:
+- **6.18 and similar**: error codes are negative decimals (`ret=-2`), everything else is hex (`ret=0x0`). Void functions print `ret=` too, with whatever was left in the register; it means nothing.
+- **Kernels with BTF-aware retval** (e.g. 7.2 trim_retval): void functions print no `ret=`; bool prints `ret=true/false`; signed integers are decimal, unsigned ones decimal or hex; types wider than long get `(trunc)`; pointers holding an ERR_PTR are printed as negative errnos.
+
+### 5.4 Folding
+
+With `--enable-fold` every `func() {` line has a ▶ icon:
+
+- Click ▶ to fold/unfold the block; Shift+click folds/unfolds recursively.
+- Keys `1`–`9`: show only calls up to depth N; `0`: unfold everything.
+- A folded entry line shows a summary: number of child calls, total time, return value.
+- Folding state is kept in the browser's localStorage, per report.
+
+Background colors related to folding:
+
+| Color | Meaning |
+|---|---|
+| very light green | entry line `func() {` of a block |
+| very light blue | lines inside a block |
+| very light red | exit line `}` of a block |
+| stronger red | a folded entry line |
+| green vertical line on the left | extent of the block, from entry to exit |
+
+### 5.5 Source blocks
+
+Lines with a call site can be expanded (click the line or press Enter). The block shows the source around the call site: 5 lines before and after, the current line highlighted and marked `>line<`.
+
+When the call site is inside inlined code, faddr2line returns an inline chain. The **Source** button switches between two layouts:
+
+- **chain** (default): outer to inner. `traced` is the function ftrace saw; below it each inlined `inline` function, indented one level, collapsible, with "→ inlines X here". Only the innermost one ("← the traced call happens here", the line that makes this call) is open. ↗ on each level is an online source link.
+- **flat**: exactly like faddr2line's output, innermost first, everything open.
+
+### 5.6 Grouping by task
+
+ftrace prints the events of all CPUs ordered by time. With several busy tasks and frequent switches a task's calls are scattered: measured 25–58% of adjacent lines belong to different CPUs.
+
+With **Order: by task**:
+- Each task's lines are together, in their original order. Tasks with more lines come first, idle tasks last.
+- Each group has a sticky header: `name pid · lines · CPUs it ran on`.
+- After each context switch a grey italic summary line is inserted, e.g. `⇣ switched out on CPU 0 → idle-0; resumes at line 19703 after 7.640 ms (1 lines of other tasks in between)`: where it was switched out, who came next, when and at which line it resumes, and how many lines of other tasks lie in between. Separator and blank lines of the switch markers are hidden.
+- Folding, filters, heatmap and source blocks keep working. **Order: time** restores the original order by line number.
+
+### 5.7 Unified filter
+
+Type `field:value` in the filter box, combine with `AND`, `OR`, `NOT` and parentheses, and press Enter or Apply. The field buttons below open drop-down lists of values.
+
+| Field | Matches | Examples |
+|---|---|---|
+| `cpu` | CPU number (regex) | `cpu:0`, `cpu:0\|1` |
+| `pid` | pid (regex) | `pid:1234` |
+| `comm` | task name (regex) | `comm:bash` |
+| `func` | function name of the line (regex), this line only | `func:mutex` |
+| `graph` | the **whole call tree** of matching functions (like `set_graph_function`) | `graph:vfs_read` |
+| `notrace` | hides the whole call tree of matching functions (like `set_graph_notrace`) | `notrace:__schedule` |
+| `ret` | return value number (regex); `ret:all` matches every known error code | `ret:-22`, `ret:-2$`, `ret:all` |
+| `params` | argument text (regex) | `params:folio` |
+| `duration` | duration in us, with `>` `<` `>=` `<=` | `duration:>10` |
+| `irqs` | flags position 1 | `irqs:d` |
+| `resched` | flags position 2 | `resched:N` |
+| `hirq` | flags position 3 | `hirq:h`, `hirq:s` |
+| `preempt` | preempt depth, with comparisons | `preempt:>1` |
+| `sort:desc` / `sort:asc` | sort the visible lines by duration | `duration:>0 sort:desc` |
+
+Examples:
+
+```
+comm:cat AND graph:anon_pipe_read             the complete anon_pipe_read call trees of cat
+graph:vfs_read AND NOT notrace:security_      vfs_read call trees without the security_* subtrees
+ret:all AND comm:ls                           every line of ls returning an error code
+irqs:d AND duration:>50                       calls longer than 50 us with irqs disabled
+```
+
+The filter is shared with the timeline (6.6).
+
+### 5.8 Keyboard and mouse
+
+| Action | Effect |
+|---|---|
+| `j` / `k` or ↓ / ↑ | next / previous expandable line |
+| `h` / `l` | scroll left / right |
+| Enter | open / close the source block of the line |
+| Space / PageDown / PageUp | page |
+| `gg` / `G` (or Home / End) | top / bottom |
+| `1`–`9` / `0` | fold to depth N / unfold all |
+| Esc | clear the selection |
+| `?` | shortcut help |
+| click a line number | copy an anchor link (`#Lnumber`) to share the exact line |
+| Alt + click a line | show this call in the timeline |
