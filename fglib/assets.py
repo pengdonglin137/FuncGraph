@@ -15,6 +15,7 @@ if not os.path.isdir(ASSET_DIR):
 REPORT_CSS = 'report/report.css'
 REPORT_JS = 'report/report.js'
 VIEWS_CSS = 'views/views.css'
+VIEWS_EARLY_JS = 'views/early.js'
 VIEWS_BOOT_JS = 'views/boot.js'
 TIMELINE_CSS = 'timeline/timeline.css'
 # Concatenated in this order inside `function __tlBoot() { ... }` (shared scope)
@@ -36,4 +37,4 @@ def timeline_script():
 
 
 def all_asset_paths():
-    return (REPORT_CSS, REPORT_JS, VIEWS_CSS, VIEWS_BOOT_JS, TIMELINE_CSS, COMPARE_CSS, COMPARE_JS) + TIMELINE_JS_PARTS
+    return (REPORT_CSS, REPORT_JS, VIEWS_CSS, VIEWS_EARLY_JS, VIEWS_BOOT_JS, TIMELINE_CSS, COMPARE_CSS, COMPARE_JS) + TIMELINE_JS_PARTS

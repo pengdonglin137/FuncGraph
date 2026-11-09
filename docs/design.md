@@ -37,7 +37,7 @@ fglib/
 fgcapture.sh              目标机采集脚本（场景预设、开销标定、丢事件检查、恢复 tracefs）
 assets/
   report/report.{js,css}  文本视图前端
-  views/                  附加视图的注册与标签切换（boot.js，全局）+ 共用样式
+  views/                  head 预启动（early.js）、附加视图注册/切换（boot.js）+ 共用样式
   timeline/               时间轴前端：model/render/interact/analysis/panels.js（闭包）+ timeline.css
   compare/                对比视图前端
 tests/                    自测，见第 9 节
@@ -219,6 +219,7 @@ lost[]    [cpu, count, line]
 
 ## 7. 附加视图与时间轴前端
 
+- `assets/views/early.js` 在 head 内、任何 trace 行之前运行：沿用原有标题哈希存储命名空间，预先恢复主题，按生成器声明的可用视图/默认视图读取初始标签页。只有恢复 Timeline/Compare（或 `--no-text-view` 默认 Timeline）时才临时添加局部 `#content { content-visibility:hidden }` 规则；普通文本首开、未知保存值和行号锚点不隐藏 Text。`boot.js` 在 DOMContentLoaded 完成切换，并在 finally 移除临时规则；`--no-text-view` 默认优先于保存状态和锚点，不再为识别它提前复制整块 Timeline JSON。文本键盘初始化仍准备索引/选中行，但仅在 Text 当前可见时调用 focus，避免强制渲染跳过的子树；主题不在报告尾部和 load 再次重设。文本、源码、原始 JSON 和 Timeline 分析语义不变，未实现文本虚拟化或异步模型构建。
 - `assets/views/boot.js` 在全局作用域执行。附加视图注册到 `window.fgViews[name] = {el, init}`，第一次切换到该视图时才调用 `init()`。它提供 `fgSwitchView()`、`fgCurrentView()`，以及在文本行上 Alt+点击跳到时间轴。报告里视图代码在前、boot.js 在后。新增标签页只需在 `HtmlGenerator._views()` 加一项并写一个注册脚本。
 - 时间轴的 `model.js`、`render.js`、`interact.js`、`analysis.js`、`panels.js` 按顺序拼接到 `function __tlBoot(){...}` 中，共享同一个作用域，返回 `{resize, revealLine, draw}`。
   - **analysis**：错误汇总（syscall → 源头 → errno）、函数耗时分布（对数直方图、分位数、最慢调用）、调度延迟归因（need-resched 窗口内的自身耗时）、等待链（off-CPU → 记录中的唤醒者 → 唤醒者此前等待的时间关联候选，并非已证实的因果链）。等待链按任务惰性建立已结束 off-CPU 的结束时间索引，二分查找前驱；相同结束时间保留原始首项选择。缓存当前根区间的增量遍历和访问集合，每页追加 100 行，刷新不重走链，CSV 补齐全部后续项但不展开表格。50 ms 间隔阈值和停止原因显式展示；文本过滤和 Overhead 不改变调度几何。`model.js` 的 `OPEN_OFF` 在补齐 trace 末尾几何之前保存原始未闭合区间，不能将其作为已恢复的前驱，也不能据其计算恢复 CPU 或唤醒延迟。
@@ -303,6 +304,31 @@ previous 增加每真实切片 4 字节持久索引；任务根头部只在构�
 | 完整子调用探索（同一数据，预览已准备） | 打开 11.0ms / 100 分组；排序 12.8ms；字面查询 7.0ms；追加至 200 行 1.3ms；首次打开逐次模式 13.6ms / 100 行；完整调用 CSV handler 105.2ms（不含下载）。另核对全部 25000 分组 / 50000 调用，导出不扩张 DOM |
 | 记录同级目标查询（合成 100001 个真实调用、10 万同起点零耗时兄弟，5 轮交替 Chromium；隔离查询，不含页面初始化、选择详情/DOM 或绘制） | 末端附近 5000 次相同目标查询中位数 443.9 → 约 0.4ms，核对全部目标的校验和；新惰性索引首次准备 1.5ms，对照旧版单次首次查询 0.8ms。增加 previous 每切片 4 字节；这验证时间戳相同情况下移除线性行扫描，不宣称整个交互帧或一般 trace 有相同比例提速 |
 | 密集合成帧悬停/绘制（合成 100001 个真实调用、一个含 10 万孩子的未跟踪帧，5 轮交替 Chromium；仅同步 tooltip HTML/Canvas 调用，不含页面初始化、tooltip DOM 布局） | 同帧 200 次 tooltip HTML 中位数 82.3 → 约 0.1ms，首次 1.2 → 1.3ms；HTML 逐字相同，无过滤画布逐像素一致。20 次无过滤 render 为 1.5 → 1.8ms；过滤首次 0.3 → 2.4ms，准备后 20 次 1.7 → 2.7ms。过滤输出有意修正漏匹配/误点亮，工作量不再相同，不能据此宣称渲染提速 |
+
+### 8.1 大报告冷启动（2026-11-10）
+
+对照 `464bd91c3e84` 与本次预启动修改，使用真实 Raspberry Pi 4 trace、相同参数生成报告，Chromium 145.0.7632.6、1500×900、浅色主题，三轮交替顺序，每次独立浏览器 context，文件系统缓存不清空。不是之前的 warm handler 微基准，也不是物理树莓派上的浏览器测试。
+
+| 场景 | 修改前 → 修改后，中位数 |
+|---|---|
+| traceB：72176 行，55186 个真实调用 / 84453 个含合成帧的切片，约 114.7 MB HTML、103.5 万 DOM 元素；保存 Timeline 后重新导航打开 | 导航至双 rAF 绘制机会代理：27913.3 → 1694.5ms（约减少 94%）；最长主线程长任务：914 → 264ms；观测窗口内每个长任务超过 50ms 的部分之和：21279 → 214ms |
+| 同一 traceB，先加载 Text，再首次调用 `fgSwitchView('timeline')` | 切换开始至双 rAF：375.8 → 381.4ms；这条路径的同步预处理/布局仍在，本轮不宣称加速 |
+| demo：371997 行、283143 个真实调用 / 283338 个含合成帧的切片，约 18.0 MB，`--timeline --no-text-view` 默认打开 | 导航至双 rAF：357.8 → 368.8ms；最长长任务均为 129ms。该路径原本没有巨大 Text DOM，不能套用恢复大文本报告的提速比例 |
+
+双 rAF 是首次绘制机会的代理，不是实际合成器完成显示的时间，也不是整个报告的交互延迟；`blocked_ms` 是所述窗口内的自定义超过 50ms 部分之和，不是 Lighthouse TBT。大文本报告只增加一个 head script 元素；逐行 Text DOM、源码池、Timeline JSON（除生成耗时 `stats.build_time`）均完整核对不变，不通过删除数据或功能提速。首次没有保存状态的 Text 报告仍会渲染逐行 DOM；JSON 解析、typed arrays、inline/ghost 和绘图行预处理仍为同步，后续优化需要分别测量，文本虚拟列表尚未实现。
+
+输入标识：traceB SHA-256 `5954b07778c00623e0bb7324cd5e78130bb5188463ab7a3ca061eb89b2f1ab62`；demo SHA-256 `b2375370c5bafba8de3bea2cf6bd8fff67e2435a71be2505a35cc9be72411ae7`。traceB 生成参数为 `--timeline --enable-fold --filter --func-links --fast --vmlinux /vol_1t/raspi/linux/vmlinux --kernel-src /vol_1t/raspi/linux`，demo 另加 `--no-text-view`，均设置 `CROSS_COMPILE=aarch64-linux-gnu-`。
+
+复现（需要 Playwright + Chromium；只清理新建 context 的存储，不使用个人浏览器配置；JSON 记录报告 SHA-256、体积、模型/DOM 数量、导航与长任务）：
+
+```bash
+python3 tests/benchmark_startup.py /tmp/before.html /tmp/after.html \
+    --mode restore --rounds 3 --output /tmp/startup-restore.json
+python3 tests/benchmark_startup.py /tmp/before.html /tmp/after.html \
+    --mode switch --rounds 3 --output /tmp/startup-switch.json
+python3 tests/benchmark_startup.py /tmp/before-no-text.html /tmp/after-no-text.html \
+    --mode auto --rounds 3 --output /tmp/startup-no-text.json
+```
 
 生成耗时的优化：源码块按（位置文本，URL）缓存渲染结果（55183 次调用只有 3207 种）；`fastfaddr2line.py` 用 `struct` 直接读 `.symtab`（4s → 0.1s，与 pyelftools 结果逐项一致）；函数名解析与返回地址解析并行。剩余时间主要是 addr2line 本身。
 

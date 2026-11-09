@@ -1,10 +1,3 @@
-        // localStorage namespace: per-file keys use a hash of the document title
-        const _lsPrefix = (function() {
-            let h = 0;
-            const s = document.title || '';
-            for (let i = 0; i < s.length; i++) { h = ((h << 5) - h + s.charCodeAt(i)) | 0; }
-            return 'fg_' + (h >>> 0).toString(36) + '_';
-        })();
         // Global keys (shared across files): theme
         // Per-file keys: expandedLines, foldedBlocks, filterBoxVisible, keyboardHintShown,
         //   infoPanelExpanded, floatingControlsHidden, floatingTogglePos, viewState, heatmapEnabled
@@ -202,10 +195,6 @@
         let mouseDownInfo = { x: 0, y: 0, time: 0 };
         // 记录当前高亮行
         let highlightedLine = null;
-        // 当前主题 (global, not per-file)
-        // Auto-detect system preference for first-time visitors
-        let currentTheme = localStorage.getItem('theme') ||
-            (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
         // 记录展开状态
         let expandedLines = JSON.parse(lsGet('expandedLines')) || {};
         // 记录折叠状态
@@ -257,9 +246,6 @@
             }
         }
 
-        // 初始化主题
-        document.documentElement.setAttribute('data-theme', currentTheme);
-        
         // 初始化展开状态
         function restoreExpandedState() {
             for (const [lineId, isExpanded] of Object.entries(expandedLines)) {
@@ -1194,7 +1180,7 @@
 
                 // 移动焦点到该行，这样event.target会更新
                 // 这样Enter键就能正确处理
-                keyboardSelectedLine.focus();
+                if (typeof fgCurrentView !== 'function' || fgCurrentView() === 'text') keyboardSelectedLine.focus();
 
                 // 只有在需要滚动时才滚动
                 if (scrollIntoView) {
@@ -2632,9 +2618,6 @@
         }
 
         window.addEventListener('load', function() {
-            // 恢复主题
-            document.documentElement.setAttribute('data-theme', currentTheme);
-
             // 初始化总行数
             // (the old .summary element no longer exists; count the rendered lines)
             total_lines = document.querySelectorAll('.line-container').length;

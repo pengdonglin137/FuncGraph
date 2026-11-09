@@ -86,6 +86,15 @@ class ReportTest(unittest.TestCase):
                        'Timeline:</div><div class="info-value">Yes'):
             self.assertTrue(marker in self.html_tl, f'marker {marker!r} missing')
 
+    def test_view_bootstrap_precedes_text_and_keeps_storage_namespace(self):
+        self.assertIn('data-views="timeline" data-default-view="text"', self.html_tl)
+        self.assertIn('data-views="" data-default-view="text"', self.html)
+        for report in [self.html, self.html_tl]:
+            self.assertLess(report.index('const _lsPrefix'), report.index('</head>'))
+            self.assertLess(report.index('data-default-view='), report.index('<div id="content">'))
+            self.assertEqual(report.count('const _lsPrefix'), 1)
+            self.assertEqual(report.count('let currentTheme'), 1)
+
     def test_text_part_identical_with_and_without_timeline(self):
         def body(h):
             start = h.index('<div id="content">')
@@ -105,6 +114,7 @@ class NoTextViewTest(unittest.TestCase):
         finally:
             k.close()
         self.assertTrue(helpers.json_script(html_text, 'tlData')['no_text'])
+        self.assertIn('data-views="timeline" data-default-view="timeline"', html_text)
         n_lines = len(re.findall(r'class="line-container', html_text))
         self.assertLess(n_lines, 50)                       # only header comments
         self.assertNotIn('data-src=', html_text)            # no source resolution
@@ -146,6 +156,7 @@ class JsSyntaxTest(unittest.TestCase):
 
     def test_assets(self):
         self.node_check(assets.read_asset(assets.REPORT_JS), 'report.js')
+        self.node_check(assets.read_asset(assets.VIEWS_EARLY_JS), 'early.js')
         self.node_check(assets.timeline_script(), 'timeline')
 
     def test_generated_inline_scripts(self):
@@ -154,8 +165,8 @@ class JsSyntaxTest(unittest.TestCase):
             html_text, _ = k.run(helpers.fixture('pi4_sched'), *FULL, '--timeline')
         finally:
             k.close()
-        scripts = re.findall(r'<script>(.*?)</script>', html_text, re.S)
-        self.assertGreaterEqual(len(scripts), 2)
+        scripts = re.findall(r'<script\b(?![^>]*\btype=)[^>]*>(.*?)</script>', html_text, re.S)
+        self.assertGreaterEqual(len(scripts), 3)
         for i, s in enumerate(scripts):
             self.node_check(s, f'inline script {i}')
 

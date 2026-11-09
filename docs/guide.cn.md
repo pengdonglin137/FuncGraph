@@ -981,6 +981,10 @@ EOF
 - 用预过滤缩小范围：`--pid`、`--comm`、`--graph`、`--time-range`；
 - 只生成时间轴：`--timeline --no-text-view`。实测 36 万行的 trace 生成的报告是 15.7 MB，约 1 秒打开。
 
+保留文本时，停留在 **Timeline** 或 **Compare** 后重新打开报告，页面会提前读取已保存的标签页，在解析逐行文本之前抑制 Text 渲染；主题也在这时恢复，初始化不会抢焦点到隐藏的文本行。不会删除文本或源码，切回 Text 后仍可过滤、折叠和跳转。带 `#L行号` 的链接优先打开 Text；`--no-text-view` 报告仍默认打开 Timeline。
+
+这项优化主要针对恢复非 Text 标签页的首次打开，不代表文本 DOM 已虚拟化、Timeline 预处理已异步化，或从 Text 首次切换 Timeline 的同步开销已消失。首次打开没有保存状态的大型文本报告，仍建议预过滤或 `--no-text-view`；可复现基准和测量边界见 [设计文档性能数据](design.md#8-性能数据)。
+
 **时间轴上没有空隙，横轴写着 compressed time**
 
 采集时没有开 `funcgraph-abstime`。

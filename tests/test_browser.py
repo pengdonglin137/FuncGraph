@@ -49,6 +49,87 @@ class BrowserSmokeTest(unittest.TestCase):
     def ev(self, js, arg=None):
         return self.page.evaluate(js, arg)
 
+    def load_startup_report(self, saved='text', theme='light', fragment='', filename='report.html'):
+        self.ev("({saved, theme}) => { lsSet('view', saved); localStorage.setItem('theme', theme); }",
+                dict(saved=saved, theme=theme))
+        with open(os.path.join(self.k.dir, filename), encoding='utf-8') as stream:
+            report = stream.read()
+        instrument = '''<script>
+            window.startupFacts = {
+                visibility: getComputedStyle(document.getElementById('content')).contentVisibility,
+                theme: document.documentElement.getAttribute('data-theme'),
+                textFocus: 0, themeChanges: 0
+            };
+            const startupFocus = HTMLElement.prototype.focus;
+            HTMLElement.prototype.focus = function (...args) {
+                if (this.matches('.line-container')) startupFacts.textFocus++;
+                return startupFocus.apply(this, args);
+            };
+            new MutationObserver(records => startupFacts.themeChanges += records.length)
+                .observe(document.documentElement, {attributes:true, attributeFilter:['data-theme']});
+        </script>'''
+        report = report.replace('<div id="content">', '<div id="content">' + instrument, 1)
+        path = os.path.join(self.k.dir, 'startup.html')
+        with open(path, 'w', encoding='utf-8') as stream:
+            stream.write(report)
+        self.page.goto('file://' + path + fragment, wait_until='load')
+
+    def test_saved_timeline_skips_initial_text_render_and_focus(self):
+        self.load_startup_report(saved='timeline', theme='dark')
+        facts = self.ev('startupFacts')
+        self.assertEqual(facts, dict(visibility='hidden', theme='dark', textFocus=0, themeChanges=0))
+        self.assertEqual(self.ev('fgCurrentView()'), 'timeline')
+        self.assertTrue(self.ev("document.getElementById('content').classList.contains('fg-off')"))
+        self.assertTrue(self.ev("typeof fgInitialView === 'undefined'"))
+        self.ev("fgSwitchView('text')")
+        self.assertEqual(self.ev("getComputedStyle(document.getElementById('content')).contentVisibility"), 'visible')
+        self.page.fill('#filterInput', 'comm:sh')
+        self.page.press('#filterInput', 'Enter')
+        self.assertEqual(self.ev('fgFilterState.text'), 'comm:sh')
+        self.ev("fgSwitchView('timeline')")
+        self.assertIn('of', self.page.locator('.tl-fcount').inner_text())
+        self.ev('toggleTheme()')
+        self.assertEqual(self.ev("document.documentElement.getAttribute('data-theme')"), 'light')
+
+    def test_saved_compare_skips_initial_text_render_and_focus(self):
+        self.load_startup_report(saved='compare')
+        self.assertEqual(self.ev('startupFacts.visibility'), 'hidden')
+        self.assertEqual(self.ev('startupFacts.textFocus'), 0)
+        self.assertEqual(self.ev('fgCurrentView()'), 'compare')
+        self.assertGreater(self.page.locator('.cmp-table tbody tr').count(), 0)
+        self.ev("fgSwitchView('text')")
+        self.assertEqual(self.ev("getComputedStyle(document.getElementById('content')).contentVisibility"), 'visible')
+
+    def test_initial_text_and_anchors_override_unavailable_or_saved_views(self):
+        for saved, fragment in [('text', ''), ('missing', ''), ('timeline', '#L10')]:
+            with self.subTest(saved=saved, fragment=fragment):
+                self.load_startup_report(saved=saved, fragment=fragment)
+                self.assertEqual(self.ev('startupFacts.visibility'), 'visible')
+                self.assertEqual(self.ev('fgCurrentView()'), 'text')
+                self.assertGreater(self.ev('startupFacts.textFocus'), 0)
+                self.assertEqual(self.ev('startupFacts.themeChanges'), 0)
+                self.assertTrue(self.ev("typeof fgInitialView === 'undefined'"))
+
+    def test_timeline_only_default_precedes_saved_view_and_anchor(self):
+        self.k.run(helpers.fixture('pi4_sched'), '--timeline', '--no-text-view',
+                   '--compare', helpers.fixture('pi4_default'), out='timeline_only.html')
+        self.load_startup_report(saved='compare', fragment='#L1', filename='timeline_only.html')
+        self.assertEqual(self.ev('startupFacts.visibility'), 'hidden')
+        self.assertEqual(self.ev('startupFacts.textFocus'), 0)
+        self.assertEqual(self.ev('fgCurrentView()'), 'timeline')
+        self.assertGreater(self.ev("fgView('timeline').probe().N"), 100)
+
+    def test_plain_report_has_early_theme_and_text_keyboard_focus(self):
+        self.k.run(helpers.fixture('pi4_default'), out='plain.html')
+        self.load_startup_report(saved='timeline', theme='dark', filename='plain.html')
+        self.assertEqual(self.ev('startupFacts.visibility'), 'visible')
+        self.assertEqual(self.ev('startupFacts.theme'), 'dark')
+        self.assertEqual(self.ev('startupFacts.themeChanges'), 0)
+        self.assertGreater(self.ev('startupFacts.textFocus'), 0)
+        self.assertTrue(self.ev("typeof fgInitialView === 'undefined'"))
+        self.ev('toggleTheme()')
+        self.assertEqual(self.ev("document.documentElement.getAttribute('data-theme')"), 'light')
+
     def test_text_view_lazy_expand(self):
         line = self.page.query_selector('.line-container.expandable')
         lid = line.get_attribute('data-line-id')

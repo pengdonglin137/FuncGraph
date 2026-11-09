@@ -979,6 +979,10 @@ EOF
 
 The text view creates DOM for every line; above ~150k lines the console warns. Either narrow the trace with a pre-filter (`--pid`, `--comm`, `--graph`, `--time-range`) or build only the timeline with `--timeline --no-text-view` (measured: 362k lines → 15.7 MB, opens in about a second).
 
+When keeping Text, leave the report on **Timeline** or **Compare** before reopening it. The saved tab is read early enough to suppress Text rendering before trace lines are parsed; the theme is restored then too, and initialization does not focus hidden text rows. Text and source content remain available for filtering, folding and navigation when switching back. A `#Lnumber` link takes precedence and opens Text; `--no-text-view` reports still default to Timeline.
+
+This primarily improves cold reopening on a non-Text tab. It does not virtualize the text DOM, move Timeline preprocessing off the main thread, or eliminate synchronous work on the first switch from Text. For a large report without saved state, pre-filtering or `--no-text-view` is still recommended. See the [design measurements](design.md#8-性能数据) for a reproducible benchmark and its scope.
+
 **The timeline has no gaps and says compressed time**
 
 The trace was captured without `funcgraph-abstime`.

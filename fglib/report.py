@@ -10,7 +10,7 @@ import time
 import json
 from collections import defaultdict
 
-from .assets import COMPARE_CSS, COMPARE_JS, REPORT_CSS, REPORT_JS, TIMELINE_CSS, VIEWS_BOOT_JS, VIEWS_CSS, read_asset, timeline_script
+from .assets import COMPARE_CSS, COMPARE_JS, REPORT_CSS, REPORT_JS, TIMELINE_CSS, VIEWS_BOOT_JS, VIEWS_CSS, VIEWS_EARLY_JS, read_asset, timeline_script
 from .constants import APP_AUTHOR, APP_TITLE, APP_VERSION, ERROR_CODE_MAP, PROJECT_DIR
 from .inline import timeline_inline_map
 from .sources import rewrite as rewrite_sources
@@ -154,7 +154,7 @@ class HtmlGenerator:
     <title>{APP_TITLE} v{APP_VERSION} - {APP_AUTHOR}</title>
     <style>
 {self._generate_css()}{self._timeline_css()}    </style>
-</head>
+{self._early_view_script()}</head>
 <body>
     <div class="progress-bar" id="progressBar"></div>
     <!-- 小悬浮切换按钮：用于显示/隐藏页面上的其他浮动控件 -->
@@ -265,6 +265,12 @@ class HtmlGenerator:
         return '    <script type="application/json" id="fgSrc">' + data + '</script>\n'
 
     # ---- Optional views (Timeline, Compare): tabs, containers, CSS, data, scripts ----
+    def _early_view_script(self):
+        names = ' '.join(view[0] for view in self._views())
+        default = 'timeline' if self.timeline_json and self.timeline_json.get('no_text') else 'text'
+        return (f'    <script data-views="{names}" data-default-view="{default}">\n'
+                + read_asset(VIEWS_EARLY_JS) + '    </script>\n')
+
     def _views(self):
         """[(name, label, badge, container_id, css, data_id, data, js)] for the enabled views."""
         v = []
