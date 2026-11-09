@@ -204,6 +204,7 @@ class HtmlGenerator:
                 <div class="btn-group">
                     <button class="control-btn btn-tool" onclick="copyVisibleContent(event)">Copy</button>
                     <button class="control-btn btn-tool" id="heatmapBtn" onclick="toggleHeatmap()">Heatmap</button>
+                    <button class="control-btn btn-tool" id="textOrderBtn" onclick="fgToggleTextOrder()" title="Line order: as captured (all CPUs interleaved by time) or grouped by task with context switches summarized">Order: time</button>
                     <button class="control-btn btn-tool" id="srcModeBtn" onclick="fgToggleSrcMode()" title="Source blocks: inline chain (outer to inner, collapsible) or flat faddr2line order">Source: chain</button>
                 </div>
                 <span class="heatmap-legend" id="heatmapLegend"></span>

@@ -150,6 +150,23 @@ class BrowserSmokeTest(unittest.TestCase):
         self.open_timeline()      # fake faddr2line has no inline chains
         self.assertEqual(self.ev("getComputedStyle(document.querySelector('[data-act=inl]')).display"), 'none')
 
+    def test_text_order_by_task(self):
+        self.page.click('#textOrderBtn')
+        self.page.wait_for_timeout(300)
+        runs, groups, gaps = self.ev("""() => {
+            const L = Array.from(document.querySelectorAll('#content .line-container')).filter(l => l.dataset.pid && !l.classList.contains('grp-hidden'));
+            let runs = 0, prev = null;
+            for (const l of L) { const k = l.dataset.pid === '0' ? 'i' + l.dataset.cpu : l.dataset.pid; if (k !== prev) { runs++; prev = k; } }
+            return [runs, document.querySelectorAll('.task-group-head').length, document.querySelectorAll('.task-gap').length]; }""")
+        self.assertEqual(runs, groups)                     # every task's lines are contiguous
+        self.assertGreater(gaps, 0)                        # context switches summarized
+        self.page.query_selector('.fold-entry .fold-icon').click()
+        self.page.wait_for_timeout(100)
+        self.page.click('#textOrderBtn')
+        self.page.wait_for_timeout(300)
+        self.assertTrue(self.ev("""(() => { const n = Array.from(document.querySelectorAll('#content .line-container')).map(l => +l.dataset.lineNumber);
+            return n.every((x, i) => i === 0 || x > n[i - 1]) && !document.querySelector('.task-gap, .task-group-head'); })()"""))
+
     def test_wakeup_overlay_toggle(self):
         self.open_timeline()
         self.assertFalse(self.ev("document.querySelector('[data-ov=wk]').classList.contains('na')"))

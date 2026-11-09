@@ -297,9 +297,9 @@ function trackAnchorY(tid, slice, sy) {
     if (slice >= 0 && !t.collapsed) return t.y - sy + HDR + rowOf(slice) * ROW + ROW / 2;
     return t.y - sy + HDR / 2;
 }
+const WAKE_MAX = 15;   // above this many visible arrows only the focused ones get their full curve
 function drawWakeups(vs, ve, k, sy) {
-    let n = 0;
-    ctx.lineWidth = 1.3;
+    const vis = [];
     for (const w of WAKES) {
         const off = w[5] >= 0 ? D.offcpu[w[5]] : null;
         const t1 = off ? off[2] : w[1];              // target resumes here
@@ -309,26 +309,60 @@ function drawWakeups(vs, ve, k, sy) {
         if (y0 === null || !tt || tt.hidden || tt.h === 0) continue;
         const y1 = off && !tt.collapsed ? tt.y - sy + HDR + offRow(off) * ROW + ROW / 2 : tt.y - sy + HDR / 2;
         if ((y0 < 0 && y1 < 0) || (y0 > H && y1 > H)) continue;
-        if (++n > 400) break;
-        const x0 = (w[1] - vs) * k, x1 = (t1 - vs) * k;
+        vis.push([w, off, (w[1] - vs) * k, y0, (t1 - vs) * k, y1]);
+    }
+    if (!vis.length) return;
+    // crowded: another arrow ends within 6 px (bursts of wakeups); or simply too many in view
+    const xs = vis.map(v => v[4]).sort((a, b) => a - b);
+    const near = x => {
+        let lo = 0, hi = xs.length;
+        while (lo < hi) { const m = (lo + hi) >> 1; if (xs[m] < x - 12) lo = m + 1; else hi = m; }
+        let n = 0;
+        for (let j = lo; j < xs.length && xs[j] <= x + 12; j++) n++;
+        return n - 1;
+    };
+    const crowded = vis.map(v => vis.length > WAKE_MAX || near(v[4]) >= 1);
+    const dense = crowded.some(Boolean);
+    const focus = new Set();
+    if (sel >= 0) focus.add(sTask[sel]);
+    if (hov >= 0) focus.add(sTask[hov]);
+    if (hovOff) focus.add(hovOff[0]);
+    if (range && range.track !== null) focus.add(range.track);
+    const col = dark ? 'rgba(52,211,190,.75)' : 'rgba(15,157,138,.7)';
+    let drawn = 0;
+    for (let q = 0; q < vis.length; q++) {
+        const [w, off, x0, y0, x1, y1] = vis[q];
         const hot = hovOff && off === hovOff;
-        ctx.strokeStyle = hot ? '#0b7a6b' : dark ? 'rgba(52,211,190,.75)' : 'rgba(15,157,138,.7)';
-        ctx.fillStyle = ctx.strokeStyle;
-        ctx.beginPath();
-        ctx.arc(x0, y0, 2.5, 0, 6.3);
-        ctx.fill();
-        ctx.beginPath();
-        ctx.moveTo(x0, y0);
+        const full = !crowded[q] || hot || focus.has(w[0]) || focus.has(w[2]);
+        ctx.fillStyle = ctx.strokeStyle = hot ? '#0b7a6b' : col;
+        const dir = y1 >= y0 ? 1 : -1;
+        if (!full) {
+            // dense: only a small head where the woken task resumes
+            ctx.globalAlpha = 0.55;
+            ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x1 - 3, y1 - 4 * dir); ctx.lineTo(x1 + 3, y1 - 4 * dir); ctx.closePath(); ctx.fill();
+            ctx.globalAlpha = 1;
+            continue;
+        }
+        if (++drawn > 400) break;
+        ctx.lineWidth = hot ? 2 : 1.3;
+        ctx.beginPath(); ctx.arc(x0, y0, 2.5, 0, 6.3); ctx.fill();
+        ctx.beginPath(); ctx.moveTo(x0, y0);
         const mx = (x0 + x1) / 2;
         ctx.bezierCurveTo(mx, y0, mx, y1, x1, y1);
         ctx.stroke();
-        const dir = y1 >= y0 ? 1 : -1;
-        ctx.beginPath();
-        ctx.moveTo(x1, y1);
-        ctx.lineTo(x1 - 5, y1 - 4 * dir);
-        ctx.lineTo(x1 + 1, y1 - 6 * dir);
-        ctx.closePath();
-        ctx.fill();
+        ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x1 - 5, y1 - 4 * dir); ctx.lineTo(x1 + 1, y1 - 6 * dir); ctx.closePath(); ctx.fill();
+    }
+    if (dense) {
+        const nc = crowded.filter(Boolean).length;
+        const msg = nc + ' of ' + vis.length + ' wakeups bunched' + (focus.size ? ' · arrows for the focused task' : ' · hover or select a task to see its arrows, zoom in for all');
+        ctx.font = FONT_S;
+        const tw = ctx.measureText(msg).width;
+        ctx.fillStyle = dark ? 'rgba(31,33,38,.85)' : 'rgba(255,255,255,.85)';
+        ctx.fillRect(W - tw - 16, 4, tw + 12, 16);
+        ctx.fillStyle = col;
+        ctx.textBaseline = 'middle';
+        ctx.fillText(msg, W - tw - 10, 12);
+        ctx.font = FONT;
     }
 }
 function bandRect(s, e, y, h, color, vs, k) {

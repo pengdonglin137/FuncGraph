@@ -1222,3 +1222,10 @@
         .src-chain .src-tag { font: 600 10px system-ui, sans-serif; padding: 0 5px; border-radius: 7px; background: var(--bg-secondary); color: var(--text-muted); }
         .src-chain .src-tag.traced { background: rgba(59, 111, 216, .15); color: #2b5bb8; }
         .src-chain .src-open { margin-left: 8px; text-decoration: none; color: var(--link-color); }
+        /* text order grouped by task */
+        #content.grouped .grp-hidden { display: none !important; }
+        .task-group-head { position: sticky; top: var(--ctl-h, 100px); z-index: 5; margin: 10px 0 2px; padding: 3px 8px; font: 600 12px system-ui, sans-serif;
+            background: var(--bg-secondary); color: var(--text-color); border-left: 3px solid var(--btn-primary); border-radius: 3px; }
+        .task-gap { margin: 1px 0 1px 40px; padding: 1px 8px; font: italic 11.5px system-ui, sans-serif; color: var(--text-muted);
+            border-left: 2px dashed var(--border-color); }
+        #content.grouped .line-container.task-switch { opacity: .55; }

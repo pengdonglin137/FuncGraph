@@ -245,6 +245,13 @@ lost[]    [cpu, count, line]
 - **BTF 感知 retval 的内核**（7.2 `trim_retval`）：内核用 BTF 判断返回类型，void 不打印、截断到类型宽度、bool 打印为 true/false、无符号用十进制、超宽类型加 `(trunc)`、ERR_PTR 打印为负 errno。出现 `true/false/(trunc)` 时设置 `caps.retval_btf`，没有主机 BTF 时把负的十进制返回值直接视为已验证的 errno。该内核上 `funcgraph-args` 与 `funcgraph-retaddr` 可以同时输出，读取 11.7 万行仅约 1.1 秒（6.18 上约 36ms/行）。
 - **采集辅助的探测**：`fgcapture.sh --args` 先用 `set_ftrace_filter=vfs_read` 做一次小探测，测每行读取耗时和参数是否与 retaddr 共存，再决定保留 retaddr/latency-format 还是关掉，以及是否必须指定 `-g/-p`。
 
+## 7d. 调度频繁时的可读性
+
+实测（7.2 VM，`yes | head | cat`，18.6 万行）：切换标记不到 1% 的行；每次切换在 `__schedule` 下带出 74–154 个调用（1–6% 的切片）；真正影响阅读的是多 CPU 按时间交错，相邻两行属于不同 CPU 的比例为 25–58%。
+
+- **按任务分组**（`report.js` 的 `fgSetTextOrder`）：把 `#content` 按 `data-line-number` 排序后，按任务（pid；idle 按 CPU；无 proc 时按 CPU）分组，繁忙的任务在前、idle 在后；每组前加吸顶的组标题，切换标记之后插入一行摘要（切到谁、多久后在第几行恢复、中间有多少行其他任务）。分隔线和空行在分组时隐藏。折叠和过滤都基于属性，不受顺序影响；恢复时按行号排回。重排时把 `#content` 暂时移出文档；2 万行重排约 0.26s，其余是浏览器重新布局。
+- **唤醒箭头降密**（`render.js` 的 `drawWakeups`）：视野内箭头超过 15 条，或某条箭头 12px 内还有其他箭头终点时视为拥挤，拥挤的只在目标恢复处画小箭头；悬停或选中的任务、悬停的 off-CPU 段、范围汇总所在轨道的箭头总是完整画出。右上角显示被折叠的数量。
+
 ## 8. 性能数据
 
 | 场景 | 数据 |

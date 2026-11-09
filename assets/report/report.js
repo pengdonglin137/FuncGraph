@@ -66,6 +66,117 @@
             });
             for (const t of tail) el.appendChild(t);
         }
+        // ---- text order: by time (as captured) or grouped by task ----
+        // ftrace interleaves all CPUs by time; with several busy tasks a task's calls are scattered.
+        // Grouping moves each task's lines together (original order inside the task) and replaces the
+        // context switches by a summary line. Folding/filters work on attributes, not on order.
+        let fgTextOrder = lsGet('textOrder') || 'time';
+        const RE_SWITCH_LINE = /^\s*(\d+)\)\s+(.+?)-(\d+)\s+=>\s+(.+?)-(\d+)\s*$/;
+        const RE_TS_LINE = /^\s*(\d+\.\d+)\s*\|/;
+        function fgTaskKey(line) {
+            const pid = line.getAttribute('data-pid'), cpu = line.getAttribute('data-cpu');
+            if (pid === '' || pid === null) return cpu ? 'cpu' + cpu : '';
+            return pid === '0' ? 'idle' + cpu : 'p' + pid;
+        }
+        function fgBlocks(container) {
+            // [line, expandedContentOrNull] in DOM order
+            const out = [];
+            for (const el of Array.from(container.children)) {
+                if (el.classList.contains('line-container')) out.push([el, null]);
+                else if (el.classList.contains('expanded-content') && out.length) out[out.length - 1][1] = el;
+            }
+            return out;
+        }
+        function fgSetTextOrder(mode) {
+            const container = document.getElementById('content');
+            if (!container) return;
+            // reorder off-document: moving tens of thousands of live nodes is slow otherwise
+            const parent = container.parentNode, marker = document.createComment('content');
+            parent.replaceChild(marker, container);
+            try { fgReorder(container, mode); } finally { parent.replaceChild(container, marker); }
+            const ctl = document.querySelector('.controls');
+            if (ctl) document.documentElement.style.setProperty('--ctl-h', ctl.offsetHeight + 'px');
+            updateExpandableLines();
+        }
+        function fgReorder(container, mode) {
+            container.querySelectorAll('.task-group-head, .task-gap').forEach(e => e.remove());
+            const blocks = fgBlocks(container).sort((a, b) => +a[0].dataset.lineNumber - +b[0].dataset.lineNumber);
+            const frag = document.createDocumentFragment();
+            const put = b => { frag.appendChild(b[0]); if (b[1]) frag.appendChild(b[1]); };
+            fgTextOrder = mode;
+            lsSet('textOrder', mode);
+            const btn = document.getElementById('textOrderBtn');
+            if (btn) btn.textContent = 'Order: ' + (mode === 'task' ? 'by task' : 'time');
+            if (mode !== 'task') {
+                blocks.forEach(put);
+                container.appendChild(frag);
+                container.classList.remove('grouped');
+                return;
+            }
+            // header comments stay first; untasked lines (separators) follow the previous line's task
+            const groups = new Map(), head = [];
+            const realBefore = new Map();         // line number -> number of real lines before it
+            let nReal = 0;
+            let cur = '';
+            const txt = b => (b[0].querySelector('.line-content') || b[0]).textContent;
+            for (const b of blocks) {
+                realBefore.set(+b[0].dataset.lineNumber, nReal);
+                if (!/^\s*(-{5,})?\s*$/.test(txt(b))) nReal++;
+                let k = fgTaskKey(b[0]);
+                if (!k) {
+                    if (!cur) { head.push(b); continue; }
+                    if (/^\s*(-{5,})?\s*$/.test(txt(b))) { b[0].classList.add('grp-hidden'); }   // separators, blank lines
+                    k = cur;
+                }
+                cur = k;
+                if (!groups.has(k)) groups.set(k, []);
+                groups.get(k).push(b);
+            }
+            head.forEach(put);
+            // busiest tasks first; idle and per-CPU (no funcgraph-proc) groups after them
+            const order = Array.from(groups.entries()).sort((a, b) => {
+                const ia = a[0].startsWith('idle'), ib = b[0].startsWith('idle');
+                if (ia !== ib) return ia ? 1 : -1;
+                return b[1].length - a[1].length;
+            });
+            for (const [k, list] of order) {
+                const real = list.filter(b => !b[0].classList.contains('grp-hidden'));
+                const first = real[0] ? real[0][0] : list[0][0];
+                const cpus = new Set(real.map(b => b[0].getAttribute('data-cpu')).filter(Boolean));
+                const h = document.createElement('div');
+                h.className = 'task-group-head';
+                h.textContent = (first.getAttribute('data-comm') || k) + '  ' + (first.getAttribute('data-pid') || '') +
+                    '   ·  ' + real.length + ' lines  ·  CPU ' + Array.from(cpus).sort((a, b) => a - b).join(',');
+                frag.appendChild(h);
+                let pendingSwitch = null, prevLn = -1, prevTs = null;
+                for (const b of list) {
+                    const t = txt(b), ln = +b[0].dataset.lineNumber;
+                    const sw = t.match(RE_SWITCH_LINE);
+                    const tm = t.match(RE_TS_LINE);
+                    if (pendingSwitch && !sw && !b[0].classList.contains('grp-hidden')) {
+                        const gap = document.createElement('div');
+                        gap.className = 'task-gap';
+                        const dt = (tm && prevTs !== null) ? ' after ' + ((parseFloat(tm[1]) - prevTs) * 1e3).toFixed(3) + ' ms' : '';
+                        gap.textContent = '⇣ switched out on CPU ' + pendingSwitch[1] + ' → ' + pendingSwitch[4].trim() + '-' + pendingSwitch[5] +
+                            '; resumes at line ' + ln + dt + ' (' + (realBefore.get(ln) - realBefore.get(prevLn) - 1) + ' lines of other tasks in between)';
+                        frag.appendChild(gap);
+                        pendingSwitch = null;
+                    }
+                    if (sw) { pendingSwitch = sw; b[0].classList.add('task-switch'); }
+                    if (tm) prevTs = parseFloat(tm[1]);
+                    if (!b[0].classList.contains('grp-hidden')) prevLn = ln;
+                    put(b);
+                }
+            }
+            container.appendChild(frag);
+            container.classList.add('grouped');
+        }
+        function fgToggleTextOrder() { fgSetTextOrder(fgTextOrder === 'task' ? 'time' : 'task'); }
+        document.addEventListener('DOMContentLoaded', () => {
+            const b = document.getElementById('textOrderBtn');
+            if (b) b.textContent = 'Order: ' + (fgTextOrder === 'task' ? 'by task' : 'time');
+            if (fgTextOrder === 'task') fgSetTextOrder('task');
+        });
         function escapeHtml(s) {
             return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
         }
