@@ -135,6 +135,27 @@ class BrowserSmokeTest(unittest.TestCase):
         self.page.wait_for_timeout(300)
         self.assertIn('not traced', self.ev("document.querySelector('.tl-detail').innerText"))
 
+    def test_ruler_aligned_with_tracks_when_scrollbar_shown(self):
+        # headless Chromium hides scrollbars by default; with a real one the track area is narrower
+        # than the ruler, and the ruler must not be stretched (selection marks drifted apart)
+        b = self.pw.chromium.launch(ignore_default_args=['--hide-scrollbars'])
+        try:
+            pg = b.new_page(viewport={'width': 1200, 'height': 420})
+            pg.goto(self.url, wait_until='load')
+            pg.evaluate("fgSwitchView('timeline')")
+            pg.wait_for_timeout(400)
+            r = pg.evaluate("""() => { const s = document.querySelector('.tl-scroll');
+                return [document.querySelector('.tl-head-canvas').getBoundingClientRect().width,
+                        document.querySelector('.tl-canvas').getBoundingClientRect().width,
+                        s.clientWidth, s.offsetWidth]; }""")
+        finally:
+            b.close()
+        head, main, client, offset = r
+        if offset == client:
+            self.skipTest('no visible scrollbar in this environment')
+        self.assertEqual(head, main)
+        self.assertEqual(main, client)
+
     def test_detail_panel_resize_and_maximize(self):
         self.open_timeline()
         self.page.click('[data-act=an-errors]')

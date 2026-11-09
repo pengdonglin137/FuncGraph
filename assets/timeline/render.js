@@ -137,6 +137,9 @@ function resize() {
         cv.width = Math.max(1, Math.round(w * DPR));
         cv.height = Math.max(1, Math.round(h * DPR));
         cv.style.height = h + 'px';
+        // both canvases are drawn for W = width of the track area without its scrollbar; the ruler
+        // is wider in CSS (no scrollbar above it) and would be stretched: x positions drift apart
+        cv.style.width = w + 'px';
     }
     ctx.font = FONT;
     charW = ctx.measureText('abcdefghijklmnopqrstuvwxyz_0123').width / 31;
