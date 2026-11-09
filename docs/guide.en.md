@@ -442,3 +442,188 @@ The filter is shared with the timeline (6.6).
 | `?` | shortcut help |
 | click a line number | copy an anchor link (`#Lnumber`) to share the exact line |
 | Alt + click a line | show this call in the timeline |
+
+## 6. Timeline view
+
+### 6.1 Layout
+
+From top to bottom:
+
+1. **Toolbar, first row**: Color (color mode), Overlay (layer switches), function search, error navigation.
+2. **Toolbar, second row**: Fit (show all), Tracks (expand / collapse all tracks), Inline (inline frames), Overhead (measured / subtracted), Errors, Sections, Sched latency (the analysis panels), ? (help and legend).
+3. **Filter bar**: the filter expression shared with the text view, see 6.6.
+4. **Notes**: what this trace lacks and what that means ("No timestamps…", "Arguments are not printed…"). Blue notes are information, yellow ones need attention.
+5. **Overview strip**: the whole trace in miniature. Blue bars show how busy each moment is, red lines are error origins (tall: reached user space, short orange: handled by a caller), the blue frame is the visible range. Click or drag to jump, use the wheel to zoom.
+6. **Time axis**: the right side shows the visible span (`span`) and the absolute start time (`start`), plus `selected` for a range selection; the time under the cursor is shown next to it.
+7. **CPU tracks** (only with timestamps) and **task tracks**.
+
+The **time mode** depends on the columns in the trace and is named at the right of the axis:
+
+| Mode | Condition | x axis |
+|---|---|---|
+| abs | `funcgraph-abstime` | real time, gaps are real |
+| rel | relative timestamps | same |
+| compressed | durations only | calls of a task are packed back-to-back; no gaps ("compressed time") |
+| count | neither | each leaf counts as one unit: call order only |
+
+### 6.2 Tracks
+
+**Task tracks**: one per task, busiest first; idle tasks last and collapsed.
+
+- Header: `name pid`, then the CPUs it ran on, call count and error count. While filtering also the number of matches (`N matched`); if the task was renamed, `was: old name` (e.g. bash before exec). Without `funcgraph-proc` the header reads `CPU N (no funcgraph-proc)`.
+- Click the header to collapse / expand the track. A collapsed track is one thin row with the outermost calls.
+- Inside a track x is time and y is call depth, outermost at the top. **A slice's width is the function's measured duration.**
+
+**CPU tracks** (`CPUs` at the top): one row per CPU showing which task ran on it.
+
+- Each segment is colored by task name (same task, same color) and labeled `name pid` when wide enough.
+- The thin strip at the bottom of a segment is interrupt time: **orange** hardirq, **green** softirq, **purple** NMI.
+- Hover: how long the task ran on this CPU in one go and how much of it went to hard/soft interrupts; click to jump to the task's track.
+
+### 6.3 Color modes (Color)
+
+| Mode | The color shows |
+|---|---|
+| **Context** (default) | execution context: **blue** task, **green** softirq, **orange** hardirq, **purple** NMI. Functions of the same context differ slightly in hue and lightness so neighbors can be told apart |
+| **Function** | the function name: same function, same color; find the calls of one function everywhere |
+| **Self time** | self time (without children), log scale, from **blue** (shortest) to **red** (longest): where the time is really spent |
+| **CPU** | the CPU a call ran on, one color per CPU, grey if unknown: shows migrations |
+| **Module** | the kernel module, one color per module, light grey for the core kernel. Hidden when the trace has no module functions |
+
+Without `latency-format` the context in Context mode is inferred from interrupt entry functions (`gic_handle_irq`, `__sysvec_*`, `handle_softirqs`, …); such slices say `(inferred)` in the tooltip.
+
+### 6.4 Overlays and markers
+
+Each overlay can be switched off; buttons of overlays without data are hidden.
+
+| Overlay | Looks like | Meaning |
+|---|---|---|
+| **Errors** | **solid dark red** slice | error origin, and the error reached user space (a `*_sys_*` in the chain) |
+| | **solid orange** slice | error origin, handled by some caller |
+| | **light red with red outline** | error propagation: returns the same errno as a child |
+| | **light orange with orange outline** | propagation of a handled error |
+| | small **triangle** (red / orange) | an error origin too narrow for a label |
+| | label `func = ENOENT` | error origins get the errno name after the function name |
+| **IRQs off** | **hatching** on a slice | irqs were disabled when the call started |
+| | **thin red line** under the track header | periods with irqs disabled |
+| **Resched delay** | **amber triangle** in the top right corner of a slice | need-resched was already set when the call started: a reschedule was due but had not happened |
+| | **amber band** under the track header | need-resched window: from setting the flag until the schedule happens, i.e. scheduling latency |
+| **Off-CPU** | grey hatched segment labeled `off-CPU 7.640 ms · do_wait [S]` | the task was not on a CPU; drawn one level below the frame that was open. Label: duration, function it waited in, state at switch-out (`S` interruptible sleep, `D` uninterruptible, `R` still runnable) |
+| | the same with an **amber tint** | preempted (it could have kept running) |
+| **Wakeups** | **teal arrow** from a dot at the waker to where the woken task resumes | who woke whom and when (needs `sched_waking` or `sched_wakeup`) |
+| | only a small head | bunched wakeups show just the end point. Hovering or selecting a task, or hovering an off-CPU segment, draws its full arrows; the top right says "N of M wakeups bunched" |
+| **Preempt depth** (off by default) | grey bar at the bottom of a slice, darker for deeper | |
+| **Markers** | **dotted right edge** | entry seen, return not (the capture ended, or events were lost) |
+| | **dotted left edge** | return seen, entry not (the call started before the capture) |
+| | **small purple square** top left | the call site's function is not the parent slice: an untraced frame (notrace, assembly entry, tail call) or inlined code in between |
+| | **red underline** | a sleeping function called in atomic context (7.4) |
+
+Other visuals:
+
+- **Dimmed**: slices excluded by search or filter are drawn at 18% opacity.
+- **Dense blocks**: neighboring slices narrower than 1.5 px are merged into 1 px blocks colored like their first slice; zooming in brings them back individually.
+- **Selected**: thick dark outline. **Hovered**: thin outline.
+- **Inline frames** (Inline view): translucent grey with a dashed outline, labeled `inline name`. See 6.8.
+
+### 6.5 Tooltip and detail panel
+
+**Hovering a slice** shows:
+
+| Field | Meaning |
+|---|---|
+| name `[module]` | module functions get the module name |
+| duration, `self` | measured and self time; `(estimated)` when there was no duration column and the value comes from timestamps |
+| start | time since the start of the trace, absolute timestamp in parentheses |
+| task | task and CPU |
+| context | context plus the decoded flags: irqs off, BH off, need-resched kind, preempt N, migrate-off N; `(inferred)` if inferred |
+| return | return value; for errors the errno name, the role (error origin / propagated) and the fate (returned to user space / handled by caller / propagates beyond trace). `unverified: no BTF type` means it was judged by value only |
+| caller | call site; `(untraced frame between)` as for the purple marker |
+| inlined in | inline chain around the call site |
+| args | arguments (only with `funcgraph-args`) |
+
+**Hovering an off-CPU segment**: wait time, function it waited in, state at switch-out, CPU it left and CPU it resumed on, waker.
+
+**Clicking a slice** opens the detail panel below:
+
+- Tags next to the title: context (`?` if inferred), irqs off, BH off, need-resched, error origin/propagated, may sleep in atomic context, no exit, no entry, estimated.
+- Left column: duration, self (and its share), start, task, depth, flags, return, call site, args, trace lines (entry and exit line numbers; click to open the text view).
+- Right column:
+  - **Where the time went**: a stacked bar splitting the measured duration (the parts add up to it exactly):
+
+    | Color | Part |
+    |---|---|
+    | dark blue | own code: the function's own code |
+    | light blue | traced callees |
+    | orange | interrupts / softirq that interrupted the call |
+    | grey | blocked: sleeping, waiting |
+    | yellow | preempted |
+
+    Below it: how many traced calls are inside, and roughly how much is tracing overhead (with an estimate).
+  - **Error chain**: the error's path from origin to outermost frame.
+  - **Call stack**: the stack with each frame's duration; inline frames in italics, marked `inline`. If the stack starts before the capture, "… N frame(s) outside trace window".
+  - **Children**: the children with the most time, `×N` = number of calls.
+- Links at the top right: **Duration distribution (H)** (7.2) and **Open in text view ↵**.
+
+### 6.6 Search and filter
+
+- **Search box** (`/`): a function-name regex. Non-matching slices are dimmed and the number of matching calls is shown; Enter or `N` goes to the next match, Shift+Enter or Shift+`N` to the previous one.
+- **Filter bar**: the same syntax as the text view's unified filter (5.7), kept in sync with it. Non-matching calls are dimmed; error navigation, range summaries and all analysis panels only count matches; the right side shows `N of M calls`. **Hide unmatched** hides tracks without matches, **Clear** removes the filter.
+
+### 6.7 Measured durations and overhead subtraction
+
+With an overhead estimate (the header written by `fgcapture.sh --calibrate`, or `--overhead`) the **Overhead** button (`O`) appears:
+
+- **measured**: measured durations.
+- **subtracted**: tooltips, the detail panel, summaries and analysis panels use durations with the overhead removed: `measured - per-child overhead × traced descendants - per-call overhead`, never below 0.
+
+**Slices are always placed and sized by measured time**; only the numbers change. The correction is an estimate: overhead depends on CPU, frequency and kernel configuration, and is off on paths with many interrupts or different cache behavior.
+
+### 6.8 Inline frames (Inline)
+
+With `--vmlinux` and `funcgraph-retaddr` the tool knows whether a call site is inside inlined code. **Inline** (`I`) switches between two views and is remembered:
+
+- **hidden**: only the frames ftrace traced.
+- **shown**: inline frames between a parent and its children. Consecutive calls under the same parent that sit in the same inlined code are merged into one inline frame.
+
+An inline frame **starts and ends** with the first and the last traced call inside it. Inlined code has no entry or return events, so the real start may be earlier and the real end later; tooltip and details say so.
+
+Tooltip and detail panel of an inline frame:
+
+| Field | Meaning |
+|---|---|
+| traced extent | span from the first to the last traced call |
+| start / end | start and end time |
+| inlined into | function, file and line it was inlined into |
+| defined in | file that defines the inlined function |
+| traced calls | traced calls inside and their total time |
+| between them | span minus those calls: the inlined code itself, untraced calls, interrupts |
+| Inline chain at the call site | the full chain, this level in bold |
+| Traced calls inside | each call inside; click to go there |
+
+In both views the call stacks list the inline frames.
+
+### 6.9 Keyboard and mouse
+
+| Action | Effect |
+|---|---|
+| `W` / `S`, or Ctrl + wheel | zoom in / out around the mouse |
+| `A` / `D`, ← / →, drag, Shift + wheel | pan |
+| wheel | scroll the tracks |
+| `0` or Home | show all |
+| `F` | zoom to the selected slice or range |
+| double-click a slice / off-CPU segment | zoom to it |
+| click a slice | select it and open the detail panel |
+| click an off-CPU segment | open the wait chain (7.5) |
+| click a track header | collapse / expand the track |
+| Shift + drag | select a time range in this track and summarize it (7.1) |
+| Shift + Alt + drag | the same over all tracks |
+| ↑ / ↓ | select the parent / first child |
+| `[` / `]` | previous / next sibling |
+| `E` / Shift + `E` | next / previous error origin |
+| `/`, `N` / Shift + `N` | search, next / previous match |
+| `H` | duration distribution of the selected function |
+| `O` | measured / overhead subtracted |
+| `I` | hide / show inline frames |
+| Enter | open the selected call in the text view |
+| Esc | close the help; clear selection and range |
+| `?` | help and legend |
