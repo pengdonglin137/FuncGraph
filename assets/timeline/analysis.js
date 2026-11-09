@@ -284,6 +284,7 @@ function distBucketLabel(index) {
     return (index ? fmtDur(bounds[0]) + ' – < ' : '< ') + fmtDur(bounds[1]) + ' (' + distView.histogram.buckets[index].ids.length + ' calls)';
 }
 function showDist(nameIdx) {
+    const keepSlowFast = distView && distView.data.name === nameIdx && distView.slowFastOpen;
     AN.kind = 'dist';
     if (AN.func !== nameIdx) AN.site = null;
     AN.func = nameIdx;
@@ -293,7 +294,7 @@ function showDist(nameIdx) {
     if (changedPopulation) {
         const siteVisible = distView && distView.data === data ? distView.siteVisible : DIST_SITE_PAGE;
         distView = { data, site: AN.site, population, histogram: distributionHistogram(population.ids),
-            bucket: -1, visible: Math.min(15, population.ids.length), siteVisible };
+            bucket: -1, visible: Math.min(15, population.ids.length), siteVisible, slowFastOpen: !!keepSlowFast };
     }
     const ids = population.ids;
     AN.distIds = ids;
@@ -319,7 +320,7 @@ function showDist(nameIdx) {
         '<button class="tl-btn" data-act="dist-csv">Export calls CSV</button></div>';
     h += '<table class="tl-sum an-tbl"><thead><tr><th>duration</th><th>self</th><th style="text-align:left">task</th><th>start</th><th style="text-align:left">caller</th><th>×p50</th></tr></thead><tbody class="an-list">' +
         slowRows(distCallIds().slice(0, distView.visible), quantile(0.5)) + '</tbody></table>' +
-        '<div style="padding:6px 12px"><button class="tl-btn" data-act="slowfast">Slow vs fast: what do the slow calls do differently?</button></div>' +
+        '<div class="an-slowfast">' + slowFastHtml() + '</div>' +
         callSiteTable(data);
     openDetail(h);
     if (changedPopulation) elDetail.scrollTop = 0;
@@ -861,32 +862,49 @@ elDetail.addEventListener('click', ev => {
 }, true);
 
 // ---- subtree helpers ----
-function subtree(i) {
-    // all descendants of slice i (same task, nested in time, parent chain reaches i)
-    const t = TRACKS[sTask[i]], d0 = sDepth[i], s = sStart[i], e = sEnd[i], out = [];
-    for (let d = d0 + 1; d < t.rowsT.length; d++) {
-        const row = t.rowsT[d];
-        let any = false;
-        for (let q = lbEnd(row, s); q < row.length && sStart[row[q]] <= e; q++) {
-            let k = row[q], g = 0;
-            while (k >= 0 && sDepth[k] > d0 && g++ < 256) k = sParent[k];
-            if (k === i) { out.push(row[q]); any = true; }
-        }
-        if (!any && d > d0 + 1) break;
+let realCallTree = null;
+const breakdownCache = new Map();
+function callTreeIndex() {
+    if (realCallTree) return realCallTree;
+    const first = new Int32Array(N).fill(-1), next = new Int32Array(N).fill(-1);
+    for (let index = N - 1; index >= 0; index--) {
+        const parent = sParent[index];
+        if (parent < 0 || parent >= N || sTask[parent] !== sTask[index] || sDepth[parent] >= sDepth[index]) continue;
+        next[index] = first[parent];
+        first[parent] = index;
     }
-    return out;
+    realCallTree = { first, next };
+    return realCallTree;
+}
+function directChildren(root) {
+    const tree = callTreeIndex(), children = [];
+    for (let child = tree.first[root]; child >= 0; child = tree.next[child]) children.push(child);
+    return children;
+}
+function subtree(root) {
+    const tree = callTreeIndex(), descendants = [];
+    let current = tree.first[root];
+    while (current >= 0) {
+        descendants.push(current);
+        if (tree.first[current] >= 0) { current = tree.first[current]; continue; }
+        while (current !== root && tree.next[current] < 0) current = sParent[current];
+        if (current === root) break;
+        current = tree.next[current];
+    }
+    return descendants;
 }
 // Partition of the measured wall time of slice i:
 // own self | traced callees (on-CPU self) | hardirq/softirq that interrupted it | off-CPU (blocked / preempted)
-function breakdown(i) {
-    const ctx0 = sFlags[i] & FL.CTX, sub = subtree(i);
+function breakdown(i, descendants) {
+    const cached = breakdownCache.get(i);
+    if (cached) return cached;
+    const ctx0 = sFlags[i] & FL.CTX, sub = descendants || subtree(i);
     const inIrq = new Set();
     let irq = 0, callees = 0, nCalls = sub.length;
-    const subSet = new Set(sub);
-    for (const k of sub) {           // sub is ordered by depth, so parents come first
+    for (const k of sub) {
         const p = sParent[k], c = sFlags[k] & FL.CTX;
         if (inIrq.has(p)) { inIrq.add(k); continue; }
-        if (c > ctx0 && (p < 0 || (sFlags[p] & FL.CTX) < c)) { irq += sEnd[k] - sStart[k]; inIrq.add(k); continue; }
+        if (c > ctx0) { irq += sEnd[k] - sStart[k]; inIrq.add(k); continue; }
         callees += sSelfRaw[k];
     }
     let own = sSelfRaw[i], offB = 0, offP = 0;
@@ -898,20 +916,28 @@ function breakdown(i) {
         if (r[3] - 1 === sDepth[i]) own -= ov; else callees -= ov;
     }
     own = Math.max(0, own); callees = Math.max(0, callees);
-    const ovh = D.overhead ? Math.min(own + callees, D.overhead.child * (nCalls - [...inIrq].length) + D.overhead.self) : 0;
-    return { wall: sEnd[i] - sStart[i], own, callees, irq, offB, offP, ovh, nCalls };
+    const ovh = D.overhead ? Math.min(own + callees, D.overhead.child * (nCalls - inIrq.size) + D.overhead.self) : 0;
+    const result = { wall: sEnd[i] - sStart[i], own, callees, irq, offB, offP, ovh, nCalls };
+    if (breakdownCache.size >= 256) breakdownCache.delete(breakdownCache.keys().next().value);
+    breakdownCache.set(i, result);
+    return result;
 }
 function breakdownHtml(i) {
     const b = breakdown(i);
     if (b.wall <= 0) return '';
     const parts = [['own code', b.own, '#3b6fd8'], ['traced callees', b.callees, '#8fb3ef'], ['interrupts / softirq', b.irq, '#f0a35a'],
         ['blocked', b.offB, '#9aa3ad'], ['preempted', b.offP, '#f2c14e']].filter(p => p[1] > 0);
-    let h = '<div class="tl-sec">Where the time went (' + fmtDur(b.wall) + ' measured)</div><div class="an-bd">';
-    for (const p of parts) h += `<span style="width:${(100 * p[1] / b.wall).toFixed(2)}%;background:${p[2]}" title="${p[0]} ${fmtDur(p[1])}"></span>`;
+    const accounted = parts.reduce((total, part) => total + part[1], 0);
+    if (accounted < b.wall) parts.push(['unattributed', b.wall - accounted, '#b39ac9']);
+    const total = Math.max(b.wall, accounted);
+    let h = '<div class="tl-sec">Where the time went (' + fmtDur(b.wall) + (TIMED ? ' measured' : MODE === 'count' ? ' call-order units' : ' packed geometry, not elapsed time') + ')</div><div class="an-bd">';
+    for (const p of parts) h += `<span style="width:${(100 * p[1] / total).toFixed(2)}%;background:${p[2]}" title="${p[0]} ${fmtDur(p[1])}"></span>`;
     h += '</div><div class="an-bd-legend">';
-    for (const p of parts) h += `<span><i style="background:${p[2]}"></i>${p[0]} <b>${fmtDur(p[1])}</b> ${(100 * p[1] / b.wall).toFixed(0)}%</span>`;
-    if (b.ovh > 0) h += `<span class="d">of own + callees, ≈${fmtDur(b.ovh)} is tracing overhead (${b.nCalls} traced calls inside)</span>`;
-    else if (b.nCalls > 0 && TIMED) h += `<span class="d">${b.nCalls} traced calls inside add tracing overhead (no estimate)</span>`;
+    for (const p of parts) h += `<span><i style="background:${p[2]}"></i>${p[0]} <b>${fmtDur(p[1])}</b> ${(100 * p[1] / total).toFixed(0)}%</span>`;
+    if (accounted > b.wall) h += '<span class="d">Trace intervals overlap or are inconsistent: parts exceed the recorded interval by ' + fmtDur(accounted - b.wall) +
+        '. Percentages use the category total, not the recorded duration.</span>';
+    if (b.ovh > 0) h += `<span class="d">of own + callees, ≈${fmtDur(b.ovh)} is tracing overhead (${b.nCalls} traced call${b.nCalls === 1 ? '' : 's'} inside)</span>`;
+    else if (b.nCalls > 0 && TIMED) h += `<span class="d">${b.nCalls} traced call${b.nCalls === 1 ? '' : 's'} inside add tracing overhead (no estimate)</span>`;
     return h + '</div><div style="height:8px"></div>';
 }
 
@@ -930,46 +956,136 @@ function callSiteTable(data) {
         (distView.siteVisible >= data.siteRows.length ? ' disabled' : '') + '>More call sites</button></div>';
     return html;
 }
-function slowFast(ids) {
-    // compare the subtrees of the fastest half and the slowest 10% of the calls
-    if (ids.length < 6) return '<div class="an-hint">Slow vs fast needs at least 6 calls.</div>';
-    const byDur = ids.slice().sort((a, b) => durOf(a) - durOf(b));
-    const fast = byDur.slice(0, Math.max(1, Math.floor(byDur.length / 2)));
-    const slow = byDur.slice(Math.floor(byDur.length * 0.9));
-    function profile(list) {
-        const m = new Map();
-        let irq = 0, offB = 0, offP = 0, own = 0;
-        for (const i of list) {
-            const b = breakdown(i);
-            irq += b.irq; offB += b.offB; offP += b.offP; own += b.own;
-            for (const k of subtree(i)) {
-                const a = m.get(sName[k]) || [0, 0];
-                a[0]++; a[1] += sSelfRaw[k];
-                m.set(sName[k], a);
-            }
+const SLOW_FAST_PAGE = 100;
+let slowFastCache = null, slowFastView = null;
+function cohortProfile(ids) {
+    const functions = new Map();
+    let irq = 0, offB = 0, offP = 0, own = 0, duration = 0;
+    for (const root of ids) {
+        const descendants = subtree(root), parts = breakdown(root, descendants);
+        irq += parts.irq; offB += parts.offB; offP += parts.offP;
+        own += Math.max(0, parts.own - (sSelfRaw[root] - sSelf[root]));
+        duration += durOf(root);
+        for (const index of descendants) {
+            let entry = functions.get(sName[index]);
+            if (!entry) { entry = { calls: 0, self: 0, example: index }; functions.set(sName[index], entry); }
+            entry.calls++;
+            entry.self += sSelf[index];
         }
-        const n = list.length;
-        const out = new Map();
-        for (const [k, a] of m) out.set(k, [a[0] / n, a[1] / n]);
-        return { m: out, irq: irq / n, offB: offB / n, offP: offP / n, own: own / n, dur: list.reduce((s, i) => s + durOf(i), 0) / n };
     }
-    const F = profile(fast), Sl = profile(slow);
-    const rows = [];
-    for (const k of new Set([...F.m.keys(), ...Sl.m.keys()])) {
-        const a = F.m.get(k) || [0, 0], b = Sl.m.get(k) || [0, 0];
-        rows.push([S[k], a[0], b[0], a[1], b[1]]);
+    return { ids, functions, irq: irq / ids.length, offB: offB / ids.length, offP: offP / ids.length,
+        own: own / ids.length, duration: duration / ids.length };
+}
+function slowFastData() {
+    const ids = distView.population.ids;
+    if (slowFastCache && slowFastCache.ids === ids && slowFastCache.durations === sDur) return slowFastCache;
+    if (ids.length < 6) return null;
+    const fast = cohortProfile(ids.slice(-Math.floor(ids.length / 2)));
+    const slow = cohortProfile(ids.slice(0, Math.ceil(ids.length / 10)));
+    const functions = new Map();
+    for (const [cohort, profile] of [['fast', fast], ['slow', slow]]) {
+        for (const [name, entry] of profile.functions) {
+            let row = functions.get(name);
+            if (!row) {
+                row = { kind: 'function', name: S[name], nameIndex: name, fastCalls: 0, slowCalls: 0,
+                    fastSelf: 0, slowSelf: 0, fastExample: -1, slowExample: -1 };
+                functions.set(name, row);
+            }
+            row[cohort + 'Calls'] = entry.calls / profile.ids.length;
+            row[cohort + 'Self'] = entry.self / profile.ids.length;
+            row[cohort + 'Example'] = entry.example;
+        }
     }
-    rows.push(['(own code)', 1, 1, F.own, Sl.own], ['(interrupts / softirq)', 0, 0, F.irq, Sl.irq],
-              ['(blocked off-CPU)', 0, 0, F.offB, Sl.offB], ['(preempted)', 0, 0, F.offP, Sl.offP]);
-    rows.sort((x, y) => (y[4] - y[3]) - (x[4] - x[3]));
-    let h = `<div class="tl-sec" style="padding:6px 12px 0">Slow vs fast: slowest ${slow.length} calls (avg ${fmtDur(Sl.dur)}) vs fastest ${fast.length} (avg ${fmtDur(F.dur)}), per call</div>` +
-        '<table class="tl-sum an-tbl"><thead><tr><th style="text-align:left">function inside</th><th>calls fast</th><th>calls slow</th><th>self fast</th><th>self slow</th><th>Δ self</th></tr></thead><tbody>';
-    for (const r of rows.filter(r => Math.abs(r[4] - r[3]) > 0).slice(0, 15)) {
-        const d = r[4] - r[3];
-        h += `<tr><td style="text-align:left">${esc(r[0])}</td><td>${r[1] ? r[1].toFixed(1) : ''}</td><td>${r[2] ? r[2].toFixed(1) : ''}</td>` +
-            `<td>${fmtDur(r[3])}</td><td>${fmtDur(r[4])}</td><td class="${d > 0 ? 'err' : ''}">${d > 0 ? '+' : ''}${fmtDur(d)}</td></tr>`;
+    const rows = Array.from(functions.values());
+    for (const [kind, name, field] of [['own', '(own code)', 'own'], ['irq', '(interrupts / softirq)', 'irq'],
+        ['blocked', '(blocked off-CPU)', 'offB'], ['preempted', '(preempted)', 'offP']]) {
+        rows.push({ kind, name, nameIndex: -1, fastCalls: kind === 'own' ? 1 : null, slowCalls: kind === 'own' ? 1 : null,
+            fastSelf: fast[field], slowSelf: slow[field], fastExample: -1, slowExample: -1 });
     }
-    return h + '</tbody></table><div class="an-hint">Self time per call of each function in the subtree. Large Δ rows explain where the slow calls spend the extra time.</div>';
+    for (const row of rows) row.delta = row.slowSelf - row.fastSelf;
+    slowFastCache = { ids, durations: sDur, fast, slow, rows };
+    slowFastView = { data: slowFastCache, sort: slowFastView ? slowFastView.sort : 'delta',
+        ascending: slowFastView ? slowFastView.ascending : false, visible: SLOW_FAST_PAGE, ordered: null };
+    return slowFastCache;
+}
+function slowFastOrder() {
+    const data = slowFastData();
+    if (!data) return [];
+    if (slowFastView.ordered) return slowFastView.ordered;
+    const key = slowFastView.sort, direction = slowFastView.ascending ? 1 : -1;
+    slowFastView.ordered = data.rows.slice().sort((left, right) => {
+        const order = key === 'name' ? (left.name < right.name ? -1 : left.name > right.name ? 1 : 0) : (left[key] || 0) - (right[key] || 0);
+        return direction * order || (left.name < right.name ? -1 : left.name > right.name ? 1 : 0) || left.kind.localeCompare(right.kind);
+    });
+    return slowFastView.ordered;
+}
+function slowFastRows(rows) {
+    return rows.map(row => '<tr data-sf-kind="' + row.kind + '" data-sf-name="' + row.nameIndex + '"><td><span class="an-slowfast-name" title="' + esc(row.name) + '">' + esc(row.name) + '</span></td><td>' +
+        (row.fastCalls === null ? '' : row.fastCalls.toFixed(2)) + '</td><td>' + (row.slowCalls === null ? '' : row.slowCalls.toFixed(2)) +
+        '</td><td>' + fmtDur(row.fastSelf) + '</td><td>' + fmtDur(row.slowSelf) + '</td><td class="' + (row.delta > 0 ? 'err' : '') + '">' +
+        (row.delta > 0 ? '+' : '') + fmtDur(row.delta) + '</td><td>' +
+        [['fast', row.fastExample], ['slow', row.slowExample]].filter(entry => entry[1] >= 0).map(([cohort, index]) =>
+            '<button class="tl-btn" data-sf-example="' + index + '" aria-label="Show ' + cohort + ' example of ' + esc(row.name) + '">' + cohort + '</button>').join(' ') + '</td></tr>').join('');
+}
+function slowFastHtml() {
+    if (!distView.slowFastOpen) return '<div class="an-slowfast-tools"><button class="tl-btn" data-act="slowfast">Slow vs fast: what do the slow calls do differently?</button></div>';
+    const data = slowFastData();
+    let html = '<div class="an-slowfast-tools"><span class="tl-sec">Slow vs fast</span><button class="tl-btn" data-act="slowfast">Hide comparison</button>';
+    if (!data) return html + '</div><div class="an-hint">Slow vs fast needs at least 6 matching calls. Change the filter or call site to restore the population.</div>';
+    html += '<button class="tl-btn" data-act="slowfast-csv">Export profile CSV</button><button class="tl-btn" data-act="slowfast-cohorts-csv">Export cohorts CSV</button></div>' +
+        '<div class="an-hint an-slowfast-hint">Per selected call: slowest ' + data.slow.ids.length + ' (avg ' + fmtDur(data.slow.duration) + ') vs fastest ' +
+        data.fast.ids.length + ' (avg ' + fmtDur(data.fast.duration) + '). Self follows Overhead; scheduling-context rows use recorded geometry.' +
+        '<details><summary>Scope and interpretation</summary>Roots follow the function, shared filter and call site, not the duration bucket. Descendants include all real traced calls, even outside the shared filter; synthetic inline/untraced frames are excluded. ' +
+        'Cohorts use descending duration, then original slice index; the fastest half and slowest ceil(10%) are disjoint, including ties. Recursive descendants contribute once per selected ancestor. ' +
+        'Function self may include off-CPU time; context rows are separate observations, not additive with function rows. Own code is on-CPU self minus the estimated self overhead, clamped at zero. ' +
+        'Differences are associations, not proof of a cause. Count/packed geometry is not elapsed scheduling time.</details></div>';
+    const rows = slowFastOrder(), columns = [['name', 'function inside'], ['fastCalls', 'calls fast'], ['slowCalls', 'calls slow'],
+        ['fastSelf', 'self / context fast'], ['slowSelf', 'self / context slow'], ['delta', 'Δ value']];
+    html += '<table class="tl-sum an-tbl an-slowfast-table"><thead><tr>' + columns.map(([key, label]) => '<th data-sf-sort="' + key +
+        '" aria-sort="' + (slowFastView.sort === key ? slowFastView.ascending ? 'ascending' : 'descending' : 'none') + '"><button class="tl-sum-sort">' + label +
+        '</button></th>').join('') + '<th>examples</th></tr></thead><tbody>' + slowFastRows(rows.slice(0, slowFastView.visible)) + '</tbody></table>' +
+        '<div class="an-slowfast-footer"><span role="status">Showing ' + Math.min(slowFastView.visible, rows.length) + ' of ' + rows.length +
+        ' profile rows, including unchanged functions</span><button class="tl-btn" data-act="slowfast-more"' +
+        (slowFastView.visible >= rows.length ? ' disabled' : '') + '>Load more profile rows</button></div>';
+    return html;
+}
+function renderSlowFast() { elDetail.querySelector('.an-slowfast').innerHTML = slowFastHtml(); sizeDetailHead(); }
+function appendSlowFastRows() {
+    const rows = slowFastOrder(), start = slowFastView.visible;
+    slowFastView.visible = Math.min(start + SLOW_FAST_PAGE, rows.length);
+    elDetail.querySelector('.an-slowfast-table tbody').insertAdjacentHTML('beforeend', slowFastRows(rows.slice(start, slowFastView.visible)));
+    elDetail.querySelector('.an-slowfast-footer [role=status]').textContent = 'Showing ' + slowFastView.visible + ' of ' + rows.length + ' profile rows, including unchanged functions';
+    elDetail.querySelector('[data-act=slowfast-more]').disabled = slowFastView.visible >= rows.length;
+}
+function slowFastBasis(kind) {
+    if (kind === 'function' || kind === 'own') return MODE === 'count' ? 'call_order' : adjOn ? 'overhead_subtracted_estimate' : 'raw_self';
+    return TIMED ? 'recorded_scheduling_geometry' : MODE === 'count' ? 'call_order_geometry' : 'packed_geometry';
+}
+function exportSlowFastCsv(cohorts) {
+    const data = slowFastData();
+    if (!data) return;
+    const unit = MODE === 'count' ? 'units' : 'ns', scale = MODE === 'count' ? 1000 : 1;
+    const filter = (window.fgFilterState || {}).text || '', site = AN.site || '';
+    const selectionBasis = MODE === 'count' ? 'call_order' : adjOn ? 'overhead_subtracted_estimate' : 'measured_duration';
+    const columns = cohorts ? ['cohort', 'slice_index', 'function', 'trace_line', 'task_index', 'pid', 'comm', 'caller',
+        'duration_' + unit, 'self_' + unit, 'start_' + unit, 'end_' + unit, 'time_mode', 'duration_basis', 'filter', 'call_site_filter'] :
+        ['kind', 'function', 'name_index', 'fast_calls_per_root', 'slow_calls_per_root', 'fast_self_per_root_' + unit, 'slow_self_per_root_' + unit,
+        'delta_self_per_root_' + unit, 'fast_example_slice', 'slow_example_slice', 'fast_roots', 'slow_roots', 'population_calls',
+        'mean_fast_duration_' + unit, 'mean_slow_duration_' + unit, 'time_mode', 'selection_basis', 'value_basis', 'filter', 'call_site_filter'];
+    function* rows() {
+        if (cohorts) {
+            for (const [cohort, profile] of [['fast', data.fast], ['slow', data.slow]]) for (const index of profile.ids) {
+                const task = TRACKS[sTask[index]];
+                yield [cohort, index, nameOf(index), sLine[index], sTask[index], task.pid, task.comm, callerOf(index) || '',
+                    durOf(index) / scale, sSelf[index] / scale, sStart[index] / scale, sEnd[index] / scale, MODE, selectionBasis, filter, site];
+            }
+        } else for (const row of slowFastOrder()) yield [row.kind, row.name, row.nameIndex < 0 ? '' : row.nameIndex,
+            row.fastCalls === null ? '' : row.fastCalls, row.slowCalls === null ? '' : row.slowCalls, row.fastSelf / scale, row.slowSelf / scale,
+            row.delta / scale, row.fastExample < 0 ? '' : row.fastExample, row.slowExample < 0 ? '' : row.slowExample,
+            data.fast.ids.length, data.slow.ids.length, data.ids.length, data.fast.duration / scale, data.slow.duration / scale,
+            MODE, selectionBasis, slowFastBasis(row.kind), filter, site];
+    }
+    downloadTimelineCsv('funcgraph-slowfast-' + (cohorts ? 'cohorts' : 'profile') + '-' + (MODE === 'count' ? 'count' : adjOn ? 'adjusted' : 'raw') + '.csv', columns, rows());
 }
 
 // ---- critical sections: irqs-off / preempt-off / BH-off ----
@@ -1034,6 +1150,30 @@ elDetail.addEventListener('click', ev => {
     }
     const st = ev.target.closest('tr[data-site]');
     if (st && AN.kind === 'dist') { AN.site = AN.site === st.dataset.site ? null : st.dataset.site; showDist(AN.func); ev.stopImmediatePropagation(); return; }
-    const sfb = ev.target.closest('[data-act=slowfast]');
-    if (sfb) { sfb.outerHTML = slowFast(AN.distIds); ev.stopImmediatePropagation(); }
+    const slowFastAction = ev.target.closest('.an-slowfast [data-act]');
+    if (slowFastAction) {
+        const action = slowFastAction.dataset.act;
+        if (action === 'slowfast') {
+            distView.slowFastOpen = !distView.slowFastOpen; renderSlowFast();
+            elDetail.querySelector('[data-act=slowfast]').focus({ preventScroll: true });
+        } else if (action === 'slowfast-more') appendSlowFastRows();
+        else if (action === 'slowfast-csv' || action === 'slowfast-cohorts-csv') exportSlowFastCsv(action === 'slowfast-cohorts-csv');
+        ev.stopImmediatePropagation(); return;
+    }
+    const slowFastSort = ev.target.closest('[data-sf-sort]');
+    if (slowFastSort) {
+        const key = slowFastSort.dataset.sfSort;
+        slowFastView.ascending = slowFastView.sort === key ? !slowFastView.ascending : key === 'name';
+        slowFastView.sort = key; slowFastView.visible = SLOW_FAST_PAGE; slowFastView.ordered = null;
+        renderSlowFast(); elDetail.querySelector('[data-sf-sort="' + key + '"] button').focus({ preventScroll: true });
+        ev.stopImmediatePropagation(); return;
+    }
+    const example = ev.target.closest('[data-sf-example]');
+    if (example) {
+        const index = +example.dataset.sfExample;
+        const track = TRACKS[sTask[index]];
+        if (track.hidden) { track.hidden = false; layout(); }
+        setSelection(index); zoomTo(sStart[index], sEnd[index], index); draw();
+        ev.stopImmediatePropagation();
+    }
 }, true);

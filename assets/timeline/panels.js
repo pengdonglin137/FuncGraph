@@ -128,17 +128,13 @@ function showDetail(i) {
     }
     h += '</div>';
     // heaviest children
-    const kids = [];
-    const tr = TRACKS[sTask[i]];
-    if (sDepth[i] + 1 < tr.rowsT.length) {
-        const row = tr.rowsT[sDepth[i] + 1];
-        for (let q = lbEnd(row, sStart[i]); q < row.length && sStart[row[q]] <= sEnd[i]; q++) if (sParent[row[q]] === i) kids.push(row[q]);
-    }
+    const kids = directChildren(i);
     if (kids.length) {
         const agg = new Map();
         for (const k of kids) { const a = agg.get(sName[k]) || [0, 0, k]; a[0]++; a[1] += durOf(k); agg.set(sName[k], a); }
         const top = Array.from(agg.entries()).sort((x, y) => y[1][1] - x[1][1]).slice(0, 8);
-        h += '<div style="height:8px"></div><div class="tl-sec">Children (' + kids.length + ' calls)</div><div class="tl-crumbs">';
+        h += '<div style="height:8px"></div><div class="tl-sec">Children (' + kids.length + ' call' + (kids.length === 1 ? '' : 's') +
+            (agg.size > 8 ? '; top 8 of ' + agg.size + ' functions' : '') + ')</div><div class="tl-crumbs">';
         for (const [nm, a] of top) h += '<div class="tl-crumb" data-slice="' + a[2] + '"><span class="d">' + fmtDur(a[1]).padStart(10, '\u00a0') + '</span>&nbsp; ' + esc(S[nm]) + (a[0] > 1 ? ' <span class="d">×' + a[0] + '</span>' : '') + '</div>';
         h += '</div>';
     }

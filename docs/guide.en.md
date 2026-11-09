@@ -594,7 +594,7 @@ Other visuals:
   - Below **call site**: the source position of the call (`file:line`, click to open the online source); `in FUNC (inlined)` when the call sits in inlined code.
   - **Call site source**: the call site's source block, the same as when expanding the line in the text view (highlighting, `>line<` marks the call, inline chain in the chain/flat layout of the Source button). Click the title to collapse it; the choice is remembered. It reuses the block the text view already resolved, so the report gets no extra data. Without `--kernel-src` / `--source-rev` / `--source-url` only the position link is shown, with `--no-text-view` neither.
 - Right column:
-  - **Where the time went**: a stacked bar splitting the measured duration (the parts add up to it exactly):
+  - **Where the time went**: a stacked bar splitting the recorded interval. It uses real parent links, including skipped depths and stacks deeper than 256 calls; synthetic inline/untraced frames are never counted as extra calls:
 
     | Color | Part |
     |---|---|
@@ -603,11 +603,12 @@ Other visuals:
     | orange | interrupts / softirq that interrupted the call |
     | grey | blocked: sleeping, waiting |
     | yellow | preempted |
+    | purple | unattributed: a gap not explained by the recorded categories |
 
-    Below it: how many traced calls are inside, and roughly how much is tracing overhead (with an estimate).
+    Below it: how many real traced calls are inside, and roughly how much is tracing overhead (with an estimate). This breakdown always uses raw geometry, independently of Overhead and the shared filter. If overlapping or inconsistent trace intervals make the categories exceed the recorded interval, a warning gives the excess; percentages then use the category total, not a misleading fraction above 100% of the interval. Call-order and packed geometry are labelled as such, not as elapsed scheduling time.
   - **Error chain**: the error's path from origin to outermost frame.
   - **Call stack**: the stack with each frame's duration; inline frames in italics, marked `inline`. If the stack starts before the capture, "… N frame(s) outside trace window".
-  - **Children**: the children with the most time, `×N` = number of calls.
+  - **Children**: real direct children, even across skipped depths, grouped by function and ordered by total duration; `×N` = number of calls. Shows up to eight functions, with an explicit top-eight/total label when more exist.
 - Links at the top right: **Duration distribution (H)** (7.2) and **Open in text view ↵**.
 
 The detail panel and the analysis panels share the bottom area. Drag the bar above the panel to change its height; the canvas grows or shrinks accordingly. Double-click the bar to restore the default (32% of the window height, between 180 and 400 px). The height is stored in the browser as a fraction of the window, so other reports and other window sizes keep the same split.
@@ -619,7 +620,7 @@ For a larger canvas: **Max** in the toolbar (`M`) hides the page header and the 
 - **Search box** (`/`): a case-insensitive function-name regex over real traced calls, not arguments, call sites or synthetic inline frames. Non-matching slices are dimmed.
 - **Match navigation**: click ◀ / ▶ beside the search box, or press Shift+Enter / Enter inside it; outside the input, Shift+`N` / `N` also works. The status shows `position / total calls`, such as `2 / 17 calls`, or just the total when the current selection is not a match. Navigation wraps in task order, then time order within each task; without a selection, next starts at the first result and previous at the last.
 - **Search status**: typing shows `Searching…`; no matches shows `0 calls`. Invalid syntax shows `Invalid regex`, marks the input red and disables both navigation buttons. It clears stale highlighting and navigation results; Esc clears the search and leaves the input. Repeated navigation reuses cached matches rather than rescanning all slices.
-- **Filter bar**: the same syntax as the text view's unified filter (5.7), kept in sync with it. Non-matching calls are dimmed; error navigation, range summaries and all analysis panels only count matches; the right side shows `N of M calls`. **Hide unmatched** hides tracks without matches, **Clear** removes the filter.
+- **Filter bar**: the same syntax as the text view's unified filter (5.7), kept in sync with it. Non-matching calls are dimmed; error navigation, range call summaries and duration populations use matching calls; windows require actual overlap with matching calls. The right side shows `N of M calls`. Context is retained where needed: off-CPU scope, wait chains and a selected call's raw breakdown are filter-independent, and Slow vs fast filters root invocations but includes their full real descendants. **Hide unmatched** hides tracks without matches, **Clear** removes the filter.
 - **Together**: search counts and navigation only include calls that pass Filter. Changing or clearing the filter updates search results immediately, without jumping into hidden unmatched tracks. Tab to focus controls, then Enter / Space activates them normally. Canvas navigation shortcuts move focus back to the canvas, where Enter opens the selected call in the text view.
 
 ![tl_search](img/tl_search.png)
@@ -723,9 +724,18 @@ Press `H` with a slice selected, or click **Duration distribution** in the detai
 - **Slowest calls**: duration, self, task, start, call site, and `×p50` (how many times the population median). Initially shows 15 calls, or 50 after choosing a bucket; **Load more** appends 50 more, without discarding existing rows. All matching calls remain reachable. Click a row to highlight that call while keeping the distribution panel open.
 - **By call site**: one row per call site with calls and p50/p99/max; the same function called from different places can behave very differently. The table stays visible while filtering: click a row to select it, then click the selected row again or **All call sites** to undo. **More call sites** reveals entries beyond the initial 12. If a shared filter removes every call at the selected site, the panel remains open with an explicit empty state and a working reset button.
 - **Export calls CSV** downloads every call in the current function, shared filter, call site and duration bucket, not just loaded rows, ordered slowest first. Includes duration, self time, measured start/end positions relative to the report origin, task, caller, trace line, error-origin flag, filter settings, bucket bounds, `time_mode` and `duration_basis`. Duration/self values follow the Overhead switch; start/end positions do not. Time-valued columns use `_ns`, or `_units` in call-order mode (one unit = one call-order step). Compressed-mode positions are packed, not real timestamps. UTF-8, quoting and spreadsheet-formula protection match range exports.
-- **Slow vs fast** button: compares the slowest 10% with the fastest half of the calls: per call, the average number of calls and self time of every function in their subtrees, plus `(own code)`, `(interrupts / softirq)`, `(blocked off-CPU)` and `(preempted)`, sorted by the difference. The top rows say what the slow calls do in addition. Example: slow `kmem_cache_alloc` calls all add `___slab_alloc`, the allocator's slow path.
+- **Slow vs fast** compares the slowest `ceil(count / 10)` with the fastest `floor(count / 2)` matching root invocations (at least six required). The population follows the function, shared filter and call site, **not the duration bucket**. Calls are ordered by descending current duration, then original slice index; cohorts are disjoint even when durations tie. The comparison remains open through filter/site/Overhead refreshes, including explicit empty states, and **Hide comparison** collapses it without losing prepared results.
+- **Full comparison table**: per selected root, average calls and self time for every real descendant function, plus `(own code)`, `(interrupts / softirq)`, `(blocked off-CPU)` and `(preempted)`. Synthetic inline/untraced frames are excluded; recursive descendants contribute once for each selected ancestor. Descendants remain included even if they do not match the root filter. Every statistic column sorts; **Load more profile rows** appends 100 rows, including unchanged functions and zero-time calls, instead of silently keeping only 15 differences. **fast** / **slow** example buttons support Enter/Space and highlight actual descendant calls without replacing the distribution panel.
+- **Interpretation**: function self follows Overhead and can contain off-CPU time. Own code subtracts estimated self overhead from raw on-CPU self, clamped at zero. Interrupt/blocked/preempted rows stay on the original scheduling geometry and are **not additive with function rows**. Expand **Scope and interpretation** for the basis and recursion rules. Differences are associations, not proof of a cause; call-order/packed positions are not elapsed scheduling time.
+- **Export profile CSV** includes every row in the current comparison sort order, not just loaded rows: kind/name index, per-root calls and values, signed deltas, fast/slow example slice indexes, cohort/population sizes, mean root durations, `selection_basis`, per-row `value_basis`, filter and call site. **Export cohorts CSV** records the exact fast/slow root members with original slice/trace/task indexes, duration/self, unchanged start/end positions and scope metadata. CSV uses `_units` in call-order mode, `_ns` otherwise, UTF-8 and spreadsheet-formula protection. Export does not expand the table; sorting, pagination and collapsing/reopening reuse the prepared comparison.
+
+![an_slowfast](img/an_slowfast.png)
+
+*Slow vs fast on a real scheduler trace: complete descendant profiles, explicit cohorts/bases and direct example navigation.*
 
 Changing the function, shared filter or Overhead setting resets a duration-bucket selection. Call-site changes reuse the cached sorted population instead of rescanning and sorting the trace. In narrow windows, long titles and selected-site labels are visually abbreviated (hover for the full text) so the close/reset controls do not fill the detail panel.
+
+Comparison controls, scope notes and pagination remain inside the viewport when scrolling wide tables horizontally. In narrow or short windows, the distribution title scrolls vertically with the content; comparison table headers use no stale title-height offset.
 
 ### 7.3 Critical sections (Sections)
 

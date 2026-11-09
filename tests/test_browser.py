@@ -1528,6 +1528,271 @@ class BrowserSmokeTest(unittest.TestCase):
         self.assertTrue(self.ev("!!document.querySelector('.an-hist')"))
         self.assertGreater(self.ev("document.querySelectorAll('.an-list tr').length"), 0)
 
+    def test_detail_breakdown_uses_real_parent_links_across_depth_gaps(self):
+        self.open_range_data(['parent', 'real_child'], starts=[0, 100], durations=[10000, 1000], parents=[-1, 0],
+                             columns={'depth': [0, 3]})
+        self.ev("fgView('timeline').probe().select(0)")
+        legend = self.page.locator('.an-bd-legend').inner_text()
+        self.assertIn('traced callees', legend)
+        self.assertIn('1 traced call inside', legend)
+        self.assertNotIn('NaN', self.page.locator('.tl-detail').inner_text())
+        self.assertIn('real_child', self.page.locator('.tl-detail').inner_text())
+        self.assertEqual(self.page.locator('.tl-detail .tl-crumb[data-slice="1"]').count(), 1)
+
+    def test_detail_breakdown_keeps_descendants_beyond_256_levels(self):
+        count = 320
+        self.open_range_data(['deep_call'] * count, starts=list(range(count)),
+                             durations=[10000 - index * 2 for index in range(count)],
+                             parents=[-1] + list(range(count - 1)), columns={'depth': list(range(count))})
+        self.ev("fgView('timeline').probe().select(0)")
+        self.assertIn('319 traced calls inside', self.page.locator('.an-bd-legend').inner_text())
+
+    def test_detail_breakdown_discloses_overlapping_recordings_instead_of_160_percent(self):
+        self.open_range_data(['parent', 'first', 'overlapping'], starts=[0, 0, 100], durations=[1000, 800, 800],
+                             parents=[-1, 0, 0], columns={'depth': [0, 1, 1]})
+        self.ev("fgView('timeline').probe().select(0)")
+        self.assertIn('parts exceed the recorded interval by 600 ns', self.page.locator('.an-bd-legend').inner_text())
+        self.assertNotIn('160%', self.page.locator('.an-bd-legend').inner_text())
+        self.assertAlmostEqual(self.ev("Array.from(document.querySelectorAll('.an-bd span')).reduce((total, part) => total + parseFloat(part.style.width), 0)"), 100)
+
+    def open_slowfast_data(self, functions=225, depth=1, extra=None, root_sites=None, child_prefix='child_'):
+        self.ev("fgSwitchView('text')")
+        self.page.reload()
+        names, starts, durations, parents, depths, callers = [], [], [], [], [], []
+        for root in range(10):
+            parent = len(names)
+            names.append('target')
+            starts.append(root * 1000000)
+            durations.append(800000 if root == 9 else 600000 + root * 1000)
+            parents.append(-1)
+            depths.append(0)
+            callers.append(root_sites[root] if root_sites else None)
+            for child in range(functions):
+                names.append(child_prefix + str(child).zfill(4))
+                starts.append(root * 1000000 + child * 1000)
+                durations.append(200 + child if root == 9 else 100)
+                parents.append(parent)
+                depths.append(depth)
+                callers.append(None)
+        self.open_range_data(names, starts=starts, durations=durations, parents=parents, columns={'depth': depths}, extra=extra,
+                             callers=callers if root_sites else None)
+        self.ev("fgView('timeline').probe().dist(0)")
+        self.page.locator('[data-act=slowfast]').press('Enter')
+
+    def test_detail_breakdown_partitions_irq_and_waits_without_synthetic_calls(self):
+        self.open_range_data(['root', 'helper', 'irq', 'irq_child', 'child'], starts=[0, 100, 200, 300, 700],
+                             durations=[10000, 1000, 400, 100, 300], parents=[-1, 0, 1, 2, 1],
+                             callers=[None, 'caller_helper', None, None, None],
+                             columns={'depth': [0, 3, 5, 6, 4], 'flags': [0, 0, 2, 2, 0]},
+                             extra={'offcpu': [[0, 3000, 5000, 1, -1, -1, 0, 0, 0, -1],
+                                               [0, 1010, 1060, 4, -1, -1, 0, 0, 1, -1]],
+                                    'inline': {'5': [['caller_helper', 'a.c', 1], ['inlined', 'a.c', 2]]}})
+        self.ev("fgView('timeline').probe().select(0)")
+        values = self.page.locator('.an-bd span').evaluate_all('(parts) => parts.map(part => part.title)')
+        self.assertEqual(values, ['own code 7.000 us', 'traced callees 550 ns', 'interrupts / softirq 400 ns', 'blocked 2.000 us', 'preempted 50 ns'])
+        self.assertIn('4 traced calls inside', self.page.locator('.an-bd-legend').inner_text())
+        writes = self.ev("""() => {
+            const original = Map.prototype.set;
+            let writes = 0;
+            Map.prototype.set = function(key, value) { if (value && typeof value.wall === 'number' && typeof value.nCalls === 'number') writes++; return original.call(this, key, value); };
+            document.querySelector('[data-act=adj]').click();
+            fgNotifyFilter('child only', new Set([5]));
+            fgView('timeline').probe().inline(true);
+            Map.prototype.set = original;
+            return writes;
+        }""")
+        self.assertEqual(writes, 0)
+        self.assertEqual(self.page.locator('.an-bd span').evaluate_all('(parts) => parts.map(part => part.title)'), values)
+
+    def test_slowfast_refresh_adjustment_bucket_scope_and_example_navigation(self):
+        self.open_slowfast_data(functions=2, depth=3,
+                                extra={'offcpu': [[0, 9700000, 9710000, 1, -1, -1, 0, 0, 0, -1]]})
+        raw = self.download_csv('[data-act=slowfast-csv]')
+        child = next(row for row in raw if row['function'] == 'child_0001')
+        self.assertEqual(float(child['slow_self_per_root_ns']), 201)
+        blocked = next(row for row in raw if row['kind'] == 'blocked')
+        self.assertEqual(float(blocked['slow_self_per_root_ns']), 10000)
+        self.assertTrue(all(row['name_index'] == '' or int(row['name_index']) < 3 for row in raw))
+        self.page.locator('[data-sf-example]').first.press('Enter')
+        self.assertEqual(self.page.locator('.tl-detail-title').inner_text(), 'target')
+        self.assertGreater(self.ev("fgView('timeline').probe().sel()"), 0)
+        self.page.locator('[data-act=adj]').click()
+        adjusted = self.download_csv('[data-act=slowfast-csv]')
+        child = next(row for row in adjusted if row['function'] == 'child_0001')
+        self.assertEqual(float(child['slow_self_per_root_ns']), 100.5)
+        self.assertEqual(child['value_basis'], 'overhead_subtracted_estimate')
+        blocked_adjusted = next(row for row in adjusted if row['kind'] == 'blocked')
+        self.assertEqual(blocked_adjusted['slow_self_per_root_ns'], blocked['slow_self_per_root_ns'])
+        self.assertEqual(blocked_adjusted['value_basis'], 'recorded_scheduling_geometry')
+        option = self.page.locator('[data-act=dist-bucket] option').nth(1).get_attribute('value')
+        self.page.locator('[data-act=dist-bucket]').select_option(option)
+        self.assertEqual(self.download_csv('[data-act=slowfast-csv]'), adjusted)
+        self.ev("fgNotifyFilter('roots only', new Set([1,4,7,10,13,16,19,22,25,28]))")
+        self.assertEqual(self.page.locator('.an-slowfast-table').count(), 1)
+        self.assertEqual(len(self.download_csv('[data-act=slowfast-csv]')), 6)
+        self.ev("fgNotifyFilter('no calls', new Set())")
+        self.assertIn('at least 6 matching calls', self.page.locator('.an-slowfast').inner_text())
+        self.ev("fgNotifyFilter('', null)")
+        self.assertEqual(len(self.download_csv('[data-act=slowfast-csv]')), 6)
+
+    def test_slowfast_cache_survives_sort_export_collapse_and_site_changes(self):
+        self.open_slowfast_data(functions=30, root_sites=['site_a'] * 7 + ['site_b'] * 3)
+        writes = self.ev("""() => {
+            const original = Map.prototype.set;
+            let writes = 0;
+            Map.prototype.set = function(key, value) { if (value && typeof value.calls === 'number' && typeof value.self === 'number' && 'example' in value) writes++; return original.call(this, key, value); };
+            document.querySelector('[data-sf-sort=name] button').click();
+            document.querySelector('[data-act=slowfast]').click();
+            document.querySelector('[data-act=slowfast]').click();
+            Map.prototype.set = original;
+            return writes;
+        }""")
+        self.assertEqual(writes, 0)
+        self.assertEqual(len(self.download_csv('[data-act=slowfast-csv]')), 34)
+        self.page.locator('tr[data-site=site_a] button').press('Enter')
+        rows = self.download_csv('[data-act=slowfast-csv]')
+        self.assertTrue(all(row['population_calls'] == '7' and row['call_site_filter'] == 'site_a' for row in rows))
+        self.page.locator('[data-act=dist-reset-site]').press('Enter')
+        self.assertTrue(all(row['population_calls'] == '10' for row in self.download_csv('[data-act=slowfast-csv]')))
+
+    def test_slowfast_ties_recursion_and_zero_time_count_differences(self):
+        self.open_range_data(['target'] * 10, starts=[0] * 10, durations=[1000] * 10,
+                             parents=[-1] + list(range(9)), columns={'depth': list(range(10))})
+        self.ev("fgView('timeline').probe().dist(0)")
+        self.page.locator('[data-act=slowfast]').press('Enter')
+        cohorts = self.download_csv('[data-act=slowfast-cohorts-csv]')
+        fast = {int(row['slice_index']) for row in cohorts if row['cohort'] == 'fast'}
+        slow = {int(row['slice_index']) for row in cohorts if row['cohort'] == 'slow'}
+        self.assertEqual(fast, {5, 6, 7, 8, 9})
+        self.assertEqual(slow, {0})
+        self.assertFalse(fast & slow)
+        function = next(row for row in self.download_csv('[data-act=slowfast-csv]') if row['kind'] == 'function')
+        self.assertEqual(float(function['fast_calls_per_root']), 2)
+        self.assertEqual(float(function['slow_calls_per_root']), 9)
+        self.assertEqual(float(function['fast_self_per_root_ns']), 800)
+        self.assertEqual(float(function['slow_self_per_root_ns']), 1000)
+        self.ev("fgSwitchView('text')")
+        self.page.reload()
+        self.open_range_data(['target', 'zero_time'] + ['target'] * 9, starts=[0, 0] + list(range(1000, 10000, 1000)),
+                             durations=[1000, 0] + [1000] * 9, parents=[-1, 0] + [-1] * 9,
+                             columns={'depth': [0, 1] + [0] * 9})
+        self.ev("fgView('timeline').probe().dist(0)")
+        self.page.locator('[data-act=slowfast]').press('Enter')
+        row = next(row for row in self.download_csv('[data-act=slowfast-csv]') if row['kind'] == 'function')
+        self.assertEqual(row['function'], 'zero_time')
+        self.assertEqual(float(row['delta_self_per_root_ns']), 0)
+        self.assertEqual(float(row['slow_calls_per_root']), 1)
+
+    def test_slowfast_export_formula_protection_and_units(self):
+        for mode in ['abs', 'count', 'dur']:
+            with self.subTest(mode=mode):
+                self.ev("fgSwitchView('text')")
+                self.page.reload()
+                self.open_range_data(['target', '=SUM(1,2)'] * 10, mode=mode, starts=[index * 3000 for index in range(20)],
+                                     durations=[6000, 1000] * 10, parents=[parent for index in range(10) for parent in [-1, index * 2]],
+                                     columns={'depth': [0, 1] * 10}, extra={'tasks': [dict(pid=1, comm='@worker', kind=0, cpu=0)]})
+                self.ev("fgView('timeline').probe().dist(0)")
+                self.page.locator('[data-act=slowfast]').press('Enter')
+                rows = self.download_csv('[data-act=slowfast-csv]')
+                row = next(row for row in rows if row['kind'] == 'function')
+                self.assertEqual(row['function'], "'=SUM(1,2)")
+                unit = 'units' if mode == 'count' else 'ns'
+                self.assertEqual(float(row['fast_self_per_root_' + unit]), 1 if mode == 'count' else 1000)
+                cohort = self.download_csv('[data-act=slowfast-cohorts-csv]')[0]
+                self.assertEqual(cohort['comm'], "'@worker")
+                self.assertEqual(cohort['time_mode'], mode)
+                if mode == 'count':
+                    self.assertFalse(any(column.endswith('_ns') for column in row))
+                elif mode == 'dur':
+                    self.assertEqual(next(row for row in rows if row['kind'] == 'irq')['value_basis'], 'packed_geometry')
+
+    def test_slowfast_compact_layout_sorts_and_examples_remain_reachable(self):
+        self.open_slowfast_data(functions=5, child_prefix='very_long_function_' * 20)
+        for theme in ['light', 'dark']:
+            for width, height in [(1500, 900), (320, 700), (800, 420)]:
+                with self.subTest(theme=theme, width=width):
+                    self.ev("theme => document.documentElement.setAttribute('data-theme', theme)", theme)
+                    self.page.set_viewport_size({'width': width, 'height': height})
+                    self.ev("() => { const panel = document.querySelector('.tl-detail'); panel.scrollTop = 0; panel.scrollLeft = panel.scrollWidth; }")
+                    self.page.wait_for_timeout(100)
+                    close = self.page.locator('.an-dist-head .tl-close').bounding_box()
+                    self.assertGreaterEqual(close['x'], 0)
+                    self.assertLessEqual(close['x'] + close['width'], width)
+                    for selector in ['.an-slowfast-tools', '.an-slowfast-footer', '.an-slowfast-hint']:
+                        bounds = self.page.locator(selector).bounding_box()
+                        self.assertGreaterEqual(bounds['x'], 0)
+                        self.assertLessEqual(bounds['x'] + bounds['width'], width)
+                    self.page.locator('[data-sf-sort=name] button').press('Enter')
+                    self.page.locator('[data-sf-example]').first.press('Space')
+                    self.assertEqual(self.page.locator('.tl-detail-title').inner_text(), 'target')
+                    self.assertLessEqual(self.ev('document.documentElement.scrollWidth'), width)
+                    self.assertEqual(self.ev("getComputedStyle(document.querySelector('.an-dist-head')).top"),
+                                     'auto' if width <= 640 or height <= 600 else '0px')
+                    self.assertEqual(self.ev("document.querySelector('.an-slowfast-table th').style.top"),
+                                     '0px' if width <= 640 or height <= 600 else str(self.ev("document.querySelector('.an-dist-head').offsetHeight")) + 'px')
+                    self.assertEqual(len(self.download_csv('[data-act=slowfast-csv]')), 9)
+                    self.assertLessEqual(self.page.locator('.an-slowfast-table tr[data-sf-kind=function]').first.evaluate('(node) => node.offsetHeight'), 48)
+
+    def test_slowfast_large_fanout_paginates_without_spreading_arguments(self):
+        count = 150000
+        self.open_range_data(['target'] * 6 + ['child_' + str(index) for index in range(count)],
+                             starts=[index * 2000 for index in range(6)] + [11000 + index * 1000 for index in range(count)],
+                             durations=[1000] * 5 + [(count + 1) * 1000] + [500] * count,
+                             parents=[-1] * 6 + [5] * count, columns={'depth': [0] * 6 + [1] * count})
+        self.ev("fgView('timeline').probe().dist(0)")
+        self.page.locator('[data-act=slowfast]').press('Enter')
+        self.assertEqual(self.page.locator('.an-slowfast-table tbody tr').count(), 100)
+        self.assertIn('of 150004 profile rows', self.page.locator('.an-slowfast-footer').inner_text())
+        self.page.locator('[data-act=slowfast-more]').press('Enter')
+        self.assertEqual(self.page.locator('.an-slowfast-table tbody tr').count(), 200)
+
+    def test_slowfast_paginates_sorts_exports_and_retains_population(self):
+        self.open_slowfast_data()
+        self.assertEqual(self.page.locator('.an-slowfast-table tbody tr').count(), 100)
+        first = self.page.locator('.an-slowfast-table tbody tr').first.element_handle()
+        rows = self.download_csv('[data-act=slowfast-csv]')
+        self.assertEqual(len(rows), 229)
+        child = next(row for row in rows if row['function'] == 'child_0224')
+        self.assertEqual(float(child['fast_calls_per_root']), 1)
+        self.assertEqual(float(child['slow_calls_per_root']), 1)
+        self.assertEqual(float(child['fast_self_per_root_ns']), 100)
+        self.assertEqual(float(child['slow_self_per_root_ns']), 424)
+        self.assertEqual(float(child['delta_self_per_root_ns']), 324)
+        self.page.locator('[data-act=slowfast-more]').press('Enter')
+        self.assertEqual(self.page.locator('.an-slowfast-table tbody tr').count(), 200)
+        self.assertTrue(first.evaluate('(node) => node.isConnected'))
+        self.assertTrue(self.page.locator('[data-act=slowfast-more]').evaluate('(node) => node === document.activeElement'))
+        self.page.locator('[data-act=slowfast-more]').press('Enter')
+        self.assertEqual(self.page.locator('.an-slowfast-table tbody tr').count(), 229)
+        cohorts = self.download_csv('[data-act=slowfast-cohorts-csv]')
+        self.assertEqual(len(cohorts), 6)
+        self.assertEqual(sum(row['cohort'] == 'fast' for row in cohorts), 5)
+        self.assertEqual(sum(row['cohort'] == 'slow' for row in cohorts), 1)
+        self.page.locator('.an-slowfast-table th[data-sf-sort=name] button').press('Enter')
+        self.assertEqual(self.page.locator('.an-slowfast-table tbody tr').count(), 100)
+        self.assertEqual(self.page.locator('.an-slowfast-table th[data-sf-sort=name]').get_attribute('aria-sort'), 'ascending')
+        self.page.locator('[data-act=slowfast]').press('Enter')
+        self.assertEqual(self.page.locator('.an-slowfast-table').count(), 0)
+        self.page.locator('[data-act=slowfast]').press('Enter')
+        self.assertEqual(len(self.download_csv('[data-act=slowfast-csv]')), 229)
+
+    def test_slowfast_numeric_sorts_export_complete_profiles(self):
+        for key, field in [('fastCalls', 'fast_calls_per_root'), ('slowCalls', 'slow_calls_per_root'),
+                           ('fastSelf', 'fast_self_per_root_ns'), ('slowSelf', 'slow_self_per_root_ns'),
+                           ('delta', 'delta_self_per_root_ns')]:
+            with self.subTest(sort=key):
+                self.open_slowfast_data()
+                self.page.locator('.an-slowfast-table th[data-sf-sort=name] button').press('Enter')
+                button = self.page.locator(f'.an-slowfast-table th[data-sf-sort={key}] button')
+                button.press('Enter')
+                values = [float(row[field] or 0) for row in self.download_csv('[data-act=slowfast-csv]')]
+                self.assertEqual(len(values), 229)
+                self.assertEqual(values, sorted(values, reverse=True))
+                button.press('Enter')
+                values = [float(row[field] or 0) for row in self.download_csv('[data-act=slowfast-csv]')]
+                self.assertEqual(len(values), 229)
+                self.assertEqual(values, sorted(values))
+
     def test_breakdown_sections_slowfast(self):
         self.open_timeline()
         self.page.fill('.tl-search', '^__arm64_sys_openat$')

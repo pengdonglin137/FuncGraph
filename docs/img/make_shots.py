@@ -225,6 +225,25 @@ def an_dist(b, rep):
     shot(pg, 'an_dist')
 
 
+def an_slowfast(b, rep):
+    pg = open_page(b, rep['sched'], 'timeline', height=980)
+    index = find(pg, 'next_uptodate_folio')
+    pg.evaluate(f"{PROBE}.dist({PROBE}.sName[{index}])")
+    pg.locator('[data-act=slowfast]').click()
+    handle = box(pg, '.tl-resizer')
+    pg.mouse.move(handle['x'] + handle['width'] / 2, handle['y'] + 4)
+    pg.mouse.down()
+    pg.mouse.move(handle['x'] + handle['width'] / 2, handle['y'] - 200, steps=4)
+    pg.mouse.up()
+    pg.evaluate("""() => {
+        const panel = document.querySelector('.tl-detail');
+        const comparison = panel.querySelector('.an-slowfast-tools');
+        panel.scrollTop += comparison.getBoundingClientRect().top - panel.getBoundingClientRect().top - panel.querySelector('.tl-detail-head').offsetHeight - 4;
+    }""")
+    pg.wait_for_timeout(400)
+    shot(pg, 'an_slowfast')
+
+
 def panel(name, key, func):
     def run(b, rep):
         pg = open_page(b, rep[key], 'timeline')
@@ -251,7 +270,7 @@ def compare(b, rep):
 SHOTS = {
     'text_view': text_view, 'tl_layout': tl_layout, 'tl_compact': tl_compact, 'tl_search': tl_search, 'tl_errors': tl_errors, 'tl_irqoff': tl_irqoff,
     'tl_offcpu': tl_offcpu, 'tl_untraced': tl_untraced, 'tl_detail': tl_detail, 'tl_inline': tl_inline,
-    'an_range': an_range, 'an_dist': an_dist, 'an_sections': panel('an_sections', 'sample', 'sections'),
+    'an_range': an_range, 'an_dist': an_dist, 'an_slowfast': an_slowfast, 'an_sections': panel('an_sections', 'sample', 'sections'),
     'an_errors': panel('an_errors', 'sched', 'errors'), 'an_wait': an_wait,
     'an_lat': panel('an_lat', 'sched', 'latency'), 'compare': compare,
 }
