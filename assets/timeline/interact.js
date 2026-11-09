@@ -68,9 +68,12 @@ function revealRow(i) {
     const y = t.y + HDR + rowOf(i) * ROW;
     if (y < elScroll.scrollTop + 4 || y + ROW > elScroll.scrollTop + H - 4) elScroll.scrollTop = Math.max(0, y - H / 3);
 }
-function select(i, opts) {
-    sel = i;
+function setSelection(index) {
+    sel = index;
     updateSearchLabel();
+}
+function select(i, opts) {
+    setSelection(i);
     opts = opts || {};
     if (i >= 0) {
         if (opts.zoom) zoomTo(sStart[i], sEnd[i], i);
@@ -290,7 +293,7 @@ window.addEventListener('mouseup', ev => {
     if (h.header && h.track) { h.track.collapsed = !h.track.collapsed; layout(); draw(); return; }
     if (h.cpuSeg) { openTaskAt(h.cpuSeg.t, h.tm); return; }
     if (h.slice >= 0) select(h.slice);
-    else if (h.off) { sel = -1; showWaitChain(h.off); draw(); }
+    else if (h.off) { setSelection(-1); showWaitChain(h.off); draw(); }
     else if (range) { range = null; hideDetail(); draw(); }
     else select(-1);
 });

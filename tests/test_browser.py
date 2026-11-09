@@ -174,6 +174,186 @@ class BrowserSmokeTest(unittest.TestCase):
         self.page.click('.view-tab[data-view=compare]')
         self.page.wait_for_selector('.cmp-table')
 
+    def open_range_data(self, names, mode='abs', starts=None, durations=None, parents=None):
+        count = len(names)
+        data = self.ev("JSON.parse(document.getElementById('tlData').textContent)")
+        starts = starts if starts is not None else [index * 1000 for index in range(count)]
+        durations = durations if durations is not None else [1000] * count
+        data.update(n=count, mode=mode, strings=names,
+                    tasks=[dict(pid=1, comm='range-test', kind=0, cpu=0)],
+                    errs=[], chains=[], offcpu=[], resched=[], wakeups=[], irqoff=[],
+                    sections=[], atomic=[], inline={}, overhead=None)
+        data['cols'] = dict(task=[0] * count, depth=[0] * count,
+                            start=[start - (starts[index - 1] if index else 0)
+                                   for index, start in enumerate(starts)],
+                            dur=durations, name=list(range(count)),
+                            parent=parents if parents is not None else [-1] * count,
+                            line=list(range(1, count + 1)), flags=[0] * count,
+                            ret=None, caller=None, args=None, module=None, cpu=None,
+                            adj=[duration / 2 for duration in durations])
+        self.ev("data => { document.getElementById('tlData').textContent = JSON.stringify(data); }", data)
+        self.open_timeline()
+
+    def drag_range(self):
+        box = self.page.locator('.tl-canvas').bounding_box()
+        self.page.keyboard.down('Shift')
+        self.page.keyboard.down('Alt')
+        self.page.mouse.move(box['x'] + box['width'] * 0.1, box['y'] + 30)
+        self.page.mouse.down()
+        self.page.mouse.move(box['x'] + box['width'] * 0.9, box['y'] + 30, steps=4)
+        self.page.mouse.up()
+        self.page.keyboard.up('Alt')
+        self.page.keyboard.up('Shift')
+
+    def test_range_replaces_analysis_state_and_resets_search_position(self):
+        self.open_timeline()
+        total = self.ev("fgView('timeline').probe().N")
+        self.page.fill('.tl-search', '.*')
+        self.page.press('.tl-search', 'Enter')
+        for action in ('an-errors', 'an-lat', 'an-sec'):
+            with self.subTest(action=action):
+                self.page.click(f'[data-act={action}]')
+                self.drag_range()
+                self.assertTrue(self.page.locator('.tl-detail-title').inner_text().startswith('Range '))
+                self.assertEqual(self.page.locator('.tl-count').inner_text(), f'{total} calls')
+                self.ev("fgNotifyFilter('', null)")
+                self.assertTrue(self.page.locator('.tl-detail-title').inner_text().startswith('Range '))
+
+    def test_analysis_highlights_sync_search_without_replacing_panel(self):
+        self.open_timeline()
+        total = self.ev("fgView('timeline').probe().N")
+        self.page.fill('.tl-search', '.*')
+        self.page.press('.tl-search', 'Enter')
+        self.page.click('[data-act=an-errors]')
+        self.page.locator('tr[data-chains]').first.click()
+        selected = self.ev("fgView('timeline').probe().sel()")
+        self.assertEqual(self.page.locator('.tl-count').inner_text(), f'{selected + 1} / {total} calls')
+        self.assertEqual(self.page.locator('.tl-detail-title').inner_text(), 'Errors')
+        self.ev("fgNotifyFilter('no calls', new Set())")
+        self.assertTrue(self.page.locator('.tl-detail.show').is_visible())
+        self.assertEqual(self.page.locator('.tl-detail-title').inner_text(), 'Errors')
+        self.ev("fgNotifyFilter('', null)")
+        self.ev("() => { const probe = fgView('timeline').probe(); probe.dist(probe.sName[19]); }")
+        title = self.page.locator('.tl-detail-title').inner_text()
+        self.page.locator('.an-list tr[data-slice]').last.click()
+        selected = self.ev("fgView('timeline').probe().sel()")
+        self.assertEqual(self.page.locator('.tl-count').inner_text(), f'{selected + 1} / {total} calls')
+        self.assertEqual(self.page.locator('.tl-detail-title').inner_text(), title)
+
+    def test_wait_panel_survives_refresh_with_retained_range(self):
+        self.open_timeline()
+        self.ev("fgView('timeline').probe().range(0, 1000000)")
+        self.ev("fgView('timeline').probe().wait(JSON.parse(document.getElementById('tlData').textContent).offcpu[0])")
+        self.ev("fgNotifyFilter('', null)")
+        self.assertTrue(self.page.locator('.tl-detail-title').inner_text().startswith('Wait chain'))
+
+    def test_range_pagination_sorting_and_cache(self):
+        self.open_range_data([f'function_{index:04d}' for index in range(650)])
+        self.ev("fgView('timeline').probe().range(0, 650000)")
+        self.assertEqual(self.page.locator('.tl-range-table tbody tr[data-name]').count(), 300)
+        first = self.page.locator('.tl-range-table tbody tr').first.element_handle()
+        self.page.locator('[data-act=range-more]').click()
+        self.assertTrue(first.evaluate('(node) => node.isConnected'))
+        self.assertEqual(self.page.locator('.tl-range-table tbody tr[data-name]').count(), 600)
+        self.ev("""() => {
+            const originalSet = Map.prototype.set;
+            window.rangeAggregationWrites = 0;
+            Map.prototype.set = function(key, value) {
+                if (value && typeof value.calls === 'number' && typeof value.incl === 'number') window.rangeAggregationWrites++;
+                return originalSet.call(this, key, value);
+            };
+        }""")
+        self.page.locator('.tl-range-table th[data-sort=name] button').click()
+        self.assertEqual(self.ev('window.rangeAggregationWrites'), 0)
+        self.assertEqual(self.page.locator('.tl-range-table tbody tr[data-name]').count(), 300)
+        self.assertEqual(self.page.locator('.tl-range-table th[data-sort=name]').get_attribute('aria-sort'), 'ascending')
+        self.page.locator('[data-act=range-more]').click()
+        self.page.locator('[data-act=range-more]').click()
+        self.assertEqual(self.page.locator('.tl-range-table tbody tr[data-name]').count(), 650)
+        self.assertTrue(self.page.locator('[data-act=range-more]').is_disabled())
+        self.ev("fgNotifyFilter('one call', new Set([650]))")
+        self.assertEqual(self.page.locator('.tl-range-table tbody tr[data-name]').count(), 1)
+        self.assertEqual(self.page.locator('.tl-range-table tbody tr').first.get_attribute('data-name'), 'function_0649')
+        self.ev("fgNotifyFilter('no calls', new Set())")
+        self.assertIn('No calls overlap', self.page.locator('.tl-detail').inner_text())
+        self.assertTrue(self.page.locator('[data-act=range-csv]').is_disabled())
+
+    def test_range_many_distinct_functions_does_not_spread_arguments(self):
+        self.open_range_data([f'function_{index}' for index in range(150000)])
+        self.ev("fgView('timeline').probe().range(0, 150000000)")
+        self.assertEqual(self.page.locator('.tl-range-table tbody tr[data-name]').count(), 300)
+        self.assertIn('150000 functions', self.page.locator('.tl-range-footer').inner_text())
+
+    def download_range_csv(self):
+        with self.page.expect_download() as download_info:
+            self.page.click('[data-act=range-csv]')
+        with open(download_info.value.path(), encoding='utf-8-sig', newline='') as source:
+            return list(csv.DictReader(source))
+
+    def test_range_csv_exports_all_rows_safely_in_sort_order(self):
+        names = ['=SUM(1,2)', '+cmd', '-cmd', '@cmd', '\tcmd', ' quoted,"\n函数']
+        names += [f'function_{index:04d}' for index in range(650)]
+        self.open_range_data(names)
+        self.ev("fgView('timeline').probe().range(0, 656000)")
+        self.page.locator('.tl-range-table th[data-sort=name] button').click()
+        rows = self.download_range_csv()
+        self.assertEqual(len(rows), len(names))
+        expected = ["'" + name if name in names[:5] else name for name in sorted(names)]
+        self.assertEqual([row['function'] for row in rows], expected)
+        self.assertEqual(rows[0]['duration_basis'], 'measured')
+        self.assertEqual(rows[0]['range_end_ns'], '656000')
+        self.assertEqual(rows[0]['time_mode'], 'abs')
+
+    def test_range_csv_statistics_adjustment_filter_and_count_units(self):
+        self.open_range_data(['parent', 'child', 'zero-start', 'zero-end'],
+                             starts=[0, 2000, 4000, 6000], durations=[10000, 4000, 0, 0],
+                             parents=[-1, 0, -1, -1])
+        self.ev("fgView('timeline').probe().range(4000, 6000, 0)")
+        rows = {row['function']: row for row in self.download_range_csv()}
+        self.assertEqual(set(rows), {'parent', 'child', 'zero-start'})
+        self.assertEqual(float(rows['parent']['self_estimate_ns']), 1200)
+        self.assertEqual(float(rows['parent']['inclusive_estimate_ns']), 2000)
+        self.assertEqual(float(rows['child']['inclusive_estimate_ns']), 2000)
+        self.assertEqual(rows['parent']['max_call_ns'], '10000')
+        self.assertEqual(rows['parent']['calls'], '0')
+        self.assertEqual(rows['zero-start']['calls'], '1')
+        self.page.click('[data-act=adj]')
+        adjusted = {row['function']: row for row in self.download_range_csv()}
+        self.assertEqual(float(adjusted['parent']['self_estimate_ns']), 600)
+        self.assertEqual(adjusted['parent']['duration_basis'], 'overhead_subtracted_estimate')
+        self.ev("fgNotifyFilter('=one call', new Set([2]))")
+        filtered = self.download_range_csv()
+        self.assertEqual([row['function'] for row in filtered], ['child'])
+        self.assertEqual(filtered[0]['filter'], "'=one call")
+        self.ev("fgSwitchView('text')")
+        self.page.reload()
+        self.open_range_data(['ordered_call'], mode='count')
+        self.ev("fgView('timeline').probe().range(0, 1000)")
+        row = self.download_range_csv()[0]
+        self.assertNotIn('self_estimate_ns', row)
+        self.assertEqual(float(row['self_estimate_units']), 1)
+        self.assertEqual(float(row['range_end_units']), 1)
+        self.assertEqual(row['duration_basis'], 'call_order')
+
+    def test_range_compact_header_keeps_export_and_close_reachable(self):
+        self.open_range_data(['wide_function_name_' * 8])
+        self.ev("fgView('timeline').probe().range(0, 1000)")
+        for width, height in [(390, 844), (320, 700), (800, 420)]:
+            with self.subTest(width=width, height=height):
+                self.page.set_viewport_size({'width': width, 'height': height})
+                self.page.wait_for_timeout(100)
+                for selector in ('[data-act=range-csv]', '.tl-close'):
+                    bounds = self.page.locator(selector).bounding_box()
+                    self.assertGreaterEqual(bounds['x'], 0)
+                    self.assertLessEqual(bounds['x'] + bounds['width'], width)
+                self.assertTrue(self.ev("""() => {
+                    const head = document.querySelector('.tl-range-head');
+                    const header = document.querySelector('.tl-range-table th');
+                    return parseInt(header.style.top, 10) === head.offsetHeight;
+                }"""))
+        self.page.click('.tl-close')
+        self.assertFalse(self.page.locator('.tl-detail.show').count())
+
     def test_timeline_search_previous_starts_at_last_and_wraps(self):
         self.open_timeline()
         total = self.ev("fgView('timeline').probe().N")

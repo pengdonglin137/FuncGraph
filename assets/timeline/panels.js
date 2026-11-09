@@ -204,15 +204,24 @@ function fillCallSite(i) {
     if (prefGet('csOpen') === '0') box.open = false;
     box.addEventListener('toggle', () => prefSet('csOpen', box.open ? '1' : '0'));
 }
+function sizeDetailHead() {
+    const head = elDetail.querySelector('.tl-detail-head');
+    const height = head ? head.offsetHeight : 0;
+    elDetail.querySelectorAll('table.tl-sum th').forEach(header => { header.style.top = height + 'px'; });
+}
+const detailHeadObserver = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(sizeDetailHead) : null;
 function openDetail(html) {
     const was = elDetail.classList.contains('show');
     elDetail.innerHTML = html;
     elDetail.classList.add('show');
     elResizer.classList.add('show');
     // sticky table headers sit right below the (sticky) panel head
-    const head = elDetail.querySelector('.tl-detail-head');
-    const hh = head ? head.offsetHeight : 0;
-    elDetail.querySelectorAll('table.tl-sum th').forEach(th => { th.style.top = hh + 'px'; });
+    sizeDetailHead();
+    if (detailHeadObserver) {
+        detailHeadObserver.disconnect();
+        const head = elDetail.querySelector('.tl-detail-head');
+        if (head) detailHeadObserver.observe(head);
+    }
     if (!was) resize();
 }
 function hideDetail() {
@@ -269,17 +278,26 @@ elDetail.addEventListener('click', ev => {
     const s = ev.target.closest('[data-slice]');
     if (s) { select(+s.dataset.slice, { reveal: true }); return; }
     if (ev.target.closest('.tl-close')) { range = null; select(-1); return; }
+    if (ev.target.closest('[data-act=range-csv]')) { exportRangeCsv(); return; }
+    if (ev.target.closest('[data-act=range-more]')) { appendRangeRows(); return; }
     const th = ev.target.closest('th[data-sort]');
-    if (th) { sumSort = th.dataset.sort; showRangeSummary(); return; }
+    if (th) {
+        sumSort = th.dataset.sort; showRangeSummary();
+        elDetail.querySelector('th[data-sort="' + sumSort + '"] button').focus({ preventScroll: true });
+        return;
+    }
     const tr = ev.target.closest('tr[data-name]');
     if (tr) { elSearch.value = '^' + tr.dataset.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '$'; applySearch(elSearch.value); }
 });
 
 // ---- range summary ----
 let sumSort = 'self';
-function showRangeSummary() {
-    if (!range) return;
-    const rs = range.s, re = range.e, span = re - rs;
+let sumCache = null;
+const SUM_PAGE = 300;
+function rangeSummary() {
+    if (sumCache && sumCache.start === range.s && sumCache.end === range.e && sumCache.track === range.track &&
+        sumCache.hits === textHits && sumCache.durations === sDur) return sumCache;
+    const rs = range.s, re = range.e;
     const agg = new Map();
     const ctxSelf = [0, 0, 0, 0];
     let offT = 0, nCalls = 0;
@@ -287,7 +305,7 @@ function showRangeSummary() {
     for (const t of tracks) {
         for (let i = t.lo; i >= 0 && i < t.hi; i++) {
             const s = sStart[i], e = sEnd[i];
-            if (e <= rs || s >= re) continue;
+            if (s === e ? s < rs || s >= re : e <= rs || s >= re) continue;
             if (textHits && !textHits[i]) continue;
             const d = e - s, ovl = Math.min(e, re) - Math.max(s, rs);
             const frac = d > 0 ? ovl / d : 0;
@@ -304,28 +322,97 @@ function showRangeSummary() {
         for (const r of t.off) if (r[2] > rs && r[1] < re) offT += Math.min(r[2], re) - Math.max(r[1], rs);
     }
     const rows = Array.from(agg.entries());
-    const key = sumSort;
-    rows.sort((x, y) => key === 'name' ? (S[x[0]] < S[y[0]] ? -1 : 1) : y[1][key] - x[1][key]);
-    const maxv = rows.length ? Math.max(...rows.map(r => r[1].self)) || 1 : 1;
-    let h = '<div class="tl-detail-head"><span class="tl-detail-title">Range ' + fmtDur(span) + '</span>';
+    let maxv = 0;
+    for (const row of rows) maxv = Math.max(maxv, row[1].self);
+    sumCache = { start: rs, end: re, track: range.track, hits: textHits, durations: sDur,
+        rows, ctxSelf, offT, nCalls, maxv: maxv || 1, sort: null, visible: 0 };
+    return sumCache;
+}
+function sortedRangeSummary() {
+    const summary = rangeSummary();
+    if (summary.sort !== sumSort) {
+        summary.rows.sort((left, right) => sumSort === 'name' ?
+            (S[left[0]] < S[right[0]] ? -1 : S[left[0]] > S[right[0]] ? 1 : 0) : right[1][sumSort] - left[1][sumSort]);
+        summary.sort = sumSort;
+        summary.visible = Math.min(SUM_PAGE, summary.rows.length);
+    }
+    return summary;
+}
+function rangeRowsHtml(summary, start, end) {
+    let html = '';
+    for (let index = start; index < end; index++) {
+        const [name, stats] = summary.rows[index];
+        html += '<tr data-name="' + esc(S[name]) + '"><td><span class="bar" style="width:' + (60 * stats.self / summary.maxv).toFixed(1) + 'px"></span>' + esc(S[name]) + '</td>' +
+            '<td>' + stats.calls + '</td><td>' + fmtDur(stats.self) + '</td><td>' + fmtDur(stats.incl) + '</td><td>' + fmtDur(stats.max) + '</td>' +
+            '<td class="' + (stats.err ? 'err' : '') + '">' + (stats.err || '') + '</td></tr>';
+    }
+    return html;
+}
+function appendRangeRows() {
+    if (!range || AN.kind !== 'range') return;
+    const summary = sortedRangeSummary(), start = summary.visible;
+    summary.visible = Math.min(start + SUM_PAGE, summary.rows.length);
+    elDetail.querySelector('.tl-range-table tbody').insertAdjacentHTML('beforeend', rangeRowsHtml(summary, start, summary.visible));
+    elDetail.querySelector('.tl-range-footer [role=status]').textContent = 'Showing ' + summary.visible + ' of ' + summary.rows.length + ' functions';
+    elDetail.querySelector('[data-act=range-more]').disabled = summary.visible >= summary.rows.length;
+}
+function exportRangeCsv() {
+    if (!range || AN.kind !== 'range') return;
+    const summary = sortedRangeSummary();
+    if (!summary.rows.length) return;
+    const unit = MODE === 'count' ? 'units' : 'ns', scale = MODE === 'count' ? 1000 : 1;
+    const basis = MODE === 'count' ? 'call_order' : adjOn ? 'overhead_subtracted_estimate' : 'measured';
+    const scope = range.track !== null ? trackLabel(TRACKS[range.track]) : 'all tracks';
+    const columns = ['function', 'calls', 'self_estimate_' + unit, 'inclusive_estimate_' + unit, 'max_call_' + unit,
+        'error_origins_overlapping', 'range_start_' + unit, 'range_end_' + unit, 'scope', 'scope_off_cpu_' + unit,
+        'time_mode', 'duration_basis', 'filter'];
+    const cell = value => {
+        let text = String(value);
+        if (typeof value === 'string' && (/^[\s]*[=+\-@]/.test(text) || /^[\t\r\n]/.test(text))) text = "'" + text;
+        return /[",\r\n]/.test(text) ? '"' + text.replace(/"/g, '""') + '"' : text;
+    };
+    const lines = [columns.join(',')];
+    for (const [name, stats] of summary.rows) {
+        lines.push([S[name], stats.calls, stats.self / scale, stats.incl / scale, stats.max / scale, stats.err,
+            range.s / scale, range.e / scale, scope, summary.offT / scale, MODE, basis,
+            (window.fgFilterState || {}).text || ''].map(cell).join(','));
+    }
+    const url = URL.createObjectURL(new Blob(['\ufeff', lines.join('\r\n'), '\r\n'], { type: 'text/csv;charset=utf-8' }));
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = 'funcgraph-range-' + (MODE === 'count' ? 'count' : adjOn ? 'adjusted' : 'raw') + '.csv';
+    link.hidden = true;
+    tlRoot.appendChild(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+function showRangeSummary() {
+    if (!range) return;
+    AN.kind = 'range';
+    const summary = sortedRangeSummary(), { rows, ctxSelf, offT, nCalls } = summary;
+    const span = range.e - range.s;
+    let h = '<div class="tl-detail-head tl-range-head"><span class="tl-detail-title">Range ' + fmtDur(span) + '</span>';
     h += pill('mute', range.track !== null ? trackLabel(TRACKS[range.track]) : 'all tracks');
     h += pill('mute', nCalls + ' calls');
     if (textHits) h += pill('warn', 'filtered');
     if (adjOn) h += pill('warn', 'overhead subtracted');
     for (let c = 0; c < 4; c++) if (ctxSelf[c] > 0) h += pill('ctx' + c, CTX_NAMES[c] + ' ' + fmtDur(ctxSelf[c]));
     if (offT > 0) h += pill('mute', 'off-CPU ' + fmtDur(offT));
-    h += '<span class="sp"></span><button class="tl-close" title="Close (Esc)">×</button></div>';
-    h += '<table class="tl-sum"><thead><tr>' +
-        '<th data-sort="name">function</th><th data-sort="calls">calls</th><th data-sort="self">self</th>' +
-        '<th data-sort="incl">inclusive</th><th data-sort="max">max</th><th data-sort="err">errors</th></tr></thead><tbody>';
-    for (const [nm, a] of rows.slice(0, 300)) {
-        h += '<tr data-name="' + esc(S[nm]) + '"><td><span class="bar" style="width:' + (60 * a.self / maxv).toFixed(1) + 'px"></span>' + esc(S[nm]) + '</td>' +
-            '<td>' + a.calls + '</td><td>' + fmtDur(a.self) + '</td><td>' + fmtDur(a.incl) + '</td><td>' + fmtDur(a.max) + '</td>' +
-            '<td class="' + (a.err ? 'err' : '') + '">' + (a.err || '') + '</td></tr>';
+    h += '<span class="tl-range-actions"><button class="tl-btn" data-act="range-csv"' + (rows.length ? '' : ' disabled') +
+        '>Export CSV</button><button class="tl-close" title="Close (Esc)">×</button></span></div>';
+    h += '<table class="tl-sum tl-range-table"><thead><tr>';
+    for (const [key, label] of [['name', 'function'], ['calls', 'calls'], ['self', 'self'], ['incl', 'inclusive'], ['max', 'max'], ['err', 'errors']]) {
+        h += '<th data-sort="' + key + '" aria-sort="' + (key === sumSort ? (key === 'name' ? 'ascending' : 'descending') : 'none') +
+            '"><button class="tl-sum-sort">' + label + '</button></th>';
     }
-    if (rows.length > 300) h += '<tr><td colspan="6">… ' + (rows.length - 300) + ' more</td></tr>';
-    h += '</tbody></table>';
-    sel = -1;
+    h += '</tr></thead><tbody>' + rangeRowsHtml(summary, 0, summary.visible);
+    if (!rows.length) h += '<tr><td colspan="6">No calls overlap this range' + (textHits ? ' with the current filter' : '') + '.</td></tr>';
+    h += '</tbody></table><div class="tl-range-footer"><span role="status">Showing ' + summary.visible + ' of ' + rows.length + ' functions</span>';
+    if (rows.length > SUM_PAGE) h += '<button class="tl-btn" data-act="range-more"' + (summary.visible >= rows.length ? ' disabled' : '') + '>Load more</button>';
+    h += '</div><div class="an-hint">Self and inclusive are proportional overlap estimates. Calls start in [range start, range end); ' +
+        'max uses whole-call duration; errors count overlapping origins. Off-CPU covers the selected tracks, independent of the filter.</div>';
+    setSelection(-1);
     openDetail(h);
     draw();
 }
@@ -383,7 +470,10 @@ function applyTextFilter() {
         elFbar.classList.add('on');
     }
     tlRoot.querySelector('[data-act=fhide]').classList.toggle('on', hideUnmatched);
-    if (sel >= 0 && textHits && !textHits[sel]) select(-1);
+    if (sel >= 0 && textHits && !textHits[sel]) {
+        if (AN.kind) setSelection(-1);
+        else select(-1);
+    }
     rebuildSearchMatches();
     rebuildErrList();
     layout();
@@ -481,6 +571,7 @@ function refreshPanel() {
     else if (AN.kind === 'lat') showLatency();
     else if (AN.kind === 'sec') showSections();
     else if (AN.kind === 'dist') showDist(AN.func);
+    else if (AN.kind === 'wait') showWaitChain(AN.off);
     else if (range) showRangeSummary();
     else if (sel >= 0) showDetail(sel);
 }

@@ -1,6 +1,6 @@
 /* FuncGraph Timeline: analysis panels (error summary, duration distribution, scheduling latency).
  * Shares the __tlBoot() scope; rendered into the detail area via openDetail(). */
-const AN = { kind: null, func: -1, errSort: 'count', latSort: 'dur' };
+const AN = { kind: null, func: -1, off: null, errSort: 'count', latSort: 'dur' };
 
 function matchOk(i) { return !textHits || textHits[i]; }
 function syscallOf(i) {
@@ -237,7 +237,7 @@ elDetail.addEventListener('click', ev => {
         ec.dataset.pos = pos + 1;
         const ch = CHAINS[list[pos]];
         zoomTo(sStart[ch[1]], sEnd[ch[1]], ch[0]);
-        sel = ch[0]; revealRow(ch[0]); draw();
+        setSelection(ch[0]); revealRow(ch[0]); draw();
         toast('occurrence ' + (pos + 1) + ' / ' + list.length);
         ev.stopImmediatePropagation(); return;
     }
@@ -253,7 +253,7 @@ elDetail.addEventListener('click', ev => {
         ev.stopImmediatePropagation(); return;
     }
     const sl = ev.target.closest('.an-list tr[data-slice], tr.an-atomic');
-    if (sl) { const i = +sl.dataset.slice; sel = i; zoomTo(sStart[i], sEnd[i], i); draw(); ev.stopImmediatePropagation(); }
+    if (sl) { const i = +sl.dataset.slice; setSelection(i); zoomTo(sStart[i], sEnd[i], i); draw(); ev.stopImmediatePropagation(); }
 }, true);
 
 // ---- 4. wait chain: off-CPU segment -> who woke it -> what the waker was waiting for ----
@@ -272,6 +272,7 @@ function wakeSite(i) {
 }
 function showWaitChain(off) {
     AN.kind = 'wait';
+    AN.off = off;
     const steps = [];
     let cur = off, guard = 0;
     while (cur && guard++ < 10) {

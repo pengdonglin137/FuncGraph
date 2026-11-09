@@ -704,7 +704,11 @@ Analysis panels open in the detail area below the timeline and follow the filter
 Shift + drag on a track selects a time range in that track; Shift + Alt + drag selects over all tracks. The summary shows:
 
 - Tags: range length, track, number of calls, self time per context (task / softirq / hardirq / NMI) and off-CPU time.
-- Table per function: calls (calls starting in the range), self, inclusive, max (longest call), errors (error origins). Calls partly inside the range count proportionally. Clicking a row puts the function into the search box and highlights it.
+- Table per function: **calls** counts calls starting in the half-open interval `[start, end)`, including zero-duration calls at the start but not at the end. **Self** and **inclusive** are proportional overlap estimates, not an exact reconstruction of where the work ran inside a partly overlapping call. **Max** is the whole-call duration, and **errors** counts overlapping error-origin calls, not error events timestamped inside the range. Off-CPU time covers the selected tracks independently of the call filter.
+- Click a column header to sort; the active sort is underlined. The first 300 functions are shown initially; **Load more** appends another 300 without replacing existing rows. All functions remain available, and changing the range, filter or Overhead setting refreshes the cached statistics. Clicking a function row puts its exact name into the search box and highlights matching calls without selecting one.
+- **Export CSV** downloads **all** functions in the current range, track scope, filter and sort order, including rows not yet loaded. The UTF-8 CSV includes range boundaries, scope, off-CPU total, filter expression, `time_mode` and `duration_basis`. Self/inclusive columns are explicitly named `self_estimate_ns` / `inclusive_estimate_ns`; `max_call_ns` retains the whole-call duration. Overhead-subtracted values are estimates. In call-order mode (`count`), columns use `_units` instead of `_ns` (one unit = one call-order step); compressed mode (`compressed`) uses packed durations, not real timestamps. Function names and other string cells are protected against spreadsheet formula interpretation.
+
+The range panel stays open when filtering or switching Overhead, even if an analysis panel was open before selecting the range. No matching calls produces an explicit empty state and disables CSV export. The header wraps in narrow windows so export and close remain reachable.
 
 ### 7.2 Duration distribution (H)
 
