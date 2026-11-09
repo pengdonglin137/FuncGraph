@@ -559,10 +559,16 @@ Two things that are easy to misread:
 Other visuals:
 
 - **Dimmed**: slices excluded by search or filter are drawn at 18% opacity.
-- **Dense blocks**: neighboring slices narrower than 1.5 px are merged into 1 px blocks colored like their first slice; zooming in brings them back individually.
+- **Dense blocks**: slices narrower than 1.5 CSS px share a pixel at this zoom. Every member contributes to matching: a pixel stays bright if **any one frame** matches both the function search and shared filter; an unmatched neighboring pixel stays dim. Color uses the first matching representative, or the first frame if none match, and neighboring pixels with the same dim state can merge for drawing. Hover reports the **frame count**, matching count and representative; click chooses the first matching frame (otherwise the first). This is a task/depth pixel group, not a new runtime call or a sum of measured time; synthetic frames are counted as frames, not traced calls. A wide call actually under the cursor wins over nearby thin frames. Zoom in or use recorded navigation to inspect individual calls. Zero-duration calls starting at the view's left boundary are included.
 - **Selected**: thick dark outline. **Hovered**: thin outline. As in Perfetto, the selected slice's start and end are marked with two blue lines over all tracks (light blue in between); the time ruler shows the same span as a blue bracket with its duration, and the overview strip shows where it is. These marks are hidden while a range is selected.
 - **Inline frames** (Inline view): translucent grey with a dashed outline, labeled `inline name`. See 6.8.
 - **Untraced frames** (always shown): translucent grey with a dashed outline, labeled `untraced name`. The kernel's call depth sometimes jumps by two or more levels, e.g. on arm64 `unwind_find_stack` appears two levels below `__might_sleep` (no entry was recorded for `arch_stack_walk` in between), and so do the interrupt entry calls `irq_enter_rcu` and `do_interrupt_handler` (the untraceable `el1_interrupt`). That used to leave an empty row. These calls now belong to the enclosing slice (its self time no longer includes them) and the missing level is drawn as an untraced frame named after the calls' return address (their caller); further missing levels are shown as `untraced frame` (name unknown). Its extent is the first to the last call inside; the real start and end are unknown. Tooltip and detail panel say so, and call stacks list these frames (marked `untraced`).
+
+![tl_dense](img/tl_dense.png)
+
+*Dense frames in the real scheduling trace: filtering keeps matching members visible, and the tooltip identifies the pixel group rather than pretending that only its representative exists.*
+
+Inline/untraced frames stay bright if any recorded child matches the **intersection** of search and shared filtering. Repeated hover reuses the current synthetic frame's raw extent/coverage facts; Overhead never changes that geometry. Matching prefixes and synthetic results are cached by search/filter identity, so repainting, theme changes, resizing and Overhead do not repeatedly scan all grouped members. The first repaint after changing either filter prepares new match facts; the scope remains complete rather than sampling only the first frame.
 
 ### 6.5 Tooltip and detail panel
 

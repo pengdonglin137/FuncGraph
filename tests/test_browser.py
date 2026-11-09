@@ -2554,6 +2554,207 @@ class BrowserSmokeTest(unittest.TestCase):
         self.assertTrue(self.ev("""(() => { const n = Array.from(document.querySelectorAll('#content .line-container')).map(l => +l.dataset.lineNumber);
             return n.every((x, i) => i === 0 || x > n[i - 1]) && !document.querySelector('.task-gap, .task-group-head'); })()"""))
 
+    def open_dense_pixels(self, depth=1, inline=False, label='dense_child', mode='abs'):
+        self.open_range_data(['root'] + [label] * 6, starts=[0, 100000, 100001, 100002, 100800, 100801, 100802],
+                             durations=[1000000] + [1] * 6, parents=[-1] + [0] * 6, mode=mode,
+                             callers=[None] + ['root+0x1/0x20'] * 6 if inline else None,
+                             columns={'depth': [0] + [depth] * 6},
+                             extra={'inline': {'2': [['root', 'a.c', 1], ['inline_frame', 'b.c', 2]]}} if inline else None)
+
+    def canvas_pixel(self, index, at_start=False):
+        return self.ev("""({index, at_start}) => {
+            const probe = fgView('timeline').probe(), canvas = document.querySelector('.tl-canvas');
+            const bounds = canvas.getBoundingClientRect(), point = probe.xyOf(index), ratio = window.devicePixelRatio || 1;
+            if (at_start) { const view = probe.view(); point[0] = bounds.left + (probe.sStart[index] - view[0]) * bounds.width / (view[1] - view[0]); }
+            const localX = Math.floor(point[0] - bounds.left) + 0.5, localY = point[1] - bounds.top;
+            return {color: [...canvas.getContext('2d').getImageData(Math.floor(localX * ratio), Math.floor(localY * ratio), 1, 1).data],
+                point: [bounds.left + localX, bounds.top + localY]};
+        }""", {'index': index, 'at_start': at_start})
+
+    def test_dense_pixels_keep_matching_members_bright_without_brightening_neighbors(self):
+        self.open_dense_pixels()
+        self.page.wait_for_timeout(80)
+        bright = [self.canvas_pixel(index)['color'] for index in [1, 4]]
+        self.ev("fgNotifyFilter('no calls', new Set())")
+        self.page.wait_for_timeout(80)
+        dimmed = [self.canvas_pixel(index)['color'] for index in [1, 4]]
+        self.assertNotEqual(bright, dimmed)
+        for line in [6, 5]:
+            self.ev("line => fgNotifyFilter('one member', new Set([line]))", line)
+            self.page.wait_for_timeout(80)
+            self.assertEqual(self.canvas_pixel(1)['color'], dimmed[0])
+            self.assertEqual(self.canvas_pixel(4)['color'], bright[1])
+        self.page.fill('.tl-search', '^root$')
+        self.page.wait_for_timeout(220)
+        self.assertEqual(self.canvas_pixel(4)['color'], dimmed[1])
+        self.page.fill('.tl-search', '')
+        self.page.wait_for_timeout(80)
+        self.assertEqual(self.canvas_pixel(4)['color'], bright[1])
+
+    def test_dense_pixel_hover_and_click_explain_and_select_matching_representative(self):
+        label = '<img src=x onerror=alert(1)>'
+        self.open_dense_pixels(label=label)
+        self.ev("fgNotifyFilter('middle member', new Set([3]))")
+        self.page.wait_for_timeout(80)
+        point = self.canvas_pixel(1)['point']
+        self.page.mouse.move(*point)
+        self.assertIn('3 frames', self.page.locator('.tl-tip').inner_text())
+        self.assertIn('1 match', self.page.locator('.tl-tip').inner_text())
+        self.assertIn(label, self.page.locator('.tl-tip .t-name').inner_text())
+        self.assertEqual(self.page.locator('.tl-tip img').count(), 0)
+        self.page.mouse.click(*point)
+        self.assertEqual(self.ev("fgView('timeline').probe().sel()"), 2)
+
+    def test_dense_pixel_keeps_exact_wide_hits_and_zero_duration_boundary_calls(self):
+        self.open_range_data(['root', 'thin', 'wanted', 'wide'], starts=[0, 100000, 100001, 100002],
+                             durations=[1000000, 1, 1, 200000], parents=[-1, 0, 0, 0], columns={'depth': [0, 1, 1, 1]})
+        self.ev("fgNotifyFilter('thin match', new Set([3]))")
+        point = self.canvas_pixel(1)['point']
+        self.ev("""point => {
+            const event = new MouseEvent('mousemove', {clientX: point[0], clientY: point[1], bubbles: true});
+            Object.defineProperty(event, 'clientX', {value: point[0]});
+            document.querySelector('.tl-canvas').dispatchEvent(event);
+        }""", point)
+        self.assertEqual(self.page.locator('.tl-tip .t-name').inner_text(), 'wide')
+        self.assertNotIn('Dense pixel', self.page.locator('.tl-tip').inner_text())
+        self.page.mouse.click(point[0] + 1, point[1])
+        self.assertEqual(self.ev("fgView('timeline').probe().sel()"), 3)
+        self.ev("fgSwitchView('text')")
+        self.page.reload()
+        self.open_range_data(['root', 'zero', 'wanted'], starts=[0, 0, 0], durations=[1000000, 0, 0],
+                             parents=[-1, 0, 0], columns={'depth': [0, 1, 1]})
+        self.ev("fgNotifyFilter('zero match', new Set([3]))")
+        self.page.wait_for_timeout(80)
+        point = self.canvas_pixel(1)['point']
+        self.page.mouse.move(*point)
+        self.assertIn('2 frames', self.page.locator('.tl-tip').inner_text())
+        self.assertIn('1 match', self.page.locator('.tl-tip').inner_text())
+        self.page.mouse.click(*point)
+        self.assertEqual(self.ev("fgView('timeline').probe().sel()"), 2)
+
+    def test_dense_synthetic_frames_match_any_child_with_search_filter_intersection(self):
+        for inline in [False, True]:
+            with self.subTest(inline=inline):
+                self.ev("fgSwitchView('text')")
+                self.page.reload()
+                self.open_dense_pixels(depth=1 if inline else 3, inline=inline)
+                if inline:
+                    self.ev("fgView('timeline').probe().inline(true)")
+                synthetic = self.ev("fgView('timeline').probe().N")
+                self.ev("fgNotifyFilter('all children', new Set([2, 3, 4, 5, 6, 7]))")
+                self.page.wait_for_timeout(120)
+                bright = self.canvas_pixel(synthetic, at_start=True)['color']
+                self.ev("fgNotifyFilter('later child', new Set([6]))")
+                self.page.wait_for_timeout(80)
+                self.assertEqual(self.canvas_pixel(synthetic, at_start=True)['color'], bright)
+                self.page.fill('.tl-search', '^root$')
+                self.page.wait_for_timeout(220)
+                self.assertNotEqual(self.canvas_pixel(synthetic, at_start=True)['color'], bright)
+                self.page.fill('.tl-search', '')
+                self.page.wait_for_timeout(80)
+                self.assertEqual(self.canvas_pixel(synthetic, at_start=True)['color'], bright)
+                self.page.click('[data-act=adj]')
+                self.page.wait_for_timeout(80)
+                self.assertEqual(self.canvas_pixel(synthetic, at_start=True)['color'], bright)
+
+    def test_dense_synthetic_hover_and_filter_facts_are_cached_across_repaints(self):
+        for inline in [False, True]:
+            with self.subTest(inline=inline):
+                self.open_detail_children(count=30000, inline=inline)
+                if inline:
+                    self.ev("fgView('timeline').probe().inline(true)")
+                synthetic = self.ev("fgView('timeline').probe().N")
+                self.ev("fgView('timeline').probe().select(-1)")
+                self.ev("""() => {
+                    const kids = fgView('timeline').probe().SYN[0].kids;
+                    const iterate = kids[Symbol.iterator], some = kids.some;
+                    window.syntheticGeometryWalks = 0; window.syntheticFilterWalks = 0;
+                    kids[Symbol.iterator] = function() { window.syntheticGeometryWalks++; return iterate.call(this); };
+                    kids.some = function(...args) { window.syntheticFilterWalks++; return some.apply(this, args); };
+                    fgNotifyFilter('last child', new Set([30001]));
+                }""")
+                self.page.wait_for_timeout(80)
+                for step in range(6):
+                    point = self.canvas_pixel(synthetic)['point']
+                    self.page.mouse.move(point[0] + step, point[1])
+                self.page.click('[data-act=adj]')
+                self.page.set_viewport_size({'width': 1400, 'height': 850})
+                self.page.wait_for_timeout(80)
+                point = self.canvas_pixel(synthetic)['point']
+                self.page.mouse.move(*point)
+                self.assertEqual(self.ev('window.syntheticGeometryWalks'), 0)
+                self.assertEqual(self.ev('window.syntheticFilterWalks'), 1)
+                self.page.fill('.tl-search', '^child$')
+                self.page.wait_for_timeout(220)
+                self.page.mouse.move(point[0] + 1, point[1])
+                self.assertEqual(self.ev('window.syntheticGeometryWalks'), 0)
+                self.assertEqual(self.ev('window.syntheticFilterWalks'), 2)
+
+    def test_dense_matching_prefix_reuses_row_facts_for_hover_and_paint(self):
+        count = 30000
+        self.open_range_data(['root'] + ['child'] * count, starts=[0] + [100000] * count,
+                             durations=[1000000] + [0] * count, parents=[-1] + [0] * count,
+                             columns={'depth': [0] + [1] * count})
+        self.ev("fgNotifyFilter('last child', new Set([30001]))")
+        self.page.wait_for_timeout(100)
+        self.ev("""() => {
+            const probe = fgView('timeline').probe(), row = probe.TRACKS[0].rows[1];
+            window.denseRowReads = 0;
+            probe.TRACKS[0].rows[1] = new Proxy(row, {
+                get(target, key) {
+                    if (typeof key === 'string' && /^[0-9]+$/.test(key)) window.denseRowReads++;
+                    return Reflect.get(target, key, target);
+                }
+            });
+        }""")
+        point = self.canvas_pixel(1)['point']
+        self.page.mouse.move(*point)
+        self.assertIn('30000 frames', self.page.locator('.tl-tip').inner_text())
+        self.assertIn('1 match', self.page.locator('.tl-tip').inner_text())
+        self.ev('window.denseRowReads = 0')
+        for offset in [0.1, 0.2, 0.3, 0.4]:
+            self.page.mouse.move(point[0] + offset, point[1])
+            self.page.wait_for_timeout(25)
+        self.assertLess(self.ev('window.denseRowReads'), 1000)
+        self.page.mouse.click(*point)
+        self.assertEqual(self.ev("fgView('timeline').probe().sel()"), count)
+
+    def test_dense_pixel_highlights_survive_time_modes_themes_and_device_scale(self):
+        for mode in ['abs', 'rel', 'compressed', 'count']:
+            with self.subTest(mode=mode):
+                self.ev("fgSwitchView('text')")
+                self.page.reload()
+                self.open_dense_pixels(mode=mode)
+                self.page.fill('.tl-search', '^dense_child$')
+                self.page.wait_for_timeout(220)
+                for theme in ['light', 'dark']:
+                    self.ev("theme => document.documentElement.setAttribute('data-theme', theme)", theme)
+                    self.page.wait_for_timeout(80)
+                    self.ev("fgNotifyFilter('all children', new Set([2, 3, 4, 5, 6, 7]))")
+                    self.page.wait_for_timeout(80)
+                    bright = self.canvas_pixel(4)['color']
+                    self.ev("fgNotifyFilter('last child', new Set([7]))")
+                    self.page.wait_for_timeout(80)
+                    self.assertEqual(self.canvas_pixel(4)['color'], bright)
+        context = self.browser.new_context(viewport={'width': 800, 'height': 600}, device_scale_factor=2)
+        original = self.page
+        try:
+            self.page = context.new_page()
+            self.page.on('pageerror', lambda error: self.errors.append(str(error)))
+            self.page.goto(self.url)
+            self.open_dense_pixels()
+            self.ev("fgNotifyFilter('last child', new Set([4]))")
+            self.page.wait_for_timeout(100)
+            point = self.canvas_pixel(1)['point']
+            self.page.mouse.move(*point)
+            self.assertIn('3 frames', self.page.locator('.tl-tip').inner_text())
+            self.assertIn('1 match', self.page.locator('.tl-tip').inner_text())
+            self.page.mouse.click(*point)
+            self.assertEqual(self.ev("fgView('timeline').probe().sel()"), 3)
+        finally:
+            context.close()
+            self.page = original
+
     def test_wide_slice_after_thin_one_is_drawn(self):
         # compressed time: a 1 ns call, then a 100 us call starting in the same pixel at full view
         trace = os.path.join(self.k.dir, 'thin_wide.txt')

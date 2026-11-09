@@ -101,12 +101,62 @@ function sliceStyle(i) {
     }
     return [baseColor(i), P.text, null];
 }
+let matchingCache = null;
+function matchingState() {
+    if (!searchHits && !textHits) { matchingCache = null; return null; }
+    if (!matchingCache || matchingCache.search !== searchHits || matchingCache.text !== textHits) {
+        matchingCache = { search: searchHits, text: textHits, rows: new WeakMap(), synthetic: new Int8Array(NA - N).fill(-1) };
+    }
+    return matchingCache;
+}
 function isDim(i) {
-    if (i >= N) return isDim(SYN[i - N].kids[0]);
+    if (i >= N) {
+        const state = matchingState();
+        if (!state) return false;
+        const index = i - N;
+        if (state.synthetic[index] < 0) state.synthetic[index] = SYN[index].kids.some(child => !isDim(child)) ? 0 : 1;
+        return !!state.synthetic[index];
+    }
     if (searchHits && !searchHits[sName[i]]) return true;
     if (textHits && !textHits[i]) return true;
     if (range && range.track !== null && range.track !== sTask[i]) return false;
     return false;
+}
+function denseSummary(row, first, end) {
+    const count = end - first, state = matchingState();
+    if (!state) return { index: row[first], count, matches: count };
+    if (count === 1) return { index: row[first], count, matches: isDim(row[first]) ? 0 : 1 };
+    let prefix = state.rows.get(row);
+    if (!prefix) {
+        prefix = new Uint32Array(row.length + 1);
+        for (let position = 0; position < row.length; position++) prefix[position + 1] = prefix[position] + (isDim(row[position]) ? 0 : 1);
+        state.rows.set(row, prefix);
+    }
+    const matches = prefix[end] - prefix[first];
+    let low = first, high = end;
+    if (matches) {
+        while (low < high) {
+            const middle = (low + high) >>> 1;
+            if (prefix[middle + 1] > prefix[first]) high = middle;
+            else low = middle + 1;
+        }
+    }
+    return { index: row[low], count, matches };
+}
+function lbPixel(row, pixel, start, scale, low = 0) {
+    let high = row.length;
+    while (low < high) {
+        const middle = (low + high) >>> 1;
+        if ((sStart[row[middle]] - start) * scale < pixel) low = middle + 1;
+        else high = middle;
+    }
+    return low;
+}
+function densePixelAt(row, pixel, start, scale) {
+    const first = lbPixel(row, pixel, start, scale);
+    let end = lbPixel(row, pixel + 1, start, scale, first);
+    if (end > first && (sEnd[row[end - 1]] - sStart[row[end - 1]]) * scale >= 1.5) end--;
+    return end > first ? denseSummary(row, first, end) : null;
 }
 
 // ---- detail panel height (drag handle between canvas and panel) ----
@@ -171,6 +221,7 @@ function niceStep(raw) {
 }
 
 function render() {
+    matchingState();
     ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
     ctx.fillStyle = P.bg;
     ctx.fillRect(0, 0, W, H);
@@ -436,7 +487,8 @@ function bandRect(s, e, y, h, color, vs, k) {
 
 function drawRow(row, ry, h, vs, ve, k, labels) {
     const n = row.length;
-    let j = lbEnd(row, vs);
+    const filtered = !!(searchHits || textHits);
+    let j = Math.min(lbEnd(row, vs), lbStart(row, vs, 0));
     let dx0 = -1, dx1 = -1, dcol = null, ddim = true;
     const flush = () => {
         if (dx0 < 0) return;
@@ -453,12 +505,13 @@ function drawRow(row, ry, h, vs, ve, k, labels) {
         const x0 = (s - vs) * k, x1 = (sEnd[i] - vs) * k;
         if (x1 - x0 < 1.5) {
             const px = Math.floor(x0);
-            if (dx0 >= 0 && px <= dx1 + 1) { if (px + 1 > dx1) dx1 = px + 1; ddim = ddim && isDim(i); }
-            else { flush(); dx0 = px; dx1 = px + 1; dcol = sliceStyle(i)[0]; ddim = isDim(i); }
             // skip the other thin slices that start in this pixel. Slices of a row do not overlap,
             // so only the last one starting here can be wide: never skip that one.
-            let jj = lbStart(row, vs + (px + 1) / k, j + 1);
+            let jj = lbPixel(row, px + 1, vs, k, j + 1);
             if (jj - 1 > j && (sEnd[row[jj - 1]] - sStart[row[jj - 1]]) * k >= 1.5) jj = jj - 1;
+            const summary = filtered ? denseSummary(row, j, jj) : null, dim = summary ? !summary.matches : false;
+            if (dx0 >= 0 && px <= dx1 + 1 && ddim === dim) { if (px + 1 > dx1) dx1 = px + 1; }
+            else { flush(); dx0 = px; dx1 = px + 1; dcol = sliceStyle(summary ? summary.index : i)[0]; ddim = dim; }
             j = jj > j ? jj : j + 1;
             continue;
         }

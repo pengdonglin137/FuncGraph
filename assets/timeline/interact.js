@@ -16,7 +16,7 @@ function hitTest(mx, my) {
         const seg = lo < sg.s.length && sg.s[lo] <= tm ? { cpu: cpu, j: lo, t: sg.t[lo], s: sg.s[lo], e: sg.e[lo] } : null;
         return { track: t, slice: -1, off: null, header: false, cpuSeg: seg, tm: tm };
     }
-    let best = -1;
+    let best = -1, dense = null;
     if (d >= 0 && d < t.rows.length) {
         const row = t.rows[d];
         const j = lbEnd(row, tm);
@@ -28,12 +28,18 @@ function hitTest(mx, my) {
             const dx = mx < x0 ? x0 - mx : mx > x1 ? mx - x1 : 0;
             if (dx < bestDx || (dx === 0 && bestDx === 0 && sEnd[i] - sStart[i] < sEnd[best] - sStart[best])) { bestDx = dx; best = i; }
         }
+        const exactWide = best >= 0 && (sEnd[best] - sStart[best]) * k >= 1.5 &&
+            mx >= (sStart[best] - view.s) * k && mx < (sEnd[best] - view.s) * k;
+        if (!exactWide) {
+            const summary = densePixelAt(row, Math.floor(mx), view.s, k);
+            if (summary) { best = summary.index; if (summary.count > 1) dense = summary; }
+        }
     }
     let off = null;
     if (best < 0 && ov.off && !t.collapsed) {
         for (const r of t.off) if (offRow(r) === d && tm >= r[1] && tm <= r[2]) { off = r; break; }
     }
-    return { track: t, slice: best, off: off, header: false };
+    return { track: t, slice: best, off: off, header: false, dense };
 }
 
 function zoomAt(factor, mx) {
@@ -91,23 +97,29 @@ function select(i, opts) {
 }
 
 // ---- tooltip ----
+let syntheticGeometryCache = null;
+function syntheticGeometry(i) {
+    if (syntheticGeometryCache && syntheticGeometryCache.index === i) return syntheticGeometryCache;
+    const y = SYN[i - N], kids = y.kids;
+    let covered = 0;
+    for (const child of kids) covered += sEnd[child] - sStart[child];
+    const span = sEnd[i] - sStart[i];
+    syntheticGeometryCache = { index: i, y, kids, covered, span, gap: Math.max(0, span - covered) };
+    return syntheticGeometryCache;
+}
 function inlineFacts(i) {
     // facts about synthetic inline frame i
-    const y = SYN[i - N], ch = y.chain, k = y.k;
-    const kids = y.kids;
-    let covered = 0;
-    for (const c of kids) covered += sEnd[c] - sStart[c];
-    const span = sEnd[i] - sStart[i];
+    const { y, kids, covered, span, gap } = syntheticGeometry(i), ch = y.chain, k = y.k;
     const outer = ch[k - 1];
-    return { y, ch, k, kids, covered, span, gap: Math.max(0, span - covered), fn: ch[k][0], file: ch[k][1],
+    return { y, ch, k, kids, covered, span, gap, fn: ch[k][0], file: ch[k][1],
         intoFn: outer[0], atFile: outer[1], atLine: outer[2], mismatch: y.p >= 0 && nameOf(y.p).split('.')[0] !== ch[0][0].split('.')[0] };
 }
 function ghostFacts(i) {
-    const y = SYN[i - N], kids = y.kids;
-    let covered = 0;
-    for (const c of kids) covered += sEnd[c] - sStart[c];
-    const span = sEnd[i] - sStart[i];
-    return { y, kids, covered, span, gap: Math.max(0, span - covered) };
+    return syntheticGeometry(i);
+}
+function tipDense(summary) {
+    return '<div class="t-sep"></div><div class="t-warn">Dense pixel: ' + summary.count + ' frames in this task/depth row; ' + summary.matches +
+        ' match the current search/filter. Showing the ' + (summary.matches ? 'first matching' : 'first') + ' representative frame, not every call. Zoom in to separate them.</div>';
 }
 function tipGhost(i) {
     const f = ghostFacts(i);
@@ -284,7 +296,7 @@ window.addEventListener('mousemove', ev => {
     hovCpu = h.cpuSeg || null;
     elCv.classList.toggle('ptr', nh >= 0 || h.header || !!hovCpu);
     if (hovCpu) showTip(tipCpu(hovCpu), ev);
-    else if (nh >= 0) showTip(tipSlice(nh), ev);
+    else if (nh >= 0) showTip(tipSlice(nh) + (h.dense ? tipDense(h.dense) : ''), ev);
     else if (h.off) showTip(tipOff(h.off), ev);
     else hideTip();
     draw();

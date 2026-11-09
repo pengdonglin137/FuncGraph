@@ -148,6 +148,44 @@ def tl_search(b, rep):
     shot(pg, 'tl_search')
 
 
+def tl_dense(b, rep):
+    pg = open_page(b, rep['sched'], 'timeline')
+    candidate = pg.evaluate("""() => {
+        const probe = fgView('timeline').probe(), canvas = document.querySelector('.tl-canvas');
+        const view = probe.view(), scale = canvas.getBoundingClientRect().width / (view[1] - view[0]);
+        let best = null;
+        for (const task of probe.TRACKS) for (const row of task.rowsT) {
+            let first = 0;
+            while (first < row.length) {
+                const pixel = Math.floor((probe.sStart[row[first]] - view[0]) * scale);
+                let end = first;
+                while (end < row.length && Math.floor((probe.sStart[row[end]] - view[0]) * scale) === pixel) end++;
+                const ids = Array.from(row.slice(first, end));
+                if (ids.length > 1 && ids.every(index => (probe.sEnd[index] - probe.sStart[index]) * scale < 1.5) &&
+                    (!best || ids.length > best.count)) best = {index: ids[0], count: ids.length, name: probe.nameOf(ids[0])};
+                first = end;
+            }
+        }
+        if (!best) throw new Error('No dense pixel in the real scheduling fixture');
+        probe.select(best.index); probe.select(-1);
+        return best;
+    }""")
+    pg.fill('.tl-ftext', 'func:' + candidate['name'].split('.')[0])
+    pg.press('.tl-ftext', 'Enter')
+    pg.wait_for_timeout(400)
+    point = pg.evaluate("""index => {
+        const probe = fgView('timeline').probe(), canvas = document.querySelector('.tl-canvas');
+        const bounds = canvas.getBoundingClientRect(), view = probe.view(), point = probe.xyOf(index);
+        return [bounds.left + Math.floor((probe.sStart[index] - view[0]) * bounds.width / (view[1] - view[0])) + 0.5, point[1]];
+    }""", candidate['index'])
+    pg.mouse.move(*point)
+    pg.wait_for_timeout(300)
+    tooltip = pg.locator('.tl-tip').inner_text()
+    if 'Dense pixel' not in tooltip or '0 match the current' in tooltip:
+        raise SystemExit('Dense-pixel screenshot did not hit the grouped frames')
+    shot(pg, 'tl_dense')
+
+
 def tl_irqoff(b, rep):
     pg = open_page(b, rep['sample'], 'timeline')
     zoom(pg, find(pg, 'do_softirq'), pad=0.25, select=False)
@@ -298,7 +336,7 @@ def compare(b, rep):
 
 
 SHOTS = {
-    'text_view': text_view, 'tl_layout': tl_layout, 'tl_compact': tl_compact, 'tl_search': tl_search, 'tl_errors': tl_errors, 'tl_irqoff': tl_irqoff,
+    'text_view': text_view, 'tl_layout': tl_layout, 'tl_compact': tl_compact, 'tl_search': tl_search, 'tl_errors': tl_errors, 'tl_dense': tl_dense, 'tl_irqoff': tl_irqoff,
     'tl_offcpu': tl_offcpu, 'tl_untraced': tl_untraced, 'tl_detail': tl_detail, 'tl_inline': tl_inline,
     'an_range': an_range, 'an_dist': an_dist, 'an_slowfast': an_slowfast, 'an_sections': panel('an_sections', 'sample', 'sections'),
     'an_errors': panel('an_errors', 'sched', 'errors'), 'an_wait': an_wait, 'an_tasks': an_tasks,
