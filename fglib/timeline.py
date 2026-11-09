@@ -325,7 +325,13 @@ class TimelineBuilder:
 
     # -- main pass -----------------------------------------------------
     def _preempt_baseline(self):
-        """Lowest preempt depth seen in task context: the tracer/trace path itself may add one."""
+        """Preempt depth the tracer itself adds to every record (0 or 1).
+
+        function_graph records tracing_gen_ctx() while its own entry path runs with preemption
+        disabled, so on CONFIG_PREEMPTION kernels every line shows one level too many (other
+        tracers use tracing_gen_ctx_dec() for this). Measured as the lowest depth seen in task
+        context, capped at 1: a trace that lies entirely inside a preempt-off region (lowest 2+)
+        must not hide that region."""
         lo = None
         for raw in self.lines:
             m = RE_LAT_TASK.search(raw, 0, 120)
@@ -336,7 +342,7 @@ class TimelineBuilder:
                     lo = v
                     if v == 0:
                         break
-        return lo or 0
+        return min(lo or 0, 1)
 
     def build(self):
         t_start = time.time()
@@ -720,7 +726,7 @@ class TimelineBuilder:
                 task.resched_open = ts
                 task.resched_info = [0, 0, lineno]
             info = task.resched_info
-            p = (lflags >> F_PREEMPT_SHIFT) & 0xf
+            p = max(0, ((lflags >> F_PREEMPT_SHIFT) & 0xf) - self.preempt_base)   # minus the tracer's own level
             if p > info[0]:
                 info[0] = p
             if lflags & F_IRQOFF:

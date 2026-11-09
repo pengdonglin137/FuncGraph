@@ -207,7 +207,7 @@ function showLatency() {
         'Blame = self time spent inside the window; irqs-off/preempt-disabled code delays the reschedule.</div>' +
         '<div class="an-blame">' + topAgg.map(([nm, v]) => `<span class="an-chip"><span class="k">${esc(S[nm])}</span>${fmtDur(v)}</span>`).join('') + '</div>';
     h += '<table class="tl-sum an-tbl"><thead>' + tblHead([['dur', 'latency'], ['start', 'start'], ['task', 'task', 1],
-        ['pre', 'max preempt'], ['irq', 'irqs-off'], ['top', 'top self time inside', 1], ['end', 'ended by']], k, 'lsort') + '</thead><tbody>';
+        ['pre', 'max preempt off'], ['irq', 'irqs-off'], ['top', 'top self time inside', 1], ['end', 'ended by']], k, 'lsort') + '</thead><tbody>';
     for (const w of wins.slice(0, 300)) {
         const r = w.r;
         h += `<tr data-win="${r[1]},${r[2]},${r[0]}"><td class="${w.dur > 100000 ? 'err' : ''}">${fmtDur(w.dur)}</td><td>${fmtDur(r[1])}</td>` +

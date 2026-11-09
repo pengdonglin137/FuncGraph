@@ -251,6 +251,14 @@ class SyntheticTest(unittest.TestCase):
         self.assertEqual(rets['is_ok'], 'false')
         self.assertNotIn('void_fn', rets)
 
+    def test_preempt_baseline(self):
+        # function_graph adds one preempt level to every record: lowest depth 1 -> baseline 1;
+        # a capture entirely inside a preempt-off region (lowest 2) still has baseline 1
+        line = "1000.0001{k:02d} |   0)   sh-7     |  ...{p}. |   1.000 us    |  f{k}(); /* <-x+0x1/0x2 */"
+        for depths, base in (([1, 2, 1], 1), ([2, 3, 2], 1), ([0, 1], 0)):
+            t = "\n".join(line.format(k=k, p=p) for k, p in enumerate(depths))
+            self.assertEqual(build(t)['preempt_base'], base, depths)
+
     def test_depth_gap_parent(self):
         # the kernel's depth jumps by two (entry of arch_stack_walk not recorded): the calls inside
         # still belong to the enclosing frame, and its self time excludes them

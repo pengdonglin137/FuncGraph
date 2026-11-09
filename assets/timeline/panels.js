@@ -499,6 +499,8 @@ function refreshPanel() {
     if (D.overhead) note('Tracing overhead estimate (' + esc(D.overhead.source) + '): ' + fmtDur(D.overhead.child) +
         ' per traced child call, ' + fmtDur(D.overhead.self) + ' per call. Toggle <b>Overhead</b> to subtract it; slice positions stay as measured.', true);
     else if (TIMED) note('Durations include tracing overhead (measured 0.2 us per traced call on a QEMU x86_64 VM, 1.1 us on a Raspberry Pi 4). Capture with <code>fgcapture.sh --calibrate</code> to get a correction.', true);
+    if (c.latency && PBASE) note('Every line shows preempt depth ' + PBASE + ' or more: function_graph itself disables preemption while recording. ' +
+        'The timeline subtracts it (preempt off, sections, atomic sleeps, preempt overlay); the text view shows the raw digit, so use <code>preempt:&gt;' + PBASE + '</code> there.', true);
     if (D.lost.length) note(D.lost.length + ' "LOST EVENTS" record(s): some slices are incomplete (marked with dotted edges). Increase <code>buffer_size_kb</code>.');
     const st = D.stats;
     if (st.truncated || st.orphans) note(st.truncated + ' call(s) without exit, ' + st.orphans + ' without entry (trace window edges).', true);

@@ -483,7 +483,7 @@ function drawSlice(i, x0, x1, y, h, labels) {
     ctx.fillRect(cx0, y, ww, h);
     if (ov.irq && (f & FL.IRQOFF) && w > 2) { ctx.fillStyle = hatch; ctx.fillRect(cx0, y, ww, h); }
     if (ov.preempt && w > 2) {
-        const p = (f >> FL.PR_SHIFT) & 15;
+        const p = preemptOff(f);   // above the tracer's own level
         if (p) { ctx.fillStyle = dark ? 'rgba(255,255,255,' + (0.1 + 0.08 * p) + ')' : 'rgba(0,0,0,' + (0.08 + 0.07 * p) + ')'; ctx.fillRect(cx0, y + h - 3, ww, 3); }
     }
     if (i >= N) {
