@@ -7,7 +7,7 @@ import os
 PROJECT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
-APP_VERSION = "0.7"      # 应用版本号
+APP_VERSION = "0.8"      # 应用版本号
 
 
 APP_AUTHOR = "@dolinux"  # 作者信息
