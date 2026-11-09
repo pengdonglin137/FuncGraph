@@ -393,7 +393,8 @@ tests/                # 自测（tests/run.sh）和树莓派 4 采集的样例
 docs/design.md        # 设计文档
 site/index.html       # GitHub Pages 首页（由 .github/workflows/ci.yml 连同示例一起发布）
 .github/workflows/    # CI：在 Python 3.8 / 3.12 上跑测试，然后发布 Pages
-samples/              # 示例 trace（sample_io.txt）、采集用的程序（demo_io.c）、截图
+samples/              # 示例 trace（sample_io.txt，以及用于对比的较慢一次 sample_io_slow.txt）、采集用的程序（demo_io.c）、截图
+docs/img/             # 使用指南的截图（make_shots.py 重新生成）
 sample.html           # samples/sample_io.txt 的报告（见“示例”一节）
 sample.png            # sample.html 的截图
 ftrace.txt            # 旧的 x86 示例 trace（测试使用）

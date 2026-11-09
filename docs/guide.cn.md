@@ -267,6 +267,10 @@ python3 funcgraph.py --preset pi4 --output r.html ftrace.txt
 
 ### 5.1 页面布局
 
+![text_view](img/text_view.png)
+
+*文本视图（sample.html，过滤 `graph:udp_sendmsg` 并展开第一行）。1 页头，2 标签页，3 工具栏，4 过滤框（5.7 节），5 一行 trace（5.2 节），6 展开的源码块，按内联链排列（5.5 节）。*
+
 - **页头**：trace 总行数、可展开行数、解析到的内核函数数；过滤后会显示 `Filtered: N`。右侧依次是 **Theme**（切换深色/浅色）、**?**（快捷键说明）和 **ⓘ**（信息面板：运行环境、处理耗时、源码来源及版本一致性检查、生成参数）。
 - **标签页**：Text / Timeline / Compare。
 - **顶部工具栏**（滚动时保持在顶部）：
@@ -447,6 +451,10 @@ irqs:d AND duration:>50                       关中断状态下耗时超过 50 
 
 ### 6.1 布局
 
+![tl_layout](img/tl_layout.png)
+
+*时间轴（sample.html，选中 `__x64_sys_sendto`），编号对应下面的列表。*
+
 从上到下依次是：
 
 1. **工具栏第一行**：Color（配色模式）、Overlay（叠加层开关）、函数搜索框、错误导航。
@@ -518,6 +526,22 @@ irqs:d AND duration:>50                       关中断状态下耗时超过 50 
 | | 切片左上角的**紫色小方块** | 调用点所在的函数和父切片不是同一个函数，说明中间有没被跟踪的帧（notrace、汇编入口、尾调用）或者内联函数 |
 | | 切片底部的**红色下划线** | 在原子上下文中调用了可能睡眠的函数（见 7.4 节） |
 
+![tl_errors](img/tl_errors.png)
+
+*错误路径（第二次 `recvfrom`）：`udp_recvmsg` 是源头（实心红，标签 `= EAGAIN`），往外各帧是浅红底加红边框的传播帧；悬停提示给出 errno 和去向。*
+
+![tl_irqoff](img/tl_irqoff.png)
+
+*关中断：`do_softirq`、`__do_softirq` 带斜纹（进入时中断关闭）；轨道标题下的深灰色细线是关中断的时间段；软中断里的调用是绿色。*
+
+![tl_offcpu](img/tl_offcpu.png)
+
+*Off-CPU 和唤醒（tests/data/pi4_sched.txt）：淡灰斜纹段是任务不在 CPU 上的时间，青色箭头从唤醒者指向被唤醒的任务；悬停 off-CPU 段显示状态和唤醒者。*
+
+![tl_untraced](img/tl_untraced.png)
+
+*未跟踪帧（tests/data/pi4_nodur.txt）：`_raw_spin_unlock` 和里面的 `unwind_find_stack` 等之间缺了两层，画成虚线框 `untraced frame`；这份夹具没有调用点，所以名字未知。*
+
 容易看错的两点：
 
 - **斜纹只反映进入调用那一刻的状态**。latency 列记录的是每一行打印时的中断状态，切片用的是入口那一行。函数中途关中断或开中断（例如 `spin_lock_irqsave` 之后的那些调用），切片本身看不出来。关中断真实持续了多久，看轨道标题下的深灰色细线，或者 Sections 面板（7.3 节），那里列出每一段的开始、结束和期间运行的代码。
@@ -532,6 +556,10 @@ irqs:d AND duration:>50                       关中断状态下耗时超过 50 
 - **未跟踪帧**（始终显示）：灰色半透明底加虚线框，标签是 `untraced 函数名`。内核打印的调用深度有时一下跳了两级或更多，例如 arm64 上 `unwind_find_stack` 直接出现在 `__might_sleep` 下两级（中间的 `arch_stack_walk` 没有入口记录），中断入口 `irq_enter_rcu`、`do_interrupt_handler` 也一样（中间是不可跟踪的 `el1_interrupt`）。以前这里会空出一行。现在这些调用归到外层切片下（外层的 self 时间不再包含它们），缺的那一层画成未跟踪帧：名字取自这些调用的返回地址（也就是它们的调用者），缺多层时外面几层显示 `untraced frame`（名字未知）；范围是里面第一个到最后一个调用，真实的起止时间不知道。悬停和详情面板会说明这一点，调用栈里也会列出这些帧（标为 `untraced`）。
 
 ### 6.5 悬停提示和详情面板
+
+![tl_detail](img/tl_detail.png)
+
+*`udp_sendmsg` 的详情面板（已向上拖大）：左栏是各项数值、调用点 `net/socket.c:800` 和它的源码块，右栏是耗时拆分、调用栈（斜体为内联帧）和子调用。*
 
 **悬停在切片上**时显示：
 
@@ -593,6 +621,10 @@ irqs:d AND duration:>50                       关中断状态下耗时超过 50 
 
 ### 6.8 内联帧视图（Inline）
 
+![tl_inline](img/tl_inline.png)
+
+*Inline 视图：虚线框是内联帧（`inline __do_sys_sendto` 等），悬停提示说明了它们的范围是怎么来的。*
+
 开启 `--vmlinux` 并有 `funcgraph-retaddr` 时，工具会知道每个调用点是否位于内联代码中。**Inline** 按钮（快捷键 `I`）在两种视图间切换，选择会被记住：
 
 - **hidden**：只显示被 ftrace 跟踪到的帧。
@@ -649,12 +681,20 @@ irqs:d AND duration:>50                       关中断状态下耗时超过 50 
 
 ### 7.1 范围汇总（Shift + 拖动）
 
+![an_range](img/an_range.png)
+
+*框选 `__x64_sys_write` 这段时间后的范围汇总：按自身耗时排序的函数列表。*
+
 在一条轨道上按住 Shift 拖动，可以框选一段时间；同时按住 Shift 和 Alt 则框选所有轨道。框选后显示：
 
 - 标题标签：范围长度、轨道、调用次数，以及各上下文的自身耗时（task / softirq / hardirq / NMI）和 off-CPU 时间。
 - 表格：每个函数的 calls（在范围内开始的调用次数）、self（自身耗时）、inclusive（总耗时）、max（最长的一次）、errors（错误源头次数）。和范围部分重叠的调用按重叠比例计入。点击一行，会在搜索框中填入这个函数名并高亮它。
 
 ### 7.2 耗时分布（H）
+
+![an_dist](img/an_dist.png)
+
+*耗时分布（tests/data/pi4_sched.txt 里的 `unwind_find_stack.constprop.0`，115 次调用）：分位数、对数直方图、最慢的调用。*
 
 选中一个切片后按 `H`，或点详情面板里的 **Duration distribution**：
 
@@ -665,6 +705,10 @@ irqs:d AND duration:>50                       关中断状态下耗时超过 50 
 - **Slow vs fast** 按钮：把最慢的 10% 和最快的一半调用分成两组，比较两组在子调用中每个函数平均的调用次数和自身耗时，按差值从大到小排列。另外还有几行特殊项：`(own code)`、`(interrupts / softirq)`、`(blocked off-CPU)`、`(preempted)`。差值大的行就是"慢的那些调用多做了什么"。例如，慢的 `kmem_cache_alloc` 调用都多出了 `___slab_alloc`，也就是走进了分配器的慢路径。
 
 ### 7.3 临界区（Sections）
+
+![an_sections](img/an_sections.png)
+
+*Sections 面板（sample.html）：irqs off / preempt off / BH off 三类区间，每行是一段区间，带开始、结束的位置和其中自身耗时最多的函数。*
 
 列出进程上下文中每一段**关中断**、**关抢占**、**关软中断**的区间，用顶部的按钮在三类之间切换，按钮上显示各类的数量：
 
@@ -681,6 +725,10 @@ preempt 深度是相对基线计算的。trace 中进程上下文的最小 preem
 精度说明：开关中断、开关抢占的操作通常是内联代码，不会出现在 trace 里，所以区间的起止只能定位到"flag 变化前后的两个被跟踪的调用"之间。点击一行会在时间轴上框选出这段区间。
 
 ### 7.4 错误汇总（Errors）
+
+![an_errors](img/an_errors.png)
+
+*Errors 面板（tests/data/pi4_sched.txt）：按系统调用、源头函数和 errno 分组；`?` 表示没有 BTF、未经类型校验。*
 
 - 顶部（如果有）：**Sleeping functions called in atomic context**。列出在关中断、关抢占、关软中断或中断上下文中调用的可能睡眠的函数（`__might_sleep`、`mutex_lock*`、`down*`、`wait_for_completion*`、`msleep`、`schedule_timeout*` 等），以及原因、所在的父函数和次数。点击可以跳到对应的调用。
 - 表格：把错误链按 **syscall / entry → origin → errno** 分组：
@@ -713,6 +761,10 @@ preempt 深度是相对基线计算的。trace 中进程上下文的最小 preem
 
 ### 7.5 等待链（点击 off-CPU 段）
 
+![an_wait](img/an_wait.png)
+
+*等待链（tests/data/pi4_sched.txt）：`python3` 睡了 1.934 ms，被 CPU 2 上的硬中断唤醒，从唤醒到重新运行用了 526 us。*
+
 一行表示一次等待，从被点击的这段 off-CPU 开始：
 
 | 列 | 含义 |
@@ -730,6 +782,10 @@ preempt 深度是相对基线计算的。trace 中进程上下文的最小 preem
 
 ### 7.6 调度延迟（Sched latency）
 
+![an_lat](img/an_lat.png)
+
+*Sched latency 面板（tests/data/pi4_sched.txt）：每个 need-resched 窗口的长度、期间最大的 preempt off 深度、是否关过中断、窗口里自身耗时最多的函数。*
+
 列出每个 **need-resched 窗口**，也就是从设置 need-resched 标志到任务真正调度出去或者标志被清除的这段时间：
 
 - 标题标签：窗口数量、总时长、最长的一个。下方的小标签汇总了所有窗口中自身耗时最多的函数，也就是"谁在拖延调度"。
@@ -739,6 +795,10 @@ preempt 深度是相对基线计算的。trace 中进程上下文的最小 preem
 需要 `latency-format` 和时间戳才能计算。
 
 ## 8. 对比视图
+
+![compare](img/compare.png)
+
+*对比 samples/sample_io_slow.txt 和 samples/sample_io.txt：慢的那次 `sendto` 在软中断里多释放了 55 个 skb（`napi_consume_skb` 等为 new），traced time 多了 134%。*
 
 ```bash
 python3 funcgraph.py --compare before.txt --output cmp.html after.txt

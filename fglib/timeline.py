@@ -409,7 +409,9 @@ class TimelineBuilder:
                     self.cpu_last_ts[cpu] = ts
             lflags, lctx = self._lat_flags(lat)
             if lat is not None and ts is not None:
-                self._track_lat(task, lat, lflags, ts, lineno, prev_ts)
+                # trace event lines (/* sched_switch: ... */) are printed from inside the scheduler or the
+                # event code with irqs off: they say nothing about the task's own critical sections
+                self._track_lat(task, lat, lflags, ts, lineno, prev_ts, event=stripped.startswith('/*'))
             # Fill a pending leaf duration (no duration column) from the next timestamp
             if task.pending_leaf >= 0 and ts is not None:
                 i = task.pending_leaf
@@ -720,7 +722,7 @@ class TimelineBuilder:
         task.last_ts = ts
         task.last_cpu = cpu
 
-    def _track_lat(self, task, lat, lflags, ts, lineno, prev_ts=None):
+    def _track_lat(self, task, lat, lflags, ts, lineno, prev_ts=None, event=False):
         if lat[1] != '.':
             if task.resched_open is None:
                 task.resched_open = ts
@@ -735,6 +737,8 @@ class TimelineBuilder:
             info = task.resched_info
             self.resched.append([task.tid, task.resched_open, ts, info[0], info[1], 0])
             task.resched_open = None
+        if event:
+            return
         ctx = lflags & F_CTX_MASK
         # The task was switched out inside __schedule (no switch marker without funcgraph-proc
         # or with set_ftrace_pid): end its sections when it left, a new one starts on resume.

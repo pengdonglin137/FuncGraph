@@ -46,6 +46,7 @@ tests/run.sh --golden                # afterwards: byte-for-byte comparison on r
 - Refactors must keep golden output identical; intended output changes must be explained in the commit. `FG_GOLDEN_KEEP=1` keeps the current outputs in `$FG_GOLDEN_DIR/current` for field-level comparison.
 - CI (`.github/workflows/ci.yml`) runs `tests/run.sh` on Python 3.8 and 3.12 (browser tests on 3.12 only) and then publishes `site/index.html` + `sample.html` to GitHub Pages. Kernel-tree tests (golden, `FG_VMLINUX`) only run locally.
 - Browser tests and debugging: `fgView('timeline').probe()` exposes the model read-only (`N`, `NA`, `SYN`, `sStart`, `nameOf`, `isGhost`, `select`, `zoomTo`, ...). Headless Chromium hides scrollbars by default; layout tests need `ignore_default_args=['--hide-scrollbars']`.
+- Guide screenshots (`docs/img/*.png`) come from `python3 docs/img/make_shots.py [names]` (uses sample.html and repo fixtures); rerun after UI changes.
 - After output-affecting changes regenerate `sample.html` from `samples/sample_io.txt` (command in README "Sample") and retake `sample.png` / `samples/sample_text.png`.
 
 ## Dependencies

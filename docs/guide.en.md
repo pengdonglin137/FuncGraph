@@ -267,6 +267,10 @@ Rules:
 
 ### 5.1 Layout
 
+![text_view](img/text_view.png)
+
+*Text view (sample.html, filter `graph:udp_sendmsg`, first line expanded). 1 header, 2 tabs, 3 toolbar, 4 filter (5.7), 5 one trace line (5.2), 6 the expanded source block as an inline chain (5.5).*
+
 - **Header**: total lines, expandable lines, resolved kernel functions; `Filtered: N` while a filter is active. On the right: **Theme** (dark/light), **?** (shortcuts) and **ⓘ** (info panel: environment, processing times, source origin and version check, the options used).
 - **Tabs**: Text / Timeline / Compare.
 - **Top toolbar** (stays at the top while scrolling):
@@ -447,6 +451,10 @@ The filter is shared with the timeline (6.6).
 
 ### 6.1 Layout
 
+![tl_layout](img/tl_layout.png)
+
+*The timeline (sample.html, `__x64_sys_sendto` selected); the numbers match the list below.*
+
 From top to bottom:
 
 1. **Toolbar, first row**: Color (color mode), Overlay (layer switches), function search, error navigation.
@@ -518,6 +526,22 @@ Each overlay can be switched off; buttons of overlays without data are hidden.
 | | **small purple square** top left | the call site's function is not the parent slice: an untraced frame (notrace, assembly entry, tail call) or inlined code in between |
 | | **red underline** | a sleeping function called in atomic context (7.4) |
 
+![tl_errors](img/tl_errors.png)
+
+*An error path (the second `recvfrom`): `udp_recvmsg` is the origin (solid red, label `= EAGAIN`), the frames above are propagation frames (light red, red outline); the tooltip gives the errno and its fate.*
+
+![tl_irqoff](img/tl_irqoff.png)
+
+*Irqs off: `do_softirq` and `__do_softirq` are hatched (irqs off when they started); the dark grey line under the track header shows the irqs-off periods; calls in the softirq are green.*
+
+![tl_offcpu](img/tl_offcpu.png)
+
+*Off-CPU and wakeups (tests/data/pi4_sched.txt): light grey hatched segments are time off the CPU, teal arrows go from the waker to the woken task; hovering an off-CPU segment shows its state and waker.*
+
+![tl_untraced](img/tl_untraced.png)
+
+*Untraced frames (tests/data/pi4_nodur.txt): two levels are missing between `_raw_spin_unlock` and the `unwind_find_stack` calls inside, drawn as a dashed `untraced frame`; this fixture has no call sites, so the name is unknown.*
+
 Two things that are easy to misread:
 
 - **Hatching shows the state when the call started.** The latency column records the irq state of each printed line, and a slice uses its entry line. Disabling or enabling irqs in the middle of a function (e.g. the calls after `spin_lock_irqsave`) does not show on the slice itself. For how long irqs were really off, look at the dark grey line under the track header or the Sections panel (7.3), which lists each region's start, end and what ran inside.
@@ -532,6 +556,10 @@ Other visuals:
 - **Untraced frames** (always shown): translucent grey with a dashed outline, labeled `untraced name`. The kernel's call depth sometimes jumps by two or more levels, e.g. on arm64 `unwind_find_stack` appears two levels below `__might_sleep` (no entry was recorded for `arch_stack_walk` in between), and so do the interrupt entry calls `irq_enter_rcu` and `do_interrupt_handler` (the untraceable `el1_interrupt`). That used to leave an empty row. These calls now belong to the enclosing slice (its self time no longer includes them) and the missing level is drawn as an untraced frame named after the calls' return address (their caller); further missing levels are shown as `untraced frame` (name unknown). Its extent is the first to the last call inside; the real start and end are unknown. Tooltip and detail panel say so, and call stacks list these frames (marked `untraced`).
 
 ### 6.5 Tooltip and detail panel
+
+![tl_detail](img/tl_detail.png)
+
+*Detail panel of `udp_sendmsg` (dragged taller): values, the call site `net/socket.c:800` and its source block on the left; the time breakdown, call stack (inline frames in italics) and children on the right.*
 
 **Hovering a slice** shows:
 
@@ -593,6 +621,10 @@ With an overhead estimate (the header written by `fgcapture.sh --calibrate`, or 
 
 ### 6.8 Inline frames (Inline)
 
+![tl_inline](img/tl_inline.png)
+
+*Inline view: dashed frames are inlined functions (`inline __do_sys_sendto`, ...); the tooltip explains where their extent comes from.*
+
 With `--vmlinux` and `funcgraph-retaddr` the tool knows whether a call site is inside inlined code. **Inline** (`I`) switches between two views and is remembered:
 
 - **hidden**: only the frames ftrace traced.
@@ -649,12 +681,20 @@ Analysis panels open in the detail area below the timeline and follow the filter
 
 ### 7.1 Range summary (Shift + drag)
 
+![an_range](img/an_range.png)
+
+*Range summary after selecting the time of `__x64_sys_write`: functions by self time.*
+
 Shift + drag on a track selects a time range in that track; Shift + Alt + drag selects over all tracks. The summary shows:
 
 - Tags: range length, track, number of calls, self time per context (task / softirq / hardirq / NMI) and off-CPU time.
 - Table per function: calls (calls starting in the range), self, inclusive, max (longest call), errors (error origins). Calls partly inside the range count proportionally. Clicking a row puts the function into the search box and highlights it.
 
 ### 7.2 Duration distribution (H)
+
+![an_dist](img/an_dist.png)
+
+*Duration distribution (`unwind_find_stack.constprop.0` in tests/data/pi4_sched.txt, 115 calls): percentiles, log histogram, slowest calls.*
 
 Press `H` with a slice selected, or click **Duration distribution** in the detail panel:
 
@@ -665,6 +705,10 @@ Press `H` with a slice selected, or click **Duration distribution** in the detai
 - **Slow vs fast** button: compares the slowest 10% with the fastest half of the calls: per call, the average number of calls and self time of every function in their subtrees, plus `(own code)`, `(interrupts / softirq)`, `(blocked off-CPU)` and `(preempted)`, sorted by the difference. The top rows say what the slow calls do in addition. Example: slow `kmem_cache_alloc` calls all add `___slab_alloc`, the allocator's slow path.
 
 ### 7.3 Critical sections (Sections)
+
+![an_sections](img/an_sections.png)
+
+*Sections panel (sample.html): irqs-off / preempt-off / BH-off regions, one row each, with where they started and ended and the functions with most self time inside.*
 
 Every region in task context with **irqs off**, **preemption off** or **BH off**; the buttons at the top switch between the three kinds and show their counts:
 
@@ -681,6 +725,10 @@ The preempt depth is relative to a baseline: the lowest preempt depth seen in ta
 Precision: enabling/disabling irqs or preemption is usually inlined code that does not appear in the trace, so a region's ends are only known up to the two traced calls around the flag change. Clicking a row selects the region in the timeline.
 
 ### 7.4 Error summary (Errors)
+
+![an_errors](img/an_errors.png)
+
+*Errors panel (tests/data/pi4_sched.txt): grouped by syscall, origin and errno; `?` means not verified (no BTF).*
 
 - At the top (if any): **Sleeping functions called in atomic context**. Calls of functions that may sleep (`__might_sleep`, `mutex_lock*`, `down*`, `wait_for_completion*`, `msleep`, `schedule_timeout*`, …) with irqs off, preemption disabled, BH disabled or from an interrupt; with the reasons, the parent function and the count. Click to go to the call.
 - The table groups error chains by **syscall / entry → origin → errno**:
@@ -713,6 +761,10 @@ The error navigator in the toolbar (`◀ N errors · to user ▶`): click the la
 
 ### 7.5 Wait chain (click an off-CPU segment)
 
+![an_wait](img/an_wait.png)
+
+*Wait chain (tests/data/pi4_sched.txt): `python3` slept 1.934 ms, was woken by a hardirq on CPU 2 and ran again 526 us later.*
+
 One row per wait, starting with the clicked off-CPU segment:
 
 | Column | Meaning |
@@ -730,6 +782,10 @@ The waker is taken from `sched_waking` when available: it fires in the waker's c
 
 ### 7.6 Scheduling latency (Sched latency)
 
+![an_lat](img/an_lat.png)
+
+*Sched latency panel (tests/data/pi4_sched.txt): each need-resched window with its length, the deepest preempt off inside, irqs-off time and the function with most self time.*
+
 Each **need-resched window**, from setting the need-resched flag until the task is switched out or the flag is cleared:
 
 - Tags: number of windows, total, longest. Below them, the functions with the most self time over all windows: who delays the reschedule.
@@ -739,6 +795,10 @@ Each **need-resched window**, from setting the need-resched flag until the task 
 Needs `latency-format` and timestamps.
 
 ## 8. Compare view
+
+![compare](img/compare.png)
+
+*Comparing samples/sample_io_slow.txt with samples/sample_io.txt: in the slow run the softirq of `sendto` freed 55 more skbs (`napi_consume_skb` etc. are new), traced time +134%.*
 
 ```bash
 python3 funcgraph.py --compare before.txt --output cmp.html after.txt

@@ -251,6 +251,17 @@ class SyntheticTest(unittest.TestCase):
         self.assertEqual(rets['is_ok'], 'false')
         self.assertNotIn('void_fn', rets)
 
+    def test_event_lines_do_not_open_sections(self):
+        # sched_waking is printed with irqs off before the task's first call: no irqs-off section
+        t = ("1000.000100 |   0)   sh-7     |  d..5. |               |  /* sched_waking: comm=x pid=9 prio=120 target_cpu=001 */\n"
+             "1000.000500 |   0)   sh-7     |  ...1. |   1.000 us    |  f(); /* <-x+0x1/0x2 */\n"
+             "1000.000600 |   0)   sh-7     |  d..1. |   1.000 us    |  g(); /* <-x+0x1/0x2 */\n"
+             "1000.000700 |   0)   sh-7     |  ...1. |   1.000 us    |  h(); /* <-x+0x1/0x2 */\n")
+        d = build(t)
+        secs = [s for s in d['sections'] if s[1] == 0]
+        self.assertEqual(len(secs), 1)
+        self.assertEqual(secs[0][3] - secs[0][2], 100000)     # g() .. h(), not from the event line
+
     def test_preempt_baseline(self):
         # function_graph adds one preempt level to every record: lowest depth 1 -> baseline 1;
         # a capture entirely inside a preempt-off region (lowest 2) still has baseline 1

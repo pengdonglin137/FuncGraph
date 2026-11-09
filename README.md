@@ -390,7 +390,8 @@ tests/                # Self-tests (tests/run.sh) and fixtures from a Raspberry 
 docs/design.md        # Design document
 site/index.html       # GitHub Pages home page (published with the sample by .github/workflows/ci.yml)
 .github/workflows/    # CI: tests on Python 3.8 / 3.12, then Pages
-samples/              # Sample trace (sample_io.txt), its workload (demo_io.c), screenshots
+samples/              # Sample trace (sample_io.txt, a slower run sample_io_slow.txt for Compare), its workload (demo_io.c), screenshots
+docs/img/             # Guide screenshots (make_shots.py regenerates them)
 sample.html           # Report of samples/sample_io.txt (see Sample)
 sample.png            # Screenshot of sample.html
 ftrace.txt            # Older x86 example trace (used by the tests)

@@ -160,6 +160,7 @@ func(args);    [/* <-caller+off/len [mod] ret=X */]  叶子
 - 没有时根据中断入口函数名推断（如 `gic_handle_irq`、`__sysvec_*`、`handle_softirqs`、`exc_nmi`），以及 `==========>` 标记，并设置 `CTX_INFERRED` 标志。
 - need-resched 窗口：从 flags 的第 2 位变成非 `.` 开始，到恢复为 `.` 或任务被换出为止，同时记录期间最大的 preempt 深度和是否关过中断。
 - 关中断窗口：只统计 task 上下文中的 `d`/`D`。
+- 事件行（`/* sched_switch: ... */` 等）不参与临界区和关中断窗口：它们是在调度器或事件代码里关着中断打印的，和任务自己的代码无关。以前任务第一次调用之前的一条 `sched_waking` 会打开一个关中断区间，一直延续到下一次调用，得到负的起点和几百微秒的假区间。
 - preempt 基线（`_preempt_baseline`）：function_graph 记录时用的是 `tracing_gen_ctx()`，而它自己的入口路径关着抢占（其他 tracer 用 `tracing_gen_ctx_dec()` 减掉这一层），所以在 `CONFIG_PREEMPTION` 内核上每一行的 preempt 数字都多 1。基线取任务上下文里出现过的最小值，最大为 1：整份 trace 都在关抢占区间里时（最小值 2），这段区间不会被当成基线掩盖。临界区、原子上下文睡眠、need-resched 窗口的 max preempt（`resched[i][3]`），以及前端的 `preemptOff(f)`（详情标签、Preempt depth 叠加层）都减去基线。文本视图的 `data-preempt` 保留原始数字。
 
 ### 6.4 Off-CPU
@@ -317,6 +318,8 @@ CI（`.github/workflows/ci.yml`）：每次推送到 master 和每个 PR 在 Pyt
 ## 10a. 示例
 
 `sample.html` 是 `samples/sample_io.txt` 的报告，用 `samples/demo_io.c` 在 QEMU 7.2 上采集，命令见 README 的"示例"一节。程序先打开文件、建好 socket，再连续执行被跟踪的 read/write/sendto/recvfrom，所以时间轴上没有空白。改了报告的输出后要重新生成 `sample.html` 并重拍 `sample.png`（选中 `__x64_sys_sendto`）和 `samples/sample_text.png`（`graph:udp_sendmsg`，展开第一行）；推送后由 CI 发布到 Pages。
+
+使用指南的截图在 `docs/img/`，由 `python3 docs/img/make_shots.py [名字...]` 生成：输入是 `sample.html`、`tests/data/pi4_sched.txt`（调度事件）、`tests/data/pi4_nodur.txt`（深度跳级）和 `samples/sample_io_slow.txt`（对比用，`sendto` 的软中断顺带释放了 55 个 skb 的那次采集）。脚本通过 `probe()` 选中切片、缩放、打开面板。界面变了就重新运行，和改动一起提交。
 
 ## 11. 已知限制
 

@@ -571,6 +571,16 @@ new MutationObserver(() => { palette(); ovDirty = true; draw(); })
 window.addEventListener('resize', () => { if (window.fgCurrentView() === 'timeline') resize(); });
 
 // probe: read access to the model and a few actions, for tests and the browser console
-const probe = () => ({ N, NA, SYN, S, sName, sStart, sEnd, sDepth, sParent, nameOf, isGhost, gapOf, TRACKS,
-    select: (i) => select(i, { reveal: true }), zoomTo, sel: () => sel });
+const probe = () => ({ N, NA, SYN, S, sName, sStart, sEnd, sDepth, sParent, sTask, nameOf, isGhost, gapOf, TRACKS,
+    select: (i) => select(i, { reveal: true }), zoomTo, sel: () => sel, view: () => [view.s, view.e],
+    // page coordinates of slice i (center) / of off-CPU record r (center), for scripted mouse input
+    xyOf: (i) => { const r = elCv.getBoundingClientRect(), k = W / (view.e - view.s), t = TRACKS[sTask[i]];
+        return [r.left + ((Math.max(sStart[i], view.s) + Math.min(sEnd[i], view.e)) / 2 - view.s) * k,
+                r.top + t.y - elScroll.scrollTop + HDR + rowOf(i) * ROW + ROW / 2]; },
+    offXY: (r) => { const c = elCv.getBoundingClientRect(), k = W / (view.e - view.s), t = TRACKS[r[0]];
+        return [c.left + ((Math.max(r[1], view.s) + Math.min(r[2], view.e)) / 2 - view.s) * k,
+                c.top + t.y - elScroll.scrollTop + HDR + offRow(r) * ROW + ROW / 2]; },
+    range: (s, e, track) => { range = { s: s, e: e, track: track === undefined ? null : track }; select(-1); showRangeSummary(); draw(); },
+    errors: showErrors, latency: showLatency, sections: showSections, dist: showDist, wait: showWaitChain,
+    inline: (on) => { if (!!on !== inlineView) toggleInlineView(); } });
 return { resize: resize, revealLine: revealLine, draw: draw, probe: probe };
