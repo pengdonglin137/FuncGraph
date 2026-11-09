@@ -43,11 +43,14 @@ tests/run.sh --golden                # afterwards: byte-for-byte comparison on r
 - The unittest suite needs no kernel tree: `tests/helpers.FakeKernel` provides an empty vmlinux and a stub `scripts/faddr2line`. Fixtures in `tests/data/` are real Raspberry Pi 4 traces captured with different ftrace option sets.
 - Optional env: `FG_VMLINUX`/`FG_KERNEL_SRC` (real BTF + agreement with the kernel's faddr2line), `FG_TRACES` (extra traces for timeline invariants). Browser tests need Playwright + Chromium and are skipped otherwise; JS syntax tests need `node`.
 - `golden.py` configs use `/vol_1t/Qemu/x86_64/linux-6.18` and `/vol_1t/raspi/linux` (override with `FG_X86_KERNEL`/`FG_PI4_KERNEL`); `FG_ROOT` runs another checkout (e.g. a `git worktree` of the old version) to record the baseline.
-- Refactors must keep golden output identical; intended output changes must be explained in the commit.
+- Refactors must keep golden output identical; intended output changes must be explained in the commit. `FG_GOLDEN_KEEP=1` keeps the current outputs in `$FG_GOLDEN_DIR/current` for field-level comparison.
+- CI (`.github/workflows/ci.yml`) runs `tests/run.sh` on Python 3.8 and 3.12 (browser tests on 3.12 only) and then publishes `site/index.html` + `sample.html` to GitHub Pages. Kernel-tree tests (golden, `FG_VMLINUX`) only run locally.
+- Browser tests and debugging: `fgView('timeline').probe()` exposes the model read-only (`N`, `NA`, `SYN`, `sStart`, `nameOf`, `isGhost`, `select`, `zoomTo`, ...). Headless Chromium hides scrollbars by default; layout tests need `ignore_default_args=['--hide-scrollbars']`.
+- After output-affecting changes regenerate `sample.html` from `samples/sample_io.txt` (command in README "Sample") and retake `sample.png` / `samples/sample_text.png`.
 
 ## Dependencies
 
-- **Python 3.6+** (standard library only for the main program, including the BTF reader)
+- **Python 3.8+** (standard library only for the main program, including the BTF reader)
 - **pyelftools** — required by `fastfaddr2line.py` (`--fast`)
 - **addr2line** (binutils, or `llvm-addr2line` with `LLVM=1`)
 - **pygments** — optional, `--highlight-code`
@@ -102,7 +105,9 @@ Data flow: `FtraceParser.parse()` → `AddressResolver.resolve_batch()` → (opt
 - Timeline `flags` bit layout is shared by `fglib/timeline.py` (`F_*`) and `assets/timeline/model.js` (`FL`); change both together.
 - Timeline JS files `model/render/interact/analysis/panels.js` are concatenated into one closure `__tlBoot()` (order in `fglib/assets.py`). Extra tabs register in `window.fgViews` and are wired by the global `assets/views/boot.js`; add a view in `HtmlGenerator._views()`.
 - Sections/atomic checks live in `TimelineBuilder._track_lat` / `_on_call` (task context only, preempt baseline from `_preempt_baseline`); breakdown and slow-vs-fast are computed in the browser from slices (`analysis.js`: `subtree`, `breakdown`, `slowFast`).
-- Timeline inline frames are synthetic slices with index >= N (`FL.INL`); use `rowOf(i)` for vertical position and `rowsT`/`sDepth` for navigation, subtrees and statistics. Loops `for (i < N)` must stay over real slices only.
+- Timeline synthetic slices have index >= N: inline frames (`FL.INL`, Inline view only) and untraced frames filling depth gaps (`FL.GHOST`, `isGhost(i)`, always shown). A slice's parent is the innermost open frame with a smaller depth (depth may jump by more than one). Use `rowOf(i)` for vertical position and `rowsT`/`sDepth` for navigation, subtrees and statistics. Loops `for (i < N)` must stay over real slices only.
+- Preempt depth: function_graph adds one level to every record; `preempt_base` (0 or 1) is subtracted everywhere in the timeline (`preemptOff(f)` in JS). The text view keeps the raw digit.
+- Hidden views use classes on the elements themselves (`.fg-off`, `#content` via `content-visibility`), never `body.cls descendant` selectors: on 1M-element reports a body class change restyles the whole tree.
 - Test environments: Pi 4 (6.18 arm64, `ssh pi4`, sources /vol_1t/raspi/linux) and a QEMU x86_64 VM with the 7.2 BTF-aware retval kernel (`ssh pengdl@localhost -p 8766`, sources /vol_1t/Qemu/trim_retval, vmlinux in x86_64/); both sudo passwords are a single space.
 - In timeline JS, displayed durations go through `durOf(i)` (measured or overhead-corrected, toggled by `setAdjusted`); geometry always uses `sStart/sEnd`.
 - New CLI options that change nothing when unused must be added to the hidden-when-default list in `util.format_args_info` to keep golden output stable.

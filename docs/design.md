@@ -151,6 +151,7 @@ func(args);    [/* <-caller+off/len [mod] ret=X */]  叶子
 - 任务被换出后可能在另一个 CPU 上恢复，所以不能按 CPU 重建栈。
 - 入口时间取时间戳，结束时间 = 开始时间 + duration。两者来自两次不同的时钟读取，实测偏差在 p1 -0.87us 到 p99 +0.93us 之间。
 - 配对：出口带函数名时（tail 或 retval）按名字向上找匹配的帧，中间未闭合的帧标记 `TRUNCATED`。找不到入口的出口生成 `ORPHAN` 切片，并收养同一深度下没有父节点的子切片。
+- 父节点取栈顶（最内层的未闭合帧），只要它的深度比当前调用小，不要求正好小 1。内核打印的深度有时一下跳两级或更多：中间那一帧进入了，但入口没有记录（arm64 上不可跟踪的 `el1_interrupt` 包着 `irq_enter_rcu`/`do_interrupt_handler`，`arch_stack_walk` 包着 `unwind_find_stack`）。以前这些调用没有父节点，外层的 self 时间把它们也算了进去，时间轴上还空出一行。前端在缺的那一层画"未跟踪帧"（见第 7 节）。
 - 后处理：截断帧的结束时间扩展到覆盖其子切片；子切片限制在父切片范围内；同一行的兄弟切片去掉重叠；没有父节点的同行切片截断前一个。这些规则保证了第 9 节测试的不变量。
 
 ### 6.3 上下文与延迟窗口
@@ -159,6 +160,7 @@ func(args);    [/* <-caller+off/len [mod] ret=X */]  叶子
 - 没有时根据中断入口函数名推断（如 `gic_handle_irq`、`__sysvec_*`、`handle_softirqs`、`exc_nmi`），以及 `==========>` 标记，并设置 `CTX_INFERRED` 标志。
 - need-resched 窗口：从 flags 的第 2 位变成非 `.` 开始，到恢复为 `.` 或任务被换出为止，同时记录期间最大的 preempt 深度和是否关过中断。
 - 关中断窗口：只统计 task 上下文中的 `d`/`D`。
+- preempt 基线（`_preempt_baseline`）：function_graph 记录时用的是 `tracing_gen_ctx()`，而它自己的入口路径关着抢占（其他 tracer 用 `tracing_gen_ctx_dec()` 减掉这一层），所以在 `CONFIG_PREEMPTION` 内核上每一行的 preempt 数字都多 1。基线取任务上下文里出现过的最小值，最大为 1：整份 trace 都在关抢占区间里时（最小值 2），这段区间不会被当成基线掩盖。临界区、原子上下文睡眠、need-resched 窗口的 max preempt（`resched[i][3]`），以及前端的 `preemptOff(f)`（详情标签、Preempt depth 叠加层）都减去基线。文本视图的 `data-preempt` 保留原始数字。
 
 ### 6.4 Off-CPU
 
@@ -220,11 +222,17 @@ lost[]    [cpu, count, line]
   - **analysis**：错误汇总（syscall → 源头 → errno）、函数耗时分布（对数直方图、分位数、最慢调用）、调度延迟归因（need-resched 窗口内的自身耗时）、等待链（off-CPU → 唤醒者 → 唤醒者之前的等待）。
   - 显示用的耗时统一经过 `durOf(i)`；`setAdjusted()` 在实测值和扣除开销后的值之间切换（快捷键 `O`）。切片的位置和宽度始终用实测的 `sStart/sEnd`。
   - **model**：解码列数据到 TypedArray，计算自身耗时，建立轨道和每个深度的行索引，构建 CPU 轨道数据，生成 DOM 骨架。
+  - **合成切片**：下标 `>= N` 的切片不是 trace 里的调用，按顺序追加：内联帧（`buildInline`，`FL.INL`，只在 Inline 视图的 `rowsI` 里）和未跟踪帧（`buildGhosts`，`FL.GHOST`，`rowsT` 和 `rowsI` 里都有）。未跟踪帧填补父子之间缺的深度，名字取自里面那些调用的返回地址（它们的调用者），缺多层时外层名字为 `?`；范围是里面第一个到最后一个调用，相邻且同名的合并成一个。`SYN[i - N]` 保存它们的信息（`kids`、`p`，未跟踪帧另有 `ghost/level/gap/name`）。统计和导航用的 `for (i < N)` 循环只看真实切片。
   - **render**：Canvas 2D 绘制。宽度小于 1.5px 的切片合并成密集块，用二分查找跳过同一像素内的切片。叠加层包括错误、关中断斜纹、need-resched 角标和横条、off-CPU 段、preempt 深度条、各种标记。另有概览条和时间轴刻度。
   - **interact**：命中测试、缩放平移、拖选范围、键盘操作（在捕获阶段处理，并阻止事件传给文本视图）、错误导航、搜索。
   - **panels**：详情面板（错误链、调用栈、最重的子调用）、范围汇总表、跳到文本视图（先展开折叠的祖先）、接收文本过滤器的结果、能力提示、帮助。
+    - 调用点源码：详情面板不另存数据，按切片的入口行号找到文本行 `L<n>`，取它的 `data-src`，用 `fgFill` 填入同一个源码块；调用所在的 `文件:行` 从块里第一个位置链接解析（`callSitePos`，按块缓存），悬停提示也用它。`--no-text-view` 时没有。
+    - 底部面板的高度由 `.tl-resizer` 拖动设置，按占窗口高度的比例存在 localStorage（`fgTl.detailFrac`），`resize()` 根据它和最小高度（画布 160px、面板 60px）分配空间。`Max`（`M`）隐藏页头和标签页，不跨页面记忆；Notes 的收起状态会记住。
+  - 选中切片时，`render()` 在画布上画起止竖线，`drawSelSpan()` 在标尺和概览条上画区间和时长（参照 Perfetto）；有框选范围时不画。两块画布的 CSS 宽度都设为轨道区不含滚动条的宽度 `W`，否则标尺被拉伸，刻度和标记与轨道错开。
+  - `probe()`：`fgView('timeline').probe()` 返回只读的模型数据和几个操作（`select`、`zoomTo`），供浏览器测试和控制台调试使用。
 - 配色：按上下文选择色相，每个函数在色相上有小幅偏移以便区分相邻切片。也可以按函数名、自身耗时、CPU、模块配色。支持深色和浅色主题（监听 `data-theme` 属性）。
 - 文本视图和时间轴通过 trace 行号互相定位：切片记录了入口行号和出口行号，文本行的锚点是 `#L<n>`。
+- 切换标签页：大报告的文本视图有上百万个元素。隐藏时用 `content-visibility: hidden`（`#content.fg-off`），浏览器保留布局，切回来不必重新布局；隐藏用的 class 直接加在元素上，不用 `body.xxx 后代选择器`，否则一次 class 变化就要重新匹配整棵树的样式；这些页面元素只查找一次（`fgPageChrome()`）。实测 100 万元素的报告，切回文本视图从 5.2s 降到 1.1s，剩下的是绘制本身。
 
 ## 7a. 预过滤、对比、唤醒与开销修正
 
@@ -289,10 +297,12 @@ python3 tests/golden.py --update   # 修改代码前先记录基线
 | `test_inline.py` | 内联链解析（有无 --list、多候选、无输出）与调用点映射 |
 | `test_sources.py` | git 正确/错误版本、URL 获取与缓存、缺失文件、路径归一化 |
 | `test_flex.py` | 无 vmlinux、stdin/gzip 与普通文件结果一致、多文件按时间合并、配置文件与预设、导出 JSON/CSV |
-| `test_fgcapture.py` | 脚本语法、帮助、非 root 拒绝运行（实际采集在树莓派 4 上手工验证） |
+| `test_fgcapture.py` | 脚本语法、帮助、非 root 拒绝运行、`--args` 探测前清空 `set_graph_function`（实际采集在树莓派 4 和 QEMU 上手工验证） |
 | `golden.py` | 6 种配置（x86 完整/最少/时间轴，pi4 完整/默认选项/sched 且不用 BTF），去掉耗时等动态字段后逐字节比较 |
 
-`tests/data/` 中的 6 份夹具来自树莓派 4（6.18 arm64），每份取前 1500 行，说明见 `tests/helpers.py` 的 `FIXTURES`。
+`tests/data/` 中的夹具来自树莓派 4（6.18 arm64）和 QEMU（7.2 x86_64），每份取前 1500 行，说明见 `tests/helpers.py` 的 `FIXTURES`。`FG_GOLDEN_KEEP=1` 时 `golden.py` 保留本次输出（`$FG_GOLDEN_DIR/current`），便于比较 `tlData` 的具体字段。
+
+CI（`.github/workflows/ci.yml`）：每次推送到 master 和每个 PR 在 Python 3.8 和 3.12 上运行 `tests/run.sh`，3.12 装 Chromium 跑浏览器测试（Playwright 不支持 3.8）。CI 上没有内核树，golden 和真实 vmlinux 的测试会跳过，这些仍要在本地跑。测试通过后 `pages` 任务把 `site/index.html`、`sample.html` 和截图发布到 GitHub Pages。
 
 这次架构调整的每一步都用 golden 验证过：JS/CSS 外置、拆包、资源加载统一、`main()` 拆分前后，6 份输出逐字节一致（只有 4 行 JS 文件头注释是有意修改的）。
 
@@ -303,6 +313,10 @@ python3 tests/golden.py --update   # 修改代码前先记录基线
 - **改了 flags 的位**：同时修改 `timeline.py` 的 `F_*` 常量和 `model.js` 的 `FL`，并更新第 6.7 节。
 - **改了 HTML 输出**：先运行 `python3 tests/golden.py --update` 记录基线，改完后确认只有预期的差异。
 - **新的 ftrace 格式**：把一段真实输出加入 `tests/data/`，并在 `test_timeline.py` 的 `FixtureTest.EXPECT` 中写明期望的模式和能力。
+
+## 10a. 示例
+
+`sample.html` 是 `samples/sample_io.txt` 的报告，用 `samples/demo_io.c` 在 QEMU 7.2 上采集，命令见 README 的"示例"一节。程序先打开文件、建好 socket，再连续执行被跟踪的 read/write/sendto/recvfrom，所以时间轴上没有空白。改了报告的输出后要重新生成 `sample.html` 并重拍 `sample.png`（选中 `__x64_sys_sendto`）和 `samples/sample_text.png`（`graph:udp_sendmsg`，展开第一行）；推送后由 CI 发布到 Pages。
 
 ## 11. 已知限制
 
