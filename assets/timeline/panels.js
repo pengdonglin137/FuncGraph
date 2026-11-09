@@ -206,7 +206,8 @@ function fillCallSite(i) {
 }
 function sizeDetailHead() {
     const head = elDetail.querySelector('.tl-detail-head');
-    const height = head ? head.offsetHeight : 0;
+    const style = head ? getComputedStyle(head) : null;
+    const height = style && style.position === 'sticky' && style.top !== 'auto' ? head.offsetHeight : 0;
     elDetail.querySelectorAll('table.tl-sum th').forEach(header => { header.style.top = height + 'px'; });
     scheduleDistHistogram();
 }
@@ -666,7 +667,7 @@ if (!WAKES.length) tlRoot.querySelector('[data-ov=wk]').classList.add('na');
 if (!D.caps.retval) tlRoot.querySelector('[data-ov=err]').classList.add('na');
 new MutationObserver(() => { palette(); ovDirty = true; draw(); scheduleDistHistogram(); })
     .observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
-window.addEventListener('resize', () => { if (window.fgCurrentView() === 'timeline') resize(); });
+window.addEventListener('resize', () => { if (window.fgCurrentView() === 'timeline') { resize(); sizeDetailHead(); } });
 if (typeof ResizeObserver !== 'undefined') {
     let controlsFrame = 0;
     const controlsObserver = new ResizeObserver(() => {

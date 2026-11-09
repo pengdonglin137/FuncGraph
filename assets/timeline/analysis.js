@@ -3,84 +3,231 @@
 const AN = { kind: null, func: -1, off: null, errSort: 'count', latSort: 'dur' };
 
 function matchOk(i) { return !textHits || textHits[i]; }
-function syscallOf(i) {
-    // nearest ancestor (or self) that is a syscall entry, else the top frame
-    let k = i, top = i;
-    while (k >= 0) {
-        if (/^(?:__(?:arm64|x64|ia32|x32|riscv|s390x?|powerpc|loongarch|se)_)?(?:compat_)?sys_\w+$|^__do_sys_/.test(nameOf(k).split('.')[0])) return k;
-        top = k;
-        k = sParent[k];
-    }
-    return top;
-}
-function sysLabel(i) { return nameOf(i).replace(/^__(?:arm64|x64|ia32|x32|riscv|s390x?|powerpc|loongarch)_sys_/, '').replace(/^__do_sys_/, ''); }
-function tblHead(cols, sortKey, attr) {
-    return '<tr>' + cols.map(c => `<th data-${attr}="${c[0]}" class="${c[0] === sortKey ? 'on' : ''}"${c[2] ? ' style="text-align:left"' : ''}>${c[1]}</th>`).join('') + '</tr>';
-}
-
 // ---- 1. error summary: syscall -> origin -> errno ----
-function showErrors() {
-    AN.kind = 'errors';
-    const groups = new Map();
-    let total = 0;
-    let minor = 0;
-    for (let c = 0; c < CHAINS.length; c++) {
-        const ch = CHAINS[c], o = ch[0];
-        if (!matchOk(o)) continue;
-        if (!chainShown(c)) { minor++; continue; }
+const ERROR_PAGE = 200, ATOMIC_PAGE = 100;
+const ERROR_FATES = ['handled', 'to_user', 'unknown'];
+const ERROR_ENTRIES = new Map();
+const SYSCALL_ENTRY = /^(?:__(?:arm64|x64|ia32|x32|riscv|s390x?|powerpc|loongarch|se)_)?(?:compat_)?sys_(\w+)$|^__do_sys_(\w+)$/;
+let errorCache = null, atomicCache = null, errorView = null;
+function errorEntry(index) {
+    const path = [];
+    let current = index, entry;
+    while (current >= 0) {
+        entry = ERROR_ENTRIES.get(current);
+        if (entry) break;
+        path.push(current);
+        const name = nameOf(current), base = name.split('.')[0], syscall = SYSCALL_ENTRY.exec(base);
+        if (syscall || sParent[current] < 0) {
+            entry = { label: syscall ? (syscall[1] || syscall[2]) + name.slice(base.length) : name, isSys: !!syscall };
+            break;
+        }
+        current = sParent[current];
+    }
+    for (const visited of path) ERROR_ENTRIES.set(visited, entry);
+    return entry;
+}
+function errorData() {
+    if (errorCache && errorCache.hits === textHits && errorCache.minors === showMinor) return errorCache;
+    const grouped = new Map(), groups = [];
+    let total = 0, minor = 0;
+    CHAINS.forEach((chain, index) => {
+        if (!matchOk(chain[0])) return;
+        if (chain[6]) minor++;
+        if (!chainShown(index)) return;
         total++;
-        const sc = syscallOf(ch[1]);
-        const key = sysLabel(sc) + '\u0000' + nameOf(o) + '\u0000' + ch[2];
-        let g = groups.get(key);
-        if (!g) {
-            g = { sys: sysLabel(sc), isSys: sc !== ch[1] || /sys_/.test(nameOf(sc)), origin: nameOf(o), errno: ch[2], fate: [0, 0, 0],
-                  count: 0, tasks: new Set(), first: c, ver: 1, len: 0, ex: [] };
-            groups.set(key, g);
+        const entry = errorEntry(chain[1]), origin = nameOf(chain[0]);
+        const key = JSON.stringify([entry.label, entry.isSys, origin, chain[2]]);
+        let group = grouped.get(key);
+        if (!group) {
+            group = { id: groups.length, entry, origin, errno: chain[2], fate: [0, 0, 0], tasks: new Set(),
+                first: index, verified: 0, minor: 0, length: 0, ids: [], position: -1 };
+            grouped.set(key, group); groups.push(group);
         }
-        g.count++;
-        g.fate[ch[3]]++;
-        g.tasks.add(sTask[o]);
-        g.ver &= ch[5];
-        g.len = Math.max(g.len, ch[4]);
-        if (g.ex.length < 50) g.ex.push(c);
+        group.fate[chain[3]]++;
+        group.tasks.add(sTask[chain[0]]);
+        group.verified += chain[5] ? 1 : 0;
+        group.minor += chain[6] ? 1 : 0;
+        group.length = Math.max(group.length, chain[4]);
+        group.ids.push(index);
+    });
+    for (const group of groups) group.ids.sort((left, right) => sStart[CHAINS[left][0]] - sStart[CHAINS[right][0]] || left - right);
+    errorCache = { hits: textHits, minors: showMinor, groups, total, minor, order: { key: null, rows: [], visible: 0 } };
+    return errorCache;
+}
+function atomicData() {
+    if (atomicCache && atomicCache.hits === textHits) return atomicCache;
+    const grouped = new Map(), groups = [];
+    let total = 0;
+    for (const [index, bits] of ATOMIC) {
+        if (index >= N || !matchOk(index)) continue;
+        total++;
+        const caller = sParent[index] >= 0 ? nameOf(sParent[index]) : '';
+        const key = JSON.stringify([sName[index], bits, caller]);
+        let group = grouped.get(key);
+        if (!group) {
+            group = { id: groups.length, name: nameOf(index), caller, bits, first: index, ids: [], position: -1 };
+            grouped.set(key, group); groups.push(group);
+        }
+        group.ids.push(index);
     }
-    const rows = Array.from(groups.values());
-    const k = AN.errSort;
-    rows.sort((a, b) => k === 'sys' ? (a.sys < b.sys ? -1 : 1) : k === 'origin' ? (a.origin < b.origin ? -1 : 1) :
-        k === 'errno' ? a.errno - b.errno : k === 'user' ? b.fate[1] - a.fate[1] : b.count - a.count);
-    let h = '<div class="tl-detail-head"><span class="tl-detail-title">Errors</span>' +
-        pill('err', total + ' error chains') + pill('mute', rows.length + ' groups') +
-        (textHits ? pill('warn', 'filtered') : '') + (D.btf || D.caps.retval_btf ? '' : pill('warn', 'no BTF: unverified')) +
-        (minor || showMinor ? '<label class="an-minor"><input type="checkbox" data-act="minor"' + (showMinor ? ' checked' : '') + '> show ' +
-            (showMinor ? '' : minor + ' ') + 'minor (handled at once, never propagated)</label>' : '') +
-        '<span class="sp"></span><button class="tl-close" title="Close (Esc)">×</button></div>';
-    if (!rows.length) {
-        if (ATOMIC.size) h += '<div style="padding:12px" class="err">' + ATOMIC.size + ' sleeping function call(s) in atomic context, see the slice markers.</div>';
-        h += '<div style="padding:12px">' + (D.caps.retval ? 'No error returns found.' : 'Error paths need <code>options/funcgraph-retval</code>.') + '</div>';
-        openDetail(h); return;
+    for (const group of groups) group.ids.sort((left, right) => sStart[left] - sStart[right] || left - right);
+    const rows = groups.slice().sort((left, right) => right.ids.length - left.ids.length || left.first - right.first);
+    atomicCache = { hits: textHits, groups, rows, total, visible: Math.min(ATOMIC_PAGE, rows.length) };
+    return atomicCache;
+}
+function errorSortAscending(key) { return key === 'sys' || key === 'origin' || key === 'errno'; }
+function errorSortValue(group, key) {
+    if (key === 'sys') return group.entry.label;
+    if (key === 'origin') return group.origin;
+    if (key === 'errno') return group.errno;
+    if (key === 'user') return group.fate[1];
+    if (key === 'h') return group.fate[0];
+    if (key === 'unknown') return group.fate[2];
+    if (key === 't') return group.tasks.size;
+    return key === 'x' ? group.length : group.ids.length;
+}
+function errorOrder() {
+    const data = errorData(), order = data.order;
+    if (order.key !== AN.errSort) {
+        const direction = errorSortAscending(AN.errSort) ? 1 : -1;
+        order.rows = data.groups.slice().sort((left, right) => {
+            const leftValue = errorSortValue(left, AN.errSort), rightValue = errorSortValue(right, AN.errSort);
+            return (leftValue < rightValue ? -direction : leftValue > rightValue ? direction : 0) || left.first - right.first;
+        });
+        order.key = AN.errSort;
+        order.visible = Math.min(ERROR_PAGE, order.rows.length);
     }
-    if (ATOMIC.size) {
-        const am = new Map();
-        for (const [i, bits] of ATOMIC) { if (!matchOk(i)) continue; const k = nameOf(i) + '\u0000' + bits; const a = am.get(k) || [i, bits, 0]; a[2]++; am.set(k, a); }
-        if (am.size) {
-            h += '<div class="tl-sec" style="padding:8px 12px 2px;color:#c62828">Sleeping functions called in atomic context</div><table class="tl-sum an-tbl"><tbody>';
-            for (const [i, bits, n] of am.values())
-                h += `<tr data-slice="${i}" class="an-atomic"><td style="text-align:left">${esc(nameOf(i))}</td><td style="text-align:left" class="err">${esc(atomicText(bits))}</td>` +
-                     `<td style="text-align:left">${esc(sParent[i] >= 0 ? 'in ' + nameOf(sParent[i]) : '')}</td><td>${n}×</td></tr>`;
-            h += '</tbody></table>';
+    return order;
+}
+function errorNavigation(group) {
+    return '<td class="an-occurrence"><button class="tl-btn" data-error-step="-1" aria-label="Previous occurrence">◀</button>' +
+        '<span role="status" data-error-position>' + (group.position < 0 ? '—' : group.position + 1) + ' / ' + group.ids.length + '</span>' +
+        '<button class="tl-btn" data-error-step="1" aria-label="Next occurrence">▶</button></td>';
+}
+function errorRows(rows) {
+    return rows.map(group => '<tr data-chain="' + group.ids[Math.max(0, group.position)] + '" data-chains="' + group.id + '">' +
+        '<td style="text-align:left">' + (group.entry.isSys ? '' : pill('mute', 'no syscall')) + esc(group.entry.label) + '</td>' +
+        '<td style="text-align:left">' + esc(group.origin) + '</td><td class="err">' + group.errno + ' ' + esc(errName(group.errno)) + '</td>' +
+        '<td>' + group.ids.length + '</td><td class="' + (group.fate[1] ? 'err' : '') + '">' + group.fate[1] + '</td>' +
+        '<td>' + group.fate[0] + '</td><td>' + group.fate[2] + '</td><td>' + group.tasks.size + '</td>' +
+        '<td title="' + (group.ids.length - group.verified) + ' of ' + group.ids.length + ' chains have unverified frames">' +
+        group.length + ' frames' + (group.verified === group.ids.length ? '' : ' ?') + '</td>' + errorNavigation(group) + '</tr>').join('');
+}
+function atomicRows(rows) {
+    return rows.map(group => '<tr class="an-atomic" data-atomic-group="' + group.id + '" data-slice="' + group.ids[Math.max(0, group.position)] + '">' +
+        '<td style="text-align:left">' + esc(group.name) + '</td><td style="text-align:left" class="err">' + esc(atomicText(group.bits)) + '</td>' +
+        '<td style="text-align:left">' + esc(group.caller || 'top level') + '</td><td>' + group.ids.length + '</td>' + errorNavigation(group) + '</tr>').join('');
+}
+function errorFooter(atomic) {
+    const data = atomic ? atomicData() : errorOrder(), kind = atomic ? 'atomic' : 'errors';
+    return '<div class="an-error-footer" data-error-footer="' + kind + '"><span role="status">Showing ' + data.visible + ' of ' + data.rows.length +
+        (atomic ? ' atomic groups' : ' error groups') + '</span><button class="tl-btn" data-act="' + kind + '-more"' +
+        (data.visible >= data.rows.length ? ' disabled' : '') + '>Load more</button>' +
+        (atomic ? '' : '<button class="tl-btn" data-act="error-occurrences-csv">Export occurrences CSV</button>') + '</div>';
+}
+function appendErrorRows(atomic) {
+    const data = atomic ? atomicData() : errorOrder(), start = data.visible;
+    data.visible = Math.min(start + (atomic ? ATOMIC_PAGE : ERROR_PAGE), data.rows.length);
+    elDetail.querySelector(atomic ? '.an-atomic-table tbody' : '.an-error-table tbody').insertAdjacentHTML('beforeend',
+        (atomic ? atomicRows : errorRows)(data.rows.slice(start, data.visible)));
+    const kind = atomic ? 'atomic' : 'errors', footer = elDetail.querySelector('[data-error-footer="' + kind + '"]');
+    footer.querySelector('[role=status]').textContent = 'Showing ' + data.visible + ' of ' + data.rows.length + (atomic ? ' atomic groups' : ' error groups');
+    footer.querySelector('[data-act="' + kind + '-more"]').disabled = data.visible >= data.rows.length;
+}
+function jumpErrorOccurrence(row, direction) {
+    const atomic = row.hasAttribute('data-atomic-group');
+    const group = atomic ? atomicData().groups[+row.dataset.atomicGroup] : errorData().groups[+row.dataset.chains];
+    const count = group.ids.length;
+    group.position = group.position < 0 ? (direction > 0 ? 0 : count - 1) : (group.position + direction + count) % count;
+    const occurrence = group.ids[group.position], chain = atomic ? null : CHAINS[occurrence];
+    const origin = atomic ? occurrence : chain[0], top = atomic ? origin : chain[1], track = TRACKS[sTask[origin]];
+    if (track.hidden) { track.hidden = false; layout(); }
+    zoomTo(sStart[top], sEnd[top], origin);
+    setSelection(origin); revealRow(origin); draw();
+    row.querySelector('[data-error-position]').textContent = group.position + 1 + ' / ' + count;
+    if (atomic) row.dataset.slice = origin;
+    else row.dataset.chain = occurrence;
+    toast('occurrence ' + (group.position + 1) + ' / ' + count);
+}
+function exportErrorsCsv(kind) {
+    const filter = (window.fgFilterState || {}).text || '', includeMinor = showMinor ? 1 : 0;
+    const unit = MODE === 'count' ? 'units' : 'ns', scale = MODE === 'count' ? 1000 : 1;
+    const basis = MODE === 'count' ? 'call_order' : adjOn ? 'overhead_subtracted_estimate' : 'measured';
+    let columns;
+    if (kind === 'groups') columns = ['group_id', 'entry', 'entry_is_syscall', 'origin', 'errno', 'errno_name', 'chains', 'to_user', 'handled', 'unknown',
+        'tasks', 'task_labels', 'max_chain_frames', 'verified_chains', 'unverified_chains', 'minor_chains', 'filter', 'include_minor'];
+    else if (kind === 'occurrences') columns = ['group_id', 'chain_index', 'entry', 'entry_is_syscall', 'origin', 'errno', 'errno_name', 'fate', 'chain_frames',
+        'verified', 'minor', 'task', 'pid', 'origin_slice', 'top_slice', 'origin_line', 'top_line', 'origin_start_' + unit, 'origin_end_' + unit,
+        'origin_duration_' + unit, 'top_start_' + unit, 'top_end_' + unit, 'top_duration_' + unit, 'time_mode', 'duration_basis', 'filter', 'include_minor'];
+    else columns = ['group_id', 'slice_index', 'function', 'caller', 'reasons', 'reason_bits', 'task', 'pid', 'line', 'start_' + unit, 'end_' + unit,
+        'duration_' + unit, 'self_' + unit, 'time_mode', 'duration_basis', 'filter'];
+    function* rows() {
+        for (const group of kind === 'atomic' ? atomicData().rows : errorOrder().rows) {
+            if (kind === 'groups') {
+                yield [group.id, group.entry.label, group.entry.isSys ? 1 : 0, group.origin, group.errno, errName(group.errno), group.ids.length,
+                    group.fate[1], group.fate[0], group.fate[2], group.tasks.size, Array.from(group.tasks, task => trackLabel(TRACKS[task])).join('; '),
+                    group.length, group.verified, group.ids.length - group.verified, group.minor, filter, includeMinor];
+                continue;
+            }
+            for (const index of group.ids) {
+                if (kind === 'atomic') {
+                    const task = TRACKS[sTask[index]];
+                    yield [group.id, index, group.name, group.caller, atomicText(group.bits), group.bits, trackLabel(task), task.pid, sLine[index],
+                        sStart[index] / scale, sEnd[index] / scale, durOf(index) / scale, sSelf[index] / scale, MODE, basis, filter];
+                } else {
+                    const chain = CHAINS[index], origin = chain[0], top = chain[1], task = TRACKS[sTask[origin]];
+                    yield [group.id, index, group.entry.label, group.entry.isSys ? 1 : 0, group.origin, group.errno, errName(group.errno), ERROR_FATES[chain[3]],
+                        chain[4], chain[5] ? 1 : 0, chain[6] ? 1 : 0, trackLabel(task), task.pid, origin, top, sLine[origin], sLine[top],
+                        sStart[origin] / scale, sEnd[origin] / scale, durOf(origin) / scale, sStart[top] / scale, sEnd[top] / scale, durOf(top) / scale,
+                        MODE, basis, filter, includeMinor];
+                }
+            }
         }
     }
-    h += '<table class="tl-sum an-tbl"><thead>' + tblHead([['sys', 'syscall / entry', 1], ['origin', 'origin', 1], ['errno', 'errno'],
-        ['count', 'count'], ['user', 'to user'], ['h', 'handled'], ['t', 'tasks'], ['x', 'chain']], k, 'esort') + '</thead><tbody>';
-    for (const g of rows) {
-        const en = errName(g.errno);
-        h += `<tr data-chain="${g.first}" data-chains="${g.ex.join(',')}"><td style="text-align:left">${g.isSys ? '' : '<span class="tl-pill mute">no syscall</span>'}${esc(g.sys)}</td>` +
-            `<td style="text-align:left">${esc(g.origin)}</td><td class="err">${g.errno}${en ? ' ' + en : ''}</td>` +
-            `<td>${g.count}</td><td class="${g.fate[1] ? 'err' : ''}">${g.fate[1] || ''}</td><td>${g.fate[0] || ''}</td>` +
-            `<td>${g.tasks.size}</td><td>${g.len} frames${g.ver ? '' : ' ?'}</td></tr>`;
+    downloadTimelineCsv('funcgraph-errors-' + kind + '.csv', columns, rows());
+}
+function showErrors() {
+    const wasOpen = AN.kind === 'errors' && elDetail.classList.contains('show');
+    AN.kind = 'errors';
+    const data = errorData(), order = errorOrder(), atomic = atomicData();
+    const resetScroll = !wasOpen || !errorView || errorView.data !== data;
+    const sorted = errorView && errorView.sort !== AN.errSort;
+    let html = '<div class="tl-detail-head an-error-head"><span class="tl-detail-title">Errors</span>' +
+        pill('err', data.total + ' error chains') + pill('mute', data.groups.length + ' groups') +
+        (atomic.total ? pill('warn', atomic.total + ' atomic calls') : '') + (textHits ? pill('warn', 'filtered') : '') +
+        (D.btf || D.caps.retval_btf ? '' : pill('warn', 'no BTF: unverified')) +
+        (data.minor || showMinor ? '<label class="an-minor" title="Handled at once; this function never propagated a negative return in the trace">' +
+            '<input type="checkbox" data-act="minor"' + (showMinor ? ' checked' : '') + '>Show ' + data.minor + ' minor</label>' : '') +
+        '<span class="an-error-actions"><button class="tl-btn" data-act="errors-csv"' + (!data.groups.length ? ' disabled' : '') +
+        '>Export groups CSV</button><button class="tl-close" title="Close (Esc)">×</button></span></div>';
+    if (atomic.total) {
+        html += '<div class="an-error-section"><span class="tl-sec">Sleeping functions called in atomic context</span>' +
+            '<button class="tl-btn" data-act="atomic-csv">Export atomic CSV</button></div>' +
+            '<table class="tl-sum an-tbl an-atomic-table"><thead><tr><th>function</th><th>reason</th><th>caller</th><th>calls</th><th>occurrence</th></tr></thead><tbody>' +
+            atomicRows(atomic.rows.slice(0, atomic.visible)) + '</tbody></table>' + errorFooter(true);
     }
-    h += '</tbody></table><div class="an-hint">Click a row to jump to the first occurrence; click again for the next one.</div>';
-    openDetail(h);
+    if (!data.groups.length) {
+        html += '<div class="an-hint">' + (textHits ? 'No visible error chains match the current filter.' :
+            D.caps.retval || CHAINS.length ? 'No visible error returns found.' : 'Error paths need <code>options/funcgraph-retval</code>.') + '</div>';
+    } else {
+        const columns = [['sys', 'syscall / entry', 1], ['origin', 'origin', 1], ['errno', 'errno'], ['count', 'count'],
+            ['user', 'to user'], ['h', 'handled'], ['unknown', 'unknown'], ['t', 'tasks'], ['x', 'chain']];
+        html += '<table class="tl-sum an-tbl an-error-table"><thead><tr>' + columns.map(([key, label, left]) => '<th data-esort="' + key +
+            '" aria-sort="' + (key === AN.errSort ? (errorSortAscending(key) ? 'ascending' : 'descending') : 'none') + '"' +
+            (left ? ' style="text-align:left"' : '') + '><button class="tl-sum-sort">' + label + '</button></th>').join('') +
+            '<th>occurrence</th></tr></thead><tbody>' + errorRows(order.rows.slice(0, order.visible)) + '</tbody></table>' + errorFooter(false);
+    }
+    html += '<div class="an-hint">Click a row for the next occurrence; Shift-click or use ◀ for the previous one. ' +
+        'Every occurrence is accessible, not just the first 50. Unknown means the trace cannot establish the final outcome. ' +
+        'The shared filter matches error origins or atomic calls; exports include unloaded rows. Durations follow Overhead, positions stay as recorded.</div>';
+    openDetail(html);
+    if (resetScroll) elDetail.scrollTop = 0;
+    else if (sorted && order.rows.length) {
+        const table = elDetail.querySelector('.an-error-table'), head = elDetail.querySelector('.an-error-head');
+        const pinned = getComputedStyle(head).top !== 'auto' ? head.offsetHeight : 0;
+        elDetail.scrollTop += table.getBoundingClientRect().top - elDetail.getBoundingClientRect().top - pinned;
+    }
+    errorView = { data, sort: AN.errSort };
 }
 
 // ---- 2. duration distribution of one function ----
@@ -513,32 +660,39 @@ function showLatency() {
 elDetail.addEventListener('change', ev => {
     if (ev.target.dataset && ev.target.dataset.act === 'minor') {
         showMinor = ev.target.checked; rebuildErrList(); draw(); showErrors();
+        elDetail.querySelector('[data-act=minor]').focus({ preventScroll: true });
     }
 });
 elDetail.addEventListener('click', ev => {
     const action = ev.target.closest('[data-act]');
+    if (action && AN.kind === 'errors') {
+        const act = action.dataset.act;
+        if (act === 'errors-more' || act === 'atomic-more') { appendErrorRows(act === 'atomic-more'); ev.stopImmediatePropagation(); return; }
+        if (act === 'errors-csv' || act === 'error-occurrences-csv' || act === 'atomic-csv') {
+            exportErrorsCsv(act === 'errors-csv' ? 'groups' : act === 'atomic-csv' ? 'atomic' : 'occurrences');
+            ev.stopImmediatePropagation(); return;
+        }
+    }
     if (action && (AN.kind === 'lat' || AN.kind === 'sec')) {
         if (action.dataset.act === 'window-more') { appendWindowRows(); ev.stopImmediatePropagation(); return; }
         if (action.dataset.act === 'window-csv') { exportWindowCsv(); ev.stopImmediatePropagation(); return; }
     }
     const th = ev.target.closest('th[data-esort], th[data-lsort]');
     if (th) {
-        if (th.dataset.esort) { AN.errSort = th.dataset.esort; showErrors(); }
+        if (th.dataset.esort) {
+            AN.errSort = th.dataset.esort; showErrors();
+            elDetail.querySelector('th[data-esort="' + AN.errSort + '"] button').focus({ preventScroll: true });
+        }
         else {
             AN.latSort = th.dataset.lsort; showLatency();
             elDetail.querySelector('th[data-lsort="' + AN.latSort + '"] button').focus({ preventScroll: true });
         }
         ev.stopImmediatePropagation(); return;
     }
-    const ec = ev.target.closest('tr[data-chains]');
+    const ec = ev.target.closest('tr[data-chains], tr[data-atomic-group]');
     if (ec) {
-        const list = ec.dataset.chains.split(',').map(Number);
-        const pos = (+ec.dataset.pos || 0) % list.length;
-        ec.dataset.pos = pos + 1;
-        const ch = CHAINS[list[pos]];
-        zoomTo(sStart[ch[1]], sEnd[ch[1]], ch[0]);
-        setSelection(ch[0]); revealRow(ch[0]); draw();
-        toast('occurrence ' + (pos + 1) + ' / ' + list.length);
+        const step = ev.target.closest('[data-error-step]');
+        jumpErrorOccurrence(ec, step ? +step.dataset.errorStep : ev.shiftKey ? -1 : 1);
         ev.stopImmediatePropagation(); return;
     }
     const wr = ev.target.closest('tr[data-win]');

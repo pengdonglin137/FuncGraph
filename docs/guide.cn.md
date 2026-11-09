@@ -757,9 +757,9 @@ CSV 的时间列在时间模式使用 `_ns`；count 模式使用 `_units`（调�
 
 ![an_errors](img/an_errors.png)
 
-*Errors 面板（tests/data/pi4_sched.txt）：按系统调用、源头函数和 errno 分组；`?` 表示没有 BTF、未经类型校验。*
+*Errors 面板（tests/data/pi4_sched.txt）：按系统调用、源头函数和 errno 分组，保留每次出现的位置；`?` 表示至少一条链含未经类型验证的帧。*
 
-- 顶部（如果有）：**Sleeping functions called in atomic context**。列出在关中断、关抢占、关软中断或中断上下文中调用的可能睡眠的函数（`__might_sleep`、`mutex_lock*`、`down*`、`wait_for_completion*`、`msleep`、`schedule_timeout*` 等），以及原因、所在的父函数和次数。点击可以跳到对应的调用。
+- 顶部（如果有）：**Sleeping functions called in atomic context**。列出在关中断、关抢占、关软中断或中断上下文中调用的可能睡眠的函数（`__might_sleep`、`mutex_lock*`、`down*`、`wait_for_completion*`、`msleep`、`schedule_timeout*` 等），按函数、原因和父函数分组，不会把不同调用者混成一行。**即使没有 errno 错误链，也能浏览这些调用**。数量和列表只统计符合共享过滤条件的真实调用，不受 minor 开关影响。默认显示 100 组，**Load more** 每次追加 100 组。
 - 表格：把错误链按 **syscall / entry → origin → errno** 分组：
 
 | 列 | 含义 |
@@ -770,10 +770,22 @@ CSV 的时间列在时间模式使用 `_ns`；count 模式使用 `_units`（调�
 | count | 发生次数 |
 | to user | 其中一直返回到用户态的次数（标红） |
 | handled | 其中被某个调用者处理掉的次数 |
+| unknown | 错误离开了已跟踪的调用窗口，无法确定最终结果的次数；不等于被处理或返回用户态 |
 | tasks | 涉及几个任务 |
-| chain | 传播链最长有几帧；`?` 表示其中有未经类型验证的帧 |
+| chain | 传播链最长有几帧；`?` 表示其中有未经类型验证的帧，悬停可看未经验证的链数 |
+| occurrence | 当前访问的位置 / 全部出现次数；左右按钮访问上一次 / 下一次 |
 
-点击一行跳到第一次出现的位置，再次点击依次跳到下一次，提示显示 `occurrence k / n`。
+点击一行跳到第一次出现的位置，再次点击依次跳到下一次；Shift + 点击或 `◀` 可反向访问，首次反向访问从最后一次开始。组内按源头调用起点、原始索引排序，首尾循环，**不再只保留前 50 次**；原子睡眠表也支持完整导航。左右按钮支持 Enter / Space，行内显示进度并同步时间轴选择，保留当前 Errors 面板。排序或切换 Overhead 不丢失组内位置；改变过滤条件或 minor 范围时重置错误组导航。
+
+**排序与分页**：syscall / entry、origin、errno 升序，其余计数和最大传播深度降序；所有可排序表头都是原生按钮，相同值按原始首条错误链索引稳定排序。默认显示 200 个错误组，**Load more** 每次追加 200 组，不替换旧行，也不丢失加载按钮的键盘焦点。排序恢复第一页并定位到错误表开头；重开同一范围保留已加载数量。汇总按过滤位图和 minor 开关缓存，原子睡眠另按过滤位图缓存；排序、分页和 Overhead 切换不会重新汇总错误链。
+
+**过滤和导出**：共享过滤条件匹配错误链的**源头调用**，或原子睡眠调用本身；顶部数量、表格及导出使用同一范围。`count = to user + handled + unknown`。普通最外层函数始终标记 `no syscall`，即使它与去掉前缀的 syscall 同名也不会合并。Errors 包含全部结果类型；工具栏错误导航的 `to user / all` 开关只限制工具栏导航，不改变这个汇总。
+
+- **Export groups CSV**：导出所有排序后的错误组，包括未加载行；包含入口及是否 syscall、源头、errno、三类结果次数、任务数量与标签、最大链长、已验证 / 未验证链数、minor 数量以及过滤范围。
+- **Export occurrences CSV**：在错误表页脚导出每条错误链，按当前组排序及组内出现顺序排列。包含原始 `chain_index`、源头 / 顶端切片与 trace 行号、任务、结果、验证与 minor 标记、起止及调用耗时。
+- **Export atomic CSV**：导出全部原子睡眠调用，而不只是每组的第一个；包含原始 `slice_index`、函数、父函数、原因及位掩码、任务、trace 行号、起止、总耗时和自身耗时。
+
+`group_id` 只标识当前过滤 / minor 范围内的组，不是跨范围的全局 ID；`chain_index` 和 `slice_index` 保留源报告的原始索引。调用级 CSV 的耗时随 Overhead 更新，但起止不变；`time_mode`、`duration_basis` 和 `filter` 明确记录口径。count 模式使用 `_units`，不是 `_ns`；packed 的起止是排列坐标，不能当作真实墙钟时间。CSV 复用 UTF-8 BOM、引号和公式注入防护。窄屏 / 矮窗口的标题随内容纵向滚动，不留下空白表头偏移；横向滚动宽表时，导出与关闭仍固定在视窗内。
 
 **次要错误（minor）默认隐藏**：只有一帧、马上被调用者处理掉、并且这个函数的负返回值在整份 trace 里从来没有向上传播过的错误源头。这类通常是带符号但不是 errno 的数值（例如 `memcg_state_val_in_pages` 返回 -1 这样的页数增量），或者正常的探测路径（尝试各个 binfmt 处理器时 `load_script` 返回 -ENOEXEC）。它们不在切片上标记，不计入错误导航、概览条和对比。错误面板里勾选 *show N minor* 可以显示它们，`--export` 导出时标记为 `"minor": true`。
 

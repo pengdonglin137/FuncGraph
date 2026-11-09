@@ -757,9 +757,9 @@ Time columns use `_ns`, or `_units` in count mode (call-order units, not nanosec
 
 ![an_errors](img/an_errors.png)
 
-*Errors panel (tests/data/pi4_sched.txt): grouped by syscall, origin and errno; `?` means not verified (no BTF).*
+*Errors panel (tests/data/pi4_sched.txt): grouped by syscall, origin and errno, retaining every occurrence; `?` means at least one chain has unverified frames.*
 
-- At the top (if any): **Sleeping functions called in atomic context**. Calls of functions that may sleep (`__might_sleep`, `mutex_lock*`, `down*`, `wait_for_completion*`, `msleep`, `schedule_timeout*`, …) with irqs off, preemption disabled, BH disabled or from an interrupt; with the reasons, the parent function and the count. Click to go to the call.
+- At the top (if any): **Sleeping functions called in atomic context**. Calls of functions that may sleep (`__might_sleep`, `mutex_lock*`, `down*`, `wait_for_completion*`, `msleep`, `schedule_timeout*`, …) with irqs off, preemption disabled, BH disabled or from an interrupt. Groups distinguish function, reasons and parent function rather than conflating different callers. **These calls remain browsable even without errno chains.** Counts and rows include only matching real calls, independently of the minor toggle. Initially 100 groups load; **Load more** appends 100.
 - The table groups error chains by **syscall / entry → origin → errno**:
 
 | Column | Meaning |
@@ -770,10 +770,22 @@ Time columns use `_ns`, or `_units` in count mode (call-order units, not nanosec
 | count | occurrences |
 | to user | of these, how many reached user space (red) |
 | handled | how many were handled by a caller |
+| unknown | errors leaving the traced call window, with no established final outcome; neither handled nor known to reach user space |
 | tasks | number of tasks involved |
-| chain | longest propagation chain in frames; `?` when some frames are not type-verified |
+| chain | longest propagation chain in frames; `?` when some frames are not type-verified, with the number of unverified chains in the tooltip |
+| occurrence | current position / full occurrence count; arrows visit the previous / next occurrence |
 
-Click a row to go to the first occurrence, click again for the next one (`occurrence k / n`).
+Click a row for the first occurrence, then the next; Shift-click or `◀` goes backward, starting with the last occurrence when none is selected. Groups wrap in origin-start / original-index order and **retain every occurrence, not just the first 50**. Atomic groups use the same complete navigation. Arrow buttons support Enter / Space, show the current position and synchronize the timeline selection without replacing Errors. Sorting and Overhead preserve each group's cursor; changing the filter or minor scope resets error-group navigation.
+
+**Sorting and pagination:** syscall / entry, origin and errno ascend; counts and maximum propagation depth descend. Every sortable header is a native button, with ties ordered by the original first chain index. Initially 200 error groups load; **Load more** appends 200 without replacing existing rows or losing keyboard focus. Sorting resets to the first page and scrolls to the error table; reopening the same scope retains loaded counts. Error aggregates cache by filter bitmap / minor toggle; atomic groups cache separately by filter bitmap. Sorting, pagination and Overhead do not reaggregate chains.
+
+**Filtering and export:** the shared filter matches an error chain's **origin call**, or the atomic call itself. Header counts, tables and exports use the same scope, and `count = to user + handled + unknown`. Ordinary roots remain tagged `no syscall` and never merge with a syscall whose shortened name happens to match. Errors includes all outcomes; the toolbar navigator's `to user / all` switch affects navigation only, not this summary.
+
+- **Export groups CSV:** all sorted error groups, including unloaded rows, with entry / syscall status, origin, errno, all three outcome counts, task counts and labels, maximum chain length, verified / unverified and minor counts, and scope metadata.
+- **Export occurrences CSV:** the error-table footer exports every chain in the current group order, then occurrence order. Fields include original `chain_index`, origin / top slices and trace lines, task, outcome, verification / minor flags, start/end coordinates and call durations.
+- **Export atomic CSV:** every atomic call, not merely a group's first example, with original `slice_index`, function, parent, reasons and bitmask, task, trace line, coordinates, inclusive and self durations.
+
+`group_id` is local to the current filter / minor scope, not a cross-scope global ID; `chain_index` and `slice_index` retain original report coordinates. Call-level CSV durations follow Overhead, but start/end coordinates never move. `time_mode`, `duration_basis` and `filter` record the basis. Count uses `_units`, not `_ns`; packed coordinates are not real wall-clock positions. CSV shares UTF-8 BOM, quoting and formula protection. Compact headers scroll vertically without a phantom sticky-header offset; horizontal table scrolling keeps export and close inside the viewport.
 
 **Minor errors** are hidden by default: single-frame origins handled at once by the caller, from functions whose negative returns never propagate anywhere in the trace. These are usually signed values that are not errnos (e.g. `memcg_state_val_in_pages` returns page deltas like -1) or normal probing (`load_script` returning -ENOEXEC while the binfmt handlers are tried). They are not marked on slices, not counted in navigation, the overview or Compare; the checkbox *show N minor* in the Errors panel brings them back, and `--export` marks them with `"minor": true`.
 

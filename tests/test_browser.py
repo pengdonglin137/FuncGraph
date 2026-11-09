@@ -382,8 +382,14 @@ class BrowserSmokeTest(unittest.TestCase):
                         self.assertLessEqual(bounds['x'] + bounds['width'], width)
                         self.assertGreaterEqual(bounds['y'], 0)
                         self.assertLessEqual(bounds['y'] + bounds['height'], height)
+                    self.ev("() => { const detail = document.querySelector('.tl-detail'); detail.scrollLeft = detail.scrollWidth; }")
+                    for selector in ['[data-act=window-csv]', '[data-act=window-more]', '.tl-close']:
+                        bounds = self.page.locator(selector).bounding_box()
+                        self.assertGreaterEqual(bounds['x'], 0)
+                        self.assertLessEqual(bounds['x'] + bounds['width'], width)
                     if width <= 640 or height <= 600:
-                        self.assertEqual(self.page.locator('.an-window-head').evaluate('(node) => getComputedStyle(node).position'), 'static')
+                        self.assertEqual(self.page.locator('.an-window-head').evaluate('(node) => getComputedStyle(node).top'), 'auto')
+                        self.assertTrue(self.page.locator('.an-window-table th').evaluate_all('(nodes) => nodes.every(node => getComputedStyle(node).top === "0px")'))
                     row = self.page.locator('tr[data-win], tr[data-sec]').first
                     row.scroll_into_view_if_needed()
                     bounds, detail = row.bounding_box(), self.page.locator('.tl-detail').bounding_box()
@@ -397,6 +403,197 @@ class BrowserSmokeTest(unittest.TestCase):
         self.ev("fgView('timeline').probe().latency()")
         self.assertEqual(self.page.locator('tr[data-win]').count(), 300)
         self.assertIn('150000', self.page.locator('.tl-detail-head').inner_text())
+
+    def test_error_atomic_only_respects_filter_and_separates_callers(self):
+        self.open_range_data(['worker', 'sleeper', 'other_worker', 'sleeper'], starts=[0, 100, 3000, 3100],
+                             durations=[2000, 1000, 2000, 1000], parents=[-1, 0, -1, 2],
+                             columns={'depth': [0, 1, 0, 1]}, extra={'atomic': [[1, 1], [3, 1]]})
+        self.ev("fgView('timeline').probe().errors()")
+        self.assertEqual(self.page.locator('tr.an-atomic').count(), 2)
+        self.assertIn('2 atomic calls', self.page.locator('.tl-detail-head').inner_text())
+        self.assertTrue(self.page.locator('[data-act=errors-csv]').is_disabled())
+        rows = self.download_csv('[data-act=atomic-csv]')
+        self.assertEqual([row['caller'] for row in rows], ['worker', 'other_worker'])
+        self.page.locator('tr.an-atomic').nth(1).click()
+        self.assertEqual(self.ev("fgView('timeline').probe().sel()"), 3)
+        self.assertEqual(self.page.locator('.tl-detail-title').inner_text(), 'Errors')
+        self.ev("fgNotifyFilter('one sleeper', new Set([2]))")
+        self.assertEqual(self.page.locator('tr.an-atomic').count(), 1)
+        self.assertEqual(len(self.download_csv('[data-act=atomic-csv]')), 1)
+        self.ev("fgNotifyFilter('no calls', new Set())")
+        self.assertEqual(self.page.locator('tr.an-atomic').count(), 0)
+        self.assertNotIn('2 atomic calls', self.page.locator('.tl-detail').inner_text())
+        self.assertIn('current filter', self.page.locator('.tl-detail').inner_text())
+
+    def test_error_occurrences_navigate_beyond_fifty_and_preserve_position(self):
+        self.open_range_data(['origin'] * 60, extra={'chains': [[index, index, 2, index % 3, 1, 1, 0] for index in range(60)]})
+        self.ev("fgView('timeline').probe().errors()")
+        self.assertEqual(self.page.locator('tr[data-chains]').count(), 1)
+        self.ev("() => { for (let index = 0; index < 51; index++) document.querySelector('tr[data-chains]').click(); }")
+        self.assertEqual(self.ev("fgView('timeline').probe().sel()"), 50)
+        self.assertIn('51 / 60', self.page.locator('tr[data-chains]').inner_text())
+        self.page.locator('tr[data-chains] [data-error-step="1"]').press('Space')
+        self.assertEqual(self.ev("fgView('timeline').probe().sel()"), 51)
+        self.page.locator('tr[data-chains] [data-error-step="-1"]').press('Enter')
+        self.assertEqual(self.ev("fgView('timeline').probe().sel()"), 50)
+        self.page.click('[data-act=adj]')
+        self.page.locator('th[data-esort=origin] button').press('Enter')
+        self.assertIn('51 / 60', self.page.locator('tr[data-chains]').inner_text())
+        self.page.locator('tr[data-chains] [data-error-step="1"]').press('Enter')
+        self.assertEqual(self.ev("fgView('timeline').probe().sel()"), 51)
+        self.assertEqual(len(self.download_csv('[data-act=error-occurrences-csv]')), 60)
+        self.assertEqual(self.page.locator('.tl-detail-title').inner_text(), 'Errors')
+
+    def test_error_entry_classification_does_not_merge_syscalls_with_ordinary_roots(self):
+        self.open_range_data(['open', 'origin', '__x64_sys_open', 'origin'], starts=[0, 100, 3000, 3100],
+                             durations=[2000, 1000, 2000, 1000], parents=[-1, 0, -1, 2],
+                             columns={'depth': [0, 1, 0, 1]},
+                             extra={'chains': [[1, 1, 2, 0, 1, 1, 0], [3, 3, 2, 1, 2, 0, 0]]})
+        self.ev("fgView('timeline').probe().errors()")
+        self.assertEqual(self.page.locator('tr[data-chains]').count(), 2)
+        self.assertEqual(self.page.locator('tr[data-chains] .tl-pill').count(), 1)
+        rows = self.download_csv('[data-act=errors-csv]')
+        self.assertEqual([row['entry'] for row in rows], ['open', 'open'])
+        self.assertEqual([int(row['entry_is_syscall']) for row in rows], [0, 1])
+        self.assertEqual([int(row['unverified_chains']) for row in rows], [0, 1])
+
+    def test_error_all_columns_sort_real_fates_tasks_and_chain_lengths(self):
+        names = ['entryA', 'entryB', 'entryC', 'entryB', 'entryC', 'entryC']
+        tasks = [dict(pid=index + 1, comm='task' + str(index), kind=0, cpu=0) for index in range(3)]
+        fates, lengths, errnos = [0, 1, 2, 1, 2, 2], [4, 2, 3, 2, 3, 3], [22, 5, 2, 5, 2, 2]
+        self.open_range_data(names, columns={'task': [0, 0, 0, 1, 1, 2]},
+                             extra={'tasks': tasks, 'chains': [[index, index, errnos[index], fates[index], lengths[index], 1, 0] for index in range(6)]})
+        self.ev("fgView('timeline').probe().errors()")
+        for key, expected in [('h', ['entryA', 'entryB', 'entryC']), ('user', ['entryB', 'entryA', 'entryC']),
+                              ('t', ['entryC', 'entryB', 'entryA']), ('x', ['entryA', 'entryC', 'entryB']),
+                              ('unknown', ['entryC', 'entryA', 'entryB']), ('errno', ['entryC', 'entryB', 'entryA']),
+                              ('sys', ['entryA', 'entryB', 'entryC']), ('origin', ['entryA', 'entryB', 'entryC'])]:
+            with self.subTest(key=key):
+                self.page.locator(f'th[data-esort={key}] button').press('Enter')
+                self.assertTrue(self.page.locator(f'th[data-esort={key}] button').evaluate('(node) => node === document.activeElement'))
+                rows = self.download_csv('[data-act=errors-csv]')
+                self.assertEqual([row['origin'] for row in rows], expected)
+                self.assertTrue(all(int(row['chains']) == int(row['handled']) + int(row['to_user']) + int(row['unknown']) for row in rows))
+        self.ev("fgNotifyFilter('last origin', new Set([6]))")
+        row = self.download_csv('[data-act=errors-csv]')[0]
+        self.assertEqual((int(row['chains']), int(row['unknown']), int(row['tasks'])), (1, 1, 1))
+
+    def test_error_groups_paginate_export_all_and_reuse_counts(self):
+        count = 650
+        self.open_range_data(['origin_' + str(index).zfill(4) for index in range(count)],
+                             extra={'chains': [[index, index, 2, 0, 1, 1, 0] for index in range(count)]})
+        self.ev("fgView('timeline').probe().errors()")
+        self.assertEqual(self.page.locator('tr[data-chains]').count(), 200)
+        first = self.page.locator('tr[data-chains]').first.element_handle()
+        self.page.locator('[data-act=errors-more]').press('Enter')
+        self.assertTrue(self.page.locator('[data-act=errors-more]').evaluate('(node) => node === document.activeElement'))
+        self.assertTrue(first.evaluate('(node) => node.isConnected'))
+        self.assertEqual(self.page.locator('tr[data-chains]').count(), 400)
+        self.assertEqual(len(self.download_csv('[data-act=errors-csv]')), count)
+        occurrences = self.download_csv('[data-act=error-occurrences-csv]')
+        self.assertEqual(len(occurrences), count)
+        self.assertEqual(int(occurrences[-1]['origin_line']), count)
+        writes = self.ev("""() => {
+            let writes = 0;
+            const original = Set.prototype.add;
+            Set.prototype.add = function(value) { if (typeof value === 'number') writes++; return original.call(this, value); };
+            document.querySelector('th[data-esort=origin] button').click();
+            document.querySelector('[data-act=adj]').click();
+            Set.prototype.add = original;
+            return writes;
+        }""")
+        self.assertEqual(writes, 0)
+        self.assertEqual(self.page.locator('tr[data-chains]').count(), 200)
+        while self.page.locator('[data-act=errors-more]').is_enabled():
+            self.page.click('[data-act=errors-more]')
+        self.assertEqual(self.page.locator('tr[data-chains]').count(), count)
+        self.ev("fgNotifyFilter('last origin', new Set([650]))")
+        self.assertEqual(self.page.locator('tr[data-chains]').count(), 1)
+        self.assertEqual(len(self.download_csv('[data-act=errors-csv]')), 1)
+
+    def test_error_atomic_groups_paginate_navigate_and_export_every_call(self):
+        names = ['sleeper'] * 60 + ['sleeper_' + str(index) for index in range(250)]
+        self.open_range_data(names, extra={'atomic': [[index, 1] for index in range(len(names))]})
+        self.ev("fgView('timeline').probe().errors()")
+        self.assertEqual(self.page.locator('tr.an-atomic').count(), 100)
+        first = self.page.locator('tr.an-atomic').first.element_handle()
+        self.page.locator('tr.an-atomic').first.locator('[data-error-step="-1"]').press('Enter')
+        self.assertEqual(self.ev("fgView('timeline').probe().sel()"), 59)
+        self.ev("() => { for (let index = 0; index < 52; index++) document.querySelector('tr.an-atomic').click(); }")
+        self.assertEqual(self.ev("fgView('timeline').probe().sel()"), 51)
+        self.page.locator('[data-act=atomic-more]').press('Enter')
+        self.assertTrue(self.page.locator('[data-act=atomic-more]').evaluate('(node) => node === document.activeElement'))
+        self.assertTrue(first.evaluate('(node) => node.isConnected'))
+        self.assertEqual(self.page.locator('tr.an-atomic').count(), 200)
+        rows = self.download_csv('[data-act=atomic-csv]')
+        self.assertEqual(len(rows), len(names))
+        self.assertEqual(len({row['slice_index'] for row in rows}), len(names))
+        self.page.click('[data-act=atomic-more]')
+        self.assertEqual(self.page.locator('tr.an-atomic').count(), 251)
+        self.ev("fgNotifyFilter('last atomic', new Set([310]))")
+        self.assertEqual(self.page.locator('tr.an-atomic').count(), 1)
+        self.assertEqual(len(self.download_csv('[data-act=atomic-csv]')), 1)
+
+    def test_error_minor_toggle_is_reachable_in_filtered_empty_state(self):
+        self.open_range_data(['major', 'minor', 'minor'],
+                             extra={'chains': [[0, 0, 2, 1, 2, 1, 0], [1, 1, 2, 0, 1, 1, 1], [2, 2, 2, 0, 1, 0, 1]]})
+        self.ev("fgView('timeline').probe().errors()")
+        self.assertEqual(len(self.download_csv('[data-act=error-occurrences-csv]')), 1)
+        self.assertIn('Show 2 minor', self.page.locator('.an-minor').inner_text())
+        self.ev("fgNotifyFilter('minor only', new Set([2, 3]))")
+        self.assertEqual(self.page.locator('tr[data-chains]').count(), 0)
+        self.assertTrue(self.page.locator('[data-act=errors-csv]').is_disabled())
+        self.page.locator('[data-act=minor]').press('Space')
+        self.assertTrue(self.page.locator('[data-act=minor]').is_checked())
+        self.assertEqual(self.page.locator('tr[data-chains]').count(), 1)
+        rows = self.download_csv('[data-act=error-occurrences-csv]')
+        self.assertEqual(len(rows), 2)
+        self.assertTrue(all(row['minor'] == '1' and row['include_minor'] == '1' for row in rows))
+        self.page.locator('[data-act=minor]').press('Space')
+        self.assertEqual(self.page.locator('tr[data-chains]').count(), 0)
+
+    def test_error_csv_units_adjusted_geometry_quoting_and_compact_controls(self):
+        for mode in ['abs', 'count']:
+            if mode != 'abs':
+                self.ev("fgSwitchView('text')")
+                self.page.reload()
+            self.open_range_data(['=SUM(1,2)'], mode=mode,
+                                 extra={'chains': [[0, 0, 2, 2, 1, 0, 0]], 'atomic': [[0, 1]]})
+            self.ev("fgView('timeline').probe().errors()")
+            row = self.download_csv('[data-act=error-occurrences-csv]')[0]
+            unit = 'units' if mode == 'count' else 'ns'
+            self.assertEqual(row['origin'], "'=SUM(1,2)")
+            self.assertEqual(row['fate'], 'unknown')
+            self.assertEqual(row['time_mode'], mode)
+            self.assertEqual(float(row['origin_duration_' + unit]), 1 if mode == 'count' else 1000)
+            if mode == 'abs':
+                self.page.click('[data-act=adj]')
+                adjusted = self.download_csv('[data-act=error-occurrences-csv]')[0]
+                self.assertEqual(float(adjusted['origin_duration_ns']), 500)
+                self.assertEqual(adjusted['duration_basis'], 'overhead_subtracted_estimate')
+                self.assertEqual(row['origin_start_ns'], adjusted['origin_start_ns'])
+                self.assertEqual(row['origin_end_ns'], adjusted['origin_end_ns'])
+                self.assertEqual(float(self.download_csv('[data-act=atomic-csv]')[0]['duration_ns']), 500)
+            else:
+                self.assertEqual(row['duration_basis'], 'call_order')
+            for width, height in [(320, 700), (390, 844), (800, 420), (1500, 900)]:
+                self.page.set_viewport_size({'width': width, 'height': height})
+                self.ev("() => { const detail = document.querySelector('.tl-detail'); detail.scrollTop = 0; detail.scrollLeft = 0; }")
+                self.page.wait_for_timeout(100)
+                for selector in ['[data-act=errors-csv]', '.tl-close']:
+                    bounds = self.page.locator(selector).bounding_box()
+                    self.assertGreaterEqual(bounds['x'], 0)
+                    self.assertLessEqual(bounds['x'] + bounds['width'], width)
+                    self.assertGreaterEqual(bounds['y'], 0)
+                    self.assertLessEqual(bounds['y'] + bounds['height'], height)
+                self.ev("() => { const detail = document.querySelector('.tl-detail'); detail.scrollLeft = detail.scrollWidth; }")
+                for selector in ['[data-act=errors-csv]', '[data-act=error-occurrences-csv]', '[data-act=atomic-csv]', '.tl-close']:
+                    bounds = self.page.locator(selector).bounding_box()
+                    self.assertGreaterEqual(bounds['x'], 0)
+                    self.assertLessEqual(bounds['x'] + bounds['width'], width)
+                if width <= 640 or height <= 600:
+                    self.assertEqual(self.page.locator('.an-error-head').evaluate('(node) => getComputedStyle(node).top'), 'auto')
+                    self.assertTrue(self.page.locator('.tl-detail table.tl-sum th').evaluate_all('(nodes) => nodes.every(node => getComputedStyle(node).top === "0px")'))
 
     def test_range_replaces_analysis_state_and_resets_search_position(self):
         self.open_timeline()
