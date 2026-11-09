@@ -10,43 +10,13 @@ permissions:
   contents: read
 
 jobs:
-  test:
-    # Hermetic tests only: golden reports and real-vmlinux comparisons need kernel trees
-    # (FG_VMLINUX), fgcapture.sh capturing needs root + tracefs; those are skipped here.
-    runs-on: ubuntu-22.04
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - python: "3.8"      # oldest supported
-            browser: false     # Playwright needs Python >= 3.9
-          - python: "3.12"
-            browser: true
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: ${{ matrix.python }}
-      - uses: actions/setup-node@v4        # JS syntax checks of the generated reports
-        with:
-          node-version: 20
-      - name: Install dependencies
-        run: |
-          sudo apt-get update -q
-          sudo apt-get install -y -q binutils shellcheck
-          pip install pyelftools pygments
-      - name: Install Playwright + Chromium
-        if: matrix.browser
-        run: |
-          pip install playwright
-          python -m playwright install --with-deps chromium
-      - name: Run tests
-        run: tests/run.sh
+  checks:
+    uses: ./.github/workflows/test-and-package.yml
 
   pages:
     # Publishes site/ plus the sample report to GitHub Pages (Settings -> Pages -> Source: GitHub Actions).
     if: github.event_name == 'push' && github.ref == 'refs/heads/master'
-    needs: test
+    needs: checks
     runs-on: ubuntu-latest
     permissions:
       pages: write

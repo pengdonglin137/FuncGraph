@@ -8,7 +8,9 @@ from functools import lru_cache
 
 from .constants import PROJECT_DIR
 
-ASSET_DIR = os.path.join(PROJECT_DIR, 'assets')
+ASSET_DIR = os.path.join(PROJECT_DIR, 'fglib', '_assets')
+if not os.path.isdir(ASSET_DIR):
+    ASSET_DIR = os.path.join(PROJECT_DIR, 'assets')
 
 REPORT_CSS = 'report/report.css'
 REPORT_JS = 'report/report.js'

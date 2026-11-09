@@ -1,0 +1,4 @@
+include README.cn.md
+include docs/design.md docs/guide.cn.md docs/guide.en.md
+include docs/releasing.md
+recursive-include tests *.py *.sh *.txt

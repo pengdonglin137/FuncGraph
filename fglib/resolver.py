@@ -46,6 +46,7 @@ class AddressResolver:
 
         # Add fastfaddr2line-specific parameters
         if os.path.basename(self.faddr2line_path) == 'fastfaddr2line.py':
+            cmd.insert(0, sys.executable)
             if self.path_prefix:
                 prefixes = self.path_prefix if isinstance(self.path_prefix, list) else [self.path_prefix]
                 for prefix in prefixes:
@@ -320,6 +321,7 @@ class AddressResolver:
 
         # 如果是fastfaddr2line，添加额外参数
         if os.path.basename(self.faddr2line_path) == 'fastfaddr2line.py':
+            cmd.insert(0, sys.executable)
             if self.path_prefix:
                 prefixes = self.path_prefix if isinstance(self.path_prefix, list) else [self.path_prefix]
                 for prefix in prefixes:

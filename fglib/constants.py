@@ -3,7 +3,7 @@
 import os
 
 
-# Repository root: fastfaddr2line.py and assets/ live here
+# Top-level Python module directory: checkout root or installed site-packages
 PROJECT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 

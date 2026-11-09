@@ -71,6 +71,21 @@ python3 funcgraph.py --timeline --enable-fold --filter --func-links --highlight-
 - pyelftools (for `--fast`)
 - Optional: Pygments (for syntax highlighting)
 
+### Install a release package
+
+Download a wheel from GitHub Releases and install it with optional dependencies:
+
+```bash
+python3 -m pip install './funcgraph-0.9.0-py3-none-any.whl[all]'
+fgreport -P trace.txt
+```
+
+The package installs `funcgraph`, `fgreport`, `fastfaddr2line`, and `fgcapture.sh`;
+the base install works without Python dependencies, while `[all]` adds pyelftools
+and Pygments. Pushing a matching `vX.Y.Z` tag automatically tests, builds, and
+publishes the wheel and source package as a GitHub Release (not PyPI).
+See [Building and releasing](docs/releasing.md) for details.
+
 ### Quick start: `fgreport`
 
 `fgreport` wraps `funcgraph.py` with all features on and the kernel paths kept in a preset, so a report is one short command:

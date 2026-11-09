@@ -1,0 +1,97 @@
+"""Run with an installed distribution's Python: python -I tests/smoke_installed.py."""
+import json
+import os
+from pathlib import Path
+import re
+import shutil
+import subprocess
+import sys
+import sysconfig
+import tempfile
+import unittest
+from importlib.metadata import distribution
+
+import fglib
+from fglib.assets import all_asset_paths, read_asset
+from fglib.constants import APP_VERSION, PROJECT_DIR
+from fglib.resolver import AddressResolver
+
+ROOT = Path(__file__).resolve().parent.parent
+WITH_EXTRAS = '--with-extras' in sys.argv
+if WITH_EXTRAS:
+    sys.argv.remove('--with-extras')
+
+
+class InstalledPackageTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.env = dict(os.environ, FG_CONFIG=os.path.join(self.tmp.name, 'config.ini'))
+        self.env.pop('FG_PRESET', None)
+
+    def run_command(self, *command):
+        result = subprocess.run(command, cwd=self.tmp.name, env=self.env,
+                                capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        return result.stdout + result.stderr
+
+    def executable(self, name):
+        command = shutil.which(name, path=sysconfig.get_path('scripts'))
+        self.assertIsNotNone(command, name + ' was not installed')
+        return command
+
+    def test_metadata_and_resources(self):
+        self.assertNotEqual(Path(fglib.__file__).resolve().parent, ROOT / 'fglib')
+        self.assertEqual(distribution('funcgraph').version, APP_VERSION)
+        for asset in all_asset_paths():
+            with self.subTest(asset=asset):
+                self.assertTrue(read_asset(asset))
+        self.assertTrue(Path(PROJECT_DIR, 'fastfaddr2line.py').is_file())
+
+    def test_command_help(self):
+        for command in ('funcgraph', 'fgreport', 'fgcapture.sh'):
+            with self.subTest(command=command):
+                self.assertTrue(self.run_command(self.executable(command), '--help'))
+        self.run_command(sys.executable, '-I', '-m', 'funcgraph', '--help')
+
+    def test_report_and_compare(self):
+        output = Path(self.tmp.name, 'report.html')
+        exported = Path(self.tmp.name, 'analysis.json')
+        trace = str(ROOT / 'tests' / 'data' / 'pi4_sched.txt')
+        self.run_command(self.executable('funcgraph'), '--no-config', '--timeline',
+                         '--enable-fold', '--filter', '--compare', trace,
+                         '--export', str(exported), '--output', str(output), trace)
+        report = output.read_text(encoding='utf-8')
+        for data_id in ('tlData', 'cmpData'):
+            match = re.search(r'<script type="application/json" id="' + data_id + r'">(.*?)</script>',
+                              report, re.S)
+            self.assertIsNotNone(match, data_id)
+            self.assertTrue(json.loads(match.group(1)))
+        self.assertIn('id="filterInput"', report)
+        self.assertTrue(json.loads(exported.read_text(encoding='utf-8'))['functions'])
+
+    def test_fgreport(self):
+        output = Path(self.tmp.name, 'wrapper.html')
+        self.run_command(self.executable('fgreport'), '-P', '-o', str(output),
+                         str(ROOT / 'tests' / 'data' / 'pi4_sched.txt'))
+        self.assertIn('id="tlData"', output.read_text(encoding='utf-8'))
+
+    @unittest.skipUnless(WITH_EXTRAS, 'run with --with-extras after installing funcgraph[all]')
+    def test_fast_resolver_and_highlighting(self):
+        import pygments
+
+        self.assertTrue(pygments.__version__)
+        self.run_command(self.executable('fastfaddr2line'), '--help')
+        source = Path(self.tmp.name, 'probe.c')
+        binary = Path(self.tmp.name, 'probe')
+        source.write_text('int packaged_probe(void) { return 7; }\n'
+                          'int main(void) { return packaged_probe(); }\n', encoding='utf-8')
+        self.run_command('cc', '-g', '-O0', '-o', str(binary), str(source))
+        resolver = AddressResolver(os.path.join(PROJECT_DIR, 'fastfaddr2line.py'), str(binary))
+        locations = resolver.resolve_batch(['packaged_probe+0x0/0x1'], use_list=True)
+        self.assertTrue(locations)
+        self.assertIn('probe.c:', '\n'.join(locations.values()))
+
+
+if __name__ == '__main__':
+    unittest.main(verbosity=2)

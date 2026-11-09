@@ -1,0 +1,72 @@
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  check-tag:
+    runs-on: ubuntu-22.04
+    outputs:
+      prerelease: ${{ steps.version.outputs.prerelease }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Check tag against the package version
+        id: version
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          python - <<'PY'
+          import os
+          import re
+          from fglib.constants import APP_VERSION
+
+          match = re.fullmatch(r"\d+\.\d+\.\d+(?:(a|b|rc)\d+)?", APP_VERSION)
+          if not match:
+              raise SystemExit("APP_VERSION must be X.Y.Z or X.Y.ZrcN / aN / bN")
+          tag = os.environ["RELEASE_TAG"]
+          if tag != "v" + APP_VERSION:
+              raise SystemExit(f"Tag {tag!r} must match v{APP_VERSION}; update fglib/constants.py before tagging")
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              output.write("prerelease=" + str(bool(match.group(1))).lower() + "\n")
+          PY
+
+  build:
+    needs: check-tag
+    uses: ./.github/workflows/test-and-package.yml
+
+  publish:
+    needs: [check-tag, build]
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: python-dist
+          path: dist
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_name }}
+          PRERELEASE: ${{ needs.check-tag.outputs.prerelease }}
+        shell: bash
+        run: |
+          cd dist
+          sha256sum --check SHA256SUMS
+          args=(--verify-tag --generate-notes --title "FuncGraph $RELEASE_TAG")
+          if [ "$PRERELEASE" = true ]; then
+            args+=(--prerelease --latest=false)
+          fi
+          gh release create "$RELEASE_TAG" ./*.whl ./*.tar.gz SHA256SUMS "${args[@]}"

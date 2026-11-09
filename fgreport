@@ -25,8 +25,9 @@ import subprocess
 import sys
 import webbrowser
 
-HERE = os.path.dirname(os.path.realpath(__file__))
-FUNCGRAPH = os.path.join(HERE, 'funcgraph.py')
+from fglib.constants import PROJECT_DIR
+
+FUNCGRAPH = os.path.join(PROJECT_DIR, 'funcgraph.py')
 CONFIG = os.path.join(os.path.expanduser('~'), '.config', 'funcgraph', 'config.ini')
 BIG = 150000          # lines; above this the text view is too heavy for browsers
 PRESET_KEYS = ('vmlinux', 'kernel-src', 'base-url', 'source-rev', 'source-url', 'cross-compile', 'llvm',

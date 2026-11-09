@@ -73,6 +73,21 @@ python3 funcgraph.py --timeline --enable-fold --filter --func-links --highlight-
 - pyelftools（`--fast` 需要）
 - 可选：Pygments（用于语法高亮）
 
+### 安装发布包
+
+从 GitHub Releases 下载 wheel，安装时可以一并启用可选依赖：
+
+```bash
+python3 -m pip install './funcgraph-0.9.0-py3-none-any.whl[all]'
+fgreport -P trace.txt
+```
+
+安装后可使用 `funcgraph`、`fgreport`、`fastfaddr2line` 和 `fgcapture.sh`。
+基础包不依赖第三方 Python 库，`[all]` 额外安装 pyelftools 和 Pygments。
+推送与代码版本一致的 `vX.Y.Z` 标签，会自动测试、构建 wheel 和源码包，
+并发布到 GitHub Release（不发布到 PyPI）。构建及发布步骤见
+[发布说明](docs/releasing.md)。
+
 ### 快速上手：`fgreport`
 
 `fgreport` 是 `funcgraph.py` 的封装：默认打开全部功能，内核路径保存在预设里，生成报告只需一条短命令：
