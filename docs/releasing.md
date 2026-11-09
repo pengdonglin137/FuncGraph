@@ -5,7 +5,7 @@
 Download the `.whl` or `.tar.gz` attachment from a GitHub Release, then install it:
 
 ```bash
-python3 -m pip install './funcgraph-0.9.0-py3-none-any.whl[all]'
+python3 -m pip install './funcgraph-0.9.1-py3-none-any.whl[all]'
 fgreport -P trace.txt
 funcgraph --timeline --output report.html trace.txt
 ```

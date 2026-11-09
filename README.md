@@ -76,7 +76,7 @@ python3 funcgraph.py --timeline --enable-fold --filter --func-links --highlight-
 Download a wheel from GitHub Releases and install it with optional dependencies:
 
 ```bash
-python3 -m pip install './funcgraph-0.9.0-py3-none-any.whl[all]'
+python3 -m pip install './funcgraph-0.9.1-py3-none-any.whl[all]'
 fgreport -P trace.txt
 ```
 
@@ -454,6 +454,6 @@ Open source project, contributions welcome!
 
 ---
 
-**Version**: v0.9.0
+**Version**: v0.9.1
 **Last Updated**: 2026-11-09
 **Status**: ✅ Production Ready

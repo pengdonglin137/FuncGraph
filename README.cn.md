@@ -78,7 +78,7 @@ python3 funcgraph.py --timeline --enable-fold --filter --func-links --highlight-
 从 GitHub Releases 下载 wheel，安装时可以一并启用可选依赖：
 
 ```bash
-python3 -m pip install './funcgraph-0.9.0-py3-none-any.whl[all]'
+python3 -m pip install './funcgraph-0.9.1-py3-none-any.whl[all]'
 fgreport -P trace.txt
 ```
 
@@ -457,6 +457,6 @@ tests/run.sh --golden              # 修改后与基线比较
 
 ---
 
-**版本**: v0.9.0
+**版本**: v0.9.1
 **最后更新**: 2026-11-09
 **状态**: ✅ 生产就绪
