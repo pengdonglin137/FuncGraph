@@ -259,8 +259,14 @@ for (const r of D.irqoff) TRACKS[r[0]].io.push(r);    // [task, start, end]
 for (let c = 0; c < CHAINS.length; c++) if (!CHAINS[c][6]) TRACKS[sTask[CHAINS[c][0]]].errs.push(c);
 
 let tMax = 1;
-for (let i = 0; i < N; i++) if (sEnd[i] > tMax) tMax = sEnd[i];
-for (const r of D.offcpu) if (r[2] !== null && r[2] > tMax) tMax = r[2];
+function observeEnd(value) { if (Number.isFinite(value) && value > tMax) tMax = value; }
+for (let index = 0; index < N; index++) { observeEnd(sStart[index]); observeEnd(sEnd[index]); }
+for (const task of TRACKS) for (const run of task.runs) { observeEnd(run[0]); observeEnd(run[1]); }
+for (const records of [D.offcpu, D.resched, D.irqoff]) for (const record of records) {
+    observeEnd(record[1]); observeEnd(record[2]);
+}
+for (const section of D.sections || []) { observeEnd(section[2]); observeEnd(section[3]); }
+for (const wake of D.wakeups || []) observeEnd(wake[1]);
 const OPEN_OFF = new Set(D.offcpu.filter(record => record[2] === null));
 for (const r of D.offcpu) if (r[2] === null) r[2] = tMax;
 // wakeups: [waker_task, ts, target_task, ctx, waker_slice, offcpu_index]
@@ -329,6 +335,7 @@ function trackSub(t) {
     const parts = [];
     if (t.cpus.size) parts.push('CPU ' + Array.from(t.cpus).sort((a, b) => a - b).join(','));
     if (t.lo >= 0) parts.push((t.hi - t.lo) + ' calls');
+    else parts.push('no traced calls' + (t.runs.length ? ' · ' + t.runs.length + ' recorded runs' : ''));
     if (t.errs.length) parts.push(t.errs.length + ' err');
     if (textHits) parts.push(t.hits + ' matched');
     if (t.comms.length > 1) parts.push('was: ' + t.comms.slice(0, -1).join(', '));
@@ -446,6 +453,7 @@ tlRoot.innerHTML = `
   <span class="tl-group">
     <button class="tl-btn" data-act="fit" title="Show the whole trace (0)">Fit</button>
     <button class="tl-btn" data-act="expand" title="Expand / collapse all tracks">Tracks</button>
+    <button class="tl-btn" data-act="an-tasks" title="Find and navigate all recorded tasks, including scheduling-only tasks">Tasks</button>
     <button class="tl-btn" data-act="adj" title="Subtract the estimated tracing overhead from durations (O)">Overhead: measured</button>
     <button class="tl-btn" data-act="inl" title="Show inlined functions as frames between the traced calls (I)">Inline: hidden</button>
     <button class="tl-btn" data-act="an-errors" title="Error summary by syscall / origin / errno">Errors</button>

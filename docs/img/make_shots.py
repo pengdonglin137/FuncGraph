@@ -262,6 +262,18 @@ def an_wait(b, rep):
     shot(pg, 'an_wait')
 
 
+def an_tasks(b, rep):
+    pg = open_page(b, rep['sample'], 'timeline', height=1000)
+    pg.click('[data-act=an-tasks]')
+    handle = box(pg, '.tl-resizer')
+    pg.mouse.move(handle['x'] + handle['width'] / 2, handle['y'] + handle['height'] / 2)
+    pg.mouse.down()
+    pg.mouse.move(handle['x'] + handle['width'] / 2, handle['y'] - 100, steps=5)
+    pg.mouse.up()
+    pg.wait_for_timeout(400)
+    shot(pg, 'an_tasks')
+
+
 def compare(b, rep):
     pg = open_page(b, rep['compare'], 'compare')
     shot(pg, 'compare', {'x': 0, 'y': 0, 'width': W, 'height': 560})
@@ -271,7 +283,7 @@ SHOTS = {
     'text_view': text_view, 'tl_layout': tl_layout, 'tl_compact': tl_compact, 'tl_search': tl_search, 'tl_errors': tl_errors, 'tl_irqoff': tl_irqoff,
     'tl_offcpu': tl_offcpu, 'tl_untraced': tl_untraced, 'tl_detail': tl_detail, 'tl_inline': tl_inline,
     'an_range': an_range, 'an_dist': an_dist, 'an_slowfast': an_slowfast, 'an_sections': panel('an_sections', 'sample', 'sections'),
-    'an_errors': panel('an_errors', 'sched', 'errors'), 'an_wait': an_wait,
+    'an_errors': panel('an_errors', 'sched', 'errors'), 'an_wait': an_wait, 'an_tasks': an_tasks,
     'an_lat': panel('an_lat', 'sched', 'latency'), 'compare': compare,
 }
 

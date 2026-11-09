@@ -3,6 +3,193 @@
 const AN = { kind: null, func: -1, off: null, errSort: 'count', latSort: 'dur' };
 
 function matchOk(i) { return !textHits || textHits[i]; }
+const TASK_PAGE = 100;
+const TASK_KINDS = ['task', 'idle', 'cpu_fallback', 'all_fallback'];
+const taskView = { query: '', kind: 'all', matching: false, only: null, sort: 'calls' };
+let taskFacts = null, taskMatches = null, taskOrderCache = null;
+function taskData() {
+    if (!taskFacts) {
+        taskFacts = TRACKS.map(task => ({ task, calls: 0, errors: 0, open: 0, start: null, end: null,
+            cpus: new Set(task.cpus), search: '', cpuLabel: '' }));
+        const observe = (id, start, end, cpu) => {
+            const fact = taskFacts[id];
+            if (!fact) return;
+            for (const value of [start, end]) if (Number.isFinite(value)) {
+                fact.start = fact.start === null ? value : Math.min(fact.start, value);
+                fact.end = fact.end === null ? value : Math.max(fact.end, value);
+            }
+            if (Number.isInteger(cpu) && cpu >= 0) fact.cpus.add(cpu);
+        };
+        for (let index = 0; index < N; index++) {
+            taskFacts[sTask[index]].calls++;
+            observe(sTask[index], sStart[index], sEnd[index], sCpu ? sCpu[index] : null);
+        }
+        for (const task of TRACKS) {
+            observe(task.id, null, null, task.cpu);
+            for (const run of task.runs) observe(task.id, run[0], run[1], run[2]);
+        }
+        for (const record of D.offcpu) {
+            observe(record[0], record[1], record[2], record[6]);
+            if (OPEN_OFF.has(record)) taskFacts[record[0]].open++;
+            else observe(record[0], null, null, record[7]);
+        }
+        for (const records of [D.resched, D.irqoff]) for (const record of records) observe(record[0], record[1], record[2], null);
+        for (const section of D.sections || []) observe(section[0], section[2], section[3], null);
+        for (const wake of WAKES) { observe(wake[0], wake[1], wake[1], null); observe(wake[2], wake[1], wake[1], null); }
+        for (const chain of CHAINS) if (chain[0] >= 0 && chain[0] < N) taskFacts[sTask[chain[0]]].errors++;
+        for (const fact of taskFacts) {
+            const cpus = Array.from(fact.cpus).sort((left, right) => left - right);
+            fact.cpuLabel = cpus.join(',');
+            fact.search = [trackLabel(fact.task), ...fact.task.comms, ...cpus.map(cpu => 'CPU ' + cpu)].join(' ').toLowerCase();
+        }
+    }
+    if (!taskMatches || taskMatches.hits !== textHits) {
+        const counts = new Uint32Array(TRACKS.length);
+        if (textHits) {
+            for (let index = 0; index < N; index++) if (textHits[index]) counts[sTask[index]]++;
+        } else for (const fact of taskFacts) counts[fact.task.id] = fact.calls;
+        taskMatches = { hits: textHits, counts };
+    }
+    return taskMatches;
+}
+function taskOrder() {
+    const data = taskData(), key = JSON.stringify(taskView);
+    if (taskOrderCache && taskOrderCache.data === data && taskOrderCache.key === key) return taskOrderCache;
+    const query = taskView.query.trim().toLowerCase();
+    const rows = taskFacts.filter(fact => (taskView.only === null || fact.task.id === taskView.only) &&
+        (taskView.kind === 'all' || fact.task.kind === +taskView.kind) && (!taskView.matching || data.counts[fact.task.id] > 0) &&
+        (!query || fact.search.includes(query)));
+    const value = fact => {
+        switch (taskView.sort) {
+            case 'name': return trackLabel(fact.task);
+            case 'matches': return -data.counts[fact.task.id];
+            case 'errors': return -fact.errors;
+            case 'runs': return -fact.task.runs.length;
+            case 'span': return fact.start === null ? Infinity : -(fact.end - fact.start);
+            default: return -fact.calls;
+        }
+    };
+    rows.sort((left, right) => {
+        const first = value(left), second = value(right);
+        return (typeof first === 'string' ? first.localeCompare(second) : first - second) || left.task.id - right.task.id;
+    });
+    taskOrderCache = { data, key, rows, visible: Math.min(TASK_PAGE, rows.length) };
+    return taskOrderCache;
+}
+function taskRows(rows) {
+    return rows.map(fact => {
+        const task = fact.task, label = trackLabel(task), aliases = task.comms.join(', ');
+        return '<tr data-task-row="' + task.id + '"><td><span class="an-task-name" title="' + esc(label + (aliases ? ' · names: ' + aliases : '')) + '">' +
+            esc(label) + '</span></td><td>' + esc(TASK_KINDS[task.kind] || 'unknown') + '</td><td><span class="an-task-name" title="' +
+            esc(fact.cpuLabel) + '">' + esc(fact.cpuLabel || '—') + '</span></td><td>' + fact.calls + '</td><td>' + taskMatches.counts[task.id] +
+            '</td><td>' + fact.errors + '</td><td>' + task.runs.length + '</td><td title="' + (fact.open ? 'Includes open waits to the report boundary; ' : '') +
+            'span includes gaps, not CPU time">' + (fact.start === null ? '—' : (fact.open ? '≥ ' : '') + fmtDur(fact.end - fact.start)) +
+            '</td><td><button class="tl-btn" data-task-show="' + task.id + '"' + (fact.start === null ? ' disabled' : '') +
+            ' aria-label="Show ' + esc(label) + '">Show</button></td></tr>';
+    }).join('');
+}
+function updateTaskFooter(order) {
+    elDetail.querySelector('.an-task-footer [role=status]').textContent = 'Showing ' + order.visible + ' of ' + order.rows.length + ' tasks';
+    elDetail.querySelector('[data-act=tasks-more]').disabled = order.visible >= order.rows.length;
+    elDetail.querySelector('[data-act=tasks-csv]').disabled = !order.rows.length;
+}
+function appendTaskRows() {
+    const order = taskOrder(), start = order.visible;
+    order.visible = Math.min(start + TASK_PAGE, order.rows.length);
+    elDetail.querySelector('.an-task-table tbody').insertAdjacentHTML('beforeend', taskRows(order.rows.slice(start, order.visible)));
+    updateTaskFooter(order);
+}
+function exportTasksCsv() {
+    const order = taskOrder(), unit = MODE === 'count' ? 'units' : 'ns', scale = MODE === 'count' ? 1000 : 1;
+    const columns = ['task_index', 'task', 'pid', 'kind', 'names', 'cpus', 'calls', 'matched_calls', 'error_origins_including_minor',
+        'recorded_runs', 'open_waits', 'start_' + unit, 'end_' + unit, 'span_' + unit, 'span_is_lower_bound', 'mode', 'position_basis',
+        'span_basis', 'query', 'kind_filter', 'matching_only', 'task_scope', 'shared_filter'];
+    function* rows() {
+        for (const fact of order.rows) {
+            const task = fact.task;
+            yield [task.id, task.comm, task.pid, TASK_KINDS[task.kind] || 'unknown', task.comms.join('; '), fact.cpuLabel,
+                fact.calls, order.data.counts[task.id], fact.errors, task.runs.length, fact.open,
+                fact.start === null ? '' : fact.start / scale, fact.end === null ? '' : fact.end / scale,
+                fact.start === null ? '' : (fact.end - fact.start) / scale, fact.open ? 1 : 0, MODE,
+                MODE === 'count' ? 'call_order' : TIMED ? 'recorded_time' : 'packed_duration', 'record_extent_including_gaps_not_cpu_time',
+                taskView.query, taskView.kind, taskView.matching ? 1 : 0, taskView.only === null ? 'all' : taskView.only,
+                window.fgFilterState && window.fgFilterState.text || ''];
+        }
+    }
+    downloadTimelineCsv('funcgraph-tasks.csv', columns, rows());
+}
+function navigateTask(id) {
+    taskData();
+    const fact = taskFacts[id];
+    if (!fact || fact.start === null) return;
+    setSelection(-1);
+    range = null;
+    revealTaskTrack(fact.task);
+    zoomTo(fact.start, fact.end, -1);
+}
+function showTasks(only) {
+    if (only !== undefined) {
+        taskView.only = only;
+        if (only !== null) { taskView.query = ''; taskView.kind = 'all'; taskView.matching = false; }
+    }
+    const reuse = AN.kind === 'tasks' && elDetail.classList.contains('show') && elDetail.querySelector('.an-task-table');
+    AN.kind = 'tasks';
+    const order = taskOrder();
+    if (!reuse) {
+        openDetail('<div class="tl-detail-head an-task-head"><span class="tl-detail-title">Tasks</span>' +
+            '<span class="an-task-scope"></span><span class="an-task-actions"><button class="tl-btn" data-act="tasks-csv">Export CSV</button>' +
+            '<button class="tl-close" title="Close (Esc)">×</button></span></div>' +
+            '<div class="an-task-tools"><label>Find <input data-task-query type="search" placeholder="Name, old name, PID or CPU" spellcheck="false"></label>' +
+            '<label>Kind <select data-task-kind><option value="all">All</option>' + TASK_KINDS.map((name, kind) =>
+                '<option value="' + kind + '">' + name + '</option>').join('') + '</select></label>' +
+            '<label><input type="checkbox" data-task-matching>Matching calls only</label><button class="tl-btn" data-act="tasks-reset">Reset</button></div>' +
+            '<table class="tl-sum an-task-table"></table><div class="an-task-footer"><span role="status" aria-live="polite"></span>' +
+            '<button class="tl-btn" data-act="tasks-more">Load more</button></div>' +
+            '<div class="an-hint">All recorded task identities, including scheduler-only tasks. Calls and errors exclude synthetic frames; errors include minor origins. ' +
+            'The shared filter changes matches, not raw counts. Trace span includes gaps: not CPU time, running duration or task lifetime. ' +
+            'Open waits extend to the report boundary (≥, lower bound), not a known resume. ' +
+            (TIMED ? 'Positions use recorded time.' : MODE === 'count' ? 'Positions use call-order units, not elapsed time.' : 'Positions use packed durations; timing gaps are unknown.') +
+            ' Show fits the task extent; CPU clicks preserve the current time range. Empty spans have no recorded time boundary. CSV includes unloaded rows.</div>');
+        elDetail.querySelector('[data-task-query]').addEventListener('input', event => {
+            taskView.query = event.target.value; taskView.only = null; showTasks();
+        });
+        elDetail.querySelector('[data-task-kind]').addEventListener('change', event => {
+            taskView.kind = event.target.value; taskView.only = null; showTasks();
+        });
+        elDetail.querySelector('[data-task-matching]').addEventListener('change', event => {
+            taskView.matching = event.target.checked; taskView.only = null; showTasks();
+        });
+        elDetail.querySelector('[data-act=tasks-reset]').onclick = () => {
+            Object.assign(taskView, { query: '', kind: 'all', matching: false, only: null, sort: 'calls' }); showTasks();
+        };
+        elDetail.querySelector('[data-act=tasks-more]').onclick = appendTaskRows;
+        elDetail.querySelector('[data-act=tasks-csv]').onclick = exportTasksCsv;
+        elDetail.querySelector('.an-task-table').onclick = event => {
+            const sort = event.target.closest('[data-task-sort]'), show = event.target.closest('[data-task-show]');
+            if (sort) {
+                taskView.sort = sort.dataset.taskSort; showTasks();
+                elDetail.querySelector('[data-task-sort="' + taskView.sort + '"]').focus();
+            } else if (show) navigateTask(+show.dataset.taskShow);
+        };
+        elDetail.scrollTop = 0;
+    }
+    elDetail.querySelector('[data-task-query]').value = taskView.query;
+    elDetail.querySelector('[data-task-kind]').value = taskView.kind;
+    elDetail.querySelector('[data-task-matching]').checked = taskView.matching;
+    elDetail.querySelector('.an-task-scope').textContent = taskView.only === null ? TRACKS.length + ' identities' : 'Task #' + taskView.only + ' · Reset for all';
+    const table = elDetail.querySelector('.an-task-table');
+    if (!reuse || table._taskOrder !== order) {
+        const columns = [['name', 'task / PID'], ['', 'kind'], ['', 'CPUs'], ['calls', 'calls'], ['matches', 'matches'],
+            ['errors', 'errors'], ['runs', 'runs'], ['span', 'trace span']];
+        table.innerHTML = '<thead><tr>' + columns.map(([key, label]) => '<th' + (key ? ' aria-sort="' + (taskView.sort === key ?
+            (key === 'name' ? 'ascending' : 'descending') : 'none') + '"><button class="tl-sum-sort" data-task-sort="' + key + '">' + label + '</button>' : '>' + label) +
+            '</th>').join('') + '<th>navigate</th></tr></thead><tbody>' + taskRows(order.rows.slice(0, order.visible)) + '</tbody>';
+        table._taskOrder = order;
+        if (reuse) elDetail.scrollTop = 0;
+    }
+    updateTaskFooter(order);
+    sizeDetailHead();
+}
 // ---- 1. error summary: syscall -> origin -> errno ----
 const ERROR_PAGE = 200, ATOMIC_PAGE = 100;
 const ERROR_FATES = ['handled', 'to_user', 'unknown'];

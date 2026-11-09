@@ -208,16 +208,28 @@ function tipCpu(c) {
     }
     return h + '<div class="t-warn">click to open this task</div>';
 }
-function openTaskAt(tid, tm) {
-    const t = TRACKS[tid];
-    t.hidden = false;
-    if (t.collapsed) t.collapsed = false;
+function revealTaskTrack(task) {
+    if (!ORDER.includes(task)) ORDER.push(task);
+    task.hidden = false;
+    task.collapsed = false;
     layout();
-    elScroll.scrollTop = Math.max(0, t.y - 4);
-    if (t.rowsT.length) {
-        const row = t.rowsT[0], j = lbEnd(row, tm);
-        if (j < row.length && sStart[row[j]] <= tm) { select(row[j]); return; }
+    elScroll.scrollTop = Math.max(0, task.y - 4);
+}
+function openTaskAt(tid, tm) {
+    const task = TRACKS[tid];
+    if (!task) return;
+    revealTaskTrack(task);
+    for (let depth = task.rowsT.length - 1; depth >= 0; depth--) {
+        const row = task.rowsT[depth], position = lbEnd(row, tm);
+        if (position < row.length) {
+            const index = row[position];
+            if (index < N && sStart[index] <= tm && sEnd[index] > tm) { select(index); return; }
+        }
     }
+    setSelection(-1);
+    range = null;
+    showTasks(tid);
+    revealTaskTrack(task);
     draw();
 }
 function showTip(html, ev) {

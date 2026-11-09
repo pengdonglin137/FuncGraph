@@ -1596,6 +1596,15 @@ table.tl-sum td.err { color: #c62828; }
 .tl-btn.on { background: #3b6fd8; color: #fff; border-color: #3b6fd8; }
 
 /* analysis panels */
+.an-task-head { flex-wrap: wrap; z-index: 2; left: 0; }
+.an-task-actions { display: flex; align-items: center; gap: 8px; margin-left: auto; flex-shrink: 0; }
+.an-task-tools, .an-task-footer { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 8px 12px; position: sticky; left: 0; color: var(--text-muted); }
+.an-task-tools label { display: flex; align-items: center; gap: 4px; min-width: 0; }
+.an-task-tools input[type=search] { width: 220px; max-width: 100%; min-width: 100px; }
+.an-task-tools input, .an-task-tools select { color: var(--text-color); background: var(--container-bg); border: 1px solid var(--border-color); border-radius: 4px; padding: 4px; }
+.an-task-table td:nth-child(-n+3), .an-task-table th:nth-child(-n+3) { text-align: left; }
+.an-task-name { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; white-space: normal; min-width: 100px; max-width: 320px; }
+.an-task-table th[aria-sort=ascending] .tl-sum-sort, .an-task-table th[aria-sort=descending] .tl-sum-sort { text-decoration: underline; text-underline-offset: 3px; }
 .an-tbl th[data-esort], .an-tbl th[data-lsort] { cursor: pointer; }
 .an-tbl th.on { color: var(--text-color); text-decoration: underline; }
 .an-tbl tr[data-chains] td, .an-tbl tr[data-win] td { cursor: pointer; }
@@ -1661,11 +1670,11 @@ table.tl-sum td.err { color: #c62828; }
 .an-minor { font-size: 11px; color: var(--text-muted); margin-left: 6px; }
 
 @media (max-height: 600px) {
-    .an-window-head, .an-error-head, .an-wait-head, .an-dist-head, .tl-slice-head { top: auto; }
+    .an-window-head, .an-error-head, .an-wait-head, .an-dist-head, .an-task-head, .tl-slice-head { top: auto; }
 }
 
 @media (max-width: 640px) {
-    .an-window-head, .an-error-head, .an-wait-head, .an-dist-head, .tl-slice-head { top: auto; }
+    .an-window-head, .an-error-head, .an-wait-head, .an-dist-head, .an-task-head, .tl-slice-head { top: auto; }
     .tl-detail-body, .an-dist { grid-template-columns: minmax(0, 1fr); }
 }
 
@@ -1707,11 +1716,11 @@ table.tl-sum td.err { color: #c62828; }
                 <div class="info-item"><div class="info-label">OS:</div><div class="info-value">Linux 6.8.0-138-generic</div></div>
                 <div class="info-item"><div class="info-label">Hostname:</div><div class="info-value">pengdl-pc</div></div>
                 <div class="info-item"><div class="info-label">Processor:</div><div class="info-value">x86_64</div></div>
-                <div class="info-item"><div class="info-label">Generated At:</div><div class="info-value">2026-11-10 04:52:21</div></div>
+                <div class="info-item"><div class="info-label">Generated At:</div><div class="info-value">2026-11-10 05:28:59</div></div>
                 <div class="info-section-divider"></div>
                 <div class="info-section-title">Processing Stats</div>
                 <div class="info-item"><div class="info-label">Parse Time:</div><div class="info-value">0.02s</div></div>
-                <div class="info-item"><div class="info-label">Vmlinux Time:</div><div class="info-value">6.29s</div></div>
+                <div class="info-item"><div class="info-label">Vmlinux Time:</div><div class="info-value">6.04s</div></div>
                 <div class="info-item"><div class="info-label">Modules Time:</div><div class="info-value">0.00s</div></div>
                 <div class="info-item"><div class="info-label">Total Lines:</div><div class="info-value">695</div></div>
                 <div class="info-item"><div class="info-label">Expandable:</div><div class="info-value">442</div></div>
@@ -4798,8 +4807,14 @@ for (const r of D.irqoff) TRACKS[r[0]].io.push(r);    // [task, start, end]
 for (let c = 0; c < CHAINS.length; c++) if (!CHAINS[c][6]) TRACKS[sTask[CHAINS[c][0]]].errs.push(c);
 
 let tMax = 1;
-for (let i = 0; i < N; i++) if (sEnd[i] > tMax) tMax = sEnd[i];
-for (const r of D.offcpu) if (r[2] !== null && r[2] > tMax) tMax = r[2];
+function observeEnd(value) { if (Number.isFinite(value) && value > tMax) tMax = value; }
+for (let index = 0; index < N; index++) { observeEnd(sStart[index]); observeEnd(sEnd[index]); }
+for (const task of TRACKS) for (const run of task.runs) { observeEnd(run[0]); observeEnd(run[1]); }
+for (const records of [D.offcpu, D.resched, D.irqoff]) for (const record of records) {
+    observeEnd(record[1]); observeEnd(record[2]);
+}
+for (const section of D.sections || []) { observeEnd(section[2]); observeEnd(section[3]); }
+for (const wake of D.wakeups || []) observeEnd(wake[1]);
 const OPEN_OFF = new Set(D.offcpu.filter(record => record[2] === null));
 for (const r of D.offcpu) if (r[2] === null) r[2] = tMax;
 // wakeups: [waker_task, ts, target_task, ctx, waker_slice, offcpu_index]
@@ -4868,6 +4883,7 @@ function trackSub(t) {
     const parts = [];
     if (t.cpus.size) parts.push('CPU ' + Array.from(t.cpus).sort((a, b) => a - b).join(','));
     if (t.lo >= 0) parts.push((t.hi - t.lo) + ' calls');
+    else parts.push('no traced calls' + (t.runs.length ? ' · ' + t.runs.length + ' recorded runs' : ''));
     if (t.errs.length) parts.push(t.errs.length + ' err');
     if (textHits) parts.push(t.hits + ' matched');
     if (t.comms.length > 1) parts.push('was: ' + t.comms.slice(0, -1).join(', '));
@@ -4985,6 +5001,7 @@ tlRoot.innerHTML = `
   <span class="tl-group">
     <button class="tl-btn" data-act="fit" title="Show the whole trace (0)">Fit</button>
     <button class="tl-btn" data-act="expand" title="Expand / collapse all tracks">Tracks</button>
+    <button class="tl-btn" data-act="an-tasks" title="Find and navigate all recorded tasks, including scheduling-only tasks">Tasks</button>
     <button class="tl-btn" data-act="adj" title="Subtract the estimated tracing overhead from durations (O)">Overhead: measured</button>
     <button class="tl-btn" data-act="inl" title="Show inlined functions as frames between the traced calls (I)">Inline: hidden</button>
     <button class="tl-btn" data-act="an-errors" title="Error summary by syscall / origin / errno">Errors</button>
@@ -5855,16 +5872,28 @@ function tipCpu(c) {
     }
     return h + '<div class="t-warn">click to open this task</div>';
 }
-function openTaskAt(tid, tm) {
-    const t = TRACKS[tid];
-    t.hidden = false;
-    if (t.collapsed) t.collapsed = false;
+function revealTaskTrack(task) {
+    if (!ORDER.includes(task)) ORDER.push(task);
+    task.hidden = false;
+    task.collapsed = false;
     layout();
-    elScroll.scrollTop = Math.max(0, t.y - 4);
-    if (t.rowsT.length) {
-        const row = t.rowsT[0], j = lbEnd(row, tm);
-        if (j < row.length && sStart[row[j]] <= tm) { select(row[j]); return; }
+    elScroll.scrollTop = Math.max(0, task.y - 4);
+}
+function openTaskAt(tid, tm) {
+    const task = TRACKS[tid];
+    if (!task) return;
+    revealTaskTrack(task);
+    for (let depth = task.rowsT.length - 1; depth >= 0; depth--) {
+        const row = task.rowsT[depth], position = lbEnd(row, tm);
+        if (position < row.length) {
+            const index = row[position];
+            if (index < N && sStart[index] <= tm && sEnd[index] > tm) { select(index); return; }
+        }
     }
+    setSelection(-1);
+    range = null;
+    showTasks(tid);
+    revealTaskTrack(task);
     draw();
 }
 function showTip(html, ev) {
@@ -6167,6 +6196,193 @@ function sibling(i, dir) {
 const AN = { kind: null, func: -1, off: null, errSort: 'count', latSort: 'dur' };
 
 function matchOk(i) { return !textHits || textHits[i]; }
+const TASK_PAGE = 100;
+const TASK_KINDS = ['task', 'idle', 'cpu_fallback', 'all_fallback'];
+const taskView = { query: '', kind: 'all', matching: false, only: null, sort: 'calls' };
+let taskFacts = null, taskMatches = null, taskOrderCache = null;
+function taskData() {
+    if (!taskFacts) {
+        taskFacts = TRACKS.map(task => ({ task, calls: 0, errors: 0, open: 0, start: null, end: null,
+            cpus: new Set(task.cpus), search: '', cpuLabel: '' }));
+        const observe = (id, start, end, cpu) => {
+            const fact = taskFacts[id];
+            if (!fact) return;
+            for (const value of [start, end]) if (Number.isFinite(value)) {
+                fact.start = fact.start === null ? value : Math.min(fact.start, value);
+                fact.end = fact.end === null ? value : Math.max(fact.end, value);
+            }
+            if (Number.isInteger(cpu) && cpu >= 0) fact.cpus.add(cpu);
+        };
+        for (let index = 0; index < N; index++) {
+            taskFacts[sTask[index]].calls++;
+            observe(sTask[index], sStart[index], sEnd[index], sCpu ? sCpu[index] : null);
+        }
+        for (const task of TRACKS) {
+            observe(task.id, null, null, task.cpu);
+            for (const run of task.runs) observe(task.id, run[0], run[1], run[2]);
+        }
+        for (const record of D.offcpu) {
+            observe(record[0], record[1], record[2], record[6]);
+            if (OPEN_OFF.has(record)) taskFacts[record[0]].open++;
+            else observe(record[0], null, null, record[7]);
+        }
+        for (const records of [D.resched, D.irqoff]) for (const record of records) observe(record[0], record[1], record[2], null);
+        for (const section of D.sections || []) observe(section[0], section[2], section[3], null);
+        for (const wake of WAKES) { observe(wake[0], wake[1], wake[1], null); observe(wake[2], wake[1], wake[1], null); }
+        for (const chain of CHAINS) if (chain[0] >= 0 && chain[0] < N) taskFacts[sTask[chain[0]]].errors++;
+        for (const fact of taskFacts) {
+            const cpus = Array.from(fact.cpus).sort((left, right) => left - right);
+            fact.cpuLabel = cpus.join(',');
+            fact.search = [trackLabel(fact.task), ...fact.task.comms, ...cpus.map(cpu => 'CPU ' + cpu)].join(' ').toLowerCase();
+        }
+    }
+    if (!taskMatches || taskMatches.hits !== textHits) {
+        const counts = new Uint32Array(TRACKS.length);
+        if (textHits) {
+            for (let index = 0; index < N; index++) if (textHits[index]) counts[sTask[index]]++;
+        } else for (const fact of taskFacts) counts[fact.task.id] = fact.calls;
+        taskMatches = { hits: textHits, counts };
+    }
+    return taskMatches;
+}
+function taskOrder() {
+    const data = taskData(), key = JSON.stringify(taskView);
+    if (taskOrderCache && taskOrderCache.data === data && taskOrderCache.key === key) return taskOrderCache;
+    const query = taskView.query.trim().toLowerCase();
+    const rows = taskFacts.filter(fact => (taskView.only === null || fact.task.id === taskView.only) &&
+        (taskView.kind === 'all' || fact.task.kind === +taskView.kind) && (!taskView.matching || data.counts[fact.task.id] > 0) &&
+        (!query || fact.search.includes(query)));
+    const value = fact => {
+        switch (taskView.sort) {
+            case 'name': return trackLabel(fact.task);
+            case 'matches': return -data.counts[fact.task.id];
+            case 'errors': return -fact.errors;
+            case 'runs': return -fact.task.runs.length;
+            case 'span': return fact.start === null ? Infinity : -(fact.end - fact.start);
+            default: return -fact.calls;
+        }
+    };
+    rows.sort((left, right) => {
+        const first = value(left), second = value(right);
+        return (typeof first === 'string' ? first.localeCompare(second) : first - second) || left.task.id - right.task.id;
+    });
+    taskOrderCache = { data, key, rows, visible: Math.min(TASK_PAGE, rows.length) };
+    return taskOrderCache;
+}
+function taskRows(rows) {
+    return rows.map(fact => {
+        const task = fact.task, label = trackLabel(task), aliases = task.comms.join(', ');
+        return '<tr data-task-row="' + task.id + '"><td><span class="an-task-name" title="' + esc(label + (aliases ? ' · names: ' + aliases : '')) + '">' +
+            esc(label) + '</span></td><td>' + esc(TASK_KINDS[task.kind] || 'unknown') + '</td><td><span class="an-task-name" title="' +
+            esc(fact.cpuLabel) + '">' + esc(fact.cpuLabel || '—') + '</span></td><td>' + fact.calls + '</td><td>' + taskMatches.counts[task.id] +
+            '</td><td>' + fact.errors + '</td><td>' + task.runs.length + '</td><td title="' + (fact.open ? 'Includes open waits to the report boundary; ' : '') +
+            'span includes gaps, not CPU time">' + (fact.start === null ? '—' : (fact.open ? '≥ ' : '') + fmtDur(fact.end - fact.start)) +
+            '</td><td><button class="tl-btn" data-task-show="' + task.id + '"' + (fact.start === null ? ' disabled' : '') +
+            ' aria-label="Show ' + esc(label) + '">Show</button></td></tr>';
+    }).join('');
+}
+function updateTaskFooter(order) {
+    elDetail.querySelector('.an-task-footer [role=status]').textContent = 'Showing ' + order.visible + ' of ' + order.rows.length + ' tasks';
+    elDetail.querySelector('[data-act=tasks-more]').disabled = order.visible >= order.rows.length;
+    elDetail.querySelector('[data-act=tasks-csv]').disabled = !order.rows.length;
+}
+function appendTaskRows() {
+    const order = taskOrder(), start = order.visible;
+    order.visible = Math.min(start + TASK_PAGE, order.rows.length);
+    elDetail.querySelector('.an-task-table tbody').insertAdjacentHTML('beforeend', taskRows(order.rows.slice(start, order.visible)));
+    updateTaskFooter(order);
+}
+function exportTasksCsv() {
+    const order = taskOrder(), unit = MODE === 'count' ? 'units' : 'ns', scale = MODE === 'count' ? 1000 : 1;
+    const columns = ['task_index', 'task', 'pid', 'kind', 'names', 'cpus', 'calls', 'matched_calls', 'error_origins_including_minor',
+        'recorded_runs', 'open_waits', 'start_' + unit, 'end_' + unit, 'span_' + unit, 'span_is_lower_bound', 'mode', 'position_basis',
+        'span_basis', 'query', 'kind_filter', 'matching_only', 'task_scope', 'shared_filter'];
+    function* rows() {
+        for (const fact of order.rows) {
+            const task = fact.task;
+            yield [task.id, task.comm, task.pid, TASK_KINDS[task.kind] || 'unknown', task.comms.join('; '), fact.cpuLabel,
+                fact.calls, order.data.counts[task.id], fact.errors, task.runs.length, fact.open,
+                fact.start === null ? '' : fact.start / scale, fact.end === null ? '' : fact.end / scale,
+                fact.start === null ? '' : (fact.end - fact.start) / scale, fact.open ? 1 : 0, MODE,
+                MODE === 'count' ? 'call_order' : TIMED ? 'recorded_time' : 'packed_duration', 'record_extent_including_gaps_not_cpu_time',
+                taskView.query, taskView.kind, taskView.matching ? 1 : 0, taskView.only === null ? 'all' : taskView.only,
+                window.fgFilterState && window.fgFilterState.text || ''];
+        }
+    }
+    downloadTimelineCsv('funcgraph-tasks.csv', columns, rows());
+}
+function navigateTask(id) {
+    taskData();
+    const fact = taskFacts[id];
+    if (!fact || fact.start === null) return;
+    setSelection(-1);
+    range = null;
+    revealTaskTrack(fact.task);
+    zoomTo(fact.start, fact.end, -1);
+}
+function showTasks(only) {
+    if (only !== undefined) {
+        taskView.only = only;
+        if (only !== null) { taskView.query = ''; taskView.kind = 'all'; taskView.matching = false; }
+    }
+    const reuse = AN.kind === 'tasks' && elDetail.classList.contains('show') && elDetail.querySelector('.an-task-table');
+    AN.kind = 'tasks';
+    const order = taskOrder();
+    if (!reuse) {
+        openDetail('<div class="tl-detail-head an-task-head"><span class="tl-detail-title">Tasks</span>' +
+            '<span class="an-task-scope"></span><span class="an-task-actions"><button class="tl-btn" data-act="tasks-csv">Export CSV</button>' +
+            '<button class="tl-close" title="Close (Esc)">×</button></span></div>' +
+            '<div class="an-task-tools"><label>Find <input data-task-query type="search" placeholder="Name, old name, PID or CPU" spellcheck="false"></label>' +
+            '<label>Kind <select data-task-kind><option value="all">All</option>' + TASK_KINDS.map((name, kind) =>
+                '<option value="' + kind + '">' + name + '</option>').join('') + '</select></label>' +
+            '<label><input type="checkbox" data-task-matching>Matching calls only</label><button class="tl-btn" data-act="tasks-reset">Reset</button></div>' +
+            '<table class="tl-sum an-task-table"></table><div class="an-task-footer"><span role="status" aria-live="polite"></span>' +
+            '<button class="tl-btn" data-act="tasks-more">Load more</button></div>' +
+            '<div class="an-hint">All recorded task identities, including scheduler-only tasks. Calls and errors exclude synthetic frames; errors include minor origins. ' +
+            'The shared filter changes matches, not raw counts. Trace span includes gaps: not CPU time, running duration or task lifetime. ' +
+            'Open waits extend to the report boundary (≥, lower bound), not a known resume. ' +
+            (TIMED ? 'Positions use recorded time.' : MODE === 'count' ? 'Positions use call-order units, not elapsed time.' : 'Positions use packed durations; timing gaps are unknown.') +
+            ' Show fits the task extent; CPU clicks preserve the current time range. Empty spans have no recorded time boundary. CSV includes unloaded rows.</div>');
+        elDetail.querySelector('[data-task-query]').addEventListener('input', event => {
+            taskView.query = event.target.value; taskView.only = null; showTasks();
+        });
+        elDetail.querySelector('[data-task-kind]').addEventListener('change', event => {
+            taskView.kind = event.target.value; taskView.only = null; showTasks();
+        });
+        elDetail.querySelector('[data-task-matching]').addEventListener('change', event => {
+            taskView.matching = event.target.checked; taskView.only = null; showTasks();
+        });
+        elDetail.querySelector('[data-act=tasks-reset]').onclick = () => {
+            Object.assign(taskView, { query: '', kind: 'all', matching: false, only: null, sort: 'calls' }); showTasks();
+        };
+        elDetail.querySelector('[data-act=tasks-more]').onclick = appendTaskRows;
+        elDetail.querySelector('[data-act=tasks-csv]').onclick = exportTasksCsv;
+        elDetail.querySelector('.an-task-table').onclick = event => {
+            const sort = event.target.closest('[data-task-sort]'), show = event.target.closest('[data-task-show]');
+            if (sort) {
+                taskView.sort = sort.dataset.taskSort; showTasks();
+                elDetail.querySelector('[data-task-sort="' + taskView.sort + '"]').focus();
+            } else if (show) navigateTask(+show.dataset.taskShow);
+        };
+        elDetail.scrollTop = 0;
+    }
+    elDetail.querySelector('[data-task-query]').value = taskView.query;
+    elDetail.querySelector('[data-task-kind]').value = taskView.kind;
+    elDetail.querySelector('[data-task-matching]').checked = taskView.matching;
+    elDetail.querySelector('.an-task-scope').textContent = taskView.only === null ? TRACKS.length + ' identities' : 'Task #' + taskView.only + ' · Reset for all';
+    const table = elDetail.querySelector('.an-task-table');
+    if (!reuse || table._taskOrder !== order) {
+        const columns = [['name', 'task / PID'], ['', 'kind'], ['', 'CPUs'], ['calls', 'calls'], ['matches', 'matches'],
+            ['errors', 'errors'], ['runs', 'runs'], ['span', 'trace span']];
+        table.innerHTML = '<thead><tr>' + columns.map(([key, label]) => '<th' + (key ? ' aria-sort="' + (taskView.sort === key ?
+            (key === 'name' ? 'ascending' : 'descending') : 'none') + '"><button class="tl-sum-sort" data-task-sort="' + key + '">' + label + '</button>' : '>' + label) +
+            '</th>').join('') + '<th>navigate</th></tr></thead><tbody>' + taskRows(order.rows.slice(0, order.visible)) + '</tbody>';
+        table._taskOrder = order;
+        if (reuse) elDetail.scrollTop = 0;
+    }
+    updateTaskFooter(order);
+    sizeDetailHead();
+}
 // ---- 1. error summary: syscall -> origin -> errno ----
 const ERROR_PAGE = 200, ATOMIC_PAGE = 100;
 const ERROR_FATES = ['handled', 'to_user', 'unknown'];
@@ -7981,6 +8197,7 @@ tlRoot.querySelector('.tl-toolbar').addEventListener('click', ev => {
         case 'an-errors': showErrors(); break;
         case 'an-lat': showLatency(); break;
         case 'an-sec': showSections(); break;
+        case 'an-tasks': showTasks(null); break;
         case 'expand': {
             const any = ORDER.some(t => t.collapsed);
             for (const t of ORDER) t.collapsed = !any;
@@ -8020,6 +8237,7 @@ function refreshPanel() {
     else if (AN.kind === 'sec') showSections();
     else if (AN.kind === 'dist') showDist(AN.func);
     else if (AN.kind === 'wait') showWaitChain(AN.off);
+    else if (AN.kind === 'tasks') showTasks();
     else if (range) showRangeSummary();
     else if (sel >= 0) showDetail(sel);
 }
@@ -8060,6 +8278,7 @@ elHelp.innerHTML = `
 <li><kbd>↑</kbd> parent · <kbd>↓</kbd> first child · <kbd>[</kbd>/<kbd>]</kbd> siblings</li>
 <li><kbd>E</kbd>/<kbd>Shift+E</kbd> next/prev error · <kbd>/</kbd> search, <kbd>N</kbd>/<kbd>Shift+N</kbd> next/prev match</li>
 <li>Click an off-CPU segment: wait chain (who woke the task, wake latency, and who woke the waker)</li>
+<li><b>Tasks</b>: find recorded tasks by name / PID / CPU, including tasks without traced calls; export all matching rows</li>
 <li><kbd>I</kbd>: show / hide inlined functions as dashed frames (extent = first to last traced call inside)</li>
 <li><kbd>M</kbd> or <b>Max</b>: maximize (hide the page header and tabs); drag the bar above the bottom panel to resize it, double-click it to reset</li>
 <li><kbd>O</kbd>: durations as measured / with the tracing overhead subtracted</li>

@@ -461,11 +461,11 @@ The filter is shared with the timeline (6.6).
 From top to bottom:
 
 1. **Toolbar, first row**: Color (color mode), Overlay (layer switches), function search, error navigation.
-2. **Toolbar, second row**: Fit (show all), Tracks (expand / collapse all tracks), Overhead (measured / subtracted), Inline (inline frames), Errors, Sections, Sched latency (the analysis panels), Notes (collapse / expand the notes), Max (hide the page header and tabs, `M`), ? (help and legend), then **Filter**: the filter expression shared with the text view, see 6.6. Narrow windows wrap the toolbar into more rows.
+2. **Toolbar, second row**: Fit (show all), Tracks (expand / collapse all tracks), Tasks (task navigator, 7.7), Overhead (measured / subtracted), Inline (inline frames), Errors, Sections, Sched latency (the analysis panels), Notes (collapse / expand the notes), Max (hide the page header and tabs, `M`), ? (help and legend), then **Filter**: the filter expression shared with the text view, see 6.6. Narrow windows wrap the toolbar into more rows.
 3. **Notes**: what this trace lacks and what that means ("No timestamps…", "Arguments are not printed…"). Blue notes are information, yellow ones need attention.
 4. **Overview strip**: the whole trace in miniature. Blue bars show how busy each moment is, red lines are error origins (tall: reached user space, short orange: handled by a caller), the blue frame is the visible range. Click or drag to jump, use the wheel to zoom.
 5. **Time axis**: the right side shows the visible span (`span`) and the absolute start time (`start`), plus `selected` for a range selection; the time under the cursor is shown next to it.
-6. **CPU tracks** (only with timestamps) and **task tracks**. Time counts from the earliest event in the trace (possibly a scheduler event before the first call), so the first call need not be at 0; the initial view and Fit show the first call to the end, pan left to see earlier events.
+6. **CPU tracks** (only with timestamps) and **task tracks**. Time counts from the earliest event in the trace (possibly a scheduler event before the first call), so the first call need not be at 0; the initial view and Fit show the first call to the last recorded call, run, wait boundary, wakeup or critical/latency-window boundary. Pan left to see earlier events. Scheduler events after the last call remain reachable; open waits end geometrically at this report boundary, not at an observed resume.
 7. **Bottom panel**: opens when a slice is clicked or an analysis panel is opened; drag the bar above it to resize (6.5).
 
 In narrow or short windows, toolbar buttons wrap, and the toolbar and notes scroll vertically within their own areas instead of pushing the canvas and detail panel off screen. Slice details use one column on narrow screens. Collapse **Notes**, or use **Max / M**, for more canvas space; the preferred panel height remains remembered.
@@ -495,7 +495,7 @@ The **time mode** depends on the columns in the trace and is named at the right 
 
 - Each segment is colored by task name (same task, same color) and labeled `name pid` when wide enough.
 - The thin strip at the bottom of a segment is interrupt time: **orange** hardirq, **green** softirq, **purple** NMI.
-- Hover: how long the task ran on this CPU in one go and how much of it went to hard/soft interrupts; click to jump to the task's track.
+- Hover: how long the task ran on this CPU in one go and how much of it went to hard/soft interrupts; click to jump to the task's track and select the innermost real call at that time (even when tracing began at nonzero depth). With no overlapping call, the click clears the previous slice details and opens Tasks scoped to this identity, keeping the time range. Tracks without calls are revealed on demand as headers, not invented slices.
 
 ### 6.3 Color modes (Color)
 
@@ -859,6 +859,19 @@ Each **need-resched window**, from setting the need-resched flag until the task 
 - As in Sections, filtering tests real-call overlap per window; count / total / max use retained windows' original lengths, while self estimates include matching calls only. Overhead changes only self estimates. A per-track, per-depth overlap index avoids full-track scans for every window; sorting and pagination reuse the prepared statistics.
 
 Needs `latency-format` and timestamps.
+
+### 7.7 Task navigator (Tasks)
+
+![an_tasks](img/an_tasks.png)
+
+*Tasks in sample.html: all seven recorded identities are accessible, including six without traced calls. The time range includes the scheduling tail after the last call.*
+
+- **Find** performs case-insensitive literal matching on current/old names, PID and CPU labels; characters such as `[` are not regular expressions. **Kind** distinguishes tasks, idle, CPU fallback and all-task fallback identities. **Reset** clears these controls and any single-task scope from a CPU click.
+- Columns show task/PID, kind, observed CPUs, real calls, shared-filter matches, error origins **including minor chains**, recorded run-interval count, and trace span. Click sortable headers: task names sort ascending; numeric statistics sort descending; ties retain original task order. CPU 0 is retained. Synthetic inline/untraced frames never increase call/error counts.
+- **Trace span** is the earliest-to-latest extent of this identity's call/run/wait/wakeup/window records, including gaps: **not CPU time, running duration or task lifetime**. Open waits extend to the report boundary and mark the span `≥` (lower bound), never a known resume. Identities without any boundary show `—` and disable Show. Count mode uses call-order units; compressed mode uses packed durations, not real elapsed time.
+- **Show** reveals and expands the task's track and fits its extent, clearing stale slice selection while retaining Tasks. It does not populate the canvas with every scheduling-only task. The existing **Tracks** button still folds/unfolds tracks; Tasks does not add separate visibility controls.
+- The initial page contains 100 identities; **Load more** appends 100 without replacing existing rows or the focused button. **Export CSV** includes every row in the current query/kind/matching/single-task scope and order, including unloaded rows. Exports carry original indexes, aliases/CPUs, counts, boundaries/span, open-wait and lower-bound flags, position/span bases and query/shared-filter metadata. Count-mode position columns use `_units`, other modes `_ns` with an explicit recorded/packed basis.
+- The shared filter affects the matches column and optional **Matching calls only**, not raw counts or task bounds. Overhead/Inline do not change these facts. Statistics are prepared lazily once; sorting, querying and reopening reuse them. Narrow layouts keep controls horizontally reachable and long names to two lines (full value in tooltip/CSV).
 
 ## 8. Compare view
 

@@ -212,6 +212,178 @@ class BrowserSmokeTest(unittest.TestCase):
         self.page.keyboard.up('Alt')
         self.page.keyboard.up('Shift')
 
+    def test_timeline_range_includes_all_recorded_event_ends(self):
+        cases = [('runs', {'tasks': [dict(pid=1, comm='late', kind=0, cpu=0, runs=[[0, 9000, 0]])]}),
+                 ('wait', {'offcpu': [[0, 8000, None, 0, 0, 1, 0, -1, 0, -1]]}),
+                 ('resched', {'resched': [[0, 1000, 9000, 1, 0, 0]]}),
+                 ('irqoff', {'irqoff': [[0, 1000, 9000]]}),
+                 ('section', {'sections': [[0, 0, 1000, 9000, 0, 0, 0, 1, 1]]}),
+                 ('wake', {'wakeups': [[0, 9000, 0, 0, -1, -1]]})]
+        for label, extra in cases:
+            with self.subTest(event=label):
+                self.ev("fgSwitchView('text')")
+                self.page.reload()
+                self.open_range_data(['early'], starts=[1000], durations=[1000], extra=extra)
+                self.page.click('[data-act=fit]')
+                expected = 8000 if label == 'wait' else 9000
+                self.assertEqual(self.ev("fgView('timeline').probe().view()"), [1000, expected])
+
+    def click_cpu_at(self, timestamp):
+        self.page.click('[data-act=fit]')
+        self.ev("document.querySelector('.tl-scroll').scrollTop = 0")
+        self.page.wait_for_timeout(60)
+        start, end = self.ev("fgView('timeline').probe().view()")
+        box = self.page.locator('.tl-canvas').bounding_box()
+        self.page.mouse.click(box['x'] + box['width'] * (timestamp - start) / (end - start), box['y'] + 28)
+
+    def test_cpu_navigation_reveals_scheduler_only_task_and_clears_stale_selection(self):
+        tasks = [dict(pid=1, comm='calls', kind=0, cpu=0, runs=[[0, 3000, 0]]),
+                 dict(pid=2, comm='scheduler-only', kind=0, cpu=0, runs=[[3000, 9000, 0]])]
+        self.open_range_data(['early'], starts=[0], durations=[2000], extra={'tasks': tasks})
+        self.ev("fgView('timeline').probe().select(0)")
+        self.assertEqual(self.ev("fgView('timeline').probe().TRACKS[1].h"), 0)
+        self.click_cpu_at(6000)
+        self.assertEqual(self.ev("fgView('timeline').probe().sel()"), -1)
+        self.assertGreater(self.ev("fgView('timeline').probe().TRACKS[1].h"), 0)
+        self.assertEqual(self.page.locator('.an-task-table tbody tr').count(), 1)
+        self.assertIn('scheduler-only', self.page.locator('.an-task-table').inner_text())
+        self.assertNotIn('early', self.page.locator('.tl-detail').inner_text())
+        self.assertEqual(self.ev("fgView('timeline').probe().view()"), [0, 9000])
+
+    def test_cpu_navigation_selects_innermost_real_nonzero_depth_call(self):
+        tasks = [dict(pid=1, comm='nested', kind=0, cpu=0, runs=[[0, 9000, 0]])]
+        self.open_range_data(['root', 'leaf'], starts=[0, 1000], durations=[9000, 2000], parents=[-1, 0],
+                             columns={'depth': [3, 4]}, extra={'tasks': tasks})
+        self.click_cpu_at(2000)
+        self.assertEqual(self.ev("fgView('timeline').probe().sel()"), 1)
+        self.click_cpu_at(3100)
+        self.assertEqual(self.ev("fgView('timeline').probe().sel()"), 0)
+
+    def open_tasks_data(self, count=230, mode='abs'):
+        self.ev("fgSwitchView('text')")
+        self.page.reload()
+        tasks = [dict(pid=index + 1, comm=('=unsafe' if index == 0 else 'task_' + str(index).zfill(4)),
+                      comms=['old_' + str(index)], kind=0, cpu=0,
+                      runs=[[index * 1000, index * 1000 + 500, index % 4]]) for index in range(count)]
+        tasks += [dict(pid=-1, comm='<identity only>', kind=3, cpu=None),
+                  dict(pid=0, comm='idle', kind=1, cpu=0), dict(pid=-1, comm='cpu fallback', kind=2, cpu=0)]
+        self.open_range_data(['root', 'child'], starts=[0, 100], durations=[1000, 200], parents=[-1, 0],
+                             columns={'depth': [0, 1]}, mode=mode,
+                             extra={'tasks': tasks, 'offcpu': [[1, 100, None, 0, 0, 1, 0, -1, 0, -1]],
+                                    'wakeups': [[-1, 250000, 2, 0, -1, -1]],
+                                    'chains': [[1, 0, 12, 0, 2, 1, 1]], 'errnames': {'12': 'ENOMEM'},
+                                    'overhead': {'child': 10, 'self': 5, 'source': 'test'}})
+        self.page.click('[data-act=an-tasks]')
+
+    def test_tasks_paginate_export_all_and_preserve_focused_more_on_refresh(self):
+        self.open_tasks_data()
+        self.assertEqual(self.page.locator('.an-task-table tbody tr').count(), 100)
+        self.page.locator('[data-act=tasks-more]').press('Enter')
+        self.assertEqual(self.page.locator('.an-task-table tbody tr').count(), 200)
+        self.assertEqual(self.ev("document.activeElement.dataset.act"), 'tasks-more')
+        rows = self.download_csv('[data-act=tasks-csv]')
+        self.assertEqual(len(rows), 233)
+        self.assertEqual(rows[0]['task'], "'=unsafe")
+        self.assertEqual(rows[0]['calls'], '2')
+        self.assertEqual(rows[0]['error_origins_including_minor'], '1')
+        self.assertEqual(rows[1]['open_waits'], '1')
+        self.assertEqual(rows[2]['end_ns'], '250000')
+        self.assertEqual(rows[-3]['start_ns'], '')
+        self.assertEqual(rows[-2]['cpus'], '0')
+        self.page.click('[data-act=adj]')
+        self.assertEqual(self.page.locator('.an-task-table tbody tr').count(), 200)
+        self.assertEqual(self.download_csv('[data-act=tasks-csv]'), rows)
+        self.page.locator('[data-act=tasks-more]').press('Space')
+        self.assertEqual(self.page.locator('.an-task-table tbody tr').count(), 233)
+        self.assertTrue(self.page.locator('[data-act=tasks-more]').is_disabled())
+
+    def test_tasks_literal_query_kind_shared_matches_and_navigation(self):
+        self.open_tasks_data(count=12)
+        self.page.fill('[data-task-query]', 'old_2')
+        self.assertEqual(self.page.locator('.an-task-table tbody tr').count(), 1)
+        self.assertIn('task_0002', self.page.locator('.an-task-table').inner_text())
+        self.page.fill('[data-task-query]', 'CPU 3')
+        self.assertEqual(self.page.locator('.an-task-table tbody tr').count(), 3)
+        self.page.fill('[data-task-query]', '[')
+        self.assertEqual(self.page.locator('.an-task-table tbody tr').count(), 0)
+        self.page.click('[data-act=tasks-reset]')
+        self.page.select_option('[data-task-kind]', '1')
+        self.assertEqual(self.page.locator('.an-task-table tbody tr').count(), 1)
+        self.assertTrue(self.page.locator('[data-task-show]').is_disabled())
+        self.page.click('[data-act=tasks-reset]')
+        self.ev("fgNotifyFilter('child only', new Set([2]))")
+        self.page.check('[data-task-matching]')
+        rows = self.download_csv('[data-act=tasks-csv]')
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]['matched_calls'], '1')
+        self.assertEqual(rows[0]['calls'], '2')
+        self.page.click('[data-act=tasks-reset]')
+        self.page.locator('[data-task-show="2"]').click()
+        self.assertGreater(self.ev("fgView('timeline').probe().TRACKS[2].h"), 0)
+        self.assertEqual(self.ev("fgView('timeline').probe().sel()"), -1)
+        self.assertEqual(self.page.locator('.tl-detail-title').inner_text(), 'Tasks')
+
+    def test_tasks_count_and_packed_exports_do_not_claim_nanosecond_measurements(self):
+        for mode in ['count', 'compressed']:
+            with self.subTest(mode=mode):
+                self.open_tasks_data(count=4, mode=mode)
+                rows = self.download_csv('[data-act=tasks-csv]')
+                suffix = 'units' if mode == 'count' else 'ns'
+                self.assertIn('span_' + suffix, rows[0])
+                self.assertEqual(rows[0]['position_basis'], 'call_order' if mode == 'count' else 'packed_duration')
+                self.assertIn('not CPU time', self.page.locator('.tl-detail').inner_text())
+
+    def test_tasks_reuse_prepared_facts_and_keep_sort_keyboard_focus(self):
+        self.open_tasks_data()
+        self.ev("""() => {
+            for (const task of fgView('timeline').probe().TRACKS) {
+                task.runs[Symbol.iterator] = function* () { throw new Error('Task facts rescanned'); };
+            }
+        }""")
+        self.page.locator('[data-task-sort=name]').press('Enter')
+        self.assertEqual(self.ev("document.activeElement.dataset.taskSort"), 'name')
+        self.assertEqual(self.page.locator('th[aria-sort=ascending]').count(), 1)
+        self.assertEqual(len(self.download_csv('[data-act=tasks-csv]')), 233)
+        self.page.fill('[data-task-query]', 'task_')
+        self.page.type('[data-task-query]', '0')
+        self.assertEqual(self.ev("document.activeElement.hasAttribute('data-task-query')"), True)
+        self.assertEqual(len(self.download_csv('[data-act=tasks-csv]')), 229)
+        self.page.click('[data-act=adj]')
+        self.ev("fgNotifyFilter('child', new Set([2]))")
+        self.page.check('[data-task-matching]')
+        self.assertEqual(self.page.locator('.an-task-table tbody tr').count(), 0)
+        self.page.fill('[data-task-query]', '')
+        self.assertEqual(self.download_csv('[data-act=tasks-csv]')[0]['matched_calls'], '1')
+
+    def test_tasks_compact_layout_preserves_controls_during_horizontal_scroll(self):
+        tasks = [dict(pid=1, comm='<script>long_name_' + 'x' * 600, kind=0, cpu=0)]
+        self.open_range_data(['root'], extra={'tasks': tasks})
+        self.page.click('[data-act=an-tasks]')
+        for theme in ['light', 'dark']:
+            for width, height in [(320, 700), (390, 844), (800, 420), (1500, 900)]:
+                with self.subTest(theme=theme, width=width, height=height):
+                    self.ev("theme => document.documentElement.setAttribute('data-theme', theme)", theme)
+                    self.page.set_viewport_size({'width': width, 'height': height})
+                    self.page.wait_for_timeout(60)
+                    self.ev("document.querySelector('.tl-detail').scrollLeft = 5000")
+                    metrics = self.ev("""() => {
+                        const panel = document.querySelector('.tl-detail').getBoundingClientRect();
+                        const head = document.querySelector('.an-task-head');
+                        const tools = document.querySelector('.an-task-tools').getBoundingClientRect();
+                        const footer = document.querySelector('.an-task-footer').getBoundingClientRect();
+                        return [document.documentElement.scrollWidth, tools.left - panel.left, footer.left - panel.left,
+                            head.getBoundingClientRect().left - panel.left, document.querySelector('.an-task-name').offsetHeight,
+                            getComputedStyle(head).top, document.querySelector('.an-task-table th').style.top];
+                    }""")
+                    self.assertLessEqual(metrics[0], width)
+                    self.assertLessEqual(abs(metrics[1]), 2)
+                    self.assertLessEqual(abs(metrics[2]), 2)
+                    self.assertLessEqual(abs(metrics[3]), 2)
+                    self.assertLessEqual(metrics[4], 40)
+                    if width <= 640 or height <= 600:
+                        self.assertEqual(metrics[5:], ['auto', '0px'])
+        self.assertEqual(self.page.locator('.an-task-table script').count(), 0)
+
     def test_window_panels_filter_overlapping_calls_and_adjust_self_not_positions(self):
         extra = {'resched': [[0, 0, 1000, 2, 1, 0], [0, 2000, 3000, 3, 0, 0]],
                  'sections': [[0, 0, 0, 1000, 0, 1, 0, 1, 2], [0, 0, 2000, 3000, 2, 2, 0, 3, 4],

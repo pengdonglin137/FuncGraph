@@ -638,6 +638,7 @@ tlRoot.querySelector('.tl-toolbar').addEventListener('click', ev => {
         case 'an-errors': showErrors(); break;
         case 'an-lat': showLatency(); break;
         case 'an-sec': showSections(); break;
+        case 'an-tasks': showTasks(null); break;
         case 'expand': {
             const any = ORDER.some(t => t.collapsed);
             for (const t of ORDER) t.collapsed = !any;
@@ -677,6 +678,7 @@ function refreshPanel() {
     else if (AN.kind === 'sec') showSections();
     else if (AN.kind === 'dist') showDist(AN.func);
     else if (AN.kind === 'wait') showWaitChain(AN.off);
+    else if (AN.kind === 'tasks') showTasks();
     else if (range) showRangeSummary();
     else if (sel >= 0) showDetail(sel);
 }
@@ -717,6 +719,7 @@ elHelp.innerHTML = `
 <li><kbd>↑</kbd> parent · <kbd>↓</kbd> first child · <kbd>[</kbd>/<kbd>]</kbd> siblings</li>
 <li><kbd>E</kbd>/<kbd>Shift+E</kbd> next/prev error · <kbd>/</kbd> search, <kbd>N</kbd>/<kbd>Shift+N</kbd> next/prev match</li>
 <li>Click an off-CPU segment: wait chain (who woke the task, wake latency, and who woke the waker)</li>
+<li><b>Tasks</b>: find recorded tasks by name / PID / CPU, including tasks without traced calls; export all matching rows</li>
 <li><kbd>I</kbd>: show / hide inlined functions as dashed frames (extent = first to last traced call inside)</li>
 <li><kbd>M</kbd> or <b>Max</b>: maximize (hide the page header and tabs); drag the bar above the bottom panel to resize it, double-click it to reset</li>
 <li><kbd>O</kbd>: durations as measured / with the tracing overhead subtracted</li>
