@@ -1,5 +1,7 @@
 # FuncGraph - 专业 Linux ftrace 可视化工具
 
+[![ci](https://github.com/pengdonglin137/FuncGraph/actions/workflows/ci.yml/badge.svg)](https://github.com/pengdonglin137/FuncGraph/actions/workflows/ci.yml)
+
 ![FuncGraph 可视化示例](sample.png)
 
 
@@ -30,7 +32,7 @@ FuncGraph 将 `function_graph` 的 ftrace 输出转换为交互式、可过滤�
 
 ## 示例
 
-[sample.html](sample.html)（2.7 MB，请在本地打开）是 [samples/sample_io.txt](samples/sample_io.txt) 的报告。采集的是一个进程（[samples/demo_io.c](samples/demo_io.c)）：读一个文件的 4 KB，写 4 KB 到另一个文件，通过 loopback 给自己发一个 UDP 包再收回来，最后在空队列上再调一次 `recvfrom`（返回 `-EAGAIN`）。只跟踪这四个系统调用，从入口函数（`__x64_sys_*`）开始，带参数、返回值、调用点和调度事件；打开文件、创建 socket 都在它们之前完成，不跟踪，所以这五次调用在 110 us 内首尾相接：共 695 行，442 次调用。
+[sample.html](https://pengdonglin137.github.io/FuncGraph/sample.html)（[在线打开](https://pengdonglin137.github.io/FuncGraph/sample.html)，2.7 MB；仓库里的文件可在本地打开）是 [samples/sample_io.txt](samples/sample_io.txt) 的报告。采集的是一个进程（[samples/demo_io.c](samples/demo_io.c)）：读一个文件的 4 KB，写 4 KB 到另一个文件，通过 loopback 给自己发一个 UDP 包再收回来，最后在空队列上再调一次 `recvfrom`（返回 `-EAGAIN`）。只跟踪这四个系统调用，从入口函数（`__x64_sys_*`）开始，带参数、返回值、调用点和调度事件；打开文件、创建 socket 都在它们之前完成，不跟踪，所以这五次调用在 110 us 内首尾相接：共 695 行，442 次调用。
 
 可以看的地方：
 - **时间轴**：`__x64_sys_sendto`（上面的截图）依次经过 `udp_sendmsg -> ip_output -> loopback_xmit`，接收端（`net_rx_action -> udp_rcv`）在同一次调用末尾的软中断里执行（绿色）。*Where the time went*：被跟踪的子调用占 65%，软中断占 35%。
@@ -64,7 +66,7 @@ python3 funcgraph.py --timeline --enable-fold --filter --func-links --highlight-
 
 ### 需求
 
-- Python 3.6+
+- Python 3.8+
 - addr2line（来自 binutils）
 - pyelftools（`--fast` 需要）
 - 可选：Pygments（用于语法高亮）
@@ -385,6 +387,8 @@ assets/compare/       # 对比标签页
 assets/views/         # 附加视图共用的标签切换
 tests/                # 自测（tests/run.sh）和树莓派 4 采集的样例
 docs/design.md        # 设计文档
+site/index.html       # GitHub Pages 首页（由 .github/workflows/ci.yml 连同示例一起发布）
+.github/workflows/    # CI：在 Python 3.8 / 3.12 上跑测试，然后发布 Pages
 samples/              # 示例 trace（sample_io.txt）、采集用的程序（demo_io.c）、截图
 sample.html           # samples/sample_io.txt 的报告（见“示例”一节）
 sample.png            # sample.html 的截图

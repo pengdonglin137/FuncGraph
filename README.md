@@ -1,5 +1,7 @@
 # FuncGraph - Specialized Linux ftrace Visualization Tool
 
+[![ci](https://github.com/pengdonglin137/FuncGraph/actions/workflows/ci.yml/badge.svg)](https://github.com/pengdonglin137/FuncGraph/actions/workflows/ci.yml)
+
 ![FuncGraph Visualization Example](sample.png)
 
 ## What is FuncGraph?
@@ -29,7 +31,7 @@ FuncGraph converts `function_graph` ftrace output into an interactive, filterabl
 
 ## Sample
 
-[sample.html](sample.html) (2.7 MB, open it locally) is the report of [samples/sample_io.txt](samples/sample_io.txt): one process ([samples/demo_io.c](samples/demo_io.c)) reads 4 KB of a file, writes 4 KB to another file, sends a UDP datagram to itself over loopback and receives it, then calls `recvfrom` once more on the empty queue (`-EAGAIN`). Only these four system calls are traced, from their entry points (`__x64_sys_*`), with arguments, return values, call sites and scheduler events; the file and socket setup happens before them and is not traced, so the five calls follow each other within 110 us: 695 lines, 442 calls.
+[sample.html](https://pengdonglin137.github.io/FuncGraph/sample.html) ([open online](https://pengdonglin137.github.io/FuncGraph/sample.html), 2.7 MB; the copy in the repo opens locally) is the report of [samples/sample_io.txt](samples/sample_io.txt): one process ([samples/demo_io.c](samples/demo_io.c)) reads 4 KB of a file, writes 4 KB to another file, sends a UDP datagram to itself over loopback and receives it, then calls `recvfrom` once more on the empty queue (`-EAGAIN`). Only these four system calls are traced, from their entry points (`__x64_sys_*`), with arguments, return values, call sites and scheduler events; the file and socket setup happens before them and is not traced, so the five calls follow each other within 110 us: 695 lines, 442 calls.
 
 What to look at:
 - **Timeline**: `__x64_sys_sendto` (the screenshot above) runs `udp_sendmsg -> ip_output -> loopback_xmit`, and the receive side (`net_rx_action -> udp_rcv`) runs in the softirq at the end of the same call (green). *Where the time went*: 65% traced callees, 35% softirq.
@@ -62,7 +64,7 @@ python3 funcgraph.py --timeline --enable-fold --filter --func-links --highlight-
 ## Installation & Usage
 
 ### Requirements
-- Python 3.6+
+- Python 3.8+
 - addr2line (from binutils)
 - pyelftools (for `--fast`)
 - Optional: Pygments (for syntax highlighting)
@@ -381,6 +383,8 @@ assets/compare/       # Compare tab
 assets/views/         # Tab switching shared by the extra views
 tests/                # Self-tests (tests/run.sh) and fixtures from a Raspberry Pi 4
 docs/design.md        # Design document
+site/index.html       # GitHub Pages home page (published with the sample by .github/workflows/ci.yml)
+.github/workflows/    # CI: tests on Python 3.8 / 3.12, then Pages
 samples/              # Sample trace (sample_io.txt), its workload (demo_io.c), screenshots
 sample.html           # Report of samples/sample_io.txt (see Sample)
 sample.png            # Screenshot of sample.html

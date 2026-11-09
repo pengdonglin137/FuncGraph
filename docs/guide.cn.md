@@ -46,7 +46,7 @@ FuncGraph 不需要安装，直接运行仓库里的 `funcgraph.py` 即可。
 
 | 依赖 | 用途 | 是否必需 |
 |---|---|---|
-| Python 3.6+ | 主程序（只用标准库，BTF 解析也是自己实现的） | 必需 |
+| Python 3.8+ | 主程序（只用标准库，BTF 解析也是自己实现的） | 必需 |
 | binutils `addr2line`，交叉编译时用 `aarch64-linux-gnu-addr2line` 等 | 把地址解析成源码位置 | 提供 `--vmlinux` 时需要 |
 | pyelftools | `--fast` 模式的地址解析（`fastfaddr2line.py`） | 用 `--fast` 时需要 |
 | Pygments | `--highlight-code` 源码语法高亮 | 可选 |

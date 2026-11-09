@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FuncGraph: interactive reports for Linux function_graph traces</title>
+<meta name="description" content="FuncGraph turns Linux ftrace function_graph output into one self-contained HTML report: text view with source, timeline, error paths, critical sections, scheduling latency, compare.">
+<style>
+  :root { --fg: #1f2933; --muted: #5f6b7a; --line: #e3e7ed; --accent: #3b6fd8; --bg: #f6f8fb; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 16px/1.6 system-ui, -apple-system, "Segoe UI", sans-serif; color: var(--fg); background: #fff; }
+  header { background: var(--bg); border-bottom: 1px solid var(--line); }
+  .wrap { max-width: 1040px; margin: 0 auto; padding: 0 20px; }
+  header .wrap { padding-top: 44px; padding-bottom: 36px; }
+  h1 { margin: 0 0 6px; font-size: 34px; letter-spacing: -.01em; }
+  h1 span { color: #2e9d6a; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .lead { margin: 0 0 22px; font-size: 18px; color: var(--muted); max-width: 760px; }
+  .btns { display: flex; flex-wrap: wrap; gap: 10px; }
+  .btn { display: inline-block; padding: 9px 16px; border-radius: 7px; border: 1px solid var(--line); background: #fff;
+         color: var(--fg); text-decoration: none; font-weight: 600; font-size: 15px; }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .btn:hover { filter: brightness(.96); }
+  .shot { display: block; width: 100%; margin: 28px 0 8px; border: 1px solid var(--line); border-radius: 8px;
+          box-shadow: 0 6px 24px rgba(20, 30, 50, .08); }
+  .cap { color: var(--muted); font-size: 14px; margin: 0 0 8px; }
+  h2 { font-size: 22px; margin: 38px 0 10px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 14px 28px; }
+  .grid div { border-top: 2px solid var(--line); padding-top: 8px; }
+  .grid b { display: block; }
+  .grid p { margin: 2px 0 0; color: var(--muted); font-size: 15px; }
+  pre { background: var(--bg); border: 1px solid var(--line); border-radius: 7px; padding: 12px 14px; overflow-x: auto;
+        font: 13.5px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; }
+  code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .92em; }
+  .lang { float: right; font-size: 14px; }
+  .lang a { color: var(--accent); }
+  footer { margin: 48px 0 30px; color: var(--muted); font-size: 14px; border-top: 1px solid var(--line); padding-top: 14px; }
+  [lang="zh"] { display: none; }
+  body.zh [lang="en"] { display: none; }
+  body.zh [lang="zh"] { display: revert; }
+  body.zh .grid[lang="zh"] { display: grid; }
+</style>
+</head>
+<body>
+<header><div class="wrap">
+  <div class="lang"><a href="#" onclick="setLang(document.body.classList.contains('zh') ? 'en' : 'zh'); return false;">
+    <span lang="en">中文</span><span lang="zh">English</span></a></div>
+  <h1><span>FuncGraph</span></h1>
+  <p class="lead" lang="en">Turns Linux ftrace <code>function_graph</code> output into one self-contained HTML report:
+    a text view with resolved source, and a timeline that shows where the time went, error paths,
+    critical sections and scheduling delays.</p>
+  <p class="lead" lang="zh">把 Linux ftrace 的 <code>function_graph</code> 输出转换成一个自包含的 HTML 报告：
+    带源码的文本视图，以及能看出时间花在哪里、错误从哪里来、关中断/关抢占区间和调度延迟的时间轴。</p>
+  <div class="btns">
+    <a class="btn primary" href="sample.html"><span lang="en">Open the sample report</span><span lang="zh">打开示例报告</span></a>
+    <a class="btn" href="https://github.com/pengdonglin137/FuncGraph">GitHub</a>
+    <a class="btn" href="https://github.com/pengdonglin137/FuncGraph/blob/master/docs/guide.en.md" lang="en">User guide</a>
+    <a class="btn" href="https://github.com/pengdonglin137/FuncGraph/blob/master/docs/guide.cn.md" lang="zh">使用指南</a>
+  </div>
+</div></header>
+
+<main class="wrap">
+  <a href="sample.html"><img class="shot" src="sample.png" alt="FuncGraph timeline of the sample trace"></a>
+  <p class="cap" lang="en">The sample: one process reads and writes 4 KB and sends a UDP datagram to itself (QEMU x86_64, Linux 7.2).
+    Selected: <code>__x64_sys_sendto</code>, 65% traced callees and 35% softirq (the loopback receive path).</p>
+  <p class="cap" lang="zh">示例：一个进程读写 4 KB 文件，再通过 loopback 给自己发一个 UDP 包（QEMU x86_64，Linux 7.2）。
+    选中的是 <code>__x64_sys_sendto</code>：被跟踪的子调用占 65%，软中断（loopback 接收路径）占 35%。</p>
+
+  <h2 lang="en">What it shows</h2>
+  <h2 lang="zh">能看到什么</h2>
+  <div class="grid" lang="en">
+    <div><b>Timeline</b><p>Per-task flame chart over time, CPU tracks, off-CPU periods, wakeup arrows and wait chains.</p></div>
+    <div><b>Where the time went</b><p>Each call split into own code, traced callees, interrupts and blocked/preempted time, with an overhead estimate.</p></div>
+    <div><b>Error paths</b><p>Errnos from <code>funcgraph-retval</code> followed from their origin to user space, checked against BTF return types.</p></div>
+    <div><b>Critical sections</b><p>irqs-off, preempt-off and BH-off regions, scheduling latency windows, sleeping in atomic context.</p></div>
+    <div><b>Source</b><p>Call sites resolved to file:line with their inline chain and highlighted source.</p></div>
+    <div><b>Compare and export</b><p>Per-function differences between two traces; JSON/CSV export for scripts and CI.</p></div>
+  </div>
+  <div class="grid" lang="zh">
+    <div><b>时间轴</b><p>按任务的时序火焰图、CPU 轨道、off-CPU 时段、唤醒箭头和等待链。</p></div>
+    <div><b>时间花在哪里</b><p>每次调用拆分为自身代码、被跟踪的子调用、中断、阻塞/被抢占时间，并估算跟踪开销。</p></div>
+    <div><b>错误路径</b><p>根据 <code>funcgraph-retval</code> 从错误源头一路追到用户态，并用 BTF 返回类型校验。</p></div>
+    <div><b>临界区</b><p>关中断、关抢占、关软中断的区间，调度延迟窗口，在原子上下文里睡眠。</p></div>
+    <div><b>源码</b><p>调用点解析到文件和行号，附内联链和语法高亮的源码。</p></div>
+    <div><b>对比和导出</b><p>两份 trace 按函数对比；JSON/CSV 导出，便于脚本和 CI 使用。</p></div>
+  </div>
+
+  <h2 lang="en">Try it</h2>
+  <h2 lang="zh">快速上手</h2>
+<pre><span lang="en"># on the target, as root: capture one command with the timeline options</span><span lang="zh"># 在目标机上（root）：采集一条命令，打开时间轴需要的选项</span>
+fgcapture.sh --sched --calibrate -o trace.txt -- cat /etc/hostname
+
+<span lang="en"># on the host</span><span lang="zh"># 在主机上</span>
+python3 funcgraph.py --timeline --enable-fold --filter --fast \
+    --vmlinux vmlinux --kernel-src linux --output report.html trace.txt</pre>
+
+  <footer>FuncGraph · <a href="https://github.com/pengdonglin137/FuncGraph">github.com/pengdonglin137/FuncGraph</a></footer>
+</main>
+<script>
+function setLang(l) {
+  document.body.classList.toggle('zh', l === 'zh');
+  document.documentElement.lang = l === 'zh' ? 'zh-CN' : 'en';
+  try { localStorage.setItem('fgSiteLang', l); } catch (e) {}
+}
+setLang((function () {
+  try { const s = localStorage.getItem('fgSiteLang'); if (s) return s; } catch (e) {}
+  return /^zh/i.test(navigator.language || '') ? 'zh' : 'en';
+})());
+</script>
+</body>
+</html>

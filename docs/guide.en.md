@@ -46,7 +46,7 @@ Nothing to install: run `funcgraph.py` from the repository.
 
 | Dependency | Used for | Required |
 |---|---|---|
-| Python 3.6+ | the program (standard library only; the BTF reader is built in) | yes |
+| Python 3.8+ | the program (standard library only; the BTF reader is built in) | yes |
 | binutils `addr2line` (`aarch64-linux-gnu-addr2line` etc. when cross-compiling) | address to source resolution | with `--vmlinux` |
 | pyelftools | address resolution in `--fast` mode (`fastfaddr2line.py`) | with `--fast` |
 | Pygments | C syntax highlighting with `--highlight-code` | optional |
