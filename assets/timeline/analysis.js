@@ -84,34 +84,99 @@ function showErrors() {
 }
 
 // ---- 2. duration distribution of one function ----
+let distCache = null, distView = null, distFrame = 0;
+const DIST_PAGE = 50, DIST_SITE_PAGE = 12;
+function distQuantile(ids, fraction) {
+    return ids.length ? durOf(ids[ids.length - 1 - Math.round(fraction * (ids.length - 1))]) : 0;
+}
+function distributionData(name) {
+    if (distCache && distCache.name === name && distCache.hits === textHits && distCache.durations === sDur) return distCache;
+    const ids = [];
+    for (let index = 0; index < N; index++) if (sName[index] === name && matchOk(index)) ids.push(index);
+    ids.sort((left, right) => durOf(right) - durOf(left) || left - right);
+    const sites = new Map();
+    let total = 0;
+    for (const index of ids) {
+        const site = callerOf(index) || '?';
+        let group = sites.get(site);
+        if (!group) { group = { site, ids: [], total: 0 }; sites.set(site, group); }
+        group.ids.push(index);
+        group.total += durOf(index);
+        total += durOf(index);
+    }
+    const siteRows = Array.from(sites.values()).sort((left, right) => right.ids.length - left.ids.length ||
+        (left.site < right.site ? -1 : left.site > right.site ? 1 : 0));
+    distCache = { name, hits: textHits, durations: sDur, ids, total, sites, siteRows };
+    return distCache;
+}
+function distributionHistogram(ids) {
+    const low = Math.log10(Math.max(1, distQuantile(ids, 0)));
+    const high = Math.log10(Math.max(2, distQuantile(ids, 1))) + 1e-9;
+    const count = Math.max(8, Math.min(40, Math.ceil((high - low) * 10)));
+    const width = (high - low) / count;
+    const buckets = Array.from({ length: count }, () => ({ ids: [], error: false }));
+    let maxCount = 1;
+    for (const index of ids) {
+        const bucket = buckets[Math.max(0, Math.min(count - 1, Math.floor((Math.log10(Math.max(1, durOf(index))) - low) / width)))];
+        bucket.ids.push(index);
+        if (eRole[index] === 0) bucket.error = true;
+        maxCount = Math.max(maxCount, bucket.ids.length);
+    }
+    return { low, high, width, buckets, maxCount };
+}
+function distCallIds() {
+    return distView.bucket < 0 ? distView.population.ids : distView.histogram.buckets[distView.bucket].ids;
+}
+function distBucketBounds(index) {
+    const histogram = distView.histogram;
+    return [index ? Math.pow(10, histogram.low + index * histogram.width) : 0,
+        Math.pow(10, histogram.low + (index + 1) * histogram.width)];
+}
+function distBucketLabel(index) {
+    const bounds = distBucketBounds(index);
+    return (index ? fmtDur(bounds[0]) + ' – < ' : '< ') + fmtDur(bounds[1]) + ' (' + distView.histogram.buckets[index].ids.length + ' calls)';
+}
 function showDist(nameIdx) {
     AN.kind = 'dist';
     if (AN.func !== nameIdx) AN.site = null;
     AN.func = nameIdx;
-    const all = [];
-    for (let i = 0; i < N; i++) if (sName[i] === nameIdx && matchOk(i)) all.push(i);
-    const ids = AN.site ? all.filter(i => (callerOf(i) || '?') === AN.site) : all;
+    const data = distributionData(nameIdx);
+    const population = AN.site !== null ? data.sites.get(AN.site) || { ids: [], total: 0 } : data;
+    const changedPopulation = !distView || distView.data !== data || distView.site !== AN.site;
+    if (changedPopulation) {
+        const siteVisible = distView && distView.data === data ? distView.siteVisible : DIST_SITE_PAGE;
+        distView = { data, site: AN.site, population, histogram: distributionHistogram(population.ids),
+            bucket: -1, visible: Math.min(15, population.ids.length), siteVisible };
+    }
+    const ids = population.ids;
     AN.distIds = ids;
-    const durs = ids.map(i => durOf(i)).sort((a, b) => a - b);
-    const q = p => durs.length ? durs[Math.min(durs.length - 1, Math.floor(p * (durs.length - 1) + 0.5))] : 0;
-    const sum = durs.reduce((s, x) => s + x, 0);
-    let h = '<div class="tl-detail-head"><span class="tl-detail-title">' + esc(S[nameIdx]) + '</span>' +
-        pill('mute', ids.length + ' calls') + pill('mute', 'total ' + fmtDur(sum)) + (textHits ? pill('warn', 'filtered') : '') +
-        (AN.site ? pill('warn', 'from ' + AN.site) : '') +
-        '<span class="sp"></span><button class="tl-close" title="Close (Esc)">×</button></div>';
-    if (!ids.length) { openDetail(h + '<div style="padding:12px">No calls.</div>'); return; }
+    const quantile = fraction => distQuantile(ids, fraction);
+    const statistic = value => ids.length ? fmtDur(value) : '—';
+    let h = '<div class="tl-detail-head an-dist-head"><span class="tl-detail-title" title="' + esc(S[nameIdx]) + '">' + esc(S[nameIdx]) + '</span>' +
+        pill('mute', ids.length + ' calls') + pill('mute', 'total ' + fmtDur(population.total)) + (textHits ? pill('warn', 'filtered') : '') +
+        (adjOn ? pill('warn', 'overhead subtracted') : '') + (AN.site !== null ? '<span class="tl-pill warn" title="' + esc(AN.site) + '">from ' + esc(AN.site) + '</span>' : '') +
+        '<span class="an-dist-actions">' + (AN.site !== null ? '<button class="tl-btn" data-act="dist-reset-site">All call sites</button>' : '') +
+        '<button class="tl-close" title="Close (Esc)">×</button></span></div>';
     h += '<div class="an-dist"><div class="tl-kv">' +
-        kv('min', fmtDur(durs[0])) + kv('p50', fmtDur(q(0.5))) + kv('p90', fmtDur(q(0.9))) + kv('p99', fmtDur(q(0.99))) +
-        kv('max', fmtDur(durs[durs.length - 1])) + kv('mean', fmtDur(sum / durs.length)) +
-        '</div><div><canvas class="an-hist" height="150"></canvas><div class="an-hint">Log-scale buckets; click a bar to list its calls. ' +
-        'Slowest calls are listed below.</div></div></div>';
-    const slow = ids.slice().sort((a, b) => durOf(b) - durOf(a)).slice(0, 15);
+        kv('min', statistic(quantile(0))) + kv('p50', statistic(quantile(0.5))) + kv('p90', statistic(quantile(0.9))) + kv('p99', statistic(quantile(0.99))) +
+        kv('max', statistic(quantile(1))) + kv('mean', statistic(ids.length ? population.total / ids.length : 0)) +
+        '</div><div class="an-hist-wrap"><canvas class="an-hist" height="120" role="img" aria-label="Duration histogram; use the duration bucket menu to filter calls"></canvas>' +
+        '<div class="an-hint">Log-scale buckets; click a bar or choose a duration bucket to filter the call list and export, not these statistics.</div></div></div>';
+    if (!ids.length) h += '<div class="an-hint">No calls match this function' + (AN.site !== null ? ' and call site' : '') + ' with the current filter.</div>';
+    h += '<div class="an-dist-tools"><label>Duration bucket <select data-act="dist-bucket"' + (ids.length ? '' : ' disabled') + '><option value="-1">All durations</option>';
+    distView.histogram.buckets.forEach((bucket, index) => {
+        if (bucket.ids.length) h += '<option value="' + index + '">' + esc(distBucketLabel(index)) + '</option>';
+    });
+    h += '</select></label><button class="tl-btn" data-act="dist-reset-bucket">All durations</button>' +
+        '<span class="an-dist-count" role="status"></span><button class="tl-btn" data-act="dist-more">Load more</button>' +
+        '<button class="tl-btn" data-act="dist-csv">Export calls CSV</button></div>';
     h += '<table class="tl-sum an-tbl"><thead><tr><th>duration</th><th>self</th><th style="text-align:left">task</th><th>start</th><th style="text-align:left">caller</th><th>×p50</th></tr></thead><tbody class="an-list">' +
-        slowRows(slow, q(0.5)) + '</tbody></table>' +
+        slowRows(distCallIds().slice(0, distView.visible), quantile(0.5)) + '</tbody></table>' +
         '<div style="padding:6px 12px"><button class="tl-btn" data-act="slowfast">Slow vs fast: what do the slow calls do differently?</button></div>' +
-        (AN.site ? '' : callSiteTable(ids));
+        callSiteTable(data);
     openDetail(h);
-    drawHist(elDetail.querySelector('.an-hist'), ids, durs, q(0.5), q(0.99));
+    if (changedPopulation) elDetail.scrollTop = 0;
+    updateDistControls();
 }
 function slowRows(list, p50) {
     return list.map(i => `<tr data-slice="${i}"><td>${fmtDur(durOf(i))}</td><td>${fmtDur(sSelf[i])}</td>` +
@@ -119,52 +184,119 @@ function slowRows(list, p50) {
         `<td style="text-align:left">${esc(callerOf(i) || (sParent[i] >= 0 ? nameOf(sParent[i]) : ''))}</td>` +
         `<td>${p50 ? (durOf(i) / p50).toFixed(1) : ''}</td></tr>`).join('');
 }
-function drawHist(cv, ids, durs, p50, p99) {
-    const w = cv.parentElement.clientWidth || 500, hh = 150, dpr = window.devicePixelRatio || 1;
-    cv.width = w * dpr; cv.height = hh * dpr; cv.style.width = w + 'px'; cv.style.height = hh + 'px';
-    const g = cv.getContext('2d');
-    g.setTransform(dpr, 0, 0, dpr, 0, 0);
-    const lo = Math.log10(Math.max(1, durs[0])), hi = Math.log10(Math.max(2, durs[durs.length - 1])) + 1e-9;
-    const NB = Math.max(8, Math.min(40, Math.ceil((hi - lo) * 10)));
-    const bw = (hi - lo) / NB || 1;
-    const buckets = Array.from({ length: NB }, () => []);
-    for (const i of ids) {
-        const d = Math.max(1, durOf(i));
-        buckets[Math.min(NB - 1, Math.floor((Math.log10(d) - lo) / bw))].push(i);
-    }
-    const mx = Math.max(...buckets.map(b => b.length));
-    const L = 40, B = 20, PW = w - L - 8, PH = hh - B - 8;
-    g.fillStyle = P.sub; g.font = FONT_S; g.textBaseline = 'top';
-    const x = v => L + (Math.log10(Math.max(1, v)) - lo) / (hi - lo || 1) * PW;
-    buckets.forEach((b, k) => {
-        if (!b.length) return;
-        const bh = Math.max(1, PH * Math.log1p(b.length) / Math.log1p(mx));
-        g.fillStyle = eRoleAny(b) ? P.errO : P.ovBar;
-        g.globalAlpha = 0.75;
-        g.fillRect(L + k * PW / NB + 1, 4 + PH - bh, PW / NB - 2, bh);
+function updateDistControls() {
+    const ids = distCallIds();
+    elDetail.querySelector('.an-dist-count').textContent = 'Showing ' + distView.visible + ' of ' + ids.length + ' calls (slowest first)';
+    elDetail.querySelector('[data-act=dist-more]').disabled = distView.visible >= ids.length;
+    elDetail.querySelector('[data-act=dist-csv]').disabled = !ids.length;
+    elDetail.querySelector('[data-act=dist-reset-bucket]').hidden = distView.bucket < 0;
+    elDetail.querySelector('[data-act=dist-bucket]').value = distView.bucket;
+}
+function selectDistBucket(index) {
+    if (!distView || !Number.isInteger(index) || index < -1 || index >= distView.histogram.buckets.length ||
+        (index >= 0 && !distView.histogram.buckets[index].ids.length)) return;
+    distView.bucket = index;
+    distView.visible = Math.min(index < 0 ? 15 : DIST_PAGE, distCallIds().length);
+    elDetail.querySelector('.an-list').innerHTML = slowRows(distCallIds().slice(0, distView.visible), distQuantile(distView.population.ids, 0.5));
+    updateDistControls();
+    scheduleDistHistogram();
+}
+function appendDistCalls() {
+    const ids = distCallIds(), start = distView.visible;
+    distView.visible = Math.min(start + DIST_PAGE, ids.length);
+    elDetail.querySelector('.an-list').insertAdjacentHTML('beforeend', slowRows(ids.slice(start, distView.visible), distQuantile(distView.population.ids, 0.5)));
+    updateDistControls();
+}
+function scheduleDistHistogram() {
+    if (distFrame || AN.kind !== 'dist' || !elDetail.classList.contains('show') || window.fgCurrentView() !== 'timeline') return;
+    distFrame = requestAnimationFrame(() => {
+        distFrame = 0;
+        if (AN.kind === 'dist' && elDetail.classList.contains('show') && window.fgCurrentView() === 'timeline') drawDistHistogram();
     });
-    g.globalAlpha = 1;
-    g.fillStyle = P.axis;
-    for (let e = Math.ceil(lo); e <= hi; e++) {
-        const xx = x(Math.pow(10, e));
-        g.fillRect(xx, 4 + PH, 1, 4);
-        g.fillText(fmtDur(Math.pow(10, e)), xx + 2, 6 + PH);
+}
+function drawDistHistogram() {
+    const canvas = elDetail.querySelector('.an-hist');
+    if (!canvas || !distView) return;
+    const width = canvas.parentElement.clientWidth, height = 120, ratio = window.devicePixelRatio || 1;
+    if (width <= 0) return;
+    canvas.width = Math.round(width * ratio); canvas.height = Math.round(height * ratio);
+    canvas.style.height = height + 'px';
+    const context = canvas.getContext('2d'), histogram = distView.histogram;
+    context.setTransform(ratio, 0, 0, ratio, 0, 0);
+    if (!distView.population.ids.length) {
+        context.fillStyle = P.sub; context.font = FONT_S;
+        context.fillText('No matching calls', 12, 24);
+        canvas.onclick = null;
+        return;
     }
-    g.fillText(String(mx), 2, 4);
-    for (const [v, lab, col] of [[p50, 'p50', P.rangeLine], [p99, 'p99', P.rs]]) {
-        const xv = x(v), tw = g.measureText(lab).width;
-        g.fillStyle = col; g.fillRect(xv, 4, 1.5, PH);
-        g.fillText(lab, xv + 3 + tw > w ? xv - tw - 3 : xv + 3, lab === 'p50' ? 4 : 18);
+    const left = 40, plotWidth = width - left - 8, plotHeight = height - 28, count = histogram.buckets.length;
+    const position = value => left + (Math.log10(Math.max(1, value)) - histogram.low) / (histogram.high - histogram.low) * plotWidth;
+    context.fillStyle = P.sub; context.font = FONT_S; context.textBaseline = 'top';
+    histogram.buckets.forEach((bucket, index) => {
+        if (!bucket.ids.length) return;
+        const barHeight = Math.max(1, plotHeight * Math.log1p(bucket.ids.length) / Math.log1p(histogram.maxCount));
+        context.fillStyle = bucket.error ? P.errO : P.ovBar;
+        context.globalAlpha = distView.bucket < 0 || distView.bucket === index ? 0.85 : 0.3;
+        context.fillRect(left + index * plotWidth / count + 1, 4 + plotHeight - barHeight, plotWidth / count - 2, barHeight);
+    });
+    context.globalAlpha = 1;
+    context.fillStyle = P.axis;
+    for (let exponent = Math.ceil(histogram.low); exponent <= histogram.high; exponent++) {
+        const coordinate = position(Math.pow(10, exponent));
+        context.fillRect(coordinate, 4 + plotHeight, 1, 4);
+        context.fillText(fmtDur(Math.pow(10, exponent)), coordinate + 2, 6 + plotHeight);
     }
-    cv.onclick = ev => {
-        const r = cv.getBoundingClientRect();
-        const k = Math.floor((ev.clientX - r.left - L) / (PW / NB));
-        if (k < 0 || k >= NB || !buckets[k].length) return;
-        const list = buckets[k].slice().sort((a, b) => durOf(b) - durOf(a)).slice(0, 50);
-        elDetail.querySelector('.an-list').innerHTML = slowRows(list, p50);
+    context.fillText(String(histogram.maxCount), 2, 4);
+    for (const [fraction, label, color] of [[0.5, 'p50', P.rangeLine], [0.99, 'p99', P.rs]]) {
+        const coordinate = position(distQuantile(distView.population.ids, fraction)), textWidth = context.measureText(label).width;
+        const labelLeft = coordinate + 3 + textWidth > width ? coordinate - textWidth - 3 : coordinate + 3;
+        const labelTop = label === 'p50' ? 4 : 18;
+        context.fillStyle = color; context.fillRect(coordinate, 4, 1.5, plotHeight);
+        context.fillStyle = P.bg; context.fillRect(labelLeft - 2, labelTop - 1, textWidth + 4, 13);
+        context.fillStyle = color; context.fillText(label, labelLeft, labelTop);
+    }
+    canvas.onclick = event => {
+        const bounds = canvas.getBoundingClientRect();
+        const index = Math.floor((event.clientX - bounds.left - left) / (plotWidth / count));
+        if (index >= 0 && index < count) selectDistBucket(index);
     };
 }
-function eRoleAny(list) { for (const i of list) if (eRole[i] === 0) return true; return false; }
+function exportDistCsv() {
+    const ids = distCallIds();
+    if (!ids.length) return;
+    const unit = MODE === 'count' ? 'units' : 'ns', scale = MODE === 'count' ? 1000 : 1;
+    const basis = MODE === 'count' ? 'call_order' : adjOn ? 'overhead_subtracted_estimate' : 'measured';
+    const bounds = distView.bucket < 0 ? ['', ''] : distBucketBounds(distView.bucket).map(value => value / scale);
+    const columns = ['function', 'duration_' + unit, 'self_' + unit, 'start_' + unit, 'end_' + unit,
+        'task', 'caller', 'trace_line', 'error_origin', 'time_mode', 'duration_basis', 'filter', 'call_site_filter',
+        'bucket_lower_' + unit, 'bucket_upper_' + unit];
+    function* rows() {
+        for (const index of ids) yield [nameOf(index), durOf(index) / scale, sSelf[index] / scale, sStart[index] / scale,
+            sEnd[index] / scale, trackLabel(TRACKS[sTask[index]]), callerOf(index) || '', sLine[index], eRole[index] === 0 ? 1 : 0,
+            MODE, basis, (window.fgFilterState || {}).text || '', AN.site || '', bounds[0], bounds[1]];
+    }
+    downloadTimelineCsv('funcgraph-calls-' + (MODE === 'count' ? 'count' : adjOn ? 'adjusted' : 'raw') + '.csv', columns, rows());
+}
+elDetail.addEventListener('change', event => {
+    if (event.target.matches('[data-act=dist-bucket]')) selectDistBucket(+event.target.value);
+});
+elDetail.addEventListener('click', event => {
+    const button = event.target.closest('[data-act]');
+    if (!button || AN.kind !== 'dist') return;
+    const action = button.dataset.act;
+    if (action === 'dist-more') appendDistCalls();
+    else if (action === 'dist-reset-bucket') selectDistBucket(-1);
+    else if (action === 'dist-reset-site') { AN.site = null; showDist(AN.func); }
+    else if (action === 'dist-csv') exportDistCsv();
+    else if (action === 'dist-sites-more') {
+        const start = distView.siteVisible;
+        distView.siteVisible = Math.min(start + DIST_SITE_PAGE, distView.data.siteRows.length);
+        elDetail.querySelector('.an-sites tbody').insertAdjacentHTML('beforeend', distSiteRows(distView.data.siteRows.slice(start, distView.siteVisible)));
+        button.disabled = distView.siteVisible >= distView.data.siteRows.length;
+        elDetail.querySelector('.an-site-count').textContent = 'Showing ' + distView.siteVisible + ' of ' + distView.data.siteRows.length + ' call sites';
+    } else return;
+    event.stopImmediatePropagation();
+}, true);
 
 // ---- 3. scheduling latency: need-resched windows and who delayed them ----
 function showLatency() {
@@ -383,16 +515,19 @@ function breakdownHtml(i) {
 }
 
 // ---- duration distribution: call sites and slow-vs-fast differential ----
-function callSiteTable(ids) {
-    if (!sCaller) return '';
-    const g = new Map();
-    for (const i of ids) { const c = callerOf(i) || '?'; if (!g.has(c)) g.set(c, []); g.get(c).push(durOf(i)); }
-    if (g.size < 2) return '';
-    const rows = Array.from(g.entries()).map(([c, v]) => { v.sort((a, b) => a - b); return [c, v.length, v[Math.floor((v.length - 1) / 2)], v[Math.floor(0.99 * (v.length - 1))], v[v.length - 1]]; })
-        .sort((a, b) => b[1] - a[1]).slice(0, 12);
-    let h = '<div class="tl-sec" style="padding:6px 12px 0">By call site</div><table class="tl-sum an-tbl"><thead><tr><th style="text-align:left">caller</th><th>calls</th><th>p50</th><th>p99</th><th>max</th></tr></thead><tbody>';
-    for (const r of rows) h += `<tr data-site="${esc(r[0])}"><td style="text-align:left">${esc(r[0])}</td><td>${r[1]}</td><td>${fmtDur(r[2])}</td><td>${fmtDur(r[3])}</td><td>${fmtDur(r[4])}</td></tr>`;
-    return h + '</tbody></table>';
+function distSiteRows(rows) {
+    return rows.map(row => '<tr data-site="' + esc(row.site) + '"><td><button class="an-site-btn" aria-pressed="' + (AN.site === row.site) + '">' +
+        esc(row.site) + '</button></td><td>' + row.ids.length + '</td><td>' + fmtDur(distQuantile(row.ids, 0.5)) + '</td><td>' +
+        fmtDur(distQuantile(row.ids, 0.99)) + '</td><td>' + fmtDur(distQuantile(row.ids, 1)) + '</td></tr>').join('');
+}
+function callSiteTable(data) {
+    if (!sCaller || (data.siteRows.length < 2 && AN.site === null)) return '';
+    let html = '<div class="tl-sec" style="padding:6px 12px 0">By call site</div><table class="tl-sum an-tbl an-sites"><thead><tr><th style="text-align:left">caller</th><th>calls</th><th>p50</th><th>p99</th><th>max</th></tr></thead><tbody>';
+    html += distSiteRows(data.siteRows.slice(0, distView.siteVisible)) + '</tbody></table>';
+    if (data.siteRows.length > DIST_SITE_PAGE) html += '<div class="an-dist-tools"><span class="an-site-count" role="status">Showing ' +
+        Math.min(distView.siteVisible, data.siteRows.length) + ' of ' + data.siteRows.length + ' call sites</span><button class="tl-btn" data-act="dist-sites-more"' +
+        (distView.siteVisible >= data.siteRows.length ? ' disabled' : '') + '>More call sites</button></div>';
+    return html;
 }
 function slowFast(ids) {
     // compare the subtrees of the fastest half and the slowest 10% of the calls

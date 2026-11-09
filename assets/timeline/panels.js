@@ -208,6 +208,7 @@ function sizeDetailHead() {
     const head = elDetail.querySelector('.tl-detail-head');
     const height = head ? head.offsetHeight : 0;
     elDetail.querySelectorAll('table.tl-sum th').forEach(header => { header.style.top = height + 'px'; });
+    scheduleDistHistogram();
 }
 const detailHeadObserver = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(sizeDetailHead) : null;
 function openDetail(html) {
@@ -356,6 +357,24 @@ function appendRangeRows() {
     elDetail.querySelector('.tl-range-footer [role=status]').textContent = 'Showing ' + summary.visible + ' of ' + summary.rows.length + ' functions';
     elDetail.querySelector('[data-act=range-more]').disabled = summary.visible >= summary.rows.length;
 }
+function downloadTimelineCsv(filename, columns, rows) {
+    const cell = value => {
+        let text = String(value);
+        if (typeof value === 'string' && (/^[\s]*[=+\-@]/.test(text) || /^[\t\r\n]/.test(text))) text = "'" + text;
+        return /[",\r\n]/.test(text) ? '"' + text.replace(/"/g, '""') + '"' : text;
+    };
+    const lines = [columns.join(',')];
+    for (const row of rows) lines.push(row.map(cell).join(','));
+    const url = URL.createObjectURL(new Blob(['\ufeff', lines.join('\r\n'), '\r\n'], { type: 'text/csv;charset=utf-8' }));
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    link.hidden = true;
+    tlRoot.appendChild(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
 function exportRangeCsv() {
     if (!range || AN.kind !== 'range') return;
     const summary = sortedRangeSummary();
@@ -366,26 +385,11 @@ function exportRangeCsv() {
     const columns = ['function', 'calls', 'self_estimate_' + unit, 'inclusive_estimate_' + unit, 'max_call_' + unit,
         'error_origins_overlapping', 'range_start_' + unit, 'range_end_' + unit, 'scope', 'scope_off_cpu_' + unit,
         'time_mode', 'duration_basis', 'filter'];
-    const cell = value => {
-        let text = String(value);
-        if (typeof value === 'string' && (/^[\s]*[=+\-@]/.test(text) || /^[\t\r\n]/.test(text))) text = "'" + text;
-        return /[",\r\n]/.test(text) ? '"' + text.replace(/"/g, '""') + '"' : text;
-    };
-    const lines = [columns.join(',')];
-    for (const [name, stats] of summary.rows) {
-        lines.push([S[name], stats.calls, stats.self / scale, stats.incl / scale, stats.max / scale, stats.err,
-            range.s / scale, range.e / scale, scope, summary.offT / scale, MODE, basis,
-            (window.fgFilterState || {}).text || ''].map(cell).join(','));
+    function* rows() {
+        for (const [name, stats] of summary.rows) yield [S[name], stats.calls, stats.self / scale, stats.incl / scale, stats.max / scale, stats.err,
+            range.s / scale, range.e / scale, scope, summary.offT / scale, MODE, basis, (window.fgFilterState || {}).text || ''];
     }
-    const url = URL.createObjectURL(new Blob(['\ufeff', lines.join('\r\n'), '\r\n'], { type: 'text/csv;charset=utf-8' }));
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = 'funcgraph-range-' + (MODE === 'count' ? 'count' : adjOn ? 'adjusted' : 'raw') + '.csv';
-    link.hidden = true;
-    tlRoot.appendChild(link);
-    link.click();
-    link.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    downloadTimelineCsv('funcgraph-range-' + (MODE === 'count' ? 'count' : adjOn ? 'adjusted' : 'raw') + '.csv', columns, rows());
 }
 function showRangeSummary() {
     if (!range) return;
@@ -660,7 +664,7 @@ else if (typeof lsGet === 'function' && lsGet('tlInline') === '1') toggleInlineV
 }
 if (!WAKES.length) tlRoot.querySelector('[data-ov=wk]').classList.add('na');
 if (!D.caps.retval) tlRoot.querySelector('[data-ov=err]').classList.add('na');
-new MutationObserver(() => { palette(); ovDirty = true; draw(); })
+new MutationObserver(() => { palette(); ovDirty = true; draw(); scheduleDistHistogram(); })
     .observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
 window.addEventListener('resize', () => { if (window.fgCurrentView() === 'timeline') resize(); });
 if (typeof ResizeObserver !== 'undefined') {

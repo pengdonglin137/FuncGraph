@@ -174,22 +174,25 @@ class BrowserSmokeTest(unittest.TestCase):
         self.page.click('.view-tab[data-view=compare]')
         self.page.wait_for_selector('.cmp-table')
 
-    def open_range_data(self, names, mode='abs', starts=None, durations=None, parents=None):
+    def open_range_data(self, names, mode='abs', starts=None, durations=None, parents=None, callers=None):
         count = len(names)
+        strings = list(dict.fromkeys(names + ([caller for caller in callers if caller is not None] if callers else [])))
+        string_ids = {name: index for index, name in enumerate(strings)}
         data = self.ev("JSON.parse(document.getElementById('tlData').textContent)")
         starts = starts if starts is not None else [index * 1000 for index in range(count)]
         durations = durations if durations is not None else [1000] * count
-        data.update(n=count, mode=mode, strings=names,
+        data.update(n=count, mode=mode, strings=strings,
                     tasks=[dict(pid=1, comm='range-test', kind=0, cpu=0)],
                     errs=[], chains=[], offcpu=[], resched=[], wakeups=[], irqoff=[],
                     sections=[], atomic=[], inline={}, overhead=None)
         data['cols'] = dict(task=[0] * count, depth=[0] * count,
                             start=[start - (starts[index - 1] if index else 0)
                                    for index, start in enumerate(starts)],
-                            dur=durations, name=list(range(count)),
+                            dur=durations, name=[string_ids[name] for name in names],
                             parent=parents if parents is not None else [-1] * count,
                             line=list(range(1, count + 1)), flags=[0] * count,
-                            ret=None, caller=None, args=None, module=None, cpu=None,
+                            ret=None, caller=[string_ids.get(caller, -1) for caller in callers] if callers else None,
+                            args=None, module=None, cpu=None,
                             adj=[duration / 2 for duration in durations])
         self.ev("data => { document.getElementById('tlData').textContent = JSON.stringify(data); }", data)
         self.open_timeline()
@@ -284,11 +287,182 @@ class BrowserSmokeTest(unittest.TestCase):
         self.assertEqual(self.page.locator('.tl-range-table tbody tr[data-name]').count(), 300)
         self.assertIn('150000 functions', self.page.locator('.tl-range-footer').inner_text())
 
-    def download_range_csv(self):
+    def download_csv(self, selector):
         with self.page.expect_download() as download_info:
-            self.page.click('[data-act=range-csv]')
+            self.page.click(selector)
         with open(download_info.value.path(), encoding='utf-8-sig', newline='') as source:
             return list(csv.DictReader(source))
+
+    def download_range_csv(self):
+        return self.download_csv('[data-act=range-csv]')
+
+    def open_distribution(self):
+        self.ev("fgView('timeline').probe().dist(0)")
+        self.page.wait_for_selector('.an-dist-tools')
+
+    def test_distribution_call_sites_remain_reversible_and_page_without_resorting(self):
+        self.open_range_data(['target'] * 80, callers=[f'caller_{index % 20:02d}' for index in range(80)])
+        self.open_distribution()
+        self.assertEqual(self.page.locator('tr[data-site]').count(), 12)
+        first = self.page.locator('tr[data-site]').first.element_handle()
+        self.page.click('[data-act=dist-sites-more]')
+        self.assertTrue(first.evaluate('(node) => node.isConnected'))
+        self.assertEqual(self.page.locator('tr[data-site]').count(), 20)
+        self.ev("""() => {
+            window.distributionSortLengths = [];
+            const originalSort = Array.prototype.sort;
+            Array.prototype.sort = function(...args) {
+                window.distributionSortLengths.push(this.length);
+                return originalSort.apply(this, args);
+            };
+        }""")
+        self.page.locator('tr[data-site] button').first.press('Enter')
+        self.assertEqual(self.page.locator('tr[data-site] button[aria-pressed=true]').count(), 1)
+        self.assertIn('4 of 4 calls', self.page.locator('.an-dist-count').inner_text())
+        self.page.locator('tr[data-site] button[aria-pressed=true]').press('Space')
+        self.assertIn('15 of 80 calls', self.page.locator('.an-dist-count').inner_text())
+        self.assertEqual(self.ev('window.distributionSortLengths'), [])
+
+    def test_distribution_empty_site_can_be_cleared_after_filtering(self):
+        self.open_range_data(['target'] * 8, callers=['caller_a'] * 4 + ['caller_b'] * 4)
+        self.open_distribution()
+        self.page.locator('tr[data-site="caller_a"] button').click()
+        self.ev("fgNotifyFilter('only b', new Set([5, 6, 7, 8]))")
+        self.assertEqual(self.page.locator('.an-list tr').count(), 0)
+        self.assertTrue(self.page.locator('[data-act=dist-csv]').is_disabled())
+        self.assertIn('No calls', self.page.locator('.tl-detail').inner_text())
+        self.assertEqual(self.page.locator('.an-dist .tl-kv .v').all_inner_texts(), ['—'] * 6)
+        self.page.click('[data-act=dist-reset-site]')
+        self.assertEqual(self.page.locator('.an-list tr').count(), 4)
+        rows = self.download_csv('[data-act=dist-csv]')
+        self.assertEqual({row['caller'] for row in rows}, {'caller_b'})
+        self.assertEqual({row['filter'] for row in rows}, {'only b'})
+
+    def test_distribution_loads_and_exports_every_call_not_just_initial_rows(self):
+        self.open_range_data(['=SUM(1,2)'] * 320, durations=list(range(1000, 1320)),
+                             callers=['\tcaller,"\n函数'] * 320)
+        self.open_distribution()
+        self.assertEqual(self.page.locator('.an-list tr').count(), 15)
+        first = self.page.locator('.an-list tr').first.element_handle()
+        self.page.click('[data-act=dist-more]')
+        self.assertTrue(first.evaluate('(node) => node.isConnected'))
+        self.assertEqual(self.page.locator('.an-list tr').count(), 65)
+        rows = self.download_csv('[data-act=dist-csv]')
+        self.assertEqual(len(rows), 320)
+        self.assertEqual([int(row['duration_ns']) for row in rows], list(range(1319, 999, -1)))
+        self.assertEqual({row['function'] for row in rows}, {"'=SUM(1,2)"})
+        self.assertEqual({row['caller'] for row in rows}, {"'\tcaller,\"\n函数"})
+        self.assertEqual({row['duration_basis'] for row in rows}, {'measured'})
+        self.assertEqual([int(row['trace_line']) for row in rows], list(range(320, 0, -1)))
+        while self.page.locator('[data-act=dist-more]').is_enabled():
+            self.page.click('[data-act=dist-more]')
+        self.assertEqual(self.page.locator('.an-list tr').count(), 320)
+
+    def test_distribution_histogram_bucket_filters_list_and_export_then_resets(self):
+        self.open_range_data(['target'] * 240, durations=[10 ** (index // 60 + 1) for index in range(240)])
+        self.open_distribution()
+        options = self.page.locator('[data-act=dist-bucket] option').evaluate_all('(nodes) => nodes.map(node => node.value)')
+        self.assertEqual(len(options), 5)
+        last = options[-1]
+        self.page.select_option('[data-act=dist-bucket]', last)
+        self.assertIn('50 of 60 calls', self.page.locator('.an-dist-count').inner_text())
+        self.page.click('[data-act=dist-more]')
+        self.assertEqual(self.page.locator('.an-list tr').count(), 60)
+        rows = self.download_csv('[data-act=dist-csv]')
+        self.assertEqual(len(rows), 60)
+        for row in rows:
+            self.assertEqual(float(row['duration_ns']), 10000)
+            self.assertGreaterEqual(float(row['duration_ns']), float(row['bucket_lower_ns']))
+            self.assertLess(float(row['duration_ns']), float(row['bucket_upper_ns']))
+        self.page.click('[data-act=dist-reset-bucket]')
+        self.assertIn('15 of 240 calls', self.page.locator('.an-dist-count').inner_text())
+        self.page.focus('[data-act=dist-bucket]')
+        self.page.keyboard.press('End')
+        self.page.keyboard.press('Enter')
+        self.assertEqual(self.page.locator('[data-act=dist-bucket]').input_value(), last)
+        self.page.click('[data-act=dist-reset-bucket]')
+        canvas = self.page.locator('.an-hist')
+        canvas.scroll_into_view_if_needed()
+        bounds = canvas.bounding_box()
+        bucket_count = int(last) + 1
+        self.page.mouse.click(bounds['x'] + 40 + (int(last) + 0.5) * (bounds['width'] - 48) / bucket_count,
+                              bounds['y'] + 50)
+        self.assertEqual(self.page.locator('[data-act=dist-bucket]').input_value(), last)
+        self.page.click('[data-act=adj]')
+        self.assertEqual(self.page.locator('[data-act=dist-bucket]').input_value(), '-1')
+        self.assertEqual(len(self.download_csv('[data-act=dist-csv]')), 240)
+        self.page.select_option('[data-act=dist-bucket]', self.page.locator('[data-act=dist-bucket] option').last.get_attribute('value'))
+        self.ev("fgNotifyFilter('first group', new Set(Array.from({length: 60}, (_, index) => index + 1)))")
+        self.assertEqual(self.page.locator('[data-act=dist-bucket]').input_value(), '-1')
+        self.assertEqual(len(self.download_csv('[data-act=dist-csv]')), 60)
+
+    def test_distribution_quantiles_sites_filter_and_adjustment_share_one_population(self):
+        self.open_range_data(['target'] * 4, durations=[1000, 2000, 5000, 10000], callers=['a', 'a', 'b', 'b'])
+        self.open_distribution()
+        values = self.ev("""() => Object.fromEntries([...document.querySelector('.an-dist .tl-kv').children]
+            .filter(node => node.classList.contains('k')).map(node => [node.textContent, node.nextElementSibling.textContent]))""")
+        self.assertEqual(values['p50'], '5.000 us')
+        self.assertEqual(values['mean'], '4.500 us')
+        self.assertEqual(self.page.locator('tr[data-site="a"] td').nth(2).inner_text(), '2.000 us')
+        self.page.locator('tr[data-site="a"] button').click()
+        self.page.click('[data-act=adj]')
+        adjusted = self.download_csv('[data-act=dist-csv]')
+        self.assertEqual([float(row['duration_ns']) for row in adjusted], [1000, 500])
+        self.assertEqual([(float(row['start_ns']), float(row['end_ns'])) for row in adjusted], [(1000, 3000), (0, 1000)])
+        self.assertEqual({row['duration_basis'] for row in adjusted}, {'overhead_subtracted_estimate'})
+        self.assertEqual({row['call_site_filter'] for row in adjusted}, {'a'})
+        self.ev("fgNotifyFilter('one call', new Set([1]))")
+        self.assertEqual(len(self.download_csv('[data-act=dist-csv]')), 1)
+        self.page.click('[data-act=adj]')
+        self.assertEqual(float(self.download_csv('[data-act=dist-csv]')[0]['duration_ns']), 1000)
+
+    def test_distribution_exports_truthful_units_in_each_time_mode(self):
+        for mode in ('abs', 'rel', 'compressed', 'count'):
+            with self.subTest(mode=mode):
+                if mode != 'abs':
+                    self.ev("fgSwitchView('text')")
+                    self.page.reload()
+                self.open_range_data(['target'] * 2, mode=mode)
+                self.open_distribution()
+                row = self.download_csv('[data-act=dist-csv]')[0]
+                self.assertEqual(row['time_mode'], mode)
+                if mode == 'count':
+                    self.assertNotIn('duration_ns', row)
+                    self.assertEqual(float(row['duration_units']), 1)
+                    self.assertEqual(row['duration_basis'], 'call_order')
+                else:
+                    self.assertEqual(float(row['duration_ns']), 1000)
+                    self.assertEqual(row['duration_basis'], 'measured')
+
+    def test_distribution_histogram_resizes_and_repaints_after_theme_and_view_changes(self):
+        self.open_range_data(['long_function_' * 15] * 4, callers=['long_caller_' * 20] * 2 + ['other'] * 2,
+                             durations=[1000, 2000, 5000, 10000])
+        self.open_distribution()
+        self.page.locator('tr[data-site] button').first.click()
+        for width, height in [(390, 844), (320, 700), (1500, 900)]:
+            with self.subTest(width=width):
+                self.page.set_viewport_size({'width': width, 'height': height})
+                self.page.wait_for_timeout(150)
+                dimensions = self.ev("""() => {
+                    const canvas = document.querySelector('.an-hist');
+                    const bounds = canvas.getBoundingClientRect();
+                    return [bounds.width, canvas.width, bounds.right, window.devicePixelRatio];
+                }""")
+                self.assertLessEqual(dimensions[2], width)
+                self.assertLessEqual(abs(dimensions[1] - dimensions[0] * dimensions[3]), 1)
+                close = self.page.locator('.tl-close').bounding_box()
+                self.assertLessEqual(close['x'] + close['width'], width)
+                self.assertLessEqual(self.page.locator('.an-dist-head').bounding_box()['height'], 160)
+        before = self.ev("document.querySelector('.an-hist').toDataURL()")
+        self.ev('toggleTheme()')
+        self.page.wait_for_timeout(100)
+        after = self.ev("document.querySelector('.an-hist').toDataURL()")
+        self.assertNotEqual(before, after)
+        self.ev("fgSwitchView('compare')")
+        self.ev('toggleTheme()')
+        self.ev("fgSwitchView('timeline')")
+        self.page.wait_for_timeout(100)
+        self.assertEqual(before, self.ev("document.querySelector('.an-hist').toDataURL()"))
 
     def test_range_csv_exports_all_rows_safely_in_sort_order(self):
         names = ['=SUM(1,2)', '+cmd', '-cmd', '@cmd', '\tcmd', ' quoted,"\n函数']

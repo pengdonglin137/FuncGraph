@@ -143,6 +143,7 @@ function resize() {
     ovDirty = true;
     layout();
     draw();
+    scheduleDistHistogram();
 }
 function layout() {
     let y = 0;
