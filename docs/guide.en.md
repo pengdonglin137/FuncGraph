@@ -627,3 +627,96 @@ In both views the call stacks list the inline frames.
 | Enter | open the selected call in the text view |
 | Esc | close the help; clear selection and range |
 | `?` | help and legend |
+
+## 7. Analysis panels
+
+Analysis panels open in the detail area below the timeline and follow the filter and the Overhead switch. Column headers sort (the sorted column is underlined); rows jump to the timeline.
+
+### 7.1 Range summary (Shift + drag)
+
+Shift + drag on a track selects a time range in that track; Shift + Alt + drag selects over all tracks. The summary shows:
+
+- Tags: range length, track, number of calls, self time per context (task / softirq / hardirq / NMI) and off-CPU time.
+- Table per function: calls (calls starting in the range), self, inclusive, max (longest call), errors (error origins). Calls partly inside the range count proportionally. Clicking a row puts the function into the search box and highlights it.
+
+### 7.2 Duration distribution (H)
+
+Press `H` with a slice selected, or click **Duration distribution** in the detail panel:
+
+- Left: min, p50, p90, p99, max and mean over all calls of the function.
+- **Histogram**: x is duration (log scale), y the number of calls (log scale). The blue line is p50, the amber one p99; bars containing error origins are red. Click a bar to list its calls below.
+- **Slowest calls**: duration, self, task, start, call site, and `×p50` (how many times the median). Click to go to the call.
+- **By call site**: one row per call site with calls and p50/p99/max; the same function called from different places can behave very differently. Click a row to restrict the distribution to that call site, click again to undo.
+- **Slow vs fast** button: compares the slowest 10% with the fastest half of the calls: per call, the average number of calls and self time of every function in their subtrees, plus `(own code)`, `(interrupts / softirq)`, `(blocked off-CPU)` and `(preempted)`, sorted by the difference. The top rows say what the slow calls do in addition. Example: slow `kmem_cache_alloc` calls all add `___slab_alloc`, the allocator's slow path.
+
+### 7.3 Critical sections (Sections)
+
+Every region in task context with **irqs off**, **preemption off** or **BH off**; the buttons at the top switch between the three kinds and show their counts:
+
+| Column | Meaning |
+|---|---|
+| duration | length; red above 100 us |
+| start / task | start time and task |
+| started in / ended in | the traced function on top of the stack when the flag changed. `top level`: outside any function; `switched out / end`: the task was switched out or the capture ended; `interrupt`: an interrupt came in (so irqs had been re-enabled in untraced code) |
+| max depth | maximum preempt depth (preempt off only) |
+| top self time inside | the 3 functions with the most self time inside: what ran while the section was held |
+
+The preempt depth is relative to a baseline: the lowest preempt depth seen in task context (1 on both 6.18 and 7.2), shown in the panel text.
+
+Precision: enabling/disabling irqs or preemption is usually inlined code that does not appear in the trace, so a region's ends are only known up to the two traced calls around the flag change. Clicking a row selects the region in the timeline.
+
+### 7.4 Error summary (Errors)
+
+- At the top (if any): **Sleeping functions called in atomic context**. Calls of functions that may sleep (`__might_sleep`, `mutex_lock*`, `down*`, `wait_for_completion*`, `msleep`, `schedule_timeout*`, …) with irqs off, preemption disabled, BH disabled or from an interrupt; with the reasons, the parent function and the count. Click to go to the call.
+- The table groups error chains by **syscall / entry → origin → errno**:
+
+| Column | Meaning |
+|---|---|
+| syscall / entry | the system call (without prefixes such as `__x64_sys_`); if there is none, the outermost function, tagged `no syscall` |
+| origin | the error origin: the first function returning this errno while none of its children returned the same |
+| errno | number and name |
+| count | occurrences |
+| to user | of these, how many reached user space (red) |
+| handled | how many were handled by a caller |
+| tasks | number of tasks involved |
+| chain | longest propagation chain in frames; `?` when some frames are not type-verified |
+
+Click a row to go to the first occurrence, click again for the next one (`occurrence k / n`).
+
+**How errors are decided**:
+
+1. With BTF (the `.BTF` section of `--vmlinux`, files given with `--btf`, or a kernel that already formats return values by type), by the function's return type:
+   - void, unsigned, bool, enum: never an error;
+   - signed integer: truncated to the type width, an error if in [-4095, -1];
+   - pointer: `IS_ERR` semantics; NULL is not an error but is marked;
+   - comparators (names with `cmp`/`compare`) are not errors: they return differences.
+2. Without BTF only the value can be used, and leftover register values of void functions cause false positives; such results are marked unverified.
+
+The error navigator in the toolbar (`◀ N errors · to user ▶`): click the label to switch between "errors that reach user space" and "all errors".
+
+### 7.5 Wait chain (click an off-CPU segment)
+
+One row per wait, starting with the clicked off-CPU segment:
+
+| Column | Meaning |
+|---|---|
+| task / waited | task and wait time |
+| waiting in | function it waited in (first frame on the stack that is not scheduler code), state at switch-out in brackets |
+| woken by | the waker, with a context tag if the wakeup came from an interrupt |
+| waker was in | what the waker was doing: the first frame above `try_to_wake_up`, `__wake_up*` and similar, e.g. `anon_pipe_write` |
+| wake latency | time from the wakeup until the task ran again; red above 1 ms |
+| run again on | CPU it resumed on |
+
+If the waker itself had been waiting before, the next row shows what it waited for, and so on. The chain ends at wakeups from idle or interrupt context.
+
+The waker is taken from `sched_waking` when available: it fires in the waker's context. `sched_wakeup` can fire in an IPI on the target CPU, and the waker would then look like idle. Enable `sched_waking` when capturing; `fgcapture.sh --sched` does.
+
+### 7.6 Scheduling latency (Sched latency)
+
+Each **need-resched window**, from setting the need-resched flag until the task is switched out or the flag is cleared:
+
+- Tags: number of windows, total, longest. Below them, the functions with the most self time over all windows: who delays the reschedule.
+- Columns: latency (red above 100 us), start, task, max preempt (maximum preempt depth in the window), irqs-off (time with irqs disabled in the window), top self time inside, ended by (flag cleared / switched out / trace end).
+- Clicking a row selects the window in the timeline.
+
+Needs `latency-format` and timestamps.
