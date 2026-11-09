@@ -362,7 +362,7 @@ function refreshPanel() {
     if (TIMED && !c.switch_markers && c.proc) note('No context-switch markers seen: off-CPU periods cannot be shown.', true);
     if (D.overhead) note('Tracing overhead estimate (' + esc(D.overhead.source) + '): ' + fmtDur(D.overhead.child) +
         ' per traced child call, ' + fmtDur(D.overhead.self) + ' per call. Toggle <b>Overhead</b> to subtract it; slice positions stay as measured.', true);
-    else if (TIMED) note('Durations include tracing overhead (about 1 us per traced call on a Raspberry Pi 4). Capture with <code>fgcapture.sh --calibrate</code> to get a correction.', true);
+    else if (TIMED) note('Durations include tracing overhead (measured 0.2 us per traced call on a QEMU x86_64 VM, 1.1 us on a Raspberry Pi 4). Capture with <code>fgcapture.sh --calibrate</code> to get a correction.', true);
     if (D.lost.length) note(D.lost.length + ' "LOST EVENTS" record(s): some slices are incomplete (marked with dotted edges). Increase <code>buffer_size_kb</code>.');
     const st = D.stats;
     if (st.truncated || st.orphans) note(st.truncated + ' call(s) without exit, ' + st.orphans + ' without entry (trace window edges).', true);
@@ -396,7 +396,12 @@ elHelp.innerHTML = `
 <i style="background:#f59e0b"></i><span>need-resched pending (header band / corner)</span>
 <i style="background:repeating-linear-gradient(135deg,#aaa 0 2px,#eee 2px 4px)"></i><span>off-CPU (amber tint: preempted)</span>
 <i style="background:#8e44ad"></i><span>caller ≠ parent (untraced frame)</span>
-<i style="background:#0f9d8a;height:2px"></i><span>wakeup: waker → woken task (sched_wakeup)</span></div>`;
+<i style="background:#0f9d8a;height:2px"></i><span>wakeup: waker → woken task (sched_waking/wakeup); bunched: small marker only</span>
+<i style="background:rgba(110,120,140,.13);outline:1px dashed #6b7280"></i><span>inline frame (Inline view)</span>
+<i style="background:#8fb3ef;border-bottom:2px solid #c62828"></i><span>red underline: sleeping function called in atomic context</span>
+<i style="background:#8fb3ef;border-right:2px dotted #6b7280"></i><span>dotted right / left edge: exit / entry not captured</span>
+<i style="background:#d32f2f;clip-path:polygon(50% 0,100% 100%,0 100%)"></i><span>error origin too narrow to label (triangle)</span>
+<i style="background:#f0a35a;height:3px"></i><span>CPU track strip: hardirq (orange) / softirq (green) / NMI (purple)</span></div>`;
 
 // ---- init ----
 palette();
