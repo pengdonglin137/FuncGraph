@@ -611,6 +611,10 @@ Other visuals:
   - **Children**: real direct recorded children, even across skipped depths, grouped by function and ordered by total duration; `×N` = number of calls. The compact preview shows up to eight functions and labels the top-eight/total. Its native buttons open the **longest** call of each function, not an arbitrary first call. **Explore all children** opens complete groups and individual calls (7.8), including functions outside the preview.
 - Links at the top right: **Duration distribution (H)** (7.2) and **Open in text view ↵**.
 
+**Recorded call navigation**: the detail panel's **↑ Parent**, **↓ First child**, **‹ Previous** and **Next ›** buttons have the same behavior as ↑/↓/`[`/`]`. Navigation follows the nearest **recorded real parent**, not the adjacent visual depth row: children with different depth gaps remain siblings, while calls belonging to another parent are never substituted. Calls without a recorded parent are navigable roots within their own task, not proof of a common runtime caller. Order follows the original slice indexes, including timestamp ties and zero-duration calls; endpoints do not wrap.
+
+Inline/untraced detail panels offer the recorded parent and **First recorded call**; synthetic frames are not inserted into the recorded sibling sequence. Filtering does not rewrite this context, and Overhead/Inline do not change the navigation links. Buttons expose the target function in a safely escaped tooltip, disable missing targets and work with Tab/Enter/Space. Navigation reveals the target and returns its details to the top. The activated control retains focus when another target exists; at the endpoint focus returns to the canvas rather than silently activating a different direction. Narrow layouts wrap the controls.
+
 **Context lists** initially render 100 rows; **Load more context** appends 100 without replacing existing rows or losing the enabled paging button's focus. The same mechanism covers call stacks, error paths, inline chains and recorded calls inside inline/untraced frames. Recorded-frame rows are native buttons: Tab then Enter/Space selects that call. Long names use two lines with the full name/source in a tooltip; compact-window titles scroll vertically instead of covering the list.
 
 **Export stack / error chain / inline chain / calls CSV** exports the entire selected list, including unloaded rows, without expanding the DOM. Columns retain row kind/order, recorded and owning slice indexes, depth/display level, trace/task indexes, return/caller/arguments/module, inline file/line, explicit outside-window counts, duration/self and original positions. Error paths also retain original chain origin/top/declared length, errno, outcome and `path_status`. Only actual recorded calls have measured columns; resolved inline/call-site, untraced and outside-window rows leave them blank. `_units` denotes call-order steps, `_ns` time values; `time_mode`, `duration_basis` and `position_basis` distinguish adjusted values and packed geometry. CSV uses UTF-8, quoting and spreadsheet-formula protection.
@@ -687,8 +691,8 @@ Inline and untraced details cache the selected frame's raw extent facts, so refr
 | click a track header | collapse / expand the track |
 | Shift + drag | select a time range in this track and summarize it (7.1) |
 | Shift + Alt + drag | the same over all tracks |
-| ↑ / ↓ | select the parent / first child |
-| `[` / `]` | previous / next sibling |
+| ↑ / ↓ | select the recorded parent / first recorded child (skip synthetic frames) |
+| `[` / `]` | previous / next recorded sibling; roots stay within the task; no wrapping |
 | `E` / Shift + `E` | next / previous error origin |
 | `/`, `N` / Shift + `N` | search, next / previous match |
 | `H` | duration distribution of the selected function |

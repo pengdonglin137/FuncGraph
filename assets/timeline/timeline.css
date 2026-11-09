@@ -136,6 +136,8 @@ body.tl-max.tl-active { padding: 2px; }
 .tl-canvas:focus-visible { outline: 2px solid var(--link-color); outline-offset: -2px; }
 .tl-canvas.grab { cursor: grabbing; }
 .tl-canvas.ptr { cursor: pointer; }
+.tl-call-nav { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 8px 12px; position: sticky; left: 0; border-bottom: 1px solid var(--border-color); }
+.tl-call-nav .tl-btn:focus-visible { outline: 2px solid var(--link-color); outline-offset: 2px; }
 
 /* tooltip */
 .tl-tip {

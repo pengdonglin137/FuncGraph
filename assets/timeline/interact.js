@@ -481,10 +481,10 @@ window.addEventListener('keydown', ev => {
         case 'E': gotoErr(-1); break;
         case 'n': searchNext(1); break;
         case 'N': searchNext(-1); break;
-        case 'ArrowUp': if (sel >= 0 && sParent[sel] >= 0) select(sParent[sel], { reveal: true }); break;
-        case 'ArrowDown': if (sel >= 0) { const c = firstChild(sel); if (c >= 0) select(c, { reveal: true }); } break;
-        case '[': if (sel >= 0) { const c = sibling(sel, -1); if (c >= 0) select(c, { reveal: true }); } break;
-        case ']': if (sel >= 0) { const c = sibling(sel, 1); if (c >= 0) select(c, { reveal: true }); } break;
+        case 'ArrowUp': navigateCall('parent'); break;
+        case 'ArrowDown': navigateCall('child'); break;
+        case '[': navigateCall('previous'); break;
+        case ']': navigateCall('next'); break;
         case 'Enter': if (sel >= 0) gotoText(sLine[sel]); break;
         case '/': elSearch.focus(); elSearch.select(); break;
         case 'h': case 'H': if (sel >= 0) showDist(sName[sel]); break;
@@ -504,26 +504,24 @@ window.addEventListener('keydown', ev => {
     }
 }, true);
 
-function rowPos(i) {
-    const row = TRACKS[sTask[i]].rowsT[sDepth[i]];
-    const j = lbStart(row, sStart[i], 0);
-    for (let q = j; q < row.length && sStart[row[q]] <= sStart[i]; q++) if (row[q] === i) return [row, q];
-    for (let q = Math.max(0, j - 2); q < row.length; q++) if (row[q] === i) return [row, q];
-    return [row, -1];
+function callTarget(index, action) {
+    if (index < 0 || index >= NA) return -1;
+    if (action === 'parent') {
+        const parent = sParent[index];
+        return parent >= 0 && parent < N && sTask[parent] === sTask[index] &&
+            (isSyn(index) || sDepth[parent] < sDepth[index]) ? parent : -1;
+    }
+    if (isSyn(index)) return action === 'child' ? SYN[index - N].kids[0] ?? -1 : -1;
+    const tree = callTreeIndex();
+    return action === 'child' ? tree.first[index] : action === 'previous' ? tree.previous[index] : action === 'next' ? tree.next[index] : -1;
 }
-function firstChild(i) {
-    const t = TRACKS[sTask[i]];
-    if (isGhost(i)) return SYN[i - N].kids[0];
-    if (isSyn(i) || sDepth[i] + 1 >= t.rowsT.length) return -1;
-    const row = t.rowsT[sDepth[i] + 1];
-    const j = lbEnd(row, sStart[i]);
-    for (let q = j; q < row.length && sStart[row[q]] <= sEnd[i]; q++) if (sParent[row[q]] === i) return row[q];
-    return -1;
-}
-function sibling(i, dir) {
-    if (isSyn(i)) return -1;
-    const [row, q] = rowPos(i);
-    if (q < 0) return -1;
-    const nq = q + dir;
-    return nq >= 0 && nq < row.length ? row[nq] : -1;
+function navigateCall(action, focusControl) {
+    const target = callTarget(sel, action);
+    if (target < 0) return;
+    select(target, { reveal: true });
+    elDetail.scrollTop = 0; elDetail.scrollLeft = 0;
+    if (focusControl) {
+        const button = elDetail.querySelector('[data-call-nav="' + action + '"]');
+        (button && !button.disabled ? button : elCv).focus({ preventScroll: true });
+    }
 }

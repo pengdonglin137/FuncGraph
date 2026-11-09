@@ -1442,6 +1442,8 @@ body.tl-max.tl-active { padding: 2px; }
 .tl-canvas:focus-visible { outline: 2px solid var(--link-color); outline-offset: -2px; }
 .tl-canvas.grab { cursor: grabbing; }
 .tl-canvas.ptr { cursor: pointer; }
+.tl-call-nav { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 8px 12px; position: sticky; left: 0; border-bottom: 1px solid var(--border-color); }
+.tl-call-nav .tl-btn:focus-visible { outline: 2px solid var(--link-color); outline-offset: 2px; }
 
 /* tooltip */
 .tl-tip {
@@ -1732,11 +1734,11 @@ table.tl-sum td.err { color: #c62828; }
                 <div class="info-item"><div class="info-label">OS:</div><div class="info-value">Linux 6.8.0-138-generic</div></div>
                 <div class="info-item"><div class="info-label">Hostname:</div><div class="info-value">pengdl-pc</div></div>
                 <div class="info-item"><div class="info-label">Processor:</div><div class="info-value">x86_64</div></div>
-                <div class="info-item"><div class="info-label">Generated At:</div><div class="info-value">2026-11-10 05:53:01</div></div>
+                <div class="info-item"><div class="info-label">Generated At:</div><div class="info-value">2026-11-10 06:17:20</div></div>
                 <div class="info-section-divider"></div>
                 <div class="info-section-title">Processing Stats</div>
                 <div class="info-item"><div class="info-label">Parse Time:</div><div class="info-value">0.02s</div></div>
-                <div class="info-item"><div class="info-label">Vmlinux Time:</div><div class="info-value">5.70s</div></div>
+                <div class="info-item"><div class="info-label">Vmlinux Time:</div><div class="info-value">5.92s</div></div>
                 <div class="info-item"><div class="info-label">Modules Time:</div><div class="info-value">0.00s</div></div>
                 <div class="info-item"><div class="info-label">Total Lines:</div><div class="info-value">695</div></div>
                 <div class="info-item"><div class="info-label">Expandable:</div><div class="info-value">442</div></div>
@@ -6161,10 +6163,10 @@ window.addEventListener('keydown', ev => {
         case 'E': gotoErr(-1); break;
         case 'n': searchNext(1); break;
         case 'N': searchNext(-1); break;
-        case 'ArrowUp': if (sel >= 0 && sParent[sel] >= 0) select(sParent[sel], { reveal: true }); break;
-        case 'ArrowDown': if (sel >= 0) { const c = firstChild(sel); if (c >= 0) select(c, { reveal: true }); } break;
-        case '[': if (sel >= 0) { const c = sibling(sel, -1); if (c >= 0) select(c, { reveal: true }); } break;
-        case ']': if (sel >= 0) { const c = sibling(sel, 1); if (c >= 0) select(c, { reveal: true }); } break;
+        case 'ArrowUp': navigateCall('parent'); break;
+        case 'ArrowDown': navigateCall('child'); break;
+        case '[': navigateCall('previous'); break;
+        case ']': navigateCall('next'); break;
         case 'Enter': if (sel >= 0) gotoText(sLine[sel]); break;
         case '/': elSearch.focus(); elSearch.select(); break;
         case 'h': case 'H': if (sel >= 0) showDist(sName[sel]); break;
@@ -6184,28 +6186,26 @@ window.addEventListener('keydown', ev => {
     }
 }, true);
 
-function rowPos(i) {
-    const row = TRACKS[sTask[i]].rowsT[sDepth[i]];
-    const j = lbStart(row, sStart[i], 0);
-    for (let q = j; q < row.length && sStart[row[q]] <= sStart[i]; q++) if (row[q] === i) return [row, q];
-    for (let q = Math.max(0, j - 2); q < row.length; q++) if (row[q] === i) return [row, q];
-    return [row, -1];
+function callTarget(index, action) {
+    if (index < 0 || index >= NA) return -1;
+    if (action === 'parent') {
+        const parent = sParent[index];
+        return parent >= 0 && parent < N && sTask[parent] === sTask[index] &&
+            (isSyn(index) || sDepth[parent] < sDepth[index]) ? parent : -1;
+    }
+    if (isSyn(index)) return action === 'child' ? SYN[index - N].kids[0] ?? -1 : -1;
+    const tree = callTreeIndex();
+    return action === 'child' ? tree.first[index] : action === 'previous' ? tree.previous[index] : action === 'next' ? tree.next[index] : -1;
 }
-function firstChild(i) {
-    const t = TRACKS[sTask[i]];
-    if (isGhost(i)) return SYN[i - N].kids[0];
-    if (isSyn(i) || sDepth[i] + 1 >= t.rowsT.length) return -1;
-    const row = t.rowsT[sDepth[i] + 1];
-    const j = lbEnd(row, sStart[i]);
-    for (let q = j; q < row.length && sStart[row[q]] <= sEnd[i]; q++) if (sParent[row[q]] === i) return row[q];
-    return -1;
-}
-function sibling(i, dir) {
-    if (isSyn(i)) return -1;
-    const [row, q] = rowPos(i);
-    if (q < 0) return -1;
-    const nq = q + dir;
-    return nq >= 0 && nq < row.length ? row[nq] : -1;
+function navigateCall(action, focusControl) {
+    const target = callTarget(sel, action);
+    if (target < 0) return;
+    select(target, { reveal: true });
+    elDetail.scrollTop = 0; elDetail.scrollLeft = 0;
+    if (focusControl) {
+        const button = elDetail.querySelector('[data-call-nav="' + action + '"]');
+        (button && !button.disabled ? button : elCv).focus({ preventScroll: true });
+    }
 }
 /* FuncGraph Timeline: analysis panels (error summary, duration distribution, scheduling latency).
  * Shares the __tlBoot() scope; rendered into the detail area via openDetail(). */
@@ -7262,14 +7262,17 @@ let realCallTree = null;
 const breakdownCache = new Map();
 function callTreeIndex() {
     if (realCallTree) return realCallTree;
-    const first = new Int32Array(N).fill(-1), next = new Int32Array(N).fill(-1);
+    const first = new Int32Array(N).fill(-1), next = new Int32Array(N).fill(-1), previous = new Int32Array(N).fill(-1);
+    const roots = new Int32Array(TRACKS.length).fill(-1);
     for (let index = N - 1; index >= 0; index--) {
         const parent = sParent[index];
-        if (parent < 0 || parent >= N || sTask[parent] !== sTask[index] || sDepth[parent] >= sDepth[index]) continue;
-        next[index] = first[parent];
-        first[parent] = index;
+        if (parent >= 0 && (parent >= N || sTask[parent] !== sTask[index] || sDepth[parent] >= sDepth[index])) continue;
+        const heads = parent < 0 ? roots : first, owner = parent < 0 ? sTask[index] : parent;
+        next[index] = heads[owner];
+        if (next[index] >= 0) previous[next[index]] = index;
+        heads[owner] = index;
     }
-    realCallTree = { first, next };
+    realCallTree = { first, next, previous };
     return realCallTree;
 }
 function directChildren(root) {
@@ -7760,6 +7763,18 @@ function pill(cls, txt, title) { return '<span class="tl-pill ' + cls + '"' + (t
 function kv(k, v, cls) { return '<span class="k">' + k + '</span><span class="v' + (cls ? ' ' + cls : '') + '">' + v + '</span>'; }
 function lineLink(n, label) { return '<a class="tl-link" data-line="' + n + '">' + (label || 'line ' + n) + '</a>'; }
 
+function callNavigationHtml(index) {
+    const controls = [['parent', '↑ Parent', 'Recorded parent', '↑'],
+        ['child', isSyn(index) ? '↓ First recorded call' : '↓ First child', 'First recorded child', '↓'],
+        ['previous', '‹ Previous', 'Previous recorded sibling / task root', '['],
+        ['next', 'Next ›', 'Next recorded sibling / task root', ']']];
+    return '<div class="tl-call-nav" role="group" aria-label="Recorded call navigation">' + controls.map(([action, label, title, key]) => {
+        const target = callTarget(index, action), description = title + ' (' + key + '): ' + (target >= 0 ? nameOf(target) : 'none');
+        return '<button class="tl-btn" data-call-nav="' + action + '" title="' + esc(description) + '" aria-label="' + esc(description) + '"' +
+            (target < 0 ? ' disabled' : '') + '>' + label + '</button>';
+    }).join('') + '</div>';
+}
+
 const DETAIL_PAGE = 100;
 let detailContext = null;
 function detailParents(start, stop) {
@@ -7905,7 +7920,7 @@ function showInlineDetail(i) {
     const f = detailContextData(i).facts;
     let h = '<div class="tl-detail-head tl-slice-head"><span class="tl-detail-title" title="' + esc(f.fn) + '">' + esc(f.fn) + '</span>' + pill('mute', 'inlined') +
         pill('mute', 'into ' + f.intoFn) + '<span class="sp"></span>' + lineLink(sLine[f.kids[0]], 'Open first call in text view ↵') +
-        '<button class="tl-close" title="Close (Esc)">×</button></div><div class="tl-detail-body"><div class="tl-kv">';
+        '<button class="tl-close" title="Close (Esc)">×</button></div>' + callNavigationHtml(i) + '<div class="tl-detail-body"><div class="tl-kv">';
     h += kv('traced extent', fmtDur(f.span) + ' &nbsp;<span class="d">from the first traced call inside to the end of the last one</span>');
     h += kv('start / end', fmtDur(sStart[i]) + ' → ' + fmtDur(sEnd[i]));
     h += kv('inlined into', esc(f.intoFn) + ' at ' + esc(f.atFile) + ':' + f.atLine);
@@ -7922,7 +7937,7 @@ function showGhostDetail(i) {
     const nm = y.name === '?' ? 'unknown frame' : y.name;
     let h = '<div class="tl-detail-head tl-slice-head"><span class="tl-detail-title" title="' + esc(nm) + '">' + esc(nm) + '</span>' + pill('mute', 'not traced') +
         '<span class="sp"></span>' + lineLink(sLine[f.kids[0]], 'Open first call in text view ↵') +
-        '<button class="tl-close" title="Close (Esc)">×</button></div><div class="tl-detail-body"><div class="tl-kv">';
+        '<button class="tl-close" title="Close (Esc)">×</button></div>' + callNavigationHtml(i) + '<div class="tl-detail-body"><div class="tl-kv">';
     h += kv('extent', fmtDur(f.span) + ' &nbsp;<span class="d">from the first call inside to the end of the last one</span>');
     h += kv('start / end', fmtDur(sStart[i]) + ' → ' + fmtDur(sEnd[i]));
     h += kv('inside', '<a class="tl-link" data-slice="' + y.p + '">' + esc(nameOf(y.p)) + '</a>');
@@ -7959,7 +7974,7 @@ function showDetail(i) {
         (modOf(i) ? ' [' + esc(modOf(i)) + ']' : '') + '</span>' + pills + '<span class="sp"></span>' +
         '<a class="tl-link" data-dist="' + sName[i] + '">Duration distribution (H)</a>&nbsp;&nbsp;' +
         lineLink(sLine[i], 'Open in text view ↵') + '<button class="tl-close" title="Close (Esc)">×</button></div>';
-    h += '<div class="tl-detail-body"><div class="tl-left"><div class="tl-kv">';
+    h += callNavigationHtml(i) + '<div class="tl-detail-body"><div class="tl-left"><div class="tl-kv">';
     h += kv('duration', fmtDur(d) + (f & FL.EST ? ' (estimated)' : ''));
     h += kv('self', fmtDur(sSelf[i]) + (d > 0 ? ' (' + (100 * sSelf[i] / d).toFixed(1) + '%)' : ''));
     h += kv('start', '+' + fmtDur(sStart[i]) + (MODE === 'abs' ? ' &nbsp;' + fmtAbs(sStart[i]) + ' s' : ''));
@@ -8116,6 +8131,8 @@ function setMax(on) {
     resize();
 }
 elDetail.addEventListener('click', ev => {
+    const navigation = ev.target.closest('[data-call-nav]');
+    if (navigation) { navigateCall(navigation.dataset.callNav, true); return; }
     const children = ev.target.closest('[data-child-open]');
     if (children) { showChildren(+children.dataset.childOpen); return; }
     const contextMore = ev.target.closest('[data-context-more]');
@@ -8466,7 +8483,7 @@ elHelp.innerHTML = `
 <li><kbd>0</kbd> fit all · <kbd>F</kbd> zoom to selection · double-click: zoom to slice</li>
 <li><kbd>Shift</kbd>+drag: summarize a range in this track (<kbd>Shift</kbd>+<kbd>Alt</kbd>: all tracks)</li></ul>
 <h4>Select</h4><ul>
-<li><kbd>↑</kbd> parent · <kbd>↓</kbd> first child · <kbd>[</kbd>/<kbd>]</kbd> siblings</li>
+<li>Call details have native navigation buttons: <kbd>↑</kbd> recorded parent · <kbd>↓</kbd> first recorded child · <kbd>[</kbd>/<kbd>]</kbd> recorded siblings (task roots stay within the task); synthetic frames are skipped</li>
 <li><kbd>E</kbd>/<kbd>Shift+E</kbd> next/prev error · <kbd>/</kbd> search, <kbd>N</kbd>/<kbd>Shift+N</kbd> next/prev match</li>
 <li>Click an off-CPU segment: wait chain (who woke the task, wake latency, and who woke the waker)</li>
 <li><b>Tasks</b>: find recorded tasks by name / PID / CPU, including tasks without traced calls; export all matching rows</li>

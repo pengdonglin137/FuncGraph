@@ -1700,6 +1700,158 @@ class BrowserSmokeTest(unittest.TestCase):
         self.assertTrue(self.ev("!!document.querySelector('.an-hist')"))
         self.assertGreater(self.ev("document.querySelectorAll('.an-list tr').length"), 0)
 
+    def open_call_navigation(self, mode='abs'):
+        self.open_range_data(['root_a', 'deep_first', 'grandchild', 'shallow_second', 'deep_last',
+                              'root_b', 'other_parent_child', 'root_c', 'other_task', 'other_task_child'],
+                             mode=mode, starts=[0, 1000, 1200, 10000, 20000, 200000, 201000, 300000, 0, 1000],
+                             durations=[100000, 5000, 1000, 1000, 1000, 50000, 1000, 1000, 100000, 1000],
+                             parents=[-1, 0, 1, 0, 0, -1, 5, -1, -1, 8],
+                             columns={'depth': [2, 5, 6, 3, 5, 0, 3, 4, 0, 5], 'task': [0] * 8 + [1, 1],
+                                      'start': [0, 1000, 200, 8800, 10000, 180000, 1000, 99000, 0, 1000]},
+                             extra={'tasks': [dict(pid=1, comm='first', kind=0, cpu=0),
+                                              dict(pid=2, comm='second', kind=0, cpu=1)]})
+        self.ev("fgView('timeline').probe().select(0)")
+
+    def test_recorded_navigation_real_trace_does_not_cross_parent(self):
+        self.open_timeline()
+        target = self.ev("""() => {
+            const probe = fgView('timeline').probe();
+            for (const task of probe.TRACKS) for (const row of task.rowsT) {
+                for (let position = 1; position < row.length; position++) {
+                    const before = row[position - 1], after = row[position];
+                    if (before >= probe.N || after >= probe.N || probe.sParent[before] < 0 ||
+                        probe.sParent[before] === probe.sParent[after]) continue;
+                    const siblings = [];
+                    for (let index = 0; index < probe.N; index++) {
+                        if (probe.sTask[index] === probe.sTask[before] && probe.sParent[index] === probe.sParent[before]) siblings.push(index);
+                    }
+                    const next = siblings[siblings.indexOf(before) + 1];
+                    return [before, next === undefined ? before : next];
+                }
+            }
+        }""")
+        self.assertIsNotNone(target)
+        self.ev("index => fgView('timeline').probe().select(index)", target[0])
+        self.page.locator('.tl-canvas').focus()
+        self.page.keyboard.press(']')
+        self.assertEqual(self.ev("fgView('timeline').probe().sel()"), target[1])
+
+    def test_recorded_navigation_follows_parent_links_across_depths_and_roots(self):
+        for mode in ['abs', 'rel', 'compressed', 'count']:
+            with self.subTest(mode=mode):
+                self.ev("fgSwitchView('text')")
+                self.page.reload()
+                self.open_call_navigation(mode)
+                if mode in ['abs', 'rel']:
+                    self.assertIn('4 traced calls inside', self.page.locator('.an-bd-legend').inner_text())
+                self.page.locator('.tl-canvas').focus()
+                for key, expected in [('ArrowDown', 1), (']', 3), (']', 4), (']', 4), ('[', 3),
+                                      ('ArrowUp', 0), (']', 5), (']', 7), (']', 7), ('[', 5),
+                                      ('ArrowDown', 6), (']', 6), ('ArrowUp', 5), ('[', 0), ('[', 0)]:
+                    self.page.keyboard.press(key)
+                    self.assertEqual(self.ev("fgView('timeline').probe().sel()"), expected, key)
+                self.ev("fgView('timeline').probe().select(9)")
+                for key in ['[', ']']:
+                    self.page.keyboard.press(key)
+                    self.assertEqual(self.ev("fgView('timeline').probe().sel()"), 9)
+
+    def test_recorded_navigation_native_controls_focus_filters_and_layout(self):
+        self.open_call_navigation()
+        self.assertTrue(self.page.locator('[data-call-nav=parent]').is_disabled())
+        self.assertTrue(self.page.locator('[data-call-nav=previous]').is_disabled())
+        self.page.locator('[data-call-nav=child]').press('Enter')
+        self.assertEqual(self.ev("fgView('timeline').probe().sel()"), 1)
+        self.assertTrue(self.page.locator('[data-call-nav=child]').evaluate('(node) => node === document.activeElement'))
+        self.page.locator('[data-call-nav=next]').press('Space')
+        self.assertEqual(self.ev("fgView('timeline').probe().sel()"), 3)
+        self.assertTrue(self.page.locator('[data-call-nav=next]').evaluate('(node) => node === document.activeElement'))
+        self.page.locator('[data-call-nav=next]').press('Enter')
+        self.assertEqual(self.ev("fgView('timeline').probe().sel()"), 4)
+        self.assertTrue(self.page.locator('[data-call-nav=next]').is_disabled())
+        self.assertTrue(self.page.locator('.tl-canvas').evaluate('(node) => node === document.activeElement'))
+        self.ev("fgView('timeline').probe().select(0)")
+        self.ev("fgNotifyFilter('root only', new Set([1]))")
+        self.page.locator('[data-call-nav=child]').click()
+        self.assertEqual(self.ev("fgView('timeline').probe().sel()"), 1)
+        self.page.click('[data-act=adj]')
+        self.ev("fgView('timeline').probe().inline(true)")
+        self.page.locator('[data-call-nav=next]').click()
+        self.assertEqual(self.ev("fgView('timeline').probe().sel()"), 3)
+        for theme in ['light', 'dark']:
+            self.ev("theme => document.documentElement.setAttribute('data-theme', theme)", theme)
+            for width, height in [(1500, 900), (800, 420), (390, 844), (320, 700)]:
+                with self.subTest(theme=theme, width=width):
+                    self.page.set_viewport_size({'width': width, 'height': height})
+                    self.page.wait_for_timeout(60)
+                    self.ev("document.querySelector('.tl-detail').scrollTop = 0")
+                    bounds = self.ev("""() => {
+                        const panel = document.querySelector('.tl-detail').getBoundingClientRect();
+                        const nav = document.querySelector('.tl-call-nav').getBoundingClientRect();
+                        return [nav.left - panel.left, nav.right - panel.right,
+                            document.documentElement.scrollWidth, nav.height];
+                    }""")
+                    self.assertGreaterEqual(bounds[0], 0)
+                    self.assertLessEqual(bounds[1], 1)
+                    self.assertLessEqual(bounds[2], width)
+                    self.assertLessEqual(bounds[3], 100)
+
+    def test_recorded_navigation_zero_duration_ties_and_safe_target_names(self):
+        unsafe = '<img src=x onerror=alert(1)>'
+        self.open_range_data(['root', unsafe, 'second', 'last'], starts=[0, 0, 0, 1000],
+                             durations=[10000, 0, 0, 1000], parents=[-1, 0, 0, 0], columns={'depth': [0, 3, 1, 2]})
+        self.ev("fgView('timeline').probe().select(0)")
+        self.assertIn(unsafe, self.page.locator('[data-call-nav=child]').get_attribute('title'))
+        self.assertEqual(self.page.locator('.tl-call-nav img').count(), 0)
+        self.page.locator('.tl-canvas').focus()
+        for key, expected in [('ArrowDown', 1), (']', 2), (']', 3), ('[', 2), ('[', 1)]:
+            self.page.keyboard.press(key)
+            self.assertEqual(self.ev("fgView('timeline').probe().sel()"), expected)
+
+    def test_recorded_navigation_reuses_links_without_reading_visual_rows(self):
+        count = 10000
+        self.open_range_data(['root'] + ['zero_call'] * count, starts=[0] * (count + 1),
+                             durations=[10000] + [0] * count, parents=[-1] + [0] * count,
+                             columns={'depth': [0] + [1] * count})
+        self.ev("index => fgView('timeline').probe().select(index)", count - 2)
+        result = self.ev("""() => {
+            const probe = fgView('timeline').probe(), saved = probe.TRACKS.map(task => task.rowsT);
+            let reads = 0;
+            for (const task of probe.TRACKS) task.rowsT = new Proxy(task.rowsT, {
+                get(target, key) { if (typeof key === 'string' && /^[0-9]+$/.test(key)) reads++; return Reflect.get(target, key); }
+            });
+            try {
+                const canvas = document.querySelector('.tl-canvas');
+                for (let iteration = 0; iteration < 30; iteration++) {
+                    canvas.dispatchEvent(new KeyboardEvent('keydown', {key: ']', bubbles: true}));
+                    canvas.dispatchEvent(new KeyboardEvent('keydown', {key: '[', bubbles: true}));
+                }
+                return [reads, probe.sel()];
+            } finally { probe.TRACKS.forEach((task, index) => { task.rowsT = saved[index]; }); }
+        }""")
+        self.assertEqual(result, [0, count - 2])
+
+    def test_recorded_navigation_synthetic_frames_reach_actual_recorded_calls(self):
+        self.open_range_data(['root', 'child'], starts=[0, 100], durations=[10000, 1000], parents=[-1, 0],
+                             callers=[None, 'root+0x1/0x20'], columns={'depth': [3, 6]},
+                             extra={'inline': {'2': [['root', 'a.c', 10], ['inline_one', 'b.c', 20], ['inline_two', 'c.c', 30]]}})
+        synthetic = self.ev("() => { const probe = fgView('timeline').probe(); return Array.from({length: probe.NA - probe.N}, (_, index) => probe.N + index); }")
+        self.assertEqual(len(synthetic), 4)
+        self.ev("fgView('timeline').probe().inline(true)")
+        for index in synthetic:
+            with self.subTest(index=index):
+                self.ev("index => fgView('timeline').probe().select(index)", index)
+                self.assertTrue(self.page.locator('[data-call-nav=previous]').is_disabled())
+                self.assertTrue(self.page.locator('[data-call-nav=next]').is_disabled())
+                self.page.locator('[data-call-nav=child]').press('Enter')
+                self.assertEqual(self.ev("fgView('timeline').probe().sel()"), 1)
+                self.ev("index => fgView('timeline').probe().select(index)", index)
+                self.page.locator('.tl-canvas').focus()
+                self.page.keyboard.press('ArrowDown')
+                self.assertEqual(self.ev("fgView('timeline').probe().sel()"), 1)
+                self.ev("index => fgView('timeline').probe().select(index)", index)
+                self.page.keyboard.press('ArrowUp')
+                self.assertEqual(self.ev("fgView('timeline').probe().sel()"), 0)
+
     def open_detail_stack(self, count=320, errors=False, mode='abs', prefix='frame_'):
         self.ev("fgSwitchView('text')")
         self.page.reload()

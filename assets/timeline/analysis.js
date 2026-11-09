@@ -1053,14 +1053,17 @@ let realCallTree = null;
 const breakdownCache = new Map();
 function callTreeIndex() {
     if (realCallTree) return realCallTree;
-    const first = new Int32Array(N).fill(-1), next = new Int32Array(N).fill(-1);
+    const first = new Int32Array(N).fill(-1), next = new Int32Array(N).fill(-1), previous = new Int32Array(N).fill(-1);
+    const roots = new Int32Array(TRACKS.length).fill(-1);
     for (let index = N - 1; index >= 0; index--) {
         const parent = sParent[index];
-        if (parent < 0 || parent >= N || sTask[parent] !== sTask[index] || sDepth[parent] >= sDepth[index]) continue;
-        next[index] = first[parent];
-        first[parent] = index;
+        if (parent >= 0 && (parent >= N || sTask[parent] !== sTask[index] || sDepth[parent] >= sDepth[index])) continue;
+        const heads = parent < 0 ? roots : first, owner = parent < 0 ? sTask[index] : parent;
+        next[index] = heads[owner];
+        if (next[index] >= 0) previous[next[index]] = index;
+        heads[owner] = index;
     }
-    realCallTree = { first, next };
+    realCallTree = { first, next, previous };
     return realCallTree;
 }
 function directChildren(root) {

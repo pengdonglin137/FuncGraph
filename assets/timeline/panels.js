@@ -3,6 +3,18 @@ function pill(cls, txt, title) { return '<span class="tl-pill ' + cls + '"' + (t
 function kv(k, v, cls) { return '<span class="k">' + k + '</span><span class="v' + (cls ? ' ' + cls : '') + '">' + v + '</span>'; }
 function lineLink(n, label) { return '<a class="tl-link" data-line="' + n + '">' + (label || 'line ' + n) + '</a>'; }
 
+function callNavigationHtml(index) {
+    const controls = [['parent', '↑ Parent', 'Recorded parent', '↑'],
+        ['child', isSyn(index) ? '↓ First recorded call' : '↓ First child', 'First recorded child', '↓'],
+        ['previous', '‹ Previous', 'Previous recorded sibling / task root', '['],
+        ['next', 'Next ›', 'Next recorded sibling / task root', ']']];
+    return '<div class="tl-call-nav" role="group" aria-label="Recorded call navigation">' + controls.map(([action, label, title, key]) => {
+        const target = callTarget(index, action), description = title + ' (' + key + '): ' + (target >= 0 ? nameOf(target) : 'none');
+        return '<button class="tl-btn" data-call-nav="' + action + '" title="' + esc(description) + '" aria-label="' + esc(description) + '"' +
+            (target < 0 ? ' disabled' : '') + '>' + label + '</button>';
+    }).join('') + '</div>';
+}
+
 const DETAIL_PAGE = 100;
 let detailContext = null;
 function detailParents(start, stop) {
@@ -148,7 +160,7 @@ function showInlineDetail(i) {
     const f = detailContextData(i).facts;
     let h = '<div class="tl-detail-head tl-slice-head"><span class="tl-detail-title" title="' + esc(f.fn) + '">' + esc(f.fn) + '</span>' + pill('mute', 'inlined') +
         pill('mute', 'into ' + f.intoFn) + '<span class="sp"></span>' + lineLink(sLine[f.kids[0]], 'Open first call in text view ↵') +
-        '<button class="tl-close" title="Close (Esc)">×</button></div><div class="tl-detail-body"><div class="tl-kv">';
+        '<button class="tl-close" title="Close (Esc)">×</button></div>' + callNavigationHtml(i) + '<div class="tl-detail-body"><div class="tl-kv">';
     h += kv('traced extent', fmtDur(f.span) + ' &nbsp;<span class="d">from the first traced call inside to the end of the last one</span>');
     h += kv('start / end', fmtDur(sStart[i]) + ' → ' + fmtDur(sEnd[i]));
     h += kv('inlined into', esc(f.intoFn) + ' at ' + esc(f.atFile) + ':' + f.atLine);
@@ -165,7 +177,7 @@ function showGhostDetail(i) {
     const nm = y.name === '?' ? 'unknown frame' : y.name;
     let h = '<div class="tl-detail-head tl-slice-head"><span class="tl-detail-title" title="' + esc(nm) + '">' + esc(nm) + '</span>' + pill('mute', 'not traced') +
         '<span class="sp"></span>' + lineLink(sLine[f.kids[0]], 'Open first call in text view ↵') +
-        '<button class="tl-close" title="Close (Esc)">×</button></div><div class="tl-detail-body"><div class="tl-kv">';
+        '<button class="tl-close" title="Close (Esc)">×</button></div>' + callNavigationHtml(i) + '<div class="tl-detail-body"><div class="tl-kv">';
     h += kv('extent', fmtDur(f.span) + ' &nbsp;<span class="d">from the first call inside to the end of the last one</span>');
     h += kv('start / end', fmtDur(sStart[i]) + ' → ' + fmtDur(sEnd[i]));
     h += kv('inside', '<a class="tl-link" data-slice="' + y.p + '">' + esc(nameOf(y.p)) + '</a>');
@@ -202,7 +214,7 @@ function showDetail(i) {
         (modOf(i) ? ' [' + esc(modOf(i)) + ']' : '') + '</span>' + pills + '<span class="sp"></span>' +
         '<a class="tl-link" data-dist="' + sName[i] + '">Duration distribution (H)</a>&nbsp;&nbsp;' +
         lineLink(sLine[i], 'Open in text view ↵') + '<button class="tl-close" title="Close (Esc)">×</button></div>';
-    h += '<div class="tl-detail-body"><div class="tl-left"><div class="tl-kv">';
+    h += callNavigationHtml(i) + '<div class="tl-detail-body"><div class="tl-left"><div class="tl-kv">';
     h += kv('duration', fmtDur(d) + (f & FL.EST ? ' (estimated)' : ''));
     h += kv('self', fmtDur(sSelf[i]) + (d > 0 ? ' (' + (100 * sSelf[i] / d).toFixed(1) + '%)' : ''));
     h += kv('start', '+' + fmtDur(sStart[i]) + (MODE === 'abs' ? ' &nbsp;' + fmtAbs(sStart[i]) + ' s' : ''));
@@ -359,6 +371,8 @@ function setMax(on) {
     resize();
 }
 elDetail.addEventListener('click', ev => {
+    const navigation = ev.target.closest('[data-call-nav]');
+    if (navigation) { navigateCall(navigation.dataset.callNav, true); return; }
     const children = ev.target.closest('[data-child-open]');
     if (children) { showChildren(+children.dataset.childOpen); return; }
     const contextMore = ev.target.closest('[data-context-more]');
@@ -709,7 +723,7 @@ elHelp.innerHTML = `
 <li><kbd>0</kbd> fit all · <kbd>F</kbd> zoom to selection · double-click: zoom to slice</li>
 <li><kbd>Shift</kbd>+drag: summarize a range in this track (<kbd>Shift</kbd>+<kbd>Alt</kbd>: all tracks)</li></ul>
 <h4>Select</h4><ul>
-<li><kbd>↑</kbd> parent · <kbd>↓</kbd> first child · <kbd>[</kbd>/<kbd>]</kbd> siblings</li>
+<li>Call details have native navigation buttons: <kbd>↑</kbd> recorded parent · <kbd>↓</kbd> first recorded child · <kbd>[</kbd>/<kbd>]</kbd> recorded siblings (task roots stay within the task); synthetic frames are skipped</li>
 <li><kbd>E</kbd>/<kbd>Shift+E</kbd> next/prev error · <kbd>/</kbd> search, <kbd>N</kbd>/<kbd>Shift+N</kbd> next/prev match</li>
 <li>Click an off-CPU segment: wait chain (who woke the task, wake latency, and who woke the waker)</li>
 <li><b>Tasks</b>: find recorded tasks by name / PID / CPU, including tasks without traced calls; export all matching rows</li>
