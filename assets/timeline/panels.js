@@ -27,10 +27,32 @@ function showInlineDetail(i) {
     h += '</div></div></div>';
     openDetail(h);
 }
+function showGhostDetail(i) {
+    const f = ghostFacts(i), y = f.y;
+    const nm = y.name === '?' ? 'unknown frame' : y.name;
+    let h = '<div class="tl-detail-head"><span class="tl-detail-title">' + esc(nm) + '</span>' + pill('mute', 'not traced') +
+        '<span class="sp"></span>' + lineLink(sLine[f.kids[0]], 'Open first call in text view ↵') +
+        '<button class="tl-close" title="Close (Esc)">×</button></div><div class="tl-detail-body"><div class="tl-kv">';
+    h += kv('extent', fmtDur(f.span) + ' &nbsp;<span class="d">from the first call inside to the end of the last one</span>');
+    h += kv('start / end', fmtDur(sStart[i]) + ' → ' + fmtDur(sEnd[i]));
+    h += kv('inside', '<a class="tl-link" data-slice="' + y.p + '">' + esc(nameOf(y.p)) + '</a>');
+    h += kv('traced calls', f.kids.length + ', together ' + fmtDur(f.covered));
+    h += kv('between them', fmtDur(f.gap) + ' <span class="d">untraced code</span>');
+    h += '<span class="k">why</span><span class="v d">The kernel\'s call depth jumps by ' + (y.gap + 1) + ' levels from ' + esc(nameOf(y.p)) +
+        ' to the calls inside: ' + (y.gap > 1 ? y.gap + ' frames were' : 'a frame was') + ' entered without a recorded entry ' +
+        '(not traceable, e.g. noinstr entry code or the unwinder, or dropped). ' +
+        (y.name === '?' ? 'Its name is unknown.' : 'The name comes from the return address of the calls inside (their caller).') +
+        ' Its real start and end are not known.</span>';
+    h += '</div><div><div class="tl-sec">Traced calls inside (' + f.kids.length + ')</div><div class="tl-crumbs">';
+    for (const c of f.kids.slice(0, 40)) h += '<div class="tl-crumb" data-slice="' + c + '"><span class="d">' + fmtDur(durOf(c)).padStart(10, '\u00a0') + '</span>&nbsp; ' + esc(nameOf(c)) + '</div>';
+    if (f.kids.length > 40) h += '<div class="tl-crumb ghost">… ' + (f.kids.length - 40) + ' more</div>';
+    h += '</div></div></div>';
+    openDetail(h);
+}
 function showDetail(i) {
     range = null;
     AN.kind = null;
-    if (i >= N) { showInlineDetail(i); return; }
+    if (i >= N) { if (isGhost(i)) showGhostDetail(i); else showInlineDetail(i); return; }
     const f = sFlags[i], d = durOf(i), t = TRACKS[sTask[i]];
     let pills = pill('ctx' + (f & FL.CTX), CTX_NAMES[f & FL.CTX] + (f & FL.CTXINF ? '?' : ''));
     if (f & FL.IRQOFF) pills += pill('warn', 'irqs off');
@@ -85,7 +107,13 @@ function showDetail(i) {
     if (stack.length && sDepth[stack[0]] > 0) h += '<div class="tl-crumb ghost">… ' + sDepth[stack[0]] + ' frame(s) outside trace window</div>';
     let ind = 0;
     for (const m of stack) {
-        // inline frames between the parent and this call (from the call site's inline chain)
+        // levels the trace skipped (untraced frames), then inline frames of the call site
+        const gp = gapOf(m);
+        for (let L = 1; L <= gp; L++) {
+            const gn = L === gp ? callerFn(m) : '?';
+            h += '<div class="tl-crumb inl" title="not traced: the trace skips this level"><span class="d">' + 'untraced'.padStart(10, '\u00a0') + '</span>&nbsp; ' +
+                '\u00a0'.repeat(Math.min(ind++, 30)) + esc(gn) + '</div>';
+        }
         const ch = inlChain(m);
         if (ch && ch.length > 1) for (const fr of ch.slice(1)) {
             h += '<div class="tl-crumb inl" title="inlined, ' + esc(fr[1]) + ':' + fr[2] + '"><span class="d">' + 'inline'.padStart(10, '\u00a0') + '</span>&nbsp; ' +
@@ -423,7 +451,7 @@ function toggleInlineView(force) {
     b.textContent = 'Inline: ' + (inlineView ? 'shown' : 'hidden');
     b.classList.toggle('on', inlineView);
     if (typeof lsSet === 'function') lsSet('tlInline', inlineView ? '1' : '0');
-    if (sel >= N && !inlineView) select(-1);
+    if (sel >= N && !inlineView && !isGhost(sel)) select(-1);
     layout();
     if (sel >= 0) revealRow(sel);
     draw();
@@ -534,4 +562,7 @@ new MutationObserver(() => { palette(); ovDirty = true; draw(); })
     .observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
 window.addEventListener('resize', () => { if (window.fgCurrentView() === 'timeline') resize(); });
 
-return { resize: resize, revealLine: revealLine, draw: draw };
+// probe: read access to the model and a few actions, for tests and the browser console
+const probe = () => ({ N, NA, SYN, S, sName, sStart, sEnd, sDepth, sParent, nameOf, isGhost, gapOf, TRACKS,
+    select: (i) => select(i, { reveal: true }), zoomTo, sel: () => sel });
+return { resize: resize, revealLine: revealLine, draw: draw, probe: probe };

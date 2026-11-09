@@ -7,6 +7,7 @@ const MODE = D.mode;
 const TIMED = MODE === 'abs' || MODE === 'rel';
 const FL = {
     INL: 1 << 23,      // synthetic inline frame (front-end only)
+    GHOST: 1 << 24,    // synthetic untraced frame filling a depth gap (front-end only)
     CTX: 3, IRQOFF: 1 << 2, BHOFF: 1 << 3, RS_SHIFT: 4, PR_SHIFT: 7, MG_SHIFT: 11,
     LAT: 1 << 15, TRUNC: 1 << 16, ORPHAN: 1 << 17, EST: 1 << 18, MISMATCH: 1 << 19,
     NULLRET: 1 << 20, LEAF: 1 << 21, CTXINF: 1 << 22
@@ -79,7 +80,8 @@ let sLdAll = sLd;
         const p = sParent[i];
         const ch = inlChain(i);
         const n = ch ? ch.length - 1 : 0;
-        const base = p >= 0 ? sLd[p] : sDepth[i] - 1;
+        // levels the kernel skipped (untraced frames, see buildGhosts) sit between parent and call site
+        const base = p >= 0 ? sLd[p] + (sDepth[i] - sDepth[p] - 1) : sDepth[i] - 1;
         sLd[i] = base + 1 + n;
         const pk = p >= 0 ? p : 'r' + sTask[i] + ':' + sDepth[i];
         let runs = open.get(pk);
@@ -122,6 +124,64 @@ let sLdAll = sLd;
     });
     sLdAll = ld;
 })();
+// ---- untraced frames (depth gaps) ----
+// The kernel's depth sometimes jumps by more than one level: a frame was entered but its entry was
+// not recorded (arm64: arch_stack_walk around unwind_*, el1_interrupt around irq_enter_rcu, ...).
+// The calls inside belong to the enclosing slice (parent); the missing level(s) are drawn as dashed
+// "untraced" frames so the stack has no hole. The innermost one is named after the calls' return
+// address (their caller), outer ones are unknown ("?"). Extent: first to last call inside.
+function callerFn(i) { const c = callerOf(i); return c ? c.split('+')[0] : '?'; }
+function gapOf(i) { const p = i < N ? sParent[i] : -1; return p >= 0 ? sDepth[i] - sDepth[p] - 1 : 0; }
+(function buildGhosts() {
+    const runs = new Map();   // parent -> open runs per missing level
+    const gh = [];            // [task, start, end, name, depth, ld, ctxFlags, line, p]
+    const meta = [];
+    for (let i = 0; i < N; i++) {
+        const p = sParent[i];
+        if (p < 0) continue;
+        const gap = sDepth[i] - sDepth[p] - 1;
+        if (gap <= 0) { runs.delete(p); continue; }    // a direct child ends the runs
+        let r = runs.get(p);
+        if (!r) { r = []; runs.set(p, r); }
+        const fn = callerFn(i);
+        for (let L = 1; L <= gap; L++) {
+            const name = L === gap ? fn : '?';
+            const cur = r[L - 1];
+            if (cur && cur.name === name) {
+                const y = gh[cur.sid];
+                y[2] = Math.max(y[2], sEnd[i]);
+                meta[cur.sid].kids.push(i);
+                continue;
+            }
+            r.length = L - 1;
+            const sid = gh.length;
+            gh.push([sTask[i], sStart[i], sEnd[i], name, sDepth[p] + L, sLd[p] + L, sFlags[i] & (FL.CTX | FL.CTXINF), sLine[i], p]);
+            meta.push({ ghost: true, kids: [i], p: p, level: L, gap: gap, name: name });
+            r.push({ name: name, sid: sid });
+        }
+        r.length = gap;
+    }
+    if (!gh.length) return;
+    const base = NA;
+    NA += gh.length;
+    const grow = (a, T) => { const b = new T(NA); b.set(a); return b; };
+    sStart = grow(sStart, Float64Array); sEnd = grow(sEnd, Float64Array);
+    sDepth = grow(sDepth, Uint16Array); sTask = grow(sTask, Int32Array);
+    sFlags = grow(sFlags, Uint32Array); sName = grow(sName, Int32Array);
+    sParent = grow(sParent, Int32Array); sLine = grow(sLine, Int32Array);
+    const ld = new Int32Array(NA); ld.set(sLdAll);
+    const nameIdx = new Map();
+    gh.forEach((y, j) => {
+        const i = base + j;
+        sTask[i] = y[0]; sStart[i] = y[1]; sEnd[i] = y[2];
+        let si = nameIdx.get(y[3]);
+        if (si === undefined) { si = S.length; S.push(y[3]); nameIdx.set(y[3], si); }
+        sName[i] = si; sDepth[i] = y[4]; ld[i] = y[5]; sFlags[i] = FL.GHOST | y[6]; sLine[i] = y[7]; sParent[i] = y[8];
+        SYN.push(meta[j]);
+    });
+    sLdAll = ld;
+})();
+function isGhost(i) { return i >= N && !!SYN[i - N].ghost; }
 let inlineView = false;
 function rowOf(i) { return inlineView ? sLdAll[i] : sDepth[i]; }
 function isSyn(i) { return i >= N; }
@@ -171,8 +231,9 @@ for (const t of TRACKS) {
     if (t.lo < 0) continue;
     const real = [];
     for (let i = t.lo; i < t.hi; i++) real.push(i);
-    [t.rowsT, t.maxDT] = buildRows(real, i => sDepth[i]);
-    if (HAS_INL) [t.rowsI, t.maxDI] = buildRows(real.concat(synByTask.get(t.id) || []), i => sLdAll[i]);
+    const syn = synByTask.get(t.id) || [];
+    [t.rowsT, t.maxDT] = buildRows(real.concat(syn.filter(isGhost)), i => sDepth[i]);
+    if (HAS_INL) [t.rowsI, t.maxDI] = buildRows(real.concat(syn), i => sLdAll[i]);
     else { t.rowsI = t.rowsT; t.maxDI = t.maxDT; }
 }
 for (const r of D.offcpu) {   // [task, start, end, depth, reason, state, cpuOut, cpuIn, preempted, waker]

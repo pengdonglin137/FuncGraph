@@ -14,7 +14,7 @@ function palette() {
         text: '#f3f5f8', textDim: '#c9ced6', sel: '#ffffff', hov: 'rgba(255,255,255,.7)',
         off: 'rgba(150,158,170,.16)', offLine: 'rgba(170,178,190,.55)', offPre: 'rgba(245,158,11,.20)',
         ovBar: '#4f7fd9', ovWin: 'rgba(255,255,255,.10)', ovMask: 'rgba(0,0,0,.35)', axis: '#a7afbc',
-        range: 'rgba(80,140,255,.16)', rangeLine: '#6ea0ff', cursor: 'rgba(255,255,255,.35)',
+        range: 'rgba(80,140,255,.16)', rangeLine: '#6ea0ff', cursor: 'rgba(255,255,255,.35)', selBand: 'rgba(110,160,255,.07)', selLine: 'rgba(130,175,255,.8)', selTag: '#3b6fd8',
         errO: '#e53935', errOh: '#d9822b', errP: '#7d3434', errPh: '#6b4a26', errLine: '#ff6b6b', errLineH: '#f0a050',
         rs: '#f59e0b', io: '#ef5350', mis: '#c18cf0', dense: 0.75
     } : {
@@ -22,7 +22,7 @@ function palette() {
         text: '#16202e', textDim: '#3b4555', sel: '#111827', hov: 'rgba(17,24,39,.55)',
         off: 'rgba(120,128,140,.10)', offLine: 'rgba(110,118,130,.55)', offPre: 'rgba(245,158,11,.16)',
         ovBar: '#3b6fd8', ovWin: 'rgba(59,111,216,.10)', ovMask: 'rgba(255,255,255,.55)', axis: '#5b6573',
-        range: 'rgba(59,111,216,.12)', rangeLine: '#3b6fd8', cursor: 'rgba(0,0,0,.30)',
+        range: 'rgba(59,111,216,.12)', rangeLine: '#3b6fd8', cursor: 'rgba(0,0,0,.30)', selBand: 'rgba(59,111,216,.05)', selLine: 'rgba(59,111,216,.75)', selTag: '#3b6fd8',
         errO: '#d32f2f', errOh: '#e8873a', errP: '#f6b8b8', errPh: '#f8d6b3', errLine: '#c62828', errLineH: '#d9822b',
         rs: '#f59e0b', io: '#e53935', mis: '#8e44ad', dense: 0.85
     };
@@ -196,7 +196,52 @@ function render() {
         ctx.fillRect(Math.round(x0), 0, 1, H);
         ctx.fillRect(Math.round(x1), 0, 1, H);
     }
+    if (sel >= 0 && !range) {
+        // selected slice: start and end lines over all tracks (as in Perfetto), the ruler shows its span
+        const x0 = (sStart[sel] - vs) * k, x1 = (sEnd[sel] - vs) * k;
+        if (x1 >= 0 && x0 <= W) {
+            ctx.fillStyle = P.selBand;
+            ctx.fillRect(Math.max(0, x0), 0, Math.min(W, x1) - Math.max(0, x0), H);
+            ctx.fillStyle = P.selLine;
+            if (x0 >= 0) ctx.fillRect(Math.round(x0), 0, 1, H);
+            if (x1 <= W && x1 - x0 >= 1) ctx.fillRect(Math.round(x1), 0, 1, H);
+        }
+    }
     if (cursorX >= 0) { ctx.fillStyle = P.cursor; ctx.fillRect(Math.round(cursorX), 0, 1, H); }
+}
+function drawSelSpan(vs, k) {
+    // ruler: bracket from start to end of the selected slice with its duration (and position in the overview)
+    if (sel < 0 || range) return;
+    const s = sStart[sel], e = sEnd[sel];
+    const k0 = W / tMax;
+    hctx.fillStyle = P.selTag;
+    hctx.fillRect(Math.round(s * k0), 0, Math.max(1.5, (e - s) * k0), OV_H);
+    const x0 = (s - vs) * k, x1 = (e - vs) * k;
+    if (x1 < 0 || x0 > W) return;
+    const y = OV_H + 2, hh = HEAD_H - OV_H - 3;
+    const a = Math.max(0, x0), b = Math.min(W, x1);
+    hctx.globalAlpha = 0.14;
+    hctx.fillRect(a, y, Math.max(1, b - a), hh);
+    hctx.globalAlpha = 1;
+    if (x0 >= 0) hctx.fillRect(Math.round(x0), y, 1, hh);
+    if (x1 <= W) hctx.fillRect(Math.round(x1), y, 1, hh);
+    hctx.fillRect(a, HEAD_H - 3, Math.max(1, b - a), 2);
+    const isS = sel >= N;
+    const lab = fmtDur(isS ? e - s : durOf(sel));
+    hctx.font = FONT_S;
+    const tw = hctx.measureText(lab).width + 10;
+    let lx = (a + b) / 2 - tw / 2;
+    if (b - a < tw + 4) lx = x1 + 4 + tw <= W ? x1 + 4 : x0 - 4 - tw;
+    lx = Math.max(0, Math.min(W - tw, lx));
+    const ly = HEAD_H - 17;
+    hctx.fillStyle = P.selTag;
+    hctx.beginPath();
+    if (hctx.roundRect) hctx.roundRect(lx, ly, tw, 14, 3); else hctx.rect(lx, ly, tw, 14);
+    hctx.fill();
+    hctx.fillStyle = '#fff';
+    hctx.textBaseline = 'middle';
+    hctx.fillText(lab, lx + 5, ly + 7.5);
+    hctx.textBaseline = 'top';
 }
 
 function drawTrack(t, y, vs, ve, k) {
@@ -456,7 +501,7 @@ function drawSlice(i, x0, x1, y, h, labels) {
     }
     if (labels && w > 26) {
         const nm = nameOf(i);
-        let txt = i >= N ? 'inline ' + nm : nm;
+        let txt = i >= N ? (isGhost(i) ? (nm === '?' ? 'untraced frame' : 'untraced ' + nm) : 'inline ' + nm) : nm;
         if (ov.err && eRole[i] === 0 && (showMinor || !CHAINS[eChain[i]][6])) { const en = errName(eErr[i]); txt += ' = ' + (en || eErr[i]); }
         const maxc = Math.floor((w - 8) / charW);
         if (maxc >= 3) {
@@ -556,6 +601,7 @@ function renderHead() {
     hctx.textAlign = 'right';
     hctx.fillText((range ? 'selected ' + fmtDur(range.e - range.s) + '   ' : '') + span, W - 8, OV_H + 18);
     hctx.textAlign = 'left';
+    drawSelSpan(vs, k);
     if (cursorX >= 0) {
         const tc = vs + cursorX / k;
         hctx.fillStyle = P.hdrText;

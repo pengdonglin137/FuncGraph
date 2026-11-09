@@ -98,6 +98,24 @@ function inlineFacts(i) {
     return { y, ch, k, kids, covered, span, gap: Math.max(0, span - covered), fn: ch[k][0], file: ch[k][1],
         intoFn: outer[0], atFile: outer[1], atLine: outer[2], mismatch: y.p >= 0 && nameOf(y.p).split('.')[0] !== ch[0][0].split('.')[0] };
 }
+function ghostFacts(i) {
+    const y = SYN[i - N], kids = y.kids;
+    let covered = 0;
+    for (const c of kids) covered += sEnd[c] - sStart[c];
+    const span = sEnd[i] - sStart[i];
+    return { y, kids, covered, span, gap: Math.max(0, span - covered) };
+}
+function tipGhost(i) {
+    const f = ghostFacts(i);
+    const row = (k, v) => '<div class="t-row"><span class="t-k">' + k + '</span><span class="t-v">' + v + '</span></div>';
+    let h = '<div class="t-name">' + esc(f.y.name === '?' ? 'unknown frame' : f.y.name) + ' <span class="t-warn">(not traced)</span></div>';
+    h += '<div>extent of the calls inside <span class="t-dur">' + fmtDur(f.span) + '</span></div><div class="t-sep"></div>';
+    h += row('inside', esc(nameOf(f.y.p)));
+    h += row('traced calls', f.kids.length + ' (' + fmtDur(f.covered) + ')');
+    h += '<div class="t-warn">The trace skips ' + f.y.gap + ' call level' + (f.y.gap > 1 ? 's' : '') + ' here: the entry was not recorded. ' +
+        (f.y.name === '?' ? 'Name unknown.' : 'Name from the return address of the calls inside.') + '</div>';
+    return h;
+}
 function tipInline(i) {
     const f = inlineFacts(i);
     const row = (k, v) => '<div class="t-row"><span class="t-k">' + k + '</span><span class="t-v">' + v + '</span></div>';
@@ -117,7 +135,7 @@ function inlineLine(i) {
     return ch && ch.length > 1 ? ch.slice(1).map(f => f[0]).join(' › ') : '';
 }
 function tipSlice(i) {
-    if (i >= N) return tipInline(i);
+    if (i >= N) return isGhost(i) ? tipGhost(i) : tipInline(i);
     const d = durOf(i), f = sFlags[i];
     let h = '<div class="t-name">' + esc(nameOf(i)) + (modOf(i) ? ' [' + esc(modOf(i)) + ']' : '') + '</div>';
     h += '<div><span class="t-dur">' + fmtDur(d) + '</span>' + (f & FL.EST ? ' <span class="t-warn">(estimated)</span>' : '') +
@@ -418,6 +436,7 @@ function rowPos(i) {
 }
 function firstChild(i) {
     const t = TRACKS[sTask[i]];
+    if (isGhost(i)) return SYN[i - N].kids[0];
     if (isSyn(i) || sDepth[i] + 1 >= t.rowsT.length) return -1;
     const row = t.rowsT[sDepth[i] + 1];
     const j = lbEnd(row, sStart[i]);

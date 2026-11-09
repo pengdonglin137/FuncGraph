@@ -114,6 +114,27 @@ class BrowserSmokeTest(unittest.TestCase):
         self.assertRegex(at, r'\.[ch]:\d+$')
         self.assertTrue(self.ev("(document.querySelector('.tl-cs-at a') || {}).href || ''").startswith('https://example.org/src/'))
 
+    def test_untraced_frames_fill_depth_gaps(self):
+        # pi4_nodur has calls two levels below their parent (kernel depth jump): the missing level is
+        # drawn as an "untraced" frame named after the calls' caller, and selecting it opens its panel
+        self.k.run(helpers.fixture('pi4_nodur'), '--timeline', out='gap.html')
+        self.page.goto('file://' + self.k.dir + '/gap.html', wait_until='load')
+        self.open_timeline()
+        r = self.ev("""() => { const q = fgView('timeline').probe(); const g = [];
+            for (let i = q.N; i < q.NA; i++) if (q.isGhost(i)) {
+                const y = q.SYN[i - q.N];
+                g.push([i, q.S[q.sName[i]], q.sDepth[i] - q.sDepth[y.p], y.kids.every(c => q.sDepth[c] === q.sDepth[i] + 1)]);
+            }
+            return g; }""")
+        self.assertTrue(r)
+        for i, name, dd, nested in r:
+            self.assertEqual(dd, 1)
+            self.assertTrue(nested)
+            self.assertNotEqual(name, '')
+        self.ev(f"fgView('timeline').probe().select({r[0][0]})")
+        self.page.wait_for_timeout(300)
+        self.assertIn('not traced', self.ev("document.querySelector('.tl-detail').innerText"))
+
     def test_detail_panel_resize_and_maximize(self):
         self.open_timeline()
         self.page.click('[data-act=an-errors]')

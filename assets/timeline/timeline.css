@@ -173,6 +173,7 @@ body.tl-max.tl-active { padding: 2px; }
 .tl-kv { display: grid; grid-template-columns: 96px 1fr; gap: 3px 10px; align-content: start; }
 .tl-kv .k { color: var(--text-muted); }
 .tl-kv .v { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; word-break: break-all; }
+.tl-kv .v.d { word-break: normal; }
 .tl-kv .v.err { color: #c62828; font-weight: 600; }
 [data-theme="dark"] .tl-kv .v.err { color: #ff8a80; }
 .tl-left { min-width: 0; }

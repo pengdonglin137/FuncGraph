@@ -482,7 +482,10 @@ class TimelineBuilder:
 
     def _on_call(self, kind, task, depth, name, module, args, caller, ret, ts, dur, lineno, lflags, lctx, cpu):
         self._close_stale(task, depth, ts)
-        parent = task.stack[-1].idx if task.stack and task.stack[-1].depth == depth - 1 else -1
+        # Parent = innermost open frame. Usually one level up; the kernel's depth can also jump by
+        # more (a frame whose entry was not recorded, e.g. arch_stack_walk, el1_interrupt on arm64):
+        # the call still belongs to the enclosing frame, the front end draws the missing level(s).
+        parent = task.stack[-1].idx if task.stack and task.stack[-1].depth < depth else -1
         ctx, inferred = self._ctx_for(task, name, lctx, cpu)
         flags = (lflags & ~F_CTX_MASK) | ctx | inferred
         if ts is not None:

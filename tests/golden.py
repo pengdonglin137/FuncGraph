@@ -124,7 +124,8 @@ def main():
         i = next((k for k in range(min(len(base), len(text))) if base[k] != text[k]), min(len(base), len(text)))
         print(f'  {name:18s} DIFF at byte {i}\n      baseline: {base[max(0, i - 100):i + 100]!r}\n      current : {text[max(0, i - 100):i + 100]!r}')
     if not args.update:
-        shutil.rmtree(work, ignore_errors=True)
+        if not os.environ.get('FG_GOLDEN_KEEP'):
+            shutil.rmtree(work, ignore_errors=True)
     print('golden:', 'recorded' if args.update else ('PASS' if not bad and ran else 'FAIL' if bad else 'nothing to compare'))
     sys.exit(1 if bad else 0)
 

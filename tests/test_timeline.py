@@ -41,7 +41,8 @@ def invariant_errors(d):
             continue
         if not (start[p] <= start[i] and end[i] <= end[p]):
             errs.append(f'slice {i} outside parent {p}')
-        if c['depth'][p] != c['depth'][i] - 1 or c['task'][p] != c['task'][i]:
+        # usually depth - 1; more when the kernel skipped a level (entry not recorded)
+        if c['depth'][p] >= c['depth'][i] or c['task'][p] != c['task'][i]:
             errs.append(f'slice {i}: parent depth/task mismatch')
     rows = {}
     for i in range(n):
@@ -249,6 +250,22 @@ class SyntheticTest(unittest.TestCase):
         self.assertEqual(rets['get_time'], '1764235(trunc)')
         self.assertEqual(rets['is_ok'], 'false')
         self.assertNotIn('void_fn', rets)
+
+    def test_depth_gap_parent(self):
+        # the kernel's depth jumps by two (entry of arch_stack_walk not recorded): the calls inside
+        # still belong to the enclosing frame, and its self time excludes them
+        t = ("1000.000100 |   0)   sh-7     |  ...1. |               |  outer() { /* <-x+0x1/0x2 */\n"
+             "1000.000101 |   0)   sh-7     |  d..1. |   2.000 us    |      unwind_find_stack(); /* <-arch_stack_walk+0x2d0/0x490 */\n"
+             "1000.000104 |   0)   sh-7     |  d..1. |   3.000 us    |      unwind_find_stack(); /* <-arch_stack_walk+0x2d0/0x490 */\n"
+             "1000.000110 |   0)   sh-7     |  ...1. | + 10.000 us   |  } /* outer */\n")
+        d = build(t)
+        c = d['cols']
+        names = [d['strings'][x] for x in c['name']]
+        o = names.index('outer')
+        kids = [i for i, nm in enumerate(names) if nm == 'unwind_find_stack']
+        self.assertEqual([c['parent'][i] for i in kids], [o, o])
+        self.assertEqual([c['depth'][i] for i in kids], [2, 2])
+        self.assertEqual(invariant_errors(d), [])
 
     def test_minor_errors(self):
         t = ("1000.000100 |   0)   sh-7     |  ...1. |               |  mod_state() { /* <-x+0x1/0x2 */\n"
