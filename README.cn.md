@@ -3,7 +3,7 @@
 ![FuncGraph 可视化示例](sample.png)
 
 
-> **详细使用指南**：[docs/guide.cn.md](docs/guide.cn.md)（采集选项、各视图字段与配色的含义、分析面板、对比、导出、常见问题）。设计文档：[docs/design.md](docs/design.md)。
+> **详细使用指南**：[中文](docs/guide.cn.md) · [English](docs/guide.en.md)（采集选项、各视图字段与配色的含义、分析面板、对比、导出、常见问题）。设计文档：[docs/design.md](docs/design.md)。
 
 ## FuncGraph 是什么？
 

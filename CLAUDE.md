@@ -54,7 +54,7 @@ tests/run.sh --golden                # afterwards: byte-for-byte comparison on r
 
 ## Architecture
 
-User guide (fields, colors, panels): **docs/guide.cn.md** - update it when UI semantics change. Full design: **docs/design.md** (module layout, ftrace grammar, timeline model, data format, tests, extension guide).
+User guide (fields, colors, panels): **docs/guide.en.md** + **docs/guide.cn.md** - update both when UI semantics change. Full design: **docs/design.md** (module layout, ftrace grammar, timeline model, data format, tests, extension guide).
 
 ```
 funcgraph.py          entry point (re-exports fglib)
