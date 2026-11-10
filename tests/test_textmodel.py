@@ -65,6 +65,69 @@ class TextModelTest(unittest.TestCase):
             assert.equal(JSON.stringify(input), original);
         ''')
 
+    def test_version_two_sources_prepare_navigation_without_dom_or_inferred_symbols(self):
+        self.run_model('''
+            const input = data([[2, 'plain', {func:'not-expandable'}], [4, 'first', {}],
+                [7, 'second', {}], [10, 'same source', {}]]);
+            input.version = 2;
+            input.rows.forEach((row, index) => row.push([null, 0, 3, 0][index]));
+            const original = JSON.stringify(input);
+            input.rows.forEach(Object.freeze);
+            Object.freeze(input.rows);
+            const model = drain(fgTextModel.prepare(input));
+            assert.equal(model.version, 2);
+            assert.deepEqual(model.records.map(record => record.source), [null, 0, 3, 0]);
+            const navigation = drain(fgTextModel.prepareNavigation(model));
+            assert.deepEqual(navigation.order, [2, 4, 7, 10]);
+            assert.deepEqual(navigation.expandable, [1, 2, 3]);
+            assert.equal(navigation.next(0, 1), 1);
+            assert.equal(navigation.boundary(true), 3);
+            assert.equal(model.records[0].getAttribute('data-func'), 'not-expandable');
+            assert.equal(model.records[1].getAttribute('data-preempt'), null);
+            assert.equal(JSON.stringify(input), original);
+            assert.equal(fgTextModel.prepare(input).next().value, model);
+        ''')
+
+    def test_legacy_source_capability_is_unknown_not_unexpandable(self):
+        self.run_model('''
+            const model = drain(fgTextModel.prepare(data([[1, 'legacy', {func:'worker'}]])));
+            assert.equal(model.version, 1);
+            assert.equal(model.records[0].source, undefined);
+            assert.throws(() => drain(fgTextModel.prepareNavigation(model)), /source metadata/);
+        ''')
+
+    def test_invalid_source_metadata_is_rejected_before_model_caching(self):
+        self.run_model('''
+            for (const source of [-1, true, false, '0', 1.5, NaN, Infinity, 2**53, undefined]) {
+                const input = data([[1, 'row', {}]]);
+                input.version = 2;
+                input.rows[0].push(source);
+                assert.throws(() => drain(fgTextModel.prepare(input)), /Invalid Text filter index/);
+                input.rows[0][input.rows[0].length - 1] = 0;
+                assert.equal(drain(fgTextModel.prepare(input)).records[0].source, 0);
+            }
+            const missing = data([[1, 'row', {}]]);
+            missing.version = 2;
+            assert.throws(() => drain(fgTextModel.prepare(missing)), /Invalid Text filter index/);
+        ''')
+
+    def test_source_navigation_preparation_can_cancel_and_retry_all_records(self):
+        self.run_model('''
+            const input = data(Array.from({length:2500}, (value, index) => [index*2+1, 'row '+index, {}]));
+            input.version = 2;
+            input.rows.forEach((row, index) => row.push(index % 3 === 0 ? null : index % 17));
+            const model = drain(fgTextModel.prepare(input));
+            const cancelled = fgTextModel.prepareNavigation(model);
+            assert.equal(cancelled.next().done, false);
+            cancelled.return();
+            const retry = fgTextModel.prepareNavigation(model);
+            assert.equal(retry.next().done, false);
+            const navigation = drain(retry);
+            assert.deepEqual(navigation.order, input.rows.map(row => row[0]));
+            assert.deepEqual(navigation.expandable, input.rows.map((row, index) => index).filter(index => index % 3));
+            assert.deepEqual(drain(fgTextModel.prepareNavigation(model)).order, navigation.order);
+        ''')
+
     def test_cancelled_preparation_never_caches_a_partial_model(self):
         self.run_model('''
             const input = data(Array.from({length:2500}, (value, index) => [index+1, 'row '+index, {}]));

@@ -207,6 +207,15 @@ class InstalledPackageTest(unittest.TestCase):
             payload = (manifest_path.parent / resource['file']).read_bytes()
             self.assertEqual(len(payload), resource['bytes'])
             self.assertEqual(hashlib.sha256(payload).hexdigest(), resource['sha256'])
+        index = json.loads((manifest_path.parent / manifest['resources']['fgTextIndex']['file']).read_text())
+        self.assertEqual(index['version'], 2)
+        self.assertTrue(all(len(row) == len(index['fields']) + 3 for row in index['rows']))
+        sources = {str(row[0]): row[-1] for row in index['rows'] if row[-1] is not None}
+        source_lines = json.loads(re.search(r'<script[^>]+id="fgSrcLines"[^>]*>(.*?)</script>', report, re.S).group(1))
+        pool = json.loads(re.search(r'<script[^>]+id="fgSrc"[^>]*>(.*?)</script>', report, re.S).group(1))
+        self.assertEqual(sources, {})
+        self.assertEqual(sources, source_lines)
+        self.assertEqual(pool, [])
         self.assertIn('data-fg-text="true"', report)
         self.assertNotIn('<div class="line-container', report)
 
@@ -264,6 +273,19 @@ class InstalledPackageTest(unittest.TestCase):
         self.assertIn('probe.c', source_block)
         if shutil.which('gawk'):
             self.assertIn('source-line', source_block)
+        sidecar = Path(self.tmp.name, 'resolved-sidecar')
+        self.run_command(self.executable('funcgraph'), '--no-config', '--timeline', '--fast',
+                         '--vmlinux', str(binary), '--kernel-src', self.tmp.name,
+                         '--report-mode', 'sidecar', '--output', str(sidecar), str(trace))
+        report = (sidecar / 'index.html').read_text()
+        descriptor = json.loads(re.search(r'<script[^>]+id="fgDataManifest"[^>]*>(.*?)</script>', report, re.S).group(1))
+        manifest_path = sidecar / descriptor['manifest']['file']
+        manifest = json.loads(manifest_path.read_text())
+        index = json.loads((manifest_path.parent / manifest['resources']['fgTextIndex']['file']).read_text())
+        self.assertEqual(index['version'], 2)
+        self.assertEqual([row[-1] for row in index['rows']], [None, 0])
+        source_lines = json.loads(re.search(r'<script[^>]+id="fgSrcLines"[^>]*>(.*?)</script>', report, re.S).group(1))
+        self.assertEqual(source_lines, {'2': 0})
 
 
 if __name__ == '__main__':

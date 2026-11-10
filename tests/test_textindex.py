@@ -14,7 +14,7 @@ class TextIndexTest(unittest.TestCase):
         writer = TextIndexWriter(stream)
         resource = writer.finish('text-index.json')
         payload = stream.getvalue()
-        self.assertEqual(json.loads(payload), dict(version=1, fields=list(FIELDS), rows=[]))
+        self.assertEqual(json.loads(payload), dict(version=2, fields=list(FIELDS), rows=[]))
         self.assertEqual(resource, dict(file='text-index.json', bytes=len(payload),
                                        sha256=hashlib.sha256(payload).hexdigest(), format='json'))
 
@@ -34,7 +34,7 @@ class TextIndexTest(unittest.TestCase):
         self.assertEqual(attributes['preempt'], '0')
         self.assertEqual(attributes['params'], '')
         self.assertIsNone(attributes['ret'])
-        self.assertEqual(rows[1], [4, ''] + [None] * len(FIELDS))
+        self.assertEqual(rows[1], [4, ''] + [None] * (len(FIELDS) + 1))
         self.assertEqual(writer.rows, 2)
         self.assertEqual(resource['sha256'], hashlib.sha256(payload).hexdigest())
         self.assertEqual(resource['bytes'], len(payload))
@@ -59,6 +59,28 @@ class TextIndexTest(unittest.TestCase):
         writer.append(1, {}, '<span>worker</span> /* <-caller+0x1/0x20 */ <span>ret=0</span>')
         writer.finish('text-index.json')
         self.assertEqual(json.loads(stream.getvalue())['rows'][0][1], 'worker /* <-caller+0x1/0x20 */ ret=0')
+
+    def test_source_ids_include_zero_reuse_and_unexpandable_rows(self):
+        stream = io.BytesIO()
+        writer = TextIndexWriter(stream)
+        for number, source in enumerate([None, 0, 2, 0], 1):
+            writer.append(number, {'func': 'worker'}, 'row', source=source)
+        writer.finish('text-index.json')
+        data = json.loads(stream.getvalue())
+        self.assertEqual(data['version'], 2)
+        self.assertEqual(data['fields'], list(FIELDS))
+        self.assertEqual([row[-1] for row in data['rows']], [None, 0, 2, 0])
+        self.assertTrue(all(len(row) == len(FIELDS) + 3 for row in data['rows']))
+
+    def test_invalid_source_ids_fail_before_writing_a_row(self):
+        stream = io.BytesIO()
+        writer = TextIndexWriter(stream)
+        original = stream.getvalue()
+        for source in [-1, True, False, '0', 1.5, float('nan'), 2 ** 53]:
+            with self.subTest(source=source), self.assertRaisesRegex(ValueError, 'source'):
+                writer.append(1, {}, 'row', source=source)
+            self.assertEqual(stream.getvalue(), original)
+            self.assertEqual(writer.rows, 0)
 
     def test_shared_row_attributes_preserve_folds_errno_and_boolean_semantics(self):
         generator = HtmlGenerator.__new__(HtmlGenerator)

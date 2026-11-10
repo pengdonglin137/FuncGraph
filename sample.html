@@ -1838,11 +1838,11 @@ document.documentElement.setAttribute('data-theme', currentTheme);
                 <div class="info-item"><div class="info-label">OS:</div><div class="info-value">Linux 6.8.0-138-generic</div></div>
                 <div class="info-item"><div class="info-label">Hostname:</div><div class="info-value">pengdl-pc</div></div>
                 <div class="info-item"><div class="info-label">Processor:</div><div class="info-value">x86_64</div></div>
-                <div class="info-item"><div class="info-label">Generated At:</div><div class="info-value">2026-11-10 21:19:08</div></div>
+                <div class="info-item"><div class="info-label">Generated At:</div><div class="info-value">2026-11-11 03:21:20</div></div>
                 <div class="info-section-divider"></div>
                 <div class="info-section-title">Processing Stats</div>
-                <div class="info-item"><div class="info-label">Parse Time:</div><div class="info-value">0.03s</div></div>
-                <div class="info-item"><div class="info-label">Vmlinux Time:</div><div class="info-value">6.30s</div></div>
+                <div class="info-item"><div class="info-label">Parse Time:</div><div class="info-value">0.02s</div></div>
+                <div class="info-item"><div class="info-label">Vmlinux Time:</div><div class="info-value">6.73s</div></div>
                 <div class="info-item"><div class="info-label">Modules Time:</div><div class="info-value">0.00s</div></div>
                 <div class="info-item"><div class="info-label">Total Lines:</div><div class="info-value">739</div></div>
                 <div class="info-item"><div class="info-label">Expandable:</div><div class="info-value">485</div></div>
@@ -2175,58 +2175,203 @@ document.documentElement.setAttribute('data-theme', currentTheme);
     };
 })();
 (function () {
-    const fields = ['cpu', 'pid', 'comm', 'ret', 'params', 'duration', 'func',
-        'fold-id', 'fold-type', 'fold-ancestors', 'irqs', 'resched', 'hirq', 'preempt'];
-    const validated = new WeakSet();
-    function* records(data) {
-        let current;
-        const columns = new Map(fields.map((field, index) => ['data-' + field, index + 2]));
-        const content = { get textContent() { return current[1]; } };
-        const line = {
-            getAttribute(name) {
-                if (name === 'data-line-number') return String(current[0]);
-                const index = columns.get(name);
-                return index === undefined ? null : current[index];
-            },
-            querySelector(selector) { return selector === '.line-content' ? content : null; },
-        };
-        for (const row of data.rows) { current = row; yield line; }
+    const fields = Object.freeze(['cpu', 'pid', 'comm', 'ret', 'params', 'duration', 'func',
+        'fold-id', 'fold-type', 'fold-ancestors', 'irqs', 'resched', 'hirq', 'preempt']);
+    const columns = new Map(fields.map((field, index) => ['data-' + field, index + 2]));
+    const models = new WeakMap();
+    const foldModels = new WeakMap();
+    class TextRecord {
+        constructor(row) { this.row = row; }
+        get textContent() { return this.row[1]; }
+        get source() { return this.row.length === fields.length + 3 ? this.row[fields.length + 2] : undefined; }
+        getAttribute(name) {
+            if (name === 'data-line-number') return String(this.row[0]);
+            const index = columns.get(name);
+            return index === undefined ? null : this.row[index];
+        }
+        querySelector(selector) { return selector === '.line-content' ? this : null; }
     }
-    function* steps(data, text) {
-        if (!data || data.version !== 1 || !Array.isArray(data.fields) || !Array.isArray(data.rows) ||
+    function* prepare(data) {
+        if (!data || ![1, 2].includes(data.version) || !Array.isArray(data.fields) || !Array.isArray(data.rows) ||
             data.fields.length !== fields.length || data.fields.some((field, index) => field !== fields[index])) {
             throw new Error('Unsupported Text filter index');
         }
-        if (!validated.has(data)) {
+        if (!models.has(data)) {
+            const records = [];
             let previous = 0;
             for (let index = 0; index < data.rows.length; index++) {
                 const row = data.rows[index];
-                if (!Array.isArray(row) || row.length !== fields.length + 2 ||
+                const source = row?.[fields.length + 2];
+                if (!Array.isArray(row) || row.length !== fields.length + (data.version === 2 ? 3 : 2) ||
                     !Number.isSafeInteger(row[0]) || row[0] <= previous || typeof row[1] !== 'string' ||
-                    row.some((value, column) => column >= 2 && value !== null && typeof value !== 'string')) {
+                    row.some((value, column) => column >= 2 && column < fields.length + 2 && value !== null && typeof value !== 'string') ||
+                    data.version === 2 && source !== null && (!Number.isSafeInteger(source) || source < 0)) {
                     throw new Error('Invalid Text filter index row ' + (index + 1));
                 }
                 previous = row[0];
+                records.push(new TextRecord(row));
                 if (index % 1024 === 0) yield 'Checking full-trace filter index…';
             }
-            validated.add(data);
+            models.set(data, { records, version: data.version });
         }
+        return models.get(data);
+    }
+    function* filter(model, text) {
         const { ast, sortDir } = parseFilterExpr(text);
-        const graphSets = yield* fgGraphSetsSteps(collectGraphConditions(ast), records(data));
+        const graphSets = yield* fgGraphSetsSteps(collectGraphConditions(ast), model.records);
         const lines = ast ? new Set() : null;
         let visible = 0;
         let scanned = 0;
-        for (const line of records(data)) {
+        for (const line of model.records) {
             const trimmed = line.querySelector('.line-content').textContent.trim();
             if (!ast || trimmed !== '' && !/^-+$/.test(trimmed) && evalExpr(line, ast, graphSets)) {
                 visible++;
                 if (lines) lines.add(+line.getAttribute('data-line-number'));
             }
             scanned++;
-            if (scanned % 1024 === 0) yield 'Filtering all Text rows: ' + scanned + ' / ' + data.rows.length + '…';
+            if (scanned % 1024 === 0) yield 'Filtering all Text rows: ' + scanned + ' / ' + model.records.length + '…';
         }
-        return { text: ast ? text : '', lines, visible, total: data.rows.length, sortDir };
+        return { text: ast || sortDir ? text : '', lines, visible, total: model.records.length, sortDir, graphSets };
     }
+    function* steps(data, text) {
+        const model = yield* prepare(data);
+        const { graphSets, ...result } = yield* filter(model, text);
+        return result;
+    }
+    function* prepareFolding(model) {
+        if (foldModels.has(model)) return foldModels.get(model);
+        const blocks = new Map();
+        const ancestry = new Map();
+        const ancestors = record => {
+            const text = record.getAttribute('data-fold-ancestors') || '';
+            if (!ancestry.has(text)) ancestry.set(text, Array.from(new Set(text.split(/\s+/).filter(Boolean))));
+            return ancestry.get(text);
+        };
+        const block = id => {
+            if (!blocks.has(id)) blocks.set(id, { id, entry: null, exit: null, calls: 0 });
+            return blocks.get(id);
+        };
+        let scanned = 0;
+        for (const record of model.records) {
+            const id = record.getAttribute('data-fold-id');
+            const type = record.getAttribute('data-fold-type');
+            const parents = ancestors(record);
+            if (id && (type === 'entry' || type === 'exit')) block(id)[type] = record;
+            if (type === 'entry' || type === 'inner' && record.getAttribute('data-func')) {
+                for (const ancestor of parents) {
+                    if (ancestor !== id || type === 'inner') block(ancestor).calls++;
+                }
+                if (type === 'inner' && id && !parents.includes(id)) block(id).calls++;
+            }
+            scanned++;
+            if (scanned % 512 === 0) yield 'Preparing Text fold metadata: ' + scanned + ' / ' + model.records.length + '…';
+        }
+        const result = {
+            records: model.records,
+            blocks,
+            *members(id) {
+                for (const record of model.records) {
+                    if (record.getAttribute('data-fold-id') === id || ancestors(record).includes(id)) yield record;
+                }
+            },
+            visible(record, folds, matches) {
+                if (matches !== null && !matches.has(record.row[0])) return false;
+                const own = record.getAttribute('data-fold-id');
+                return !(record.getAttribute('data-fold-type') !== 'entry' && folds[own] === true) &&
+                    !ancestors(record).some(ancestor => folds[ancestor] === true);
+            },
+            visibleLines(folds, matches) {
+                const lines = new Set();
+                for (const record of model.records) {
+                    if (result.visible(record, folds, matches)) lines.add(record.row[0]);
+                }
+                return lines;
+            },
+        };
+        foldModels.set(model, result);
+        return result;
+    }
+    function folding(model) {
+        const steps = prepareFolding(model);
+        let result;
+        do { result = steps.next(); } while (!result.done);
+        return result.value;
+    }
+    function navigation(order, expandable, hidden = []) {
+        const original = new Set(order);
+        const sources = new Set(expandable);
+        const concealed = new Set(hidden);
+        if (original.size !== order.length || order.some(line => !Number.isSafeInteger(line) || line <= 0) ||
+            [...sources, ...concealed].some(line => !original.has(line))) {
+            throw new Error('Invalid Text navigation records');
+        }
+        let positions = new Map();
+        let dirty = true;
+        const result = {
+            order: [], expandable: [], visible: [],
+            indexOf(line) { return positions.get(line) ?? -1; },
+            setVisible(line, visible) {
+                if (!original.has(line)) throw new Error('Invalid Text navigation line');
+                if (concealed.has(line) === !visible) return;
+                if (visible) concealed.delete(line);
+                else concealed.add(line);
+                dirty = true;
+            },
+            reorder(next) {
+                const updated = new Map(next.map((line, index) => [line, index]));
+                if (next.length !== original.size || updated.size !== original.size ||
+                    next.some(line => !original.has(line))) throw new Error('Invalid Text navigation order');
+                result.order = next.slice();
+                positions = updated;
+                dirty = true;
+            },
+            refresh() {
+                if (!dirty) return;
+                const visible = [], candidates = [];
+                result.order.forEach((line, index) => {
+                    if (concealed.has(line)) return;
+                    visible.push(index);
+                    if (sources.has(line)) candidates.push(index);
+                });
+                result.visible = visible;
+                result.expandable = candidates;
+                dirty = false;
+            },
+            next(current, direction) {
+                result.refresh();
+                const candidates = result.expandable;
+                if (!candidates.length) return -1;
+                if (current < 0) return candidates[direction > 0 ? 0 : candidates.length - 1];
+                let lower = 0, upper = candidates.length;
+                while (lower < upper) {
+                    const middle = Math.floor((lower + upper) / 2);
+                    if (candidates[middle] < current || direction > 0 && candidates[middle] === current) lower = middle + 1;
+                    else upper = middle;
+                }
+                return direction > 0 ? candidates[lower % candidates.length] :
+                    candidates[(lower - 1 + candidates.length) % candidates.length];
+            },
+            boundary(last) {
+                result.refresh();
+                const candidates = result.expandable.length ? result.expandable : result.visible;
+                return candidates.length ? candidates[last ? candidates.length - 1 : 0] : -1;
+            },
+        };
+        result.reorder(order);
+        result.refresh();
+        return result;
+    }
+    function* prepareNavigation(model) {
+        if (model.version !== 2) throw new Error('Text source metadata is unavailable');
+        const order = [], expandable = [];
+        for (const record of model.records) {
+            order.push(record.row[0]);
+            if (record.source !== null) expandable.push(record.row[0]);
+            if (order.length % 512 === 0) yield 'Preparing Text navigation: ' + order.length + ' / ' + model.records.length + '…';
+        }
+        return navigation(order, expandable);
+    }
+    window.fgTextModel = { fields, prepare, filter, folding, prepareFolding, navigation, prepareNavigation };
     window.fgIndexedFilter = async function (data, text, signal, progress) {
         const iterator = steps(data, text);
         try {
@@ -2328,6 +2473,7 @@ document.documentElement.setAttribute('data-theme', currentTheme);
         // Grouping moves each task's lines together (original order inside the task) and replaces the
         // context switches by a summary line. Folding/filters work on attributes, not on order.
         let fgTextOrder = lsGet('textOrder') || 'time';
+        let fgTextSort = '';
         const RE_SWITCH_LINE = /^\s*(\d+)\)\s+(.+?)-(\d+)\s+=>\s+(.+?)-(\d+)\s*$/;
         const RE_TS_LINE = /^\s*(\d+\.\d+)\s*\|/;
         function fgTaskKey(line) {
@@ -2349,6 +2495,7 @@ document.documentElement.setAttribute('data-theme', currentTheme);
         function fgSetTextOrder(mode) {
             const container = document.getElementById('content');
             if (!container) return;
+            fgTextSort = '';
             // reorder off-document: moving tens of thousands of live nodes is slow otherwise
             const parent = container.parentNode, marker = document.createComment('content');
             parent.replaceChild(marker, container);
@@ -2361,6 +2508,12 @@ document.documentElement.setAttribute('data-theme', currentTheme);
             container.querySelectorAll('.task-group-head, .task-gap').forEach(e => e.remove());
             const blocks = orderedBlocks || fgBlocks(container).sort((a, b) => +a[0].dataset.lineNumber - +b[0].dataset.lineNumber);
             const frag = document.createDocumentFragment();
+            const navigation = fgTextNavigation;
+            const lineOrder = [];
+            const commit = () => {
+                container.replaceChildren(frag);
+                if (navigation) navigation.reorder(lineOrder);
+            };
             const chunkSize = Number(container.querySelector('.text-chunk')?.dataset.chunkSize) || 512;
             let chunk = null, chunkRows = 0;
             const boundary = element => { chunk = null; chunkRows = 0; frag.appendChild(element); };
@@ -2370,6 +2523,7 @@ document.documentElement.setAttribute('data-theme', currentTheme);
                     chunk.dataset.chunkSize = chunkSize; frag.appendChild(chunk); chunkRows = 0;
                 }
                 chunk.appendChild(block[0]); if (block[1]) chunk.appendChild(block[1]); chunkRows++;
+                if (navigation) lineOrder.push(+block[0].getAttribute('data-line-number'));
             };
             fgTextOrder = mode;
             lsSet('textOrder', mode);
@@ -2377,7 +2531,7 @@ document.documentElement.setAttribute('data-theme', currentTheme);
             if (btn) btn.textContent = 'Order: ' + (mode === 'task' ? 'by task' : 'time');
             if (mode !== 'task') {
                 blocks.forEach(put);
-                container.replaceChildren(frag);
+                commit();
                 container.classList.remove('grouped');
                 return;
             }
@@ -2436,7 +2590,7 @@ document.documentElement.setAttribute('data-theme', currentTheme);
                     put(b);
                 }
             }
-            container.replaceChildren(frag);
+            commit();
             container.classList.add('grouped');
         }
         function fgToggleTextOrder() { fgSetTextOrder(fgTextOrder === 'task' ? 'time' : 'task'); }
@@ -2493,13 +2647,12 @@ document.documentElement.setAttribute('data-theme', currentTheme);
         // 键盘导航相关变量
         let keyboardSelectedLine = null;
         let keyboardSelectedIndex = -1;
-        let allLines = [];
+        let fgTextNavigation = null;
         let fgTextInitialized = false;
         let fgFilterGeneration = 0;
         let fgFilterController = null;
         function fgTextDeferred() { return document.getElementById('content').hasAttribute('data-fg-text'); }
         let textGuideRevision = 0;
-        let expandableLines = [];
         let expandableLineIndices = [];
         let keyboardHintTimer = null;
         // 记录当前滚动位置
@@ -2747,11 +2900,9 @@ document.documentElement.setAttribute('data-theme', currentTheme);
         }
 
         // 恢复折叠状态
-        // Restore all folded states on page load — uses _setFolded for consistency
         function restoreFoldedState() {
-            for (const [foldId, isFolded] of Object.entries(foldedBlocks)) {
-                if (isFolded) _setFolded(foldId, true, true);
-            }
+            const saved = Object.entries(foldedBlocks).filter(([, folded]) => folded === true);
+            if (saved.length) fgSetFoldStates(saved, true);
         }
 
         // 保存展开状态
@@ -2782,9 +2933,9 @@ document.documentElement.setAttribute('data-theme', currentTheme);
             // 如果有可展开行，设置默认选中第一个可展开行
             if (expandableLineIndices.length > 0) {
                 setKeyboardSelectedLine(expandableLineIndices[0], false);
-            } else if (allLines.length > 0) {
+            } else if (fgTextNavigation.visible.length > 0) {
                 // 如果没有可展开行，选中第一行
-                setKeyboardSelectedLine(0, false);
+                setKeyboardSelectedLine(fgTextNavigation.boundary(false), false);
             }
             
             // 初始显示键盘提示，但只在第一次加载页面时
@@ -2909,6 +3060,13 @@ document.documentElement.setAttribute('data-theme', currentTheme);
                 if (text[i] === '!') {
                     tokens.push({ type: 'NOT' }); i++; continue;
                 }
+                // Sort directive: sort:desc or sort:asc
+                const sortMatch = text.slice(i).match(/^sort:(desc|asc)(?=$|[\s()])/i);
+                if (sortMatch) {
+                    tokens.push({ type: 'SORT', value: sortMatch[1].toLowerCase() });
+                    i += sortMatch[0].length;
+                    continue;
+                }
                 // field:value condition (field may contain letters/digits/underscore, value may contain anything except spaces and parens)
                 const condMatch = text.slice(i).match(/^([a-zA-Z_][a-zA-Z0-9_]*):(>=|<=|>|<|=)?([^\s()]*)/);
                 if (condMatch) {
@@ -2917,13 +3075,6 @@ document.documentElement.setAttribute('data-theme', currentTheme);
                     const value = condMatch[3];
                     tokens.push({ type: 'COND', field: field.toLowerCase(), op, value });
                     i += condMatch[0].length;
-                    continue;
-                }
-                // Sort directive: sort:desc or sort:asc
-                const sortMatch = text.slice(i).match(/^sort:(desc|asc)/i);
-                if (sortMatch) {
-                    tokens.push({ type: 'SORT', value: sortMatch[1].toLowerCase() });
-                    i += sortMatch[0].length;
                     continue;
                 }
                 // Unknown character, skip
@@ -3348,8 +3499,9 @@ document.documentElement.setAttribute('data-theme', currentTheme);
         }
 
         async function fgApplyIndexedFilter(text, generation) {
-            if (!parseFilterExpr(text).ast) {
-                fgNotifyFilter('', null);
+            const { ast, sortDir } = parseFilterExpr(text);
+            if (!ast) {
+                fgNotifyFilter(sortDir ? text : '', null);
                 fgShowFilterCount(total_lines, total_lines);
                 return true;
             }
@@ -3378,6 +3530,56 @@ document.documentElement.setAttribute('data-theme', currentTheme);
             }
         }
 
+        const fgDomTextModels = new WeakMap();
+        function* fgPrepareTextModel(lines) {
+            const root = document.getElementById('content');
+            if (fgDomTextModels.has(root)) return fgDomTextModels.get(root);
+            let data;
+            if (fgData.ready('fgTextIndex')) data = fgData.read('fgTextIndex');
+            else {
+                const rows = [];
+                for (const line of lines) {
+                    let source = null;
+                    if (line.classList.contains('expandable')) {
+                        const reference = line.nextElementSibling?.getAttribute('data-src');
+                        if (!/^(0|[1-9][0-9]*)$/.test(reference || '')) throw new Error('Missing Text source metadata');
+                        source = Number(reference);
+                    }
+                    const content = line.querySelector('.line-content');
+                    let text = content?.textContent || '';
+                    const summary = line.classList.contains('folded') && content?.querySelector('.fold-summary');
+                    if (summary) {
+                        const range = document.createRange();
+                        range.selectNodeContents(content);
+                        range.setEndBefore(summary);
+                        text = range.toString();
+                        range.selectNodeContents(content);
+                        range.setStartAfter(summary);
+                        text += range.toString();
+                    }
+                    rows.push([+line.getAttribute('data-line-number'), text,
+                        ...fgTextModel.fields.map(field => line.getAttribute('data-' + field)), source]);
+                    if (rows.length % 512 === 0) yield 'Reading complete Text rows: ' + rows.length + ' / ' + lines.length + '…';
+                }
+                rows.sort((left, right) => left[0] - right[0]);
+                data = { version: 2, fields: fgTextModel.fields, rows };
+            }
+            const model = yield* fgTextModel.prepare(data);
+            if (model.records.length !== lines.length) throw new Error('Text model does not cover mounted rows');
+            yield* fgTextModel.prepareFolding(model);
+            return model;
+        }
+
+        function fgGetTextModel(lines) {
+            const root = document.getElementById('content');
+            if (fgDomTextModels.has(root)) return fgDomTextModels.get(root);
+            const iterator = fgPrepareTextModel(lines);
+            let result;
+            do { result = iterator.next(); } while (!result.done);
+            fgDomTextModels.set(root, result.value);
+            return result.value;
+        }
+
         function applyFilter() {
             fgCancelPendingFilter(false);
             const generation = fgFilterGeneration;
@@ -3403,36 +3605,26 @@ document.documentElement.setAttribute('data-theme', currentTheme);
 
             // Get all lines
             const allLineElems = document.querySelectorAll('.line-container');
-            let visibleCount = 0;
-
-            // Precompute graph/notrace fold-id sets
+            let visibleCount = allLineElems.length;
+            let passLines = null;
             if (hasFilter) {
-                const graphConds = collectGraphConditions(ast);
-                _graphFoldIds = precomputeGraphSets(graphConds, allLineElems);
+                const iterator = fgTextModel.filter(fgGetTextModel(allLineElems), text);
+                let result;
+                do { result = iterator.next(); } while (!result.done);
+                passLines = result.value.lines;
+                visibleCount = result.value.visible;
+                _graphFoldIds = result.value.graphSets;
             } else {
                 _graphFoldIds = {};
             }
+            const visibleLines = Object.values(foldedBlocks).some(folded => folded === true)
+                ? fgTextModel.folding(fgGetTextModel(allLineElems)).visibleLines(foldedBlocks, passLines) : passLines;
 
-            const passLines = hasFilter ? new Set() : null;
             // Single-pass: filter lines + collapse expanded content
             allLineElems.forEach(line => {
-                let show = true;
-
-                if (hasFilter) {
-                    const rawLine = line.querySelector('.line-content')?.textContent || '';
-                    const trimmed = rawLine.trim();
-                    if (trimmed === '' || /^[-]+$/.test(trimmed)) {
-                        show = false;
-                    }
-                }
-
-                if (show && hasFilter) {
-                    show = evalExpr(line, ast);
-                }
-
+                const show = visibleLines === null || visibleLines.has(+line.getAttribute('data-line-number'));
                 line.style.display = show ? '' : 'none';
-                if (show) visibleCount++;
-                if (show && passLines) passLines.add(+line.getAttribute('data-line-number'));
+                fgTextNavigation?.setVisible(+line.getAttribute('data-line-number'), show);
 
                 // Collapse expanded content for hidden or all filtered lines (single pass)
                 if (hasFilter && line.classList.contains('expandable')) {
@@ -3460,14 +3652,18 @@ document.documentElement.setAttribute('data-theme', currentTheme);
                         const rightDuration = parseFloat(right[0].dataset.sortDuration || right[0].dataset.duration || '0');
                         return sortDir === 'desc' ? rightDuration - leftDuration : leftDuration - rightDuration;
                     });
+                    const preferredOrder = fgTextOrder;
                     fgReorder(container, 'time', blocks);
+                    fgTextOrder = preferredOrder;
+                    lsSet('textOrder', preferredOrder);
+                    fgTextSort = sortDir;
                     const button = document.getElementById('textOrderBtn');
                     if (button) button.textContent = 'Order: duration ' + (sortDir === 'desc' ? '↓' : '↑');
                 }
-            }
+            } else if (fgTextSort) fgSetTextOrder(fgTextOrder);
 
             updateExpandableLines();
-            fgNotifyFilter(hasFilter ? text : '', passLines);
+            fgNotifyFilter(hasFilter || sortDir ? text : '', passLines);
 
             // Update visible lines count
             fgShowFilterCount(visibleCount, total_lines);
@@ -3487,27 +3683,14 @@ document.documentElement.setAttribute('data-theme', currentTheme);
             document.querySelectorAll('.field-btn.active').forEach(b => b.classList.remove('active'));
 
             const allLineElems = document.querySelectorAll('.line-container');
+            const visibleLines = Object.values(foldedBlocks).some(folded => folded === true)
+                ? fgTextModel.folding(fgGetTextModel(allLineElems)).visibleLines(foldedBlocks, null) : null;
             allLineElems.forEach(line => {
-                line.style.display = '';
-                const lineId = line.getAttribute('data-line-id');
-                if (lineId) {
-                    const content = document.getElementById(lineId + '_content');
-                    const btn = line.querySelector('.expand-btn');
-                    if (content && btn) {
-                        const isExpanded = localStorage.getItem(`expanded_${lineId}`) === 'true';
-                        if (isExpanded) {
-                            fgFill(content); content.style.display = 'block';
-                            btn.textContent = '-';
-                            line.classList.add('selected');
-                        } else {
-                            content.style.display = 'none';
-                            btn.textContent = '+';
-                            line.classList.remove('selected');
-                        }
-                    }
-                }
+                const show = visibleLines === null || visibleLines.has(+line.getAttribute('data-line-number'));
+                fgProjectFoldLine(line, show);
             });
 
+            if (fgTextSort) fgSetTextOrder(fgTextOrder);
             updateExpandableLines();
             fgNotifyFilter('', null);
 
@@ -3515,19 +3698,31 @@ document.documentElement.setAttribute('data-theme', currentTheme);
             if (visibleLinesContainer) visibleLinesContainer.style.display = 'none';
         }
 
-        // 更新展开行列表（只包含可见的）
+        function* fgPrepareTextNavigation(lines, model = null) {
+            if (model?.version === 2) return yield* fgTextModel.prepareNavigation(model);
+            const order = [], expandable = [], hidden = [];
+            for (const line of lines) {
+                const number = +line.getAttribute('data-line-number');
+                order.push(number);
+                if (line.classList.contains('expandable')) expandable.push(number);
+                if (line.style.display === 'none') hidden.push(number);
+                if (order.length % 512 === 0) yield 'Preparing Text navigation: ' + order.length + ' / ' + lines.length + '…';
+            }
+            return fgTextModel.navigation(order, expandable, hidden);
+        }
+
         function updateExpandableLines() {
+            if (fgTextDeferred()) return;
             textGuideRevision++;
-            // 重新获取所有行（包括隐藏的）
-            allLines = Array.from(document.querySelectorAll('.line-container'));
-            expandableLines = Array.from(document.querySelectorAll('.line-container.expandable'))
-                .filter(line => line.style.display !== 'none');
-            expandableLineIndices = [];
-            allLines.forEach((line, index) => {
-                if (line.classList.contains('expandable') && line.style.display !== 'none') {
-                    expandableLineIndices.push(index);
-                }
-            });
+            if (!fgTextNavigation) {
+                const steps = fgPrepareTextNavigation(document.getElementById('content').querySelectorAll('.line-container'));
+                let result;
+                do { result = steps.next(); } while (!result.done);
+                fgTextNavigation = result.value;
+            }
+            fgTextNavigation.refresh();
+            expandableLineIndices = fgTextNavigation.expandable;
+            if (keyboardSelectedLine) keyboardSelectedIndex = fgTextNavigation.indexOf(+keyboardSelectedLine.getAttribute('data-line-number'));
             document.getElementById('content')?.dispatchEvent(new Event('fg-guides-change'));
         }
 
@@ -3727,10 +3922,10 @@ document.documentElement.setAttribute('data-theme', currentTheme);
             }
 
             if (index < 0) index = 0;
-            if (index >= allLines.length) index = allLines.length - 1;
+            if (index >= fgTextNavigation.order.length) index = fgTextNavigation.order.length - 1;
 
             keyboardSelectedIndex = index;
-            keyboardSelectedLine = allLines[index];
+            keyboardSelectedLine = document.getElementById('L' + fgTextNavigation.order[index]);
 
             // 添加新的选择样式
             if (keyboardSelectedLine) {
@@ -3738,13 +3933,14 @@ document.documentElement.setAttribute('data-theme', currentTheme);
 
                 // 移动焦点到该行，这样event.target会更新
                 // 这样Enter键就能正确处理
-                if (typeof fgCurrentView !== 'function' || fgCurrentView() === 'text') keyboardSelectedLine.focus();
+                if (typeof fgCurrentView !== 'function' || fgCurrentView() === 'text') keyboardSelectedLine.focus({ preventScroll: true });
 
                 // 只有在需要滚动时才滚动
                 if (scrollIntoView) {
                     // 获取当前行的位置
                     const rect = keyboardSelectedLine.getBoundingClientRect();
                     const windowHeight = window.innerHeight;
+                    const visibleTop = Math.max(0, document.querySelector('.controls')?.getBoundingClientRect().bottom || 0);
 
                     // 计算行在视口中的位置
                     const lineTop = rect.top;
@@ -3755,7 +3951,7 @@ document.documentElement.setAttribute('data-theme', currentTheme);
                     // 如果当前行接近视口底部（距离底部小于2行高度），则滚动到中间
                     // 如果当前行接近视口顶部（距离顶部小于1行高度），也滚动到中间
                     const nearBottom = windowHeight - lineBottom < lineHeight * 2;
-                    const nearTop = lineTop < lineHeight;
+                    const nearTop = lineTop < visibleTop + lineHeight;
 
                     if (nearBottom || nearTop || lineTop < 0 || lineBottom > windowHeight) {
                         // 如果接近边界或不在视口中，滚动到中间
@@ -3770,61 +3966,13 @@ document.documentElement.setAttribute('data-theme', currentTheme);
         
         // 导航到下一个可展开行
         function navigateToExpandableLine(direction) {
-            if (expandableLineIndices.length === 0) {
-                return; // 没有可展开行
-            }
-            
-            let currentExpandableIndex = -1;
-            
-            // 找到当前行在可展开行列表中的位置
-            for (let i = 0; i < expandableLineIndices.length; i++) {
-                if (expandableLineIndices[i] === keyboardSelectedIndex) {
-                    currentExpandableIndex = i;
-                    break;
-                }
-            }
-            
-            // 如果当前行不是可展开行，找到最近的可展开行
-            if (currentExpandableIndex === -1) {
-                if (direction > 0) {
-                    // 向下查找
-                    for (let i = 0; i < expandableLineIndices.length; i++) {
-                        if (expandableLineIndices[i] > keyboardSelectedIndex) {
-                            currentExpandableIndex = i;
-                            break;
-                        }
-                    }
-                    // 如果没找到，从第一个开始
-                    if (currentExpandableIndex === -1) {
-                        currentExpandableIndex = 0;
-                    }
-                } else {
-                    // 向上查找
-                    for (let i = expandableLineIndices.length - 1; i >= 0; i--) {
-                        if (expandableLineIndices[i] < keyboardSelectedIndex) {
-                            currentExpandableIndex = i;
-                            break;
-                        }
-                    }
-                    // 如果没找到，从最后一个开始
-                    if (currentExpandableIndex === -1) {
-                        currentExpandableIndex = expandableLineIndices.length - 1;
-                    }
-                }
-            }
-            
-            // 计算下一个索引
-            let nextIndex = currentExpandableIndex + direction;
-            
-            // 处理循环
-            if (nextIndex < 0) {
-                nextIndex = expandableLineIndices.length - 1; // 循环到最后一个
-            } else if (nextIndex >= expandableLineIndices.length) {
-                nextIndex = 0; // 循环到第一个
-            }
-            
-            // 设置新的选中行
-            setKeyboardSelectedLine(expandableLineIndices[nextIndex], true);
+            const next = fgTextNavigation.next(keyboardSelectedIndex, direction);
+            if (next >= 0) setKeyboardSelectedLine(next, true);
+        }
+
+        function navigateToTextBoundary(last) {
+            const next = fgTextNavigation.boundary(last);
+            if (next >= 0) setKeyboardSelectedLine(next, true);
         }
         
         // 处理行点击事件 - 现在只处理单击
@@ -3888,17 +4036,9 @@ document.documentElement.setAttribute('data-theme', currentTheme);
 
             // 设置键盘选中行，但不滚动
             // 根据 data-line-id 查找对应的行元素
-            let clickedLine = null;
-            const allLineElements = Array.from(document.querySelectorAll('.line-container'));
-            for (let line of allLineElements) {
-                if (line.getAttribute('data-line-id') === lineId) {
-                    clickedLine = line;
-                    break;
-                }
-            }
-
-            if (clickedLine) {
-                const lineIndex = allLineElements.findIndex(line => line === clickedLine);
+            const clickedLine = event.target.closest('.line-container');
+            if (clickedLine?.getAttribute('data-line-id') === lineId) {
+                const lineIndex = fgTextNavigation.indexOf(+clickedLine.getAttribute('data-line-number'));
                 if (lineIndex >= 0) {
                     setKeyboardSelectedLine(lineIndex, false);
                 }
@@ -4003,23 +4143,44 @@ document.documentElement.setAttribute('data-theme', currentTheme);
         // 切换展开/收起状态 - 只影响当前行，不滚动
         // 切换折叠状态
         // Core fold/unfold logic — does NOT write localStorage (P3 optimization)
-        function _setFolded(foldId, shouldFold, restore) {
-            const isFolded = foldedBlocks[foldId] === true;
-            if (shouldFold === isFolded && !restore) return; // no-op
-            textGuideRevision++;
+        function fgGetTextFolding() {
+            const root = document.getElementById('content');
+            const model = fgDomTextModels.get(root) || fgGetTextModel(root.querySelectorAll('.line-container'));
+            return fgTextModel.folding(model);
+        }
 
-            // P1: single DOM query for all related lines
-            const lines = document.querySelectorAll('[data-fold-id="' + foldId + '"], [data-fold-ancestors~="' + foldId + '"]');
-            // Find entry element from the query results (avoid extra querySelector)
-            let entryEl = null;
-            for (let i = 0; i < lines.length; i++) {
-                if (lines[i].getAttribute('data-fold-type') === 'entry' && lines[i].getAttribute('data-fold-id') === foldId) {
-                    entryEl = lines[i]; break;
-                }
+        function fgProjectFoldLine(line, visible) {
+            if (!line) return;
+            fgTextNavigation?.setVisible(+line.getAttribute('data-line-number'), visible);
+            const display = visible ? '' : 'none';
+            if (line.style.display !== display) line.style.display = display;
+            const content = line.nextElementSibling;
+            if (!content?.classList.contains('expanded-content')) return;
+            const expanded = visible && expandedLines[line.getAttribute('data-line-id')] === true;
+            if (expanded) fgFill(content);
+            const sourceDisplay = expanded ? 'block' : 'none';
+            if (content.style.display !== sourceDisplay) content.style.display = sourceDisplay;
+            const button = line.querySelector('.expand-btn');
+            const symbol = expanded ? '-' : '+';
+            if (button && button.textContent !== symbol) button.textContent = symbol;
+            line.classList.toggle('selected', expanded);
+        }
+
+        function fgProjectFoldRecords(folding, records) {
+            for (const record of records) {
+                const line = document.getElementById('L' + record.row[0]);
+                fgProjectFoldLine(line, folding.visible(record, foldedBlocks, window.fgFilterState.lines));
             }
+            updateExpandableLines();
+        }
+
+        function fgUpdateFoldState(folding, foldId, shouldFold, restore) {
+            const isFolded = foldedBlocks[foldId] === true;
+            if (shouldFold === isFolded && !restore) return false;
+            const record = folding.blocks.get(foldId)?.entry;
+            const entryEl = record && document.getElementById('L' + record.row[0]);
 
             if (shouldFold) {
-                // Collapse
                 foldedBlocks[foldId] = true;
                 if (entryEl) {
                     entryEl.classList.add('folded');
@@ -4028,7 +4189,6 @@ document.documentElement.setAttribute('data-theme', currentTheme);
                 }
                 addFoldSummary(foldId);
             } else {
-                // Expand
                 delete foldedBlocks[foldId];
                 removeFoldSummary(foldId);
                 if (entryEl) {
@@ -4047,24 +4207,23 @@ document.documentElement.setAttribute('data-theme', currentTheme);
                 });
             }
 
-            lines.forEach(line => {
-                const ancestors = (line.getAttribute('data-fold-ancestors') || '').split(' ');
-                const ownFold = line.getAttribute('data-fold-id');
-                const hidden = (line.getAttribute('data-fold-type') !== 'entry' && foldedBlocks[ownFold] === true) ||
-                    ancestors.some(ancestor => foldedBlocks[ancestor] === true);
-                line.style.display = hidden ? 'none' : '';
-                const lineId = line.getAttribute('data-line-id');
-                const content = document.getElementById(lineId + '_content');
-                if (content) {
-                    if (!hidden && expandedLines[lineId]) {
-                        fgFill(content);
-                        content.style.display = 'block';
-                    } else {
-                        content.style.display = 'none';
-                    }
-                }
-            });
-            entryEl?.closest('#content')?.dispatchEvent(new Event('fg-guides-change'));
+            return true;
+        }
+
+        function fgSetFoldStates(changes, restore = false) {
+            const folding = fgGetTextFolding();
+            let changed = false;
+            for (const [foldId, shouldFold] of changes) {
+                if (fgUpdateFoldState(folding, foldId, shouldFold, restore)) changed = true;
+            }
+            if (changed) fgProjectFoldRecords(folding, folding.records);
+        }
+
+        function _setFolded(foldId, shouldFold, restore) {
+            const folding = fgGetTextFolding();
+            if (fgUpdateFoldState(folding, foldId, shouldFold, restore)) {
+                fgProjectFoldRecords(folding, folding.members(foldId));
+            }
         }
 
         // Public API: toggle a single fold block + save state
@@ -4540,13 +4699,13 @@ document.documentElement.setAttribute('data-theme', currentTheme);
             if (keyLower === 'j' || event.key === 'ArrowDown') {
                 event.preventDefault();
                 handled = true;
-                if (expandableLineIndices.length > 0 && expandableLines.length > 0) {
+                if (expandableLineIndices.length > 0) {
                     navigateToExpandableLine(1); // 向下导航
                 }
             } else if (keyLower === 'k' || event.key === 'ArrowUp') {
                 event.preventDefault();
                 handled = true;
-                if (expandableLineIndices.length > 0 && expandableLines.length > 0) {
+                if (expandableLineIndices.length > 0) {
                     navigateToExpandableLine(-1); // 向上导航
                 }
             }
@@ -4586,11 +4745,7 @@ document.documentElement.setAttribute('data-theme', currentTheme);
                         if (!event.shiftKey) {
                             event.preventDefault();
                             if (event.repeat) break;
-                            if (expandableLineIndices.length > 0) {
-                                setKeyboardSelectedLine(expandableLineIndices[0], true);
-                            } else if (allLines.length > 0) {
-                                setKeyboardSelectedLine(0, true);
-                            }
+                            navigateToTextBoundary(false);
                         }
                         break;
                         
@@ -4598,30 +4753,18 @@ document.documentElement.setAttribute('data-theme', currentTheme);
                         if (event.shiftKey) {
                             event.preventDefault();
                             if (event.repeat) break;
-                            if (expandableLineIndices.length > 0) {
-                                setKeyboardSelectedLine(expandableLineIndices[expandableLineIndices.length - 1], true);
-                            } else if (allLines.length > 0) {
-                                setKeyboardSelectedLine(allLines.length - 1, true);
-                            }
+                            navigateToTextBoundary(true);
                         }
                         break;
                         
                     case 'Home': // Home键跳转到顶部
                         event.preventDefault();
-                        if (expandableLineIndices.length > 0) {
-                            setKeyboardSelectedLine(expandableLineIndices[0], true);
-                        } else if (allLines.length > 0) {
-                            setKeyboardSelectedLine(0, true);
-                        }
+                        navigateToTextBoundary(false);
                         break;
                         
                     case 'End': // End键跳转到底部
                         event.preventDefault();
-                        if (expandableLineIndices.length > 0) {
-                            setKeyboardSelectedLine(expandableLineIndices[expandableLineIndices.length - 1], true);
-                        } else if (allLines.length > 0) {
-                            setKeyboardSelectedLine(allLines.length - 1, true);
-                        }
+                        navigateToTextBoundary(true);
                         break;
                         
                     case 'PageDown': // PageDown向下翻页
@@ -4670,7 +4813,7 @@ document.documentElement.setAttribute('data-theme', currentTheme);
                     // 从第一个行内容开始
                     range.setStart(allLineContents[0], 0);
                     // 到最后一个行内容结束
-                    range.setEnd(allLineContents[allLineContents.length - 1], allLineContents[allLines.length - 1].childNodes.length);
+                    range.setEnd(allLineContents[allLineContents.length - 1], allLineContents[allLineContents.length - 1].childNodes.length);
                     
                     selection.addRange(range);
                     highlightSelectedLines();
@@ -4684,7 +4827,9 @@ document.documentElement.setAttribute('data-theme', currentTheme);
             const viewportBottom = viewportTop + window.innerHeight;
             const visibleLines = [];
             
-            allLines.forEach(line => {
+            (fgTextNavigation?.order || []).forEach(number => {
+                const line = document.getElementById('L' + number);
+                if (!line) return;
                 const rect = line.getBoundingClientRect();
                 const lineTop = rect.top + window.scrollY;
                 const lineBottom = rect.bottom + window.scrollY;
@@ -4999,8 +5144,8 @@ document.documentElement.setAttribute('data-theme', currentTheme);
                 const element = document.getElementById(hash);
                 if (element && element.classList.contains('line-container')) {
                     // 如果是行容器，清除其他高亮，然后高亮此行
-                    const allLines = document.querySelectorAll('.line-container');
-                    allLines.forEach(line => line.classList.remove('highlighted'));
+                    if (highlightedLine) highlightedLine.classList.remove('highlighted');
+                    highlightedLine = element;
                     element.classList.add('highlighted');
                     
                     // 平滑滚动到该行
@@ -5009,8 +5154,7 @@ document.documentElement.setAttribute('data-theme', currentTheme);
                     }, 100);
                     
                     // 设置键盘选中
-                    const lineId = element.getAttribute('data-line-id');
-                    const lineIndex = allLines.length > 0 ? Array.from(allLines).findIndex(line => line.getAttribute('data-line-id') === lineId) : -1;
+                    const lineIndex = fgTextNavigation.indexOf(+element.getAttribute('data-line-number'));
                     if (lineIndex >= 0) {
                         setKeyboardSelectedLine(lineIndex, false);
                     }
@@ -5072,33 +5216,34 @@ document.documentElement.setAttribute('data-theme', currentTheme);
         // ============================================================
         // P3: batch operations — write localStorage once at the end
         function foldToDepth(maxDepth) {
-            const entries = document.querySelectorAll('[data-fold-type="entry"]');
-            entries.forEach(entry => {
+            const changes = [];
+            for (const block of fgGetTextFolding().blocks.values()) {
+                if (!block.entry) continue;
+                const entry = document.getElementById('L' + block.entry.row[0]);
+                if (!entry) continue;
                 const depth = parseInt(entry.getAttribute('data-call-depth'));
-                if (isNaN(depth)) return;
-                const foldId = entry.getAttribute('data-fold-id');
-                if (!foldId) return;
-                _setFolded(foldId, depth >= maxDepth);
-            });
+                if (!isNaN(depth)) changes.push([block.id, depth >= maxDepth]);
+            }
+            fgSetFoldStates(changes);
             lsSet('foldedBlocks', JSON.stringify(foldedBlocks));
         }
 
         function unfoldAllBlocks() {
             const foldIds = Object.keys(foldedBlocks);
-            foldIds.forEach(foldId => _setFolded(foldId, false));
+            if (foldIds.length) fgSetFoldStates(foldIds.map(foldId => [foldId, false]));
             lsSet('foldedBlocks', JSON.stringify(foldedBlocks));
         }
 
         // F1: Recursive fold — fold/unfold block and all its child blocks
         function toggleFoldRecursive(foldId) {
             const shouldFold = !foldedBlocks[foldId];
-            _setFolded(foldId, shouldFold);
-            // Find all child entry blocks whose ancestors include this foldId
-            const childEntries = document.querySelectorAll('[data-fold-type="entry"][data-fold-ancestors~="' + foldId + '"]');
-            childEntries.forEach(child => {
-                const childId = child.getAttribute('data-fold-id');
-                if (childId) _setFolded(childId, shouldFold);
-            });
+            const changes = [];
+            for (const record of fgGetTextFolding().members(foldId)) {
+                if (record.getAttribute('data-fold-type') === 'entry') {
+                    changes.push([record.getAttribute('data-fold-id'), shouldFold]);
+                }
+            }
+            fgSetFoldStates(changes);
             lsSet('foldedBlocks', JSON.stringify(foldedBlocks));
         }
 
@@ -5106,47 +5251,30 @@ document.documentElement.setAttribute('data-theme', currentTheme);
         // P2: Fold Summary
         // ============================================================
         function addFoldSummary(foldId) {
-            let entryEl = null;
-            try {
-                entryEl = document.querySelector('[data-fold-id="' + foldId + '"][data-fold-type="entry"]');
-            } catch(e) { return; }
+            const block = fgGetTextFolding().blocks.get(foldId);
+            const entryEl = block?.entry && document.getElementById('L' + block.entry.row[0]);
             if (!entryEl) return;
 
             // Remove existing summary if any
             const existing = entryEl.querySelector('.fold-summary');
             if (existing) existing.remove();
 
-            // Find all inner/exit lines belonging to this fold
-            const innerLines = document.querySelectorAll('[data-fold-id="' + foldId + '"], [data-fold-ancestors~="' + foldId + '"]');
-
-            let childCalls = 0;
+            const childCalls = block.calls;
             let totalDuration = 0;
             let hasDuration = false;
             let retValue = null;
             let hasErrorReturn = false;
-
-            innerLines.forEach(line => {
-                const thisId = line.getAttribute('data-fold-id');
-                const thisType = line.getAttribute('data-fold-type');
-
-                if ((thisType === 'entry' && thisId !== foldId) ||
-                    (thisType === 'inner' && line.hasAttribute('data-func'))) {
-                    childCalls++;
+            const exitEl = block.exit && document.getElementById('L' + block.exit.row[0]);
+            if (exitEl) {
+                const ret = exitEl.getAttribute('data-fold-ret') || exitEl.getAttribute('data-ret');
+                if (ret) retValue = ret;
+                hasErrorReturn = exitEl.hasAttribute('data-ret');
+                const dur = exitEl.getAttribute('data-sort-duration') || exitEl.getAttribute('data-duration');
+                if (dur) {
+                    totalDuration = parseFloat(dur);
+                    hasDuration = true;
                 }
-
-                // Get return value from exit line of this fold
-                if (thisType === 'exit' && thisId === foldId) {
-                    const ret = line.getAttribute('data-fold-ret') || line.getAttribute('data-ret');
-                    if (ret) retValue = ret;
-                    hasErrorReturn = line.hasAttribute('data-ret');
-                    // Get duration from exit line
-                    const dur = line.getAttribute('data-sort-duration') || line.getAttribute('data-duration');
-                    if (dur) {
-                        totalDuration = parseFloat(dur);
-                        hasDuration = true;
-                    }
-                }
-            });
+            }
 
             // If no duration from exit, try from entry itself
             if (!hasDuration) {
@@ -5172,9 +5300,7 @@ document.documentElement.setAttribute('data-theme', currentTheme);
             if (retValue) {
                 // Look up error code name from the ERROR_CODE_MAP if embedded
                 let retDisplay = 'ret=' + retValue;
-                const errSpan = entryEl.closest('.line-container');
                 // Try to find error name from sibling exit line
-                const exitEl = document.querySelector('[data-fold-id="' + foldId + '"][data-fold-type="exit"]');
                 if (exitEl) {
                     const exitContent = exitEl.querySelector('.line-content');
                     if (exitContent) {
@@ -5197,27 +5323,31 @@ document.documentElement.setAttribute('data-theme', currentTheme);
         }
 
         function removeFoldSummary(foldId) {
-            let entryEl = null;
-            try {
-                entryEl = document.querySelector('[data-fold-id="' + foldId + '"][data-fold-type="entry"]');
-            } catch(e) { return; }
+            const record = fgGetTextFolding().blocks.get(foldId)?.entry;
+            const entryEl = record && document.getElementById('L' + record.row[0]);
             if (!entryEl) return;
             const summary = entryEl.querySelector('.fold-summary');
             if (summary) summary.remove();
         }
 
-        function fgInitText(mounted = false) {
+        function fgInitText(mounted = false, model = null, navigation = null) {
             if (fgTextInitialized || fgTextDeferred()) return;
+            const root = document.getElementById('content');
+            total_lines = root.querySelectorAll('.line-container').length;
+            if (model) {
+                if (model.records.length !== total_lines) throw new Error('Text model does not cover mounted rows');
+                fgDomTextModels.set(root, model);
+            }
+            if (navigation) {
+                if (navigation.order.length !== total_lines) throw new Error('Text navigation does not cover mounted rows');
+                fgTextNavigation = navigation;
+            }
             fgTextInitialized = true;
             if (mounted) {
                 fgRestoreTextOrder();
                 initTextFolds();
                 restoreFoldedState();
             }
-            // 初始化总行数
-            // (the old .summary element no longer exists; count the rendered lines)
-            total_lines = document.querySelectorAll('.line-container').length;
-
             // 恢复展开状态
             restoreExpandedState();
 
@@ -9516,19 +9646,51 @@ function __tlBoot() {
             staged: window.fgData.external('tlData') || window.fgData.length('tlData') >= 1024 * 1024 };
     }
     if (fgTextDeferred()) {
-        views.text = { el: 'content', data: ['fgText'], init: () => {
+        function* textSteps() {
             const content = document.getElementById('content');
-            content.innerHTML = window.fgData.read('fgText');
-            content.removeAttribute('data-fg-text');
-            try { fgInitText(true); }
-            catch (error) {
-                textFailed = true;
-                content.setAttribute('data-fg-text', 'true');
-                throw error;
+            const fragment = document.createDocumentFragment();
+            const parser = document.createElement('div');
+            try {
+                yield 'Preparing Text…';
+                const html = window.fgData.read('fgText');
+                const marker = html.match(/^<div class="text-chunk" data-chunk-size="[1-9][0-9]*">/)?.[0];
+                if (html && !marker) throw new Error('Unrecognized Text chunk format');
+                let position = 0;
+                while (position < html.length) {
+                    const next = html.indexOf(marker, position + marker.length);
+                    const end = next < 0 ? html.length : next;
+                    parser.innerHTML = html.slice(position, end);
+                    if (parser.childNodes.length !== 1 || !parser.firstElementChild?.classList.contains('text-chunk')) {
+                        throw new Error('Invalid Text chunk boundary');
+                    }
+                    fragment.appendChild(parser.firstElementChild);
+                    position = end;
+                    yield 'Preparing Text… ' + Math.floor(position / html.length * 100) + '%';
+                }
+                const rows = fragment.querySelectorAll('.line-container');
+                const model = yield* fgPrepareTextModel(rows);
+                const navigation = yield* fgPrepareTextNavigation(rows, model);
+                yield { label: 'Finishing Text layout…', paint: true };
+                content.replaceChildren(fragment);
+                content.removeAttribute('data-fg-text');
+                try { fgInitText(true, model, navigation); }
+                catch (error) {
+                    textFailed = true;
+                    content.setAttribute('data-fg-text', 'true');
+                    throw error;
+                }
+                window.fgData.release('fgText');
+                window.fgData.release('fgTextIndex');
+                document.querySelector('.controls').inert = false;
+                return {};
+            } finally {
+                parser.replaceChildren();
+                fragment.replaceChildren();
             }
-            window.fgData.release('fgText');
-            window.fgData.release('fgTextIndex');
-            document.querySelector('.controls').inert = false;
+        }
+        views.text = { el: 'content', data: ['fgText'], staged: true, steps: textSteps, init: () => {
+            const steps = textSteps();
+            while (!steps.next().done) {}
             return {};
         } };
         document.querySelector('.controls').inert = true;
@@ -9577,7 +9739,7 @@ function __tlBoot() {
         delete pending[state.name];
         state.el.removeAttribute('aria-busy');
         loadingContent(state.el, 'Unable to open ' + state.name + ': ' + error.message, true);
-        if (state.loadingData || textFailed && state.name === 'text') {
+        if (state.loadingData || state.name === 'text') {
             const retry = document.createElement('button');
             retry.type = 'button';
             const reload = textFailed && state.name === 'text';
@@ -9600,6 +9762,14 @@ function __tlBoot() {
         state.el.textContent = '';
         state.resolve(null);
     }
+    function updateStatus(state, step) {
+        const label = typeof step === 'string' ? step : step.label;
+        if (state.label !== label) {
+            state.label = label;
+            state.status.textContent = label;
+        }
+        return typeof step !== 'string' && step.paint === true;
+    }
     function schedule(state, first) {
         const next = () => {
             state.timer = setTimeout(() => {
@@ -9610,10 +9780,7 @@ function __tlBoot() {
                     do {
                         result = state.steps.next();
                         if (result.done) { complete(state, result.value); return; }
-                        if (state.label !== result.value) {
-                            state.label = result.value;
-                            state.status.textContent = result.value;
-                        }
+                        if (updateStatus(state, result.value)) { schedule(state, true); return; }
                     } while (performance.now() - start < 8);
                     schedule(state);
                 } catch (error) { fail(state, error); }
@@ -9631,7 +9798,7 @@ function __tlBoot() {
             state.steps = views[state.name].steps();
             const first = state.steps.next();
             if (first.done) complete(state, first.value);
-            else { state.label = first.value; state.status.textContent = first.value; schedule(state, true); }
+            else { updateStatus(state, first.value); schedule(state, true); }
         } catch (error) { fail(state, error); }
     }
     function missingData(name) {

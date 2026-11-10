@@ -7,6 +7,7 @@
     class TextRecord {
         constructor(row) { this.row = row; }
         get textContent() { return this.row[1]; }
+        get source() { return this.row.length === fields.length + 3 ? this.row[fields.length + 2] : undefined; }
         getAttribute(name) {
             if (name === 'data-line-number') return String(this.row[0]);
             const index = columns.get(name);
@@ -15,7 +16,7 @@
         querySelector(selector) { return selector === '.line-content' ? this : null; }
     }
     function* prepare(data) {
-        if (!data || data.version !== 1 || !Array.isArray(data.fields) || !Array.isArray(data.rows) ||
+        if (!data || ![1, 2].includes(data.version) || !Array.isArray(data.fields) || !Array.isArray(data.rows) ||
             data.fields.length !== fields.length || data.fields.some((field, index) => field !== fields[index])) {
             throw new Error('Unsupported Text filter index');
         }
@@ -24,16 +25,18 @@
             let previous = 0;
             for (let index = 0; index < data.rows.length; index++) {
                 const row = data.rows[index];
-                if (!Array.isArray(row) || row.length !== fields.length + 2 ||
+                const source = row?.[fields.length + 2];
+                if (!Array.isArray(row) || row.length !== fields.length + (data.version === 2 ? 3 : 2) ||
                     !Number.isSafeInteger(row[0]) || row[0] <= previous || typeof row[1] !== 'string' ||
-                    row.some((value, column) => column >= 2 && value !== null && typeof value !== 'string')) {
+                    row.some((value, column) => column >= 2 && column < fields.length + 2 && value !== null && typeof value !== 'string') ||
+                    data.version === 2 && source !== null && (!Number.isSafeInteger(source) || source < 0)) {
                     throw new Error('Invalid Text filter index row ' + (index + 1));
                 }
                 previous = row[0];
                 records.push(new TextRecord(row));
                 if (index % 1024 === 0) yield 'Checking full-trace filter index…';
             }
-            models.set(data, { records });
+            models.set(data, { records, version: data.version });
         }
         return models.get(data);
     }
@@ -182,7 +185,17 @@
         result.refresh();
         return result;
     }
-    window.fgTextModel = { fields, prepare, filter, folding, prepareFolding, navigation };
+    function* prepareNavigation(model) {
+        if (model.version !== 2) throw new Error('Text source metadata is unavailable');
+        const order = [], expandable = [];
+        for (const record of model.records) {
+            order.push(record.row[0]);
+            if (record.source !== null) expandable.push(record.row[0]);
+            if (order.length % 512 === 0) yield 'Preparing Text navigation: ' + order.length + ' / ' + model.records.length + '…';
+        }
+        return navigation(order, expandable);
+    }
+    window.fgTextModel = { fields, prepare, filter, folding, prepareFolding, navigation, prepareNavigation };
     window.fgIndexedFilter = async function (data, text, signal, progress) {
         const iterator = steps(data, text);
         try {

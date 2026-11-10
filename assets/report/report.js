@@ -1148,6 +1148,12 @@
             else {
                 const rows = [];
                 for (const line of lines) {
+                    let source = null;
+                    if (line.classList.contains('expandable')) {
+                        const reference = line.nextElementSibling?.getAttribute('data-src');
+                        if (!/^(0|[1-9][0-9]*)$/.test(reference || '')) throw new Error('Missing Text source metadata');
+                        source = Number(reference);
+                    }
                     const content = line.querySelector('.line-content');
                     let text = content?.textContent || '';
                     const summary = line.classList.contains('folded') && content?.querySelector('.fold-summary');
@@ -1161,11 +1167,11 @@
                         text += range.toString();
                     }
                     rows.push([+line.getAttribute('data-line-number'), text,
-                        ...fgTextModel.fields.map(field => line.getAttribute('data-' + field))]);
+                        ...fgTextModel.fields.map(field => line.getAttribute('data-' + field)), source]);
                     if (rows.length % 512 === 0) yield 'Reading complete Text rows: ' + rows.length + ' / ' + lines.length + '…';
                 }
                 rows.sort((left, right) => left[0] - right[0]);
-                data = { version: 1, fields: fgTextModel.fields, rows };
+                data = { version: 2, fields: fgTextModel.fields, rows };
             }
             const model = yield* fgTextModel.prepare(data);
             if (model.records.length !== lines.length) throw new Error('Text model does not cover mounted rows');
@@ -1301,7 +1307,8 @@
             if (visibleLinesContainer) visibleLinesContainer.style.display = 'none';
         }
 
-        function* fgPrepareTextNavigation(lines) {
+        function* fgPrepareTextNavigation(lines, model = null) {
+            if (model?.version === 2) return yield* fgTextModel.prepareNavigation(model);
             const order = [], expandable = [], hidden = [];
             for (const line of lines) {
                 const number = +line.getAttribute('data-line-number');

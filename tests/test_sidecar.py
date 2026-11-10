@@ -699,8 +699,8 @@ class SidecarBrowserTest(unittest.TestCase):
             window.holdNavigation = true;
             window.navigationStarted = false;
             window.navigationClosed = 0;
-            fgPrepareTextNavigation = function* (lines) {
-                const steps = prepare(lines);
+            fgPrepareTextNavigation = function* (lines, model) {
+                const steps = prepare(lines, model);
                 try {
                     const first = steps.next();
                     window.navigationStarted = true;
@@ -728,6 +728,82 @@ class SidecarBrowserTest(unittest.TestCase):
         self.page.evaluate('async () => { holdNavigation = false; await fgEnsureText(); }')
         self.assertEqual(self.page.evaluate('navigationClosed'), 2)
         self.assertEqual(self.page.evaluate('fgTextNavigation.order.length'), self.page.locator('#content .line-container').count())
+        self.assertEqual(sum(url.endswith('text.html') for url in self.requests), 1)
+        self.assertFalse(any(url.endswith('text-index.json') for url in self.requests))
+
+    def test_source_navigation_uses_complete_records_without_inspecting_dom_rows(self):
+        index = json.loads((self.manifest.parent / self.resources['fgTextIndex']['file']).read_text())
+        expected = [[row[0], row[-1]] for row in index['rows']]
+        for preload in [False, True]:
+            with self.subTest(preload=preload):
+                if preload:
+                    self.page.reload(wait_until='load')
+                    self.page.locator('#timelineView .tl-canvas').wait_for(state='attached')
+                facts = self.page.evaluate('''async preload => {
+                    if (preload) await fgData.load('fgTextIndex');
+                    const prepare = fgPrepareTextNavigation;
+                    let calls = 0;
+                    fgPrepareTextNavigation = function* (rows, model) {
+                        calls++;
+                        if (model.version !== 2) throw new Error('Missing structured source metadata');
+                        const noDOM = new Proxy({}, {get() {throw new Error('Navigation inspected DOM rows');}});
+                        return yield* prepare(noDOM, model);
+                    };
+                    await fgEnsureText();
+                    const model = fgDomTextModels.get(document.getElementById('content'));
+                    const mapping = model.records.map(record => [record.row[0], record.source]);
+                    const pool = fgData.read('fgSrc');
+                    const sourceLines = fgData.read('fgSrcLines');
+                    return {calls, mapping, candidates:fgTextNavigation.expandable.map(position => fgTextNavigation.order[position]),
+                        exact:model.records.every(record => record.source === null ? !(record.row[0] in sourceLines) :
+                            record.source === sourceLines[record.row[0]] && typeof pool[record.source] === 'string'),
+                        mounted:document.querySelectorAll('#content .line-container').length};
+                }''', preload)
+                self.assertEqual(facts['calls'], 1)
+                self.assertTrue(facts['exact'])
+                self.assertEqual(facts['mapping'], expected)
+                self.assertEqual(facts['mounted'], len(expected))
+                self.assertEqual(facts['candidates'], [number for number, source in expected if source is not None])
+                self.assertTrue(any(source == 0 for number, source in expected))
+                self.assertEqual(sum(url.endswith('text-index.json') for url in self.requests), int(preload))
+
+    def test_legacy_index_keeps_full_navigation_with_dom_capability_fallback(self):
+        facts = self.page.evaluate('''async () => {
+            const legacy = JSON.parse(JSON.stringify(await fgData.load('fgTextIndex')));
+            legacy.version = 1;
+            legacy.rows.forEach(row => row.pop());
+            const read = fgData.read;
+            fgData.read = id => id === 'fgTextIndex' ? legacy : read(id);
+            fgTextModel.prepareNavigation = function* () { throw new Error('Legacy source capability was inferred'); };
+            await fgEnsureText();
+            const model = fgDomTextModels.get(document.getElementById('content'));
+            const expected = Array.from(document.querySelectorAll('#content .line-container.expandable'), row => +row.dataset.lineNumber);
+            return {version:model.version, unknown:model.records.every(record => record.source === undefined),
+                expected, actual:fgTextNavigation.expandable.map(position => fgTextNavigation.order[position])};
+        }''')
+        self.assertEqual(facts['version'], 1)
+        self.assertTrue(facts['unknown'])
+        self.assertTrue(facts['expected'])
+        self.assertEqual(facts['actual'], facts['expected'])
+
+    def test_invalid_snapshot_source_does_not_publish_partial_model_and_can_retry(self):
+        self.page.evaluate('''async () => {
+            await fgData.load('fgText');
+            const read = fgData.read;
+            window.badSource = true;
+            fgData.read = id => {
+                const value = read(id);
+                return badSource && id === 'fgText' ? value.replace(/data-src="[0-9]+"/, 'data-src="-1"') : value;
+            };
+            await fgSwitchView('text');
+        }''')
+        self.assertEqual(self.page.locator('#content .line-container').count(), 0)
+        self.assertIn('Missing Text source metadata', self.page.locator('#content').inner_text())
+        self.assertTrue(self.page.evaluate('!fgTextInitialized && fgTextNavigation === null && !fgDomTextModels.has(document.getElementById("content"))'))
+        self.page.evaluate('badSource = false')
+        self.page.locator('#content').get_by_role('button', name='Retry', exact=True).click()
+        self.page.wait_for_function('() => !fgTextDeferred()')
+        self.assertGreater(self.page.locator('#content .line-container').count(), 100)
         self.assertEqual(sum(url.endswith('text.html') for url in self.requests), 1)
         self.assertFalse(any(url.endswith('text-index.json') for url in self.requests))
 
@@ -893,7 +969,9 @@ class SidecarBrowserTest(unittest.TestCase):
         self.assertFalse(self.page.evaluate('fgData.ready("fgTextIndex")'))
         actual = self.page.evaluate('''fields => Array.from(document.querySelectorAll('#content .line-container'), line => [
             +line.getAttribute('data-line-number'), line.querySelector('.line-content').textContent,
-            ...fields.map(field => line.getAttribute('data-' + field))]).sort((left, right) => left[0] - right[0])''', index['fields'])
+            ...fields.map(field => line.getAttribute('data-' + field)),
+            line.classList.contains('expandable') ? +line.nextElementSibling.dataset.src : null
+            ]).sort((left, right) => left[0] - right[0])''', index['fields'])
         self.assertEqual(index['rows'], actual)
         for query in queries:
             with self.subTest(native_query=query):
@@ -929,7 +1007,7 @@ class SidecarBrowserTest(unittest.TestCase):
             if (!entry.querySelector('.fold-summary')) throw new Error('Expected generated summary');
             window.detachedTextModel = fgGetTextModel(document.querySelectorAll('#content .line-container'));
             return detachedTextModel.records.map(record => [+record.getAttribute('data-line-number'),
-                record.textContent, ...fgTextModel.fields.map(field => record.getAttribute('data-' + field))]);
+                record.textContent, ...fgTextModel.fields.map(field => record.getAttribute('data-' + field)), record.source]);
         }''')
         self.assertEqual(records, index['rows'])
         facts = self.page.evaluate('''() => {
@@ -1146,7 +1224,7 @@ class SidecarBrowserTest(unittest.TestCase):
     def test_index_schema_validation_rejects_invalid_records(self):
         errors = self.page.evaluate('''async () => {
             const original = await fgData.load('fgTextIndex');
-            const mutations = [data => { data.version = 2; }, data => { data.fields.reverse(); },
+            const mutations = [data => { data.version = 3; }, data => { data.fields.reverse(); },
                 data => { data.rows[0][0] = -1; }, data => { data.rows[1][0] = data.rows[0][0]; },
                 data => { data.rows[0][2] = {}; }, data => { data.rows[0].pop(); }];
             const results = [];

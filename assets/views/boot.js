@@ -39,7 +39,7 @@
                 }
                 const rows = fragment.querySelectorAll('.line-container');
                 const model = yield* fgPrepareTextModel(rows);
-                const navigation = yield* fgPrepareTextNavigation(rows);
+                const navigation = yield* fgPrepareTextNavigation(rows, model);
                 yield { label: 'Finishing Text layout…', paint: true };
                 content.replaceChildren(fragment);
                 content.removeAttribute('data-fg-text');

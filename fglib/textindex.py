@@ -1,4 +1,4 @@
-"""Write complete Text filter records incrementally, without retaining their JSON."""
+"""Stream complete Text filter records and explicit source-pool identities."""
 
 import hashlib
 import json
@@ -38,7 +38,7 @@ class TextIndexWriter:
         self.byte_count = 0
         self.rows = 0
         self.parser = _LineText()
-        self._write('{"version":1,"fields":' + json.dumps(FIELDS, separators=(',', ':')) + ',"rows":[')
+        self._write('{"version":2,"fields":' + json.dumps(FIELDS, separators=(',', ':')) + ',"rows":[')
 
     def _write(self, value):
         payload = value.encode('utf-8')
@@ -47,9 +47,12 @@ class TextIndexWriter:
         self.digest.update(payload)
         self.byte_count += len(payload)
 
-    def append(self, line_number, attributes, markup):
+    def append(self, line_number, attributes, markup, source=None):
+        if source is not None and (type(source) is not int or not 0 <= source < 2 ** 53):
+            raise ValueError('invalid Text source ID')
         text = self.parser.read(markup)
-        row = [line_number, text] + [_dom_text(attributes[field]) if field in attributes else None for field in FIELDS]
+        row = ([line_number, text] + [_dom_text(attributes[field]) if field in attributes else None for field in FIELDS]
+               + [source])
         self._write((',' if self.rows else '') + json.dumps(row, ensure_ascii=False, separators=(',', ':')))
         self.rows += 1
 

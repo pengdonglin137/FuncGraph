@@ -267,6 +267,21 @@ class NativeRawTest(unittest.TestCase):
         expected['stats'].pop('build_time', None)
         self.assertEqual(actual, expected)
         self.assertIn('fgText', manifest['resources'])
+
+        for output in [sidecar, automatic]:
+            with self.subTest(source_metadata=output.name):
+                report = (output / 'index.html').read_text()
+                descriptor = helpers.json_script(report, 'fgDataManifest')
+                manifest_path = output / descriptor['manifest']['file']
+                manifest = json.loads(manifest_path.read_text())
+                index = json.loads((manifest_path.parent / manifest['resources']['fgTextIndex']['file']).read_text())
+                self.assertEqual(index['version'], 2)
+                self.assertTrue(all(len(row) == len(index['fields']) + 3 for row in index['rows']))
+                sources = {str(row[0]): row[-1] for row in index['rows'] if row[-1] is not None}
+                self.assertEqual(sources, {})
+                self.assertEqual(sources, helpers.json_script(report, 'fgSrcLines'))
+                pool = helpers.json_script(report, 'fgSrc')
+                self.assertEqual(pool, [])
         embedded = helpers.json_script((offline / 'index.html').read_text(), 'tlData')
         embedded['stats'].pop('build_time', None)
         self.assertEqual(embedded, expected)
@@ -278,6 +293,24 @@ class NativeRawTest(unittest.TestCase):
         actual['stats'].pop('build_time', None)
         self.assertEqual(actual, expected)
         self.assertIn('fgText', manifest['resources'])
+
+    def test_raw_source_index_preserves_resolved_source_pool_identities(self):
+        self.path.write_bytes(container(sched=True, retaddr=True))
+        kernel = helpers.FakeKernel()
+        self.addCleanup(kernel.close)
+        report, _ = kernel.run(str(self.path), '--timeline', '--func-links', '--report-mode', 'sidecar', out='resolved')
+        output = Path(kernel.dir) / 'resolved'
+        descriptor = helpers.json_script(report, 'fgDataManifest')
+        manifest_path = output / descriptor['manifest']['file']
+        manifest = json.loads(manifest_path.read_text())
+        index = json.loads((manifest_path.parent / manifest['resources']['fgTextIndex']['file']).read_text())
+        self.assertEqual(index['version'], 2)
+        sources = {str(row[0]): row[-1] for row in index['rows'] if row[-1] is not None}
+        self.assertTrue(sources)
+        self.assertIn(0, sources.values())
+        self.assertEqual(sources, helpers.json_script(report, 'fgSrcLines'))
+        pool = helpers.json_script(report, 'fgSrc')
+        self.assertTrue(all(isinstance(pool[source], str) for source in sources.values()))
 
     def test_endian_and_word_size(self):
         for endian in ('<', '>'):

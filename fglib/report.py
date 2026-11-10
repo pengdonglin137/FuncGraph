@@ -1319,8 +1319,9 @@ class HtmlGenerator:
             duration_raw = line_data.get('duration_raw')  # 原始耗时字符串
             attributes = self._text_attributes(line_data, raw_line, fold_ends, fold_starts)
             data_attrs = ''.join(f' data-{name}="{html.escape(value, quote=True)}"' for name, value in attributes.items())
+            src_idx = self._source_index(line_data['func_info']) if is_expandable else None
             if self.text_index is not None:
-                self.text_index.append(line_number, attributes, escaped_line)
+                self.text_index.append(line_number, attributes, escaped_line, source=src_idx)
 
             # 添加耗时 tooltip
             title_attr = ''
@@ -1347,7 +1348,6 @@ class HtmlGenerator:
             content_parts.append('</div>')
 
             if is_expandable:
-                src_idx = self._source_index(line_data['func_info'])
                 if self.timeline_json is not None:
                     self._src_lines[line_number] = src_idx
                 content_parts.append(f'<div class="expanded-content" id="{line_id}_content" data-src="{src_idx}" style="display: none;"></div>')

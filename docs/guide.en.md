@@ -487,6 +487,8 @@ Text handles focus separately from scrolling: initialization, selection restorat
 
 `j`/`k` and the arrow keys follow the current Text presentation order and wrap at either end. From a comment or exit row they choose the nearest visible source-expandable call in that direction, without skipping it. Time/task ordering and duration sorting keep the selected trace line's identity; filtering and folding update the navigation candidates together. Home/End use the first/last visible expandable row, falling back to visible plain rows if no source-expandable calls remain; with no visible rows they do nothing. Logical lookup uses a complete numeric line index, so clicks, anchor selection and candidate refresh no longer query every mounted row. Sources, focus and scrolling still require the target DOM node, and full rendering/layout can still block. Regenerate old reports to use these fixes.
 
+New sidecar indexes carry the exact source-pool ID for every expandable row, including ID `0`; `null` explicitly means no source expansion. Deferred Text prepares navigation from these complete records without a second DOM capability scan. It reuses an already-loaded index, or captures the same metadata while reading the detached rows; opening Text does not request the filter index just for navigation. Legacy version-1 indexes remain readable and fall back to the authored rows because their source capabilities are unknown, not absent. This is model decoupling, not viewport virtualization: Text still loads and mounts all rows, and source expansion/focus/scroll still need mounted elements.
+
 ## 6. Timeline view
 
 ### 6.1 Layout
