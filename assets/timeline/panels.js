@@ -11,10 +11,8 @@ function safeSourceUrl(href) {
 }
 
 function callNavigationHtml(index) {
-    const controls = [['back', '← Back', 'Previously selected call (selection history)', ''],
-        ['parent', '↑ Parent', 'Recorded parent', '↑'],
+    const controls = [['parent', '↑ Parent', 'Recorded parent', '↑'],
         ['child', isSyn(index) ? '↓ First recorded call' : '↓ First child', 'First recorded child', '↓'],
-        ['dive', '↓ Dive deeper', 'First child with recorded children, or first child if all are leaves', ''],
         ['previous', '‹ Previous', 'Previous recorded sibling / task root', '['],
         ['next', 'Next ›', 'Next recorded sibling / task root', ']']];
     return '<div class="tl-call-nav" role="group" aria-label="Recorded call navigation">' + controls.map(([action, label, title, key]) => {

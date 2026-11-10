@@ -2991,32 +2991,48 @@ class BrowserSmokeTest(unittest.TestCase):
         self.assertIn('Source unavailable', section.inner_text())
         self.assertEqual(section.locator('.tl-context-source a, .tl-context-source b').count(), 0)
 
-    def test_dive_deeper_skips_leaf_children_and_back_restores_the_actual_path(self):
+    def test_recorded_navigation_repeated_child_and_parent_follow_each_level(self):
+        self.open_range_data(['root', 'branch', 'leaf'], starts=[0, 1, 2],
+                             durations=[10000, 8000, 1000], parents=[-1, 0, 1],
+                             columns={'depth': [0, 1, 2]})
+        self.ev("fgView('timeline').probe().select(0)")
+        self.assertEqual(self.page.locator('[data-call-nav]').evaluate_all(
+            'buttons => buttons.map(button => button.dataset.callNav)'), ['parent', 'child', 'previous', 'next'])
+        for expected in [1, 2]:
+            self.page.locator('[data-call-nav=child]').press('Enter')
+            self.assertEqual(self.ev("fgView('timeline').probe().sel()"), expected)
+        self.assertTrue(self.page.locator('[data-call-nav=child]').is_disabled())
+        self.assertTrue(self.page.locator('.tl-canvas').evaluate('node => node === document.activeElement'))
+        for expected in [1, 0]:
+            self.page.locator('[data-call-nav=parent]').press('Space')
+            self.assertEqual(self.ev("fgView('timeline').probe().sel()"), expected)
+        self.assertTrue(self.page.locator('[data-call-nav=parent]').is_disabled())
+        self.assertTrue(self.page.locator('.tl-canvas').evaluate('node => node === document.activeElement'))
+
+    def test_recorded_navigation_branching_is_explicit_and_refresh_keeps_targets(self):
         self.open_range_data(['root', 'first_leaf', 'branch', 'other_leaf', 'deep_branch', 'last_leaf'],
                              starts=[0, 1, 2, 3, 4, 5], durations=[10000, 0, 8000, 0, 6000, 1000],
                              parents=[-1, 0, 0, 2, 2, 4], columns={'depth': [0, 1, 1, 2, 2, 3]})
         self.ev("fgView('timeline').probe().select(0)")
-        self.assertTrue(self.page.locator('[data-call-nav=back]').is_disabled())
         self.page.locator('[data-call-nav=child]').press('Enter')
         self.assertEqual(self.ev("fgView('timeline').probe().sel()"), 1)
-        self.assertTrue(self.page.locator('[data-call-nav=dive]').is_disabled())
-        self.page.locator('[data-call-nav=back]').press('Space')
-        for expected in [2, 4, 5]:
-            self.page.locator('[data-call-nav=dive]').press('Enter')
+        self.assertTrue(self.page.locator('[data-call-nav=child]').is_disabled())
+        for action, expected in [('next', 2), ('child', 3), ('next', 4), ('child', 5)]:
+            self.page.locator(f'[data-call-nav={action}]').press('Enter')
             self.assertEqual(self.ev("fgView('timeline').probe().sel()"), expected)
         for expected in [4, 2, 0]:
-            self.page.locator('[data-call-nav=back]').press('Enter')
+            self.page.locator('[data-call-nav=parent]').press('Enter')
             self.assertEqual(self.ev("fgView('timeline').probe().sel()"), expected)
-        self.assertTrue(self.page.locator('[data-call-nav=back]').is_disabled())
         self.ev("fgView('timeline').probe().select(4)")
         self.page.locator('[data-call-nav=parent]').press('Enter')
-        self.page.locator('[data-call-nav=back]').press('Enter')
-        self.assertEqual(self.ev("fgView('timeline').probe().sel()"), 4)
-        previous = self.page.locator('[data-call-nav=back]').get_attribute('title')
+        self.page.locator('[data-call-nav=child]').press('Enter')
+        self.assertEqual(self.ev("fgView('timeline').probe().sel()"), 3)
+        targets = self.page.locator('[data-call-nav]').evaluate_all('buttons => buttons.map(button => button.title)')
         self.page.click('[data-act=adj]')
         self.ev("fgView('timeline').probe().inline(true)")
         self.ev("fgNotifyFilter('keep selected', new Set([5]))")
-        self.assertEqual(self.page.locator('[data-call-nav=back]').get_attribute('title'), previous)
+        self.assertEqual(self.page.locator('[data-call-nav]').evaluate_all('buttons => buttons.map(button => button.title)'), targets)
+        self.assertEqual(self.page.locator('[data-call-nav]').count(), 4)
 
     def test_stack_sources_distinguish_inline_sites_entries_and_mismatched_parents(self):
         sources = {'functions': {'0:-1': ['root.c', 1, 'https://example.org/root#L1'],
@@ -3037,10 +3053,10 @@ class BrowserSmokeTest(unittest.TestCase):
         self.assertEqual([row['kind'] for row in rows], ['traced', 'inline', 'traced'])
         self.assertEqual(section.locator('button a').count(), 0)
         synthetic = self.ev("() => { const probe = fgView('timeline').probe(); probe.select(probe.N); return probe.N; }")
-        self.page.locator('[data-call-nav=child]').click()
-        self.page.locator('[data-call-nav=back]').click()
         self.assertEqual(self.ev("fgView('timeline').probe().sel()"), synthetic)
         self.assertEqual(self.page.locator('[data-context-list=inline] .tl-context-source a').count(), 2)
+        self.page.locator('[data-call-nav=child]').click()
+        self.assertEqual(self.ev("fgView('timeline').probe().sel()"), 1)
         self.ev("fgSwitchView('text')")
         self.page.reload()
         sources['callers']['2'][0][0] = 'different_parent'

@@ -78,10 +78,8 @@ function setSelection(index) {
     sel = index;
     updateSearchLabel();
 }
-const callHistory = [];
 function select(i, opts) {
     opts = opts || {};
-    if (i >= 0 && sel >= 0 && i !== sel && opts.history !== false) callHistory.push(sel);
     setSelection(i);
     if (i >= 0) {
         if (opts.zoom) zoomTo(sStart[i], sEnd[i], i);
@@ -520,36 +518,19 @@ window.addEventListener('keydown', ev => {
 
 function callTarget(index, action) {
     if (index < 0 || index >= NA) return -1;
-    if (action === 'back') return callHistory.length ? callHistory[callHistory.length - 1] : -1;
     if (action === 'parent') {
         const parent = sParent[index];
         return parent >= 0 && parent < N && sTask[parent] === sTask[index] &&
             (isSyn(index) || sDepth[parent] < sDepth[index]) ? parent : -1;
     }
     const tree = callTreeIndex();
-    if (action === 'dive') {
-        if (!tree.branches) tree.branches = new Map();
-        if (tree.branches.has(index)) return tree.branches.get(index);
-        const first = isSyn(index) ? SYN[index - N].kids[0] ?? -1 : tree.first[index];
-        let target = first;
-        if (isSyn(index)) {
-            target = SYN[index - N].kids.find(child => tree.first[child] >= 0) ?? first;
-        } else {
-            for (let child = first; child >= 0; child = tree.next[child]) {
-                if (tree.first[child] >= 0) { target = child; break; }
-            }
-        }
-        tree.branches.set(index, target);
-        return target;
-    }
     if (isSyn(index)) return action === 'child' ? SYN[index - N].kids[0] ?? -1 : -1;
     return action === 'child' ? tree.first[index] : action === 'previous' ? tree.previous[index] : action === 'next' ? tree.next[index] : -1;
 }
 function navigateCall(action, focusControl) {
     const target = callTarget(sel, action);
     if (target < 0) return;
-    if (action === 'back') callHistory.pop();
-    select(target, { reveal: true, history: action !== 'back' });
+    select(target, { reveal: true });
     elDetail.scrollTop = 0; elDetail.scrollLeft = 0;
     if (focusControl) {
         const button = elDetail.querySelector('[data-call-nav="' + action + '"]');
