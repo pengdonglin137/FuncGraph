@@ -349,10 +349,10 @@
                         const rowIndent = row.querySelector('.call-indent');
                         const indentRect = rowIndent?.getBoundingClientRect();
                         if (indentRect && indentRect.width >= offset) {
-                            const top = Math.max(viewportTop, row === entry ? iconRect.bottom - 3 : rect.top);
+                            const top = Math.max(viewportTop, row === entry ? iconRect.top + iconRect.height / 2 + 6 : rect.top);
                             const end = row === scopeRows[1] ? rect.top + rect.height / 2 : rect.bottom;
-                            const left = Math.round((indentRect.left + offset) * scale - 0.5) / scale;
-                            if (end > top) context.fillRect(left, top, 1 / scale, end - top);
+                            const left = Math.round((indentRect.left + offset - 0.5) * scale) / scale;
+                            if (end > top) context.fillRect(left, top, 1, end - top);
                         }
                     }
                 }

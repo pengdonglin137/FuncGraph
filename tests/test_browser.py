@@ -579,9 +579,14 @@ class BrowserSmokeTest(unittest.TestCase):
                     self.ev('async () => {await new Promise(requestAnimationFrame); await new Promise(requestAnimationFrame)}')
                     self.assertEqual(self.ev(geometry), before_geometry)
                     after_pixels = self.page.screenshot(clip=clip)
-                    clipped = self.page.add_style_tag(content='.text-chunk {overflow-clip-margin:0px}')
-                    clipped_pixels = self.page.screenshot(clip=clip)
-                    clipped.evaluate('style => style.remove()')
+                    images = [before_pixels, after_pixels]
+                    if row_id == 'L513':
+                        wider_focus = self.page.add_style_tag(content='.fold-icon:focus-visible {outline-offset:4px}')
+                        images.append(self.page.screenshot(clip=clip))
+                        clipped = self.page.add_style_tag(content='.text-chunk {overflow-clip-margin:0px}')
+                        images.append(self.page.screenshot(clip=clip))
+                        clipped.evaluate('style => style.remove()')
+                        wider_focus.evaluate('style => style.remove()')
                     outline_color = icon.evaluate("control => getComputedStyle(control).outlineColor.match(/[0-9.]+/g).slice(0, 3).map(Number)")
                     outlines = self.ev("""async ({images, color}) => {
                         const decode = async encoded => {
@@ -602,7 +607,7 @@ class BrowserSmokeTest(unittest.TestCase):
                             return result;
                         };
                         return Promise.all(images.map(decode));
-                    }""", dict(images=[base64.b64encode(image).decode() for image in [before_pixels, after_pixels, clipped_pixels]], color=outline_color))
+                    }""", dict(images=[base64.b64encode(image).decode() for image in images], color=outline_color))
                     self.assertGreater(outlines[0]['count'], 20)
                     self.assertGreaterEqual(outlines[1]['count'], outlines[0]['count'] * 0.95, outlines)
                     for edge in ['left', 'top']:
@@ -610,7 +615,7 @@ class BrowserSmokeTest(unittest.TestCase):
                     for edge in ['right', 'bottom']:
                         self.assertGreaterEqual(outlines[1][edge], outlines[0][edge] - 1, outlines)
                     if row_id == 'L513':
-                        self.assertGreater(outlines[2]['top'], outlines[0]['top'] + 1, outlines)
+                        self.assertGreater(outlines[3]['top'], outlines[2]['top'] + 1, outlines)
                     self.assertEqual(self.ev(hit_targets, bounds), before_hits)
                     self.assertEqual(icon.evaluate("control => getComputedStyle(control.closest('.text-chunk')).contain"), 'paint')
                     self.assertEqual(icon.evaluate("control => getComputedStyle(control.closest('.line-container')).contain"), 'none')
@@ -761,6 +766,107 @@ class BrowserSmokeTest(unittest.TestCase):
                     self.assertNotEqual(visible, hidden, 'Ancestor gradient must paint pixels, not just have a CSS color')
                     page.locator('#foldGuidesBtn').click()
                     self.assertEqual(indent.screenshot(), visible)
+                finally:
+                    page.close()
+
+    def test_tree_layout_preserves_trace_geometry_tabs_and_native_selection(self):
+        self.ev("""() => {
+            const content = document.getElementById('content');
+            for (const prefix of ['x|', 'xxxx|', 'xxxxxxxx|']) {
+                const row = document.createElement('div');
+                row.className = 'line-container';
+                row.innerHTML = '<div class="line-content">' + prefix +
+                    '<span class="call-indent">\\t  </span><span class="hl-func">probe</span>()</div>';
+                content.append(row);
+            }
+        }""")
+        legacy = self.page.add_style_tag(content='''
+            .call-indent {display:inline; height:auto; vertical-align:baseline}
+            .fold-marker {height:1em; vertical-align:baseline}
+            .fold-close {display:inline}
+        ''')
+        snapshot = """() => {
+            const content = document.getElementById('content');
+            const range = document.createRange(); range.selectNodeContents(content);
+            const selection = getSelection(); selection.removeAllRanges(); selection.addRange(range);
+            const text = selection.toString(); selection.removeAllRanges();
+            return {text, rows:Array.from(content.querySelectorAll('.line-container'), row => {
+                const rect = row.getBoundingClientRect();
+                const name = row.querySelector('.func-name-link, .hl-func')?.getBoundingClientRect();
+                return [rect.x, rect.y, rect.width, rect.height, name?.x, name?.y];
+            })};
+        }"""
+        before = self.ev(snapshot)
+        legacy.evaluate('style => style.remove()')
+        self.assertEqual(self.ev(snapshot), before)
+
+    def test_tree_rails_join_across_rows_and_controls_share_the_same_axis(self):
+        parent, child = self.nested_fold_rows()[:2]
+        for scale, theme in product([1, 1.25, 2], ['light', 'dark']):
+            with self.subTest(scale=scale, theme=theme):
+                page = self.browser.new_page(viewport={'width': 1500, 'height': 900}, device_scale_factor=scale)
+                try:
+                    page.goto(self.url, wait_until='load')
+                    page.evaluate("theme => document.documentElement.setAttribute('data-theme', theme)", theme)
+                    page.locator('#' + child['row']).scroll_into_view_if_needed()
+                    facts = page.evaluate("""({parent, child}) => {
+                        const entry = document.getElementById(parent.row);
+                        const icon = entry.querySelector('.fold-icon');
+                        const iconRect = icon.getBoundingClientRect();
+                        const exit = document.getElementById(entry.dataset.foldEnd);
+                        const close = exit.querySelector('.fold-close');
+                        const corner = getComputedStyle(close, '::before');
+                        const arrow = getComputedStyle(icon, '::before');
+                        const rows = Array.from(document.querySelectorAll('#content .line-container'));
+                        const start = rows.findIndex(row => row.id === child.row);
+                        const sampled = rows.slice(start, start + 4);
+                        if (sampled.some(row => !(row.dataset.foldAncestors || '').split(' ').includes(parent.fold)))
+                            throw new Error('The sampled rail must stay inside the same recorded parent');
+                        const first = sampled[0].getBoundingClientRect();
+                        const last = sampled[sampled.length - 1].getBoundingClientRect();
+                        const axis = iconRect.left + iconRect.width / 2;
+                        const row = entry.getBoundingClientRect();
+                        return {clip:{x:Math.floor(axis - 2), y:Math.floor(first.top), width:5,
+                                      height:Math.ceil(last.bottom) - Math.floor(first.top)},
+                            centerOffset:iconRect.top + iconRect.height / 2 - row.top - row.height / 2,
+                            cornerOffset:close.getBoundingClientRect().left + parseFloat(corner.left) + 0.5 - axis,
+                            radius:parseFloat(corner.borderBottomLeftRadius), arrow:arrow.content,
+                            stroke:parseFloat(arrow.borderRightWidth)};
+                    }""", dict(parent=parent, child=child))
+                    self.assertAlmostEqual(facts['centerOffset'], 0, delta=0.02)
+                    self.assertAlmostEqual(facts['cornerOffset'], 0, delta=0.05)
+                    self.assertGreaterEqual(facts['radius'], 2)
+                    self.assertEqual(facts['arrow'], '\"\"')
+                    self.assertEqual(facts['stroke'], 1)
+                    page.mouse.move(0, 0)
+                    page.wait_for_timeout(350)
+                    visible = page.screenshot(clip=facts['clip'])
+                    page.locator('#foldGuidesBtn').click()
+                    hidden = page.screenshot(clip=facts['clip'])
+                    gaps = page.evaluate("""async images => {
+                        const decode = async encoded => {
+                            const image = new Image();
+                            image.src = 'data:image/png;base64,' + encoded; await image.decode();
+                            const canvas = document.createElement('canvas');
+                            canvas.width = image.width; canvas.height = image.height;
+                            const context = canvas.getContext('2d'); context.drawImage(image, 0, 0);
+                            return {pixels:context.getImageData(0, 0, image.width, image.height).data,
+                                    width:image.width, height:image.height};
+                        };
+                        const [visible, hidden] = await Promise.all(images.map(decode));
+                        const missing = [];
+                        for (let row = 3; row < visible.height - 3; row++) {
+                            let painted = false;
+                            for (let column = 0; column < visible.width; column++) {
+                                const offset = (row * visible.width + column) * 4;
+                                if ([0, 1, 2].some(channel => Math.abs(visible.pixels[offset + channel] -
+                                    hidden.pixels[offset + channel]) >= 12)) painted = true;
+                            }
+                            if (!painted) missing.push(row);
+                        }
+                        return missing;
+                    }""", [base64.b64encode(image).decode() for image in [visible, hidden]])
+                    self.assertEqual(gaps, [], 'Ancestor rails must paint through every row boundary')
                 finally:
                     page.close()
 

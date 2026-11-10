@@ -210,8 +210,9 @@
             display: inline-block;
             position: relative;
             width: 0;
-            height: 1em;
-            vertical-align: baseline;
+            height: 1.5em;
+            height: 1lh;
+            vertical-align: top;
             user-select: none;
         }
         .fold-icon {
@@ -234,13 +235,16 @@
             transform: translateY(-50%);
         }
         .fold-icon::before {
-            content: '▶';
-            font-size: 9px;
-            line-height: 1;
+            content: '';
+            width: 5px;
+            height: 5px;
+            border-right: 1px solid currentColor;
+            border-bottom: 1px solid currentColor;
+            transform: rotate(-45deg);
             transition: transform 0.15s ease;
         }
         .fold-icon.expanded::before {
-            transform: rotate(90deg);
+            transform: rotate(45deg);
         }
         .fold-icon:hover, .fold-brace:hover {
             background: var(--bg-secondary);
@@ -282,6 +286,7 @@
             color: var(--summary-text);
         }
         .fold-close {
+            display: inline-block;
             position: relative;
         }
         .fold-entry {

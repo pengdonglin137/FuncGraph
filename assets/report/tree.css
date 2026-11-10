@@ -1,7 +1,12 @@
 .call-indent::before {
     content: '';
     position: absolute;
-    inset: -5px 2ch -5px 0;
+    left: 0;
+    right: 2ch;
+    top: calc(50% - 0.75em - 3px);
+    top: calc(50% - 0.5lh - 3px);
+    height: calc(1.5em + 6px);
+    height: calc(1lh + 6px);
     background-image: linear-gradient(to right, transparent calc(1ch - 0.5px), var(--tree-guide) calc(1ch - 0.5px), var(--tree-guide) calc(1ch + 0.5px), transparent calc(1ch + 0.5px));
     background-size: 2ch 100%;
     pointer-events: none;
@@ -10,20 +15,21 @@
     content: '';
     position: absolute;
     left: calc(-1ch - 0.5px);
-    top: calc(50% + 7px);
-    height: 8px;
+    top: calc(50% + 6px);
+    bottom: -3px;
     width: 1px;
     background: var(--tree-guide);
 }
 .fold-close::before {
     content: '';
     position: absolute;
-    left: -1ch;
-    top: -5px;
-    width: 1ch;
-    height: calc(50% + 5px);
+    left: calc(-1ch - 0.5px);
+    top: -3px;
+    width: calc(1ch - 2px);
+    height: calc(50% + 3px);
     border-left: 1px solid var(--tree-guide);
     border-bottom: 1px solid var(--tree-guide);
+    border-bottom-left-radius: 3px;
 }
 .fold-entry.fold-scope:not(.folded) .fold-marker::after {
     background: var(--tree-guide-active);
