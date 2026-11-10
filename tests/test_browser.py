@@ -137,6 +137,83 @@ class BrowserSmokeTest(unittest.TestCase):
         self.page.locator('#viewHelpBtn').click()
         self.assertTrue(self.page.locator('#keyboardHint').is_visible())
 
+    def test_text_selection_without_scrolling_preserves_viewport_and_focus(self):
+        for width, theme in product([390, 1500], ['light', 'dark']):
+            with self.subTest(width=width, theme=theme):
+                self.page.set_viewport_size(dict(width=width, height=640))
+                facts = self.ev('''theme => {
+                    document.documentElement.setAttribute('data-theme', theme);
+                    document.activeElement.blur();
+                    window.scrollTo(0, 400);
+                    const before = [scrollX, scrollY];
+                    const target = expandableLineIndices[expandableLineIndices.length - 2];
+                    setKeyboardSelectedLine(target, false);
+                    return {before, after:[scrollX, scrollY],
+                        focused:document.activeElement === allLines[target]};
+                }''', theme)
+                self.assertTrue(facts['focused'])
+                self.assertEqual(facts['after'], facts['before'])
+
+    def test_text_navigation_scrolls_explicitly_after_focusing_without_native_scroll(self):
+        facts = self.ev('''() => {
+            window.scrollTo(0, 0);
+            const target = expandableLineIndices[expandableLineIndices.length - 2];
+            const row = allLines[target];
+            const original = row.scrollIntoView;
+            const calls = [];
+            const before = scrollY;
+            const initialTop = row.getBoundingClientRect().top;
+            row.scrollIntoView = function(options) {
+                calls.push({options, focused:document.activeElement === row, scroll:scrollY});
+                return original.call(this, options);
+            };
+            try { setKeyboardSelectedLine(target); }
+            finally { row.scrollIntoView = original; }
+            return {before, initialTop, height:innerHeight, calls};
+        }''')
+        self.assertGreater(facts['initialTop'], facts['height'])
+        self.assertEqual(facts['calls'], [dict(options=dict(behavior='smooth', block='center'),
+                                            focused=True, scroll=facts['before'])])
+        self.page.wait_for_function('''() => {
+            const bounds = keyboardSelectedLine.getBoundingClientRect();
+            return bounds.top >= document.querySelector('.controls').getBoundingClientRect().bottom
+                && bounds.bottom <= innerHeight;
+        }''')
+
+    def test_text_navigation_reveals_rows_occluded_by_compact_sticky_toolbar(self):
+        self.page.set_viewport_size(dict(width=390, height=640))
+        for theme in ['light', 'dark']:
+            with self.subTest(theme=theme):
+                facts = self.ev('''theme => {
+                    document.documentElement.setAttribute('data-theme', theme);
+                    window.scrollTo(0, 0);
+                    const target = expandableLineIndices[Math.floor(expandableLineIndices.length / 2)];
+                    const row = allLines[target];
+                    const height = row.getBoundingClientRect().height;
+                    const toolbar = document.querySelector('.controls');
+                    const toolbarHeight = toolbar.getBoundingClientRect().height;
+                    window.scrollTo(0, row.getBoundingClientRect().top - toolbarHeight + height / 2);
+                    const top = row.getBoundingClientRect().top;
+                    const toolbarBottom = toolbar.getBoundingClientRect().bottom;
+                    const original = row.scrollIntoView;
+                    const calls = [];
+                    row.scrollIntoView = function(options) {
+                        calls.push(options);
+                        return original.call(this, options);
+                    };
+                    try { setKeyboardSelectedLine(target); }
+                    finally { row.scrollIntoView = original; }
+                    return {top, height, toolbarBottom, calls};
+                }''', theme)
+                self.assertGreater(facts['top'], facts['height'])
+                self.assertLess(facts['top'], facts['toolbarBottom'])
+                self.assertEqual(facts['calls'], [dict(behavior='smooth', block='center')])
+                self.page.wait_for_function('''() => {
+                    const bounds = keyboardSelectedLine.getBoundingClientRect();
+                    return bounds.top >= document.querySelector('.controls').getBoundingClientRect().bottom
+                        && bounds.bottom <= innerHeight;
+                }''')
+
     def stage_timeline(self, slow=False):
         self.ev('''slow => {
             const original = fgViews.timeline.steps;

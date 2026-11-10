@@ -87,6 +87,10 @@ def measure(browser, report, timeout, mount_text, filter_query=None):
             if mount_text:
                 if not page.evaluate('fgTextDeferred()'):
                     raise RuntimeError('--text needs a sidecar report retaining Text')
+                session = context.new_cdp_session(page)
+                session.send('Performance.enable')
+                before = {metric['name']: metric['value']
+                          for metric in session.send('Performance.getMetrics')['metrics']}
                 mounted = page.evaluate('''async () => {
                     const start = performance.now();
                     const labels = new Set();
@@ -118,6 +122,15 @@ def measure(browser, report, timeout, mount_text, filter_query=None):
                         rows:document.querySelectorAll('#content .line-container').length,
                         cached_html:fgData.ready('fgText')};
                 }''')
+                after = {metric['name']: metric['value']
+                         for metric in session.send('Performance.getMetrics')['metrics']}
+                session.detach()
+                mounted['browser_work'] = {
+                    name: (after[metric] - before[metric]) * scale
+                    for name, metric, scale in [
+                        ('script_ms', 'ScriptDuration', 1000), ('style_ms', 'RecalcStyleDuration', 1000),
+                        ('layout_ms', 'LayoutDuration', 1000), ('layout_count', 'LayoutCount', 1),
+                        ('style_count', 'RecalcStyleCount', 1)]}
                 page.evaluate('async () => { await fgSwitchView("timeline"); await fgSwitchView("text"); }')
                 mounted['text_requests'] = sum(url.endswith('text.html') for url in requests)
                 mounted['renderer_rss_bytes'] = sum(process['rss_bytes'] for process in renderer_memory(browser))

@@ -1492,13 +1492,14 @@
 
                 // 移动焦点到该行，这样event.target会更新
                 // 这样Enter键就能正确处理
-                if (typeof fgCurrentView !== 'function' || fgCurrentView() === 'text') keyboardSelectedLine.focus();
+                if (typeof fgCurrentView !== 'function' || fgCurrentView() === 'text') keyboardSelectedLine.focus({ preventScroll: true });
 
                 // 只有在需要滚动时才滚动
                 if (scrollIntoView) {
                     // 获取当前行的位置
                     const rect = keyboardSelectedLine.getBoundingClientRect();
                     const windowHeight = window.innerHeight;
+                    const visibleTop = Math.max(0, document.querySelector('.controls')?.getBoundingClientRect().bottom || 0);
 
                     // 计算行在视口中的位置
                     const lineTop = rect.top;
@@ -1509,7 +1510,7 @@
                     // 如果当前行接近视口底部（距离底部小于2行高度），则滚动到中间
                     // 如果当前行接近视口顶部（距离顶部小于1行高度），也滚动到中间
                     const nearBottom = windowHeight - lineBottom < lineHeight * 2;
-                    const nearTop = lineTop < lineHeight;
+                    const nearTop = lineTop < visibleTop + lineHeight;
 
                     if (nearBottom || nearTop || lineTop < 0 || lineBottom > windowHeight) {
                         // 如果接近边界或不在视口中，滚动到中间

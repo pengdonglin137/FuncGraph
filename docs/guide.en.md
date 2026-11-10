@@ -480,6 +480,8 @@ The top-right header **?** is the shared help entry, with content specific to th
 | click a line number | copy an anchor link (`#Lnumber`) to share the exact line |
 | Alt + click a line | show this call in the timeline |
 
+Text handles focus separately from scrolling: initialization, selection restoration and other explicitly non-scrolling updates keep native row focus without moving the viewport. Keyboard navigation scrolls explicitly when needed. The visible range accounts for the sticky toolbar's actual height, including wrapped controls in narrow windows, so navigation reveals rows behind it.
+
 ## 6. Timeline view
 
 ### 6.1 Layout
