@@ -15,7 +15,7 @@ from benchmark_startup import report_info
 from benchmark_text import renderer_memory, settle
 
 
-def measure(browser, report, timeout, mount_text, filter_query=None):
+def measure(browser, report, timeout, mount_text, filter_query=None, text_queries=None):
     server = create_server(Path(report['root']))
     thread = threading.Thread(target=server.serve_forever, kwargs={'poll_interval': 0.02}, daemon=True)
     thread.start()
@@ -137,6 +137,31 @@ def measure(browser, report, timeout, mount_text, filter_query=None):
                 if mounted['cached_html'] or mounted['text_requests'] != 1:
                     raise RuntimeError('Text did not release HTML or reuse its mounted view')
                 facts['first_text'] = mounted
+                facts['text_filters'] = []
+                for query in text_queries or []:
+                    filtered = page.evaluate('''async query => {
+                        const start = performance.now();
+                        document.getElementById('filterInput').value = query;
+                        const pending = applyFilter();
+                        const call_ms = performance.now() - start;
+                        await pending;
+                        await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+                        const lines = fgFilterState.lines === null
+                            ? Array.from(document.querySelectorAll('#content .line-container'), row => +row.dataset.lineNumber)
+                            : Array.from(fgFilterState.lines);
+                        return {duration_ms:performance.now() - start, call_ms,
+                            rows:document.querySelectorAll('#content .line-container').length,
+                            lines:lines.sort((left, right) => left - right)};
+                    }''', query)
+                    lines = filtered.pop('lines')
+                    filtered.update(query=query, hits=len(lines),
+                                    hit_sha256=hashlib.sha256(','.join(map(str, lines)).encode('ascii')).hexdigest(),
+                                    renderer_rss_bytes=sum(process['rss_bytes'] for process in renderer_memory(browser)))
+                    if filtered['rows'] != mounted['rows']:
+                        raise RuntimeError('Native Text filtering changed the complete row inventory')
+                    facts['text_filters'].append(filtered)
+                if sum(url.endswith('text.html') for url in requests) != 1:
+                    raise RuntimeError('Native queries fetched Text again instead of using the mounted report')
         violations = page.evaluate('startupViolations')
         if errors or violations:
             raise RuntimeError(json.dumps(dict(errors=errors, violations=violations)))
@@ -155,6 +180,8 @@ def main():
     parser.add_argument('--rounds', type=int, default=3)
     parser.add_argument('--timeout', type=int, default=180000)
     parser.add_argument('--text', action='store_true', help='also mount complete Text on the last sidecar round')
+    parser.add_argument('--text-filter', action='append', default=[], metavar='QUERY',
+                        help='repeatable native Text query after mounting; implies --text on the last sidecar round')
     parser.add_argument('--filter', help='apply a full-trace filter before mounting Text and compare exact hit digests')
     parser.add_argument('--output', type=Path, required=True)
     args = parser.parse_args()
@@ -173,7 +200,9 @@ def main():
             for report in reports if iteration % 2 == 0 else reversed(reports):
                 browser = playwright.chromium.launch(ignore_default_args=['--hide-scrollbars'])
                 try:
-                    facts = measure(browser, report, args.timeout, args.text and iteration == args.rounds - 1, args.filter)
+                    facts = measure(browser, report, args.timeout,
+                                    bool(args.text or args.text_filter) and iteration == args.rounds - 1,
+                                    args.filter, args.text_filter)
                     facts.update(mode=report['mode'], iteration=iteration + 1, browser=browser.version)
                     output['runs'].append(facts)
                     identities = {(run['calls'], run['frames'], run['tracks']) for run in output['runs']}

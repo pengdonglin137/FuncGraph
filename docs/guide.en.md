@@ -450,6 +450,8 @@ Type `field:value` in the filter box, combine with `AND`, `OR`, `NOT` and parent
 | `preempt` | preempt depth, with comparisons | `preempt:>1` |
 | `sort:desc` / `sort:asc` | sort the visible lines by duration | `duration:>0 sort:desc` |
 
+`sort:asc` / `sort:desc` are presentation directives, not filter conditions: use them alone or after an expression. They do not change the matching line set or Timeline timestamps/order. A standalone sort entered in Timeline is retained until Text opens, without loading its filter index or Text early. Sorting keeps trace rows with their adjacent source blocks without overwriting the preferred task/time **Order**. Clearing the filter or removing its sort directive restores that preference; **Order** can also switch it manually. Matching uses the complete authored-record model, not just displayed rows or generated fold summaries. The first filtering query prepares this model and later queries reuse it; a standalone sort does not need it. The full model and DOM still consume memory, and sorting/display updates can block; this is not virtualization.
+
 Examples:
 
 ```

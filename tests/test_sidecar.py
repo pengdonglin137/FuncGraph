@@ -757,11 +757,162 @@ class SidecarBrowserTest(unittest.TestCase):
         self.assertFalse(self.page.evaluate('fgData.ready("fgTextIndex")'))
         actual = self.page.evaluate('''fields => Array.from(document.querySelectorAll('#content .line-container'), line => [
             +line.getAttribute('data-line-number'), line.querySelector('.line-content').textContent,
-            ...fields.map(field => line.getAttribute('data-' + field))])''', index['fields'])
+            ...fields.map(field => line.getAttribute('data-' + field))]).sort((left, right) => left[0] - right[0])''', index['fields'])
         self.assertEqual(index['rows'], actual)
         for query in queries:
             with self.subTest(native_query=query):
                 self.assertEqual(self.apply_query(query), indexed[query])
+
+    def test_full_text_reuses_prepared_index_model_after_resource_cache_release(self):
+        self.apply_query('graph:do_sys_openat2')
+        facts = self.page.evaluate('''async () => {
+            const iterator = fgTextModel.prepare(fgData.read('fgTextIndex'));
+            let result;
+            do { result = iterator.next(); } while (!result.done);
+            const model = result.value;
+            await fgEnsureText();
+            return {same:fgDomTextModels.get(document.getElementById('content')) === model,
+                records:model.records.length, rows:document.querySelectorAll('#content .line-container').length,
+                cached:fgData.ready('fgTextIndex'),
+                stable:model.records[0].querySelector('.line-content') === model.records[0],
+                nodes:model.records.some(record => record instanceof Node)};
+        }''')
+        self.assertTrue(facts['same'])
+        self.assertTrue(facts['stable'])
+        self.assertFalse(facts['nodes'])
+        self.assertFalse(facts['cached'])
+        self.assertEqual(facts['records'], facts['rows'])
+
+    def test_dom_snapshot_is_canonical_and_filters_without_any_mounted_rows(self):
+        index = json.loads((self.manifest.parent / self.resources['fgTextIndex']['file']).read_text())
+        records = self.page.evaluate('''async () => {
+            await fgEnsureText();
+            fgSetTextOrder('task');
+            const entry = document.querySelector('#content [data-fold-type=entry]');
+            _setFolded(entry.getAttribute('data-fold-id'), true);
+            if (!entry.querySelector('.fold-summary')) throw new Error('Expected generated summary');
+            window.detachedTextModel = fgGetTextModel(document.querySelectorAll('#content .line-container'));
+            return detachedTextModel.records.map(record => [+record.getAttribute('data-line-number'),
+                record.textContent, ...fgTextModel.fields.map(field => record.getAttribute('data-' + field))]);
+        }''')
+        self.assertEqual(records, index['rows'])
+        facts = self.page.evaluate('''() => {
+            const evaluate = () => {
+                const iterator = fgTextModel.filter(detachedTextModel, 'duration:>1 OR func:mutex');
+                let result;
+                do { result = iterator.next(); } while (!result.done);
+                return Array.from(result.value.lines);
+            };
+            const before = evaluate();
+            document.getElementById('content').replaceChildren();
+            return {before, after:evaluate(), rows:document.querySelectorAll('#content .line-container').length};
+        }''')
+        self.assertTrue(facts['before'])
+        self.assertEqual(facts['after'], facts['before'])
+        self.assertEqual(facts['rows'], 0)
+
+    def test_native_queries_reuse_the_snapshot_after_reordering_without_dom_field_reads(self):
+        self.page.evaluate('async () => { await fgEnsureText(); }')
+        self.apply_query('comm:sh')
+        self.page.evaluate('''() => {
+            window.originalTextModel = fgDomTextModels.get(document.getElementById('content'));
+            fgSetTextOrder('task');
+            window.modelAttributeReads = 0;
+            const original = Element.prototype.getAttribute;
+            Element.prototype.getAttribute = function(name) {
+                if ((name === 'data-comm' || name === 'data-params') && this.matches('.line-container')) modelAttributeReads++;
+                return original.call(this, name);
+            };
+        }''')
+        for query in ['comm:sh', 'params:0x', 'graph:do_sys_openat2', 'duration:>1 sort:desc']:
+            self.apply_query(query)
+        self.assertEqual(self.page.evaluate('modelAttributeReads'), 0)
+        self.assertTrue(self.page.evaluate('fgDomTextModels.get(document.getElementById("content")) === originalTextModel'))
+
+    def test_duration_sort_directives_are_not_filter_conditions(self):
+        parsed = self.page.evaluate('''() => ['duration:>1 sort:desc', 'sort:ASC', 'sort:invalid',
+            '(func:mutex) sort:asc sort:desc'].map(text => parseFilterExpr(text))''')
+        self.assertEqual(parsed[0]['sortDir'], 'desc')
+        self.assertEqual(parsed[0]['ast'], dict(type='COND', field='duration', op='>', value='1'))
+        self.assertEqual(parsed[1], dict(ast=None, sortDir='asc'))
+        self.assertEqual(parsed[2]['sortDir'], '')
+        self.assertEqual(parsed[2]['ast']['field'], 'sort')
+        self.assertEqual(parsed[3]['sortDir'], 'desc')
+        self.assertEqual(parsed[3]['ast']['field'], 'func')
+
+    def test_duration_sort_keeps_full_matches_and_orders_only_presentation(self):
+        expected = self.apply_query('duration:>1')
+        self.assertTrue(expected)
+        self.assertEqual(self.apply_query('duration:>1 sort:desc'), expected)
+        self.assertEqual(self.page.locator('#content .line-container').count(), 0)
+        self.page.evaluate('async () => { await fgEnsureText(); }')
+        for direction in ['desc', 'asc']:
+            with self.subTest(direction=direction):
+                self.assertEqual(self.apply_query('duration:>1 sort:' + direction), expected)
+                facts = self.page.evaluate('''() => {
+                    const rows = Array.from(document.querySelectorAll('#content .line-container'));
+                    return {durations:rows.filter(row => row.style.display !== 'none').map(row =>
+                        Number(row.dataset.sortDuration || row.dataset.duration || 0)),
+                        adjacent:rows.filter(row => row.classList.contains('expandable')).every(row =>
+                            row.nextElementSibling?.id === row.dataset.lineId + '_content')};
+                }''')
+                self.assertTrue(facts['adjacent'])
+                self.assertEqual(facts['durations'], sorted(facts['durations'], reverse=direction == 'desc'))
+
+    def test_clearing_or_replacing_duration_sort_restores_preferred_task_order(self):
+        self.page.evaluate('async () => { await fgEnsureText(); fgSetTextOrder("task"); }')
+        order = self.page.evaluate('Array.from(document.querySelectorAll("#content .line-container"), row => row.id)')
+        for direction, clear in [('desc', True), ('asc', False)]:
+            with self.subTest(direction=direction, clear=clear):
+                self.apply_query('duration:>1 sort:' + direction)
+                self.assertEqual(self.page.evaluate('fgTextOrder'), 'task')
+                self.assertEqual(self.page.evaluate('fgTextSort'), direction)
+                self.assertEqual(self.page.evaluate('lsGet("textOrder")'), 'task')
+                if clear:
+                    self.page.evaluate('clearFilter()')
+                else:
+                    self.apply_query('func:mutex')
+                self.assertEqual(self.page.evaluate('fgTextSort'), '')
+                self.assertEqual(self.page.locator('#textOrderBtn').inner_text(), 'Order: by task')
+                self.assertEqual(self.page.evaluate('Array.from(document.querySelectorAll("#content .line-container"), row => row.id)'), order)
+
+    def test_standalone_duration_sort_and_manual_order_switch_preserve_all_records(self):
+        self.page.evaluate('async () => { await fgEnsureText(); }')
+        before = self.page.evaluate('Array.from(document.querySelectorAll("#content .line-container"), row => row.id)')
+        self.assertIsNone(self.apply_query('sort:desc'))
+        facts = self.page.evaluate('''() => {
+            const rows = Array.from(document.querySelectorAll('#content .line-container'));
+            return {ids:rows.map(row => row.id), durations:rows.map(row =>
+                Number(row.dataset.sortDuration || row.dataset.duration || 0))};
+        }''')
+        self.assertEqual(sorted(facts['ids']), sorted(before))
+        self.assertEqual(facts['durations'], sorted(facts['durations'], reverse=True))
+        self.page.evaluate('fgSetTextOrder("time")')
+        self.assertEqual(self.page.evaluate('fgTextSort'), '')
+        self.assertEqual(self.page.evaluate('Array.from(document.querySelectorAll("#content .line-container"), row => row.id)'), before)
+
+    def test_standalone_duration_sort_survives_deferred_text_entry_without_index_loading(self):
+        self.assertIsNone(self.apply_query('sort:desc'))
+        self.assertEqual(self.page.evaluate('fgFilterState.text'), 'sort:desc')
+        self.assertEqual(self.page.locator('#content .line-container').count(), 0)
+        self.assertFalse(any(url.endswith(('text-index.json', 'text.html')) for url in self.requests))
+        self.page.evaluate('async () => { await fgSwitchView("text"); }')
+        facts = self.page.evaluate('''() => {
+            const rows = Array.from(document.querySelectorAll('#content .line-container'));
+            return {rows:rows.length, durations:rows.map(row =>
+                Number(row.dataset.sortDuration || row.dataset.duration || 0)),
+                query:document.getElementById('filterInput').value, text:fgFilterState.text,
+                unfiltered:fgFilterState.lines === null, sort:fgTextSort};
+        }''')
+        self.assertGreater(facts['rows'], 100)
+        self.assertEqual(facts['durations'], sorted(facts['durations'], reverse=True))
+        self.assertEqual(facts['query'], 'sort:desc')
+        self.assertEqual(facts['text'], 'sort:desc')
+        self.assertTrue(facts['unfiltered'])
+        self.assertEqual(facts['sort'], 'desc')
+        self.assertFalse(any(url.endswith('text-index.json') for url in self.requests))
+        self.page.evaluate('clearFilter()')
+        self.assertEqual(self.page.evaluate('fgFilterState.text'), '')
 
     def test_filter_index_failure_retains_previous_result_and_retries_without_text(self):
         previous = self.apply_query('duration:>1')

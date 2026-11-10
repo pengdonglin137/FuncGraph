@@ -82,6 +82,7 @@
         // Grouping moves each task's lines together (original order inside the task) and replaces the
         // context switches by a summary line. Folding/filters work on attributes, not on order.
         let fgTextOrder = lsGet('textOrder') || 'time';
+        let fgTextSort = '';
         const RE_SWITCH_LINE = /^\s*(\d+)\)\s+(.+?)-(\d+)\s+=>\s+(.+?)-(\d+)\s*$/;
         const RE_TS_LINE = /^\s*(\d+\.\d+)\s*\|/;
         function fgTaskKey(line) {
@@ -103,6 +104,7 @@
         function fgSetTextOrder(mode) {
             const container = document.getElementById('content');
             if (!container) return;
+            fgTextSort = '';
             // reorder off-document: moving tens of thousands of live nodes is slow otherwise
             const parent = container.parentNode, marker = document.createComment('content');
             parent.replaceChild(marker, container);
@@ -663,6 +665,13 @@
                 if (text[i] === '!') {
                     tokens.push({ type: 'NOT' }); i++; continue;
                 }
+                // Sort directive: sort:desc or sort:asc
+                const sortMatch = text.slice(i).match(/^sort:(desc|asc)(?=$|[\s()])/i);
+                if (sortMatch) {
+                    tokens.push({ type: 'SORT', value: sortMatch[1].toLowerCase() });
+                    i += sortMatch[0].length;
+                    continue;
+                }
                 // field:value condition (field may contain letters/digits/underscore, value may contain anything except spaces and parens)
                 const condMatch = text.slice(i).match(/^([a-zA-Z_][a-zA-Z0-9_]*):(>=|<=|>|<|=)?([^\s()]*)/);
                 if (condMatch) {
@@ -671,13 +680,6 @@
                     const value = condMatch[3];
                     tokens.push({ type: 'COND', field: field.toLowerCase(), op, value });
                     i += condMatch[0].length;
-                    continue;
-                }
-                // Sort directive: sort:desc or sort:asc
-                const sortMatch = text.slice(i).match(/^sort:(desc|asc)/i);
-                if (sortMatch) {
-                    tokens.push({ type: 'SORT', value: sortMatch[1].toLowerCase() });
-                    i += sortMatch[0].length;
                     continue;
                 }
                 // Unknown character, skip
@@ -1102,8 +1104,9 @@
         }
 
         async function fgApplyIndexedFilter(text, generation) {
-            if (!parseFilterExpr(text).ast) {
-                fgNotifyFilter('', null);
+            const { ast, sortDir } = parseFilterExpr(text);
+            if (!ast) {
+                fgNotifyFilter(sortDir ? text : '', null);
                 fgShowFilterCount(total_lines, total_lines);
                 return true;
             }
@@ -1132,6 +1135,40 @@
             }
         }
 
+        const fgDomTextModels = new WeakMap();
+        function fgGetTextModel(lines) {
+            const root = document.getElementById('content');
+            if (fgDomTextModels.has(root)) return fgDomTextModels.get(root);
+            let data;
+            if (fgData.ready('fgTextIndex')) data = fgData.read('fgTextIndex');
+            else {
+                const rows = Array.from(lines, line => {
+                    const content = line.querySelector('.line-content');
+                    let text = content?.textContent || '';
+                    const summary = line.classList.contains('folded') && content?.querySelector('.fold-summary');
+                    if (summary) {
+                        const range = document.createRange();
+                        range.selectNodeContents(content);
+                        range.setEndBefore(summary);
+                        text = range.toString();
+                        range.selectNodeContents(content);
+                        range.setStartAfter(summary);
+                        text += range.toString();
+                    }
+                    return [+line.getAttribute('data-line-number'), text,
+                        ...fgTextModel.fields.map(field => line.getAttribute('data-' + field))];
+                });
+                rows.sort((left, right) => left[0] - right[0]);
+                data = { version: 1, fields: fgTextModel.fields, rows };
+            }
+            const iterator = fgTextModel.prepare(data);
+            let result;
+            do { result = iterator.next(); } while (!result.done);
+            if (result.value.records.length !== lines.length) throw new Error('Text model does not cover mounted rows');
+            fgDomTextModels.set(root, result.value);
+            return result.value;
+        }
+
         function applyFilter() {
             fgCancelPendingFilter(false);
             const generation = fgFilterGeneration;
@@ -1157,36 +1194,23 @@
 
             // Get all lines
             const allLineElems = document.querySelectorAll('.line-container');
-            let visibleCount = 0;
-
-            // Precompute graph/notrace fold-id sets
+            let visibleCount = allLineElems.length;
+            let passLines = null;
             if (hasFilter) {
-                const graphConds = collectGraphConditions(ast);
-                _graphFoldIds = precomputeGraphSets(graphConds, allLineElems);
+                const iterator = fgTextModel.filter(fgGetTextModel(allLineElems), text);
+                let result;
+                do { result = iterator.next(); } while (!result.done);
+                passLines = result.value.lines;
+                visibleCount = result.value.visible;
+                _graphFoldIds = result.value.graphSets;
             } else {
                 _graphFoldIds = {};
             }
 
-            const passLines = hasFilter ? new Set() : null;
             // Single-pass: filter lines + collapse expanded content
             allLineElems.forEach(line => {
-                let show = true;
-
-                if (hasFilter) {
-                    const rawLine = line.querySelector('.line-content')?.textContent || '';
-                    const trimmed = rawLine.trim();
-                    if (trimmed === '' || /^[-]+$/.test(trimmed)) {
-                        show = false;
-                    }
-                }
-
-                if (show && hasFilter) {
-                    show = evalExpr(line, ast);
-                }
-
+                const show = passLines === null || passLines.has(+line.getAttribute('data-line-number'));
                 line.style.display = show ? '' : 'none';
-                if (show) visibleCount++;
-                if (show && passLines) passLines.add(+line.getAttribute('data-line-number'));
 
                 // Collapse expanded content for hidden or all filtered lines (single pass)
                 if (hasFilter && line.classList.contains('expandable')) {
@@ -1214,14 +1238,18 @@
                         const rightDuration = parseFloat(right[0].dataset.sortDuration || right[0].dataset.duration || '0');
                         return sortDir === 'desc' ? rightDuration - leftDuration : leftDuration - rightDuration;
                     });
+                    const preferredOrder = fgTextOrder;
                     fgReorder(container, 'time', blocks);
+                    fgTextOrder = preferredOrder;
+                    lsSet('textOrder', preferredOrder);
+                    fgTextSort = sortDir;
                     const button = document.getElementById('textOrderBtn');
                     if (button) button.textContent = 'Order: duration ' + (sortDir === 'desc' ? '↓' : '↑');
                 }
-            }
+            } else if (fgTextSort) fgSetTextOrder(fgTextOrder);
 
             updateExpandableLines();
-            fgNotifyFilter(hasFilter ? text : '', passLines);
+            fgNotifyFilter(hasFilter || sortDir ? text : '', passLines);
 
             // Update visible lines count
             fgShowFilterCount(visibleCount, total_lines);
@@ -1262,6 +1290,7 @@
                 }
             });
 
+            if (fgTextSort) fgSetTextOrder(fgTextOrder);
             updateExpandableLines();
             fgNotifyFilter('', null);
 
