@@ -290,24 +290,25 @@
             let scopeRows = [];
             let guideLayer = null;
             let guideFrame = null;
-            let guideRows = [];
+            let guideGroups = [];
             let guideRevision = -1;
+            const guideMeasure = content.querySelector('.call-indent');
             const foldControl = target => target?.closest?.('.fold-icon, .fold-brace');
             const scopeControl = target => target?.closest?.('.fold-icon, .fold-brace, .fold-marker, .fold-close');
             function drawGuideScope() {
                 guideFrame = null;
                 if (guideLayer) guideLayer.getContext('2d').clearRect(0, 0, guideLayer.width, guideLayer.height);
-                const entry = scopeRows[0];
-                if (!entry || !guideStyle || guideStyle.sheet.disabled || entry.classList.contains('folded')) return;
+                if (!guideMeasure || !guideStyle || guideStyle.sheet.disabled) return;
                 const contentRect = content.getBoundingClientRect();
                 if (contentRect.height === 0) return;
                 const viewportWidth = document.documentElement.clientWidth;
                 const viewportHeight = window.innerHeight;
-                const indent = entry.querySelector('.call-indent');
-                const icon = entry.querySelector('.fold-icon');
-                if (!indent || !icon) return;
-                const iconRect = icon.getBoundingClientRect();
-                const offset = iconRect.left + iconRect.width / 2 - indent.getBoundingClientRect().left;
+                const step = parseFloat(getComputedStyle(guideMeasure, '::before').width);
+                if (!(step > 0)) return;
+                const unit = step / 2;
+                const entry = scopeRows[0];
+                const activeOffset = entry && !entry.classList.contains('folded')
+                    ? entry.querySelector('.call-indent').getBoundingClientRect().width - unit : null;
                 if (!guideLayer) {
                     guideLayer = document.createElement('canvas');
                     guideLayer.className = 'fold-guide-layer';
@@ -323,42 +324,89 @@
                 }
                 const context = guideLayer.getContext('2d');
                 context.setTransform(scale, 0, 0, scale, 0, 0);
-                context.fillStyle = getComputedStyle(entry).getPropertyValue('--tree-guide-active').trim();
+                const strokePixels = Math.max(1, Math.round(scale));
+                const stroke = strokePixels / scale;
+                const snap = value => Math.round(value * scale) / scale;
+                const strokeOrigin = axis => Math.round(axis * scale - strokePixels / 2) / scale;
+                const palette = getComputedStyle(content);
+                const baseColor = palette.getPropertyValue('--tree-guide').trim();
+                const activeColor = palette.getPropertyValue('--tree-guide-active').trim();
                 if (guideRevision !== textGuideRevision) {
-                    guideRows = Array.from(content.querySelectorAll('.line-container')).filter(row =>
-                        row.classList.contains('line-container') && row.style.display !== 'none' &&
-                        !row.classList.contains('grp-hidden'));
+                    guideGroups = Array.from(content.children).filter(group => group.matches('.text-chunk, .line-container'));
                     guideRevision = textGuideRevision;
                 }
                 const toolbarBottom = content.previousElementSibling?.getBoundingClientRect().bottom || 0;
                 const viewportTop = Math.max(0, contentRect.top, toolbarBottom);
                 const bottom = Math.min(viewportHeight, contentRect.bottom);
+                if (bottom <= viewportTop) return;
+                context.save();
+                context.beginPath();
+                context.rect(0, viewportTop, viewportWidth, bottom - viewportTop);
+                context.clip();
                 let lower = 0;
-                let upper = guideRows.length;
+                let upper = guideGroups.length;
                 while (lower < upper) {
                     const middle = Math.floor((lower + upper) / 2);
-                    if (guideRows[middle].getBoundingClientRect().bottom <= viewportTop) lower = middle + 1;
+                    if (guideGroups[middle].getBoundingClientRect().bottom <= viewportTop) lower = middle + 1;
                     else upper = middle;
                 }
-                for (let index = lower; index < guideRows.length; index++) {
-                    const row = guideRows[index];
-                    const rect = row.getBoundingClientRect();
-                    if (rect.top >= bottom) break;
-                    const ancestors = (row.getAttribute('data-fold-ancestors') || '').split(' ');
-                    if (row.getAttribute('data-fold-id') === scopeId || ancestors.includes(scopeId)) {
+                for (let groupIndex = lower; groupIndex < guideGroups.length; groupIndex++) {
+                    const group = guideGroups[groupIndex];
+                    if (group.getBoundingClientRect().top >= bottom) break;
+                    const rows = (group.matches('.line-container') ? [group] : Array.from(group.querySelectorAll('.line-container')))
+                        .filter(row => row.style.display !== 'none' && !row.classList.contains('grp-hidden'));
+                    let first = 0;
+                    let last = rows.length;
+                    while (first < last) {
+                        const middle = Math.floor((first + last) / 2);
+                        if (rows[middle].getBoundingClientRect().bottom <= viewportTop) first = middle + 1;
+                        else last = middle;
+                    }
+                    for (let rowIndex = first; rowIndex < rows.length; rowIndex++) {
+                        const row = rows[rowIndex];
+                        const rect = row.getBoundingClientRect();
+                        if (rect.top >= bottom) break;
                         const rowIndent = row.querySelector('.call-indent');
-                        const indentRect = rowIndent?.getBoundingClientRect();
-                        if (indentRect && indentRect.width >= offset) {
-                            const top = Math.max(viewportTop, row === entry ? iconRect.top + iconRect.height / 2 + 6 : rect.top);
-                            const end = row === scopeRows[1] ? rect.top + rect.height / 2 : rect.bottom;
-                            const left = Math.round((indentRect.left + offset - 0.5) * scale) / scale;
-                            if (end > top) context.fillRect(left, top, 1, end - top);
+                        if (!rowIndent) continue;
+                        const indentRect = rowIndent.getBoundingClientRect();
+                        const top = snap(Math.max(viewportTop, rect.top));
+                        const end = snap(Math.min(bottom, rect.bottom));
+                        const ancestors = (row.getAttribute('data-fold-ancestors') || '').split(' ');
+                        const related = activeOffset !== null && ancestors.includes(scopeId);
+                        const start = Math.max(0, Math.ceil((-indentRect.left - unit) / step));
+                        const limit = Math.min(indentRect.right - step, viewportWidth);
+                        for (let column = start; indentRect.left + unit + column * step < limit; column++) {
+                            const offset = unit + column * step;
+                            context.fillStyle = related && Math.abs(offset - activeOffset) < unit / 2 ? activeColor : baseColor;
+                            context.fillRect(strokeOrigin(indentRect.left + offset), top, stroke, end - top);
+                        }
+                        const own = activeOffset !== null && row.getAttribute('data-fold-id') === scopeId;
+                        context.fillStyle = own ? activeColor : baseColor;
+                        const axis = indentRect.right - unit;
+                        if (axis < 0 || axis > viewportWidth) continue;
+                        if (row.classList.contains('fold-entry') && !row.classList.contains('folded')) {
+                            const from = snap(rect.top + rect.height / 2 + 6);
+                            if (end > from) context.fillRect(strokeOrigin(axis), from, stroke, end - from);
+                        } else if (row.getAttribute('data-fold-type') === 'exit') {
+                            const center = strokeOrigin(axis) + stroke / 2;
+                            const turn = strokeOrigin(rect.top + rect.height / 2) + stroke / 2;
+                            const finish = snap(indentRect.right - 2);
+                            const radius = Math.min(3, Math.max(0, finish - center));
+                            context.strokeStyle = context.fillStyle;
+                            context.lineWidth = stroke;
+                            context.beginPath();
+                            context.moveTo(center, top);
+                            context.lineTo(center, turn - radius);
+                            context.arcTo(center, turn, center + radius, turn, radius);
+                            context.lineTo(finish, turn);
+                            context.stroke();
                         }
                     }
                 }
+                context.restore();
             }
             function scheduleGuideScope() {
-                if (guideFrame === null && (scopeId || guideLayer)) guideFrame = requestAnimationFrame(drawGuideScope);
+                if (guideFrame === null) guideFrame = requestAnimationFrame(drawGuideScope);
             }
             function showScope(control) {
                 const row = control?.closest('.line-container');
@@ -393,6 +441,7 @@
             if (window.ResizeObserver) new ResizeObserver(scheduleGuideScope).observe(content);
             new MutationObserver(scheduleGuideScope).observe(document.documentElement,
                 {attributes:true, attributeFilter:['data-theme']});
+            scheduleGuideScope();
             for (const type of ['pointerover', 'focusin']) {
                 content.addEventListener(type, event => {
                     const control = scopeControl(event.target);

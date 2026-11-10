@@ -2,38 +2,24 @@
     content: '';
     position: absolute;
     left: 0;
-    right: 2ch;
-    top: calc(50% - 0.75em - 3px);
-    top: calc(50% - 0.5lh - 3px);
-    height: calc(1.5em + 6px);
-    height: calc(1lh + 6px);
-    background-image: linear-gradient(to right, transparent calc(1ch - 0.5px), var(--tree-guide) calc(1ch - 0.5px), var(--tree-guide) calc(1ch + 0.5px), transparent calc(1ch + 0.5px));
-    background-size: 2ch 100%;
+    top: 0;
+    width: 2ch;
+    height: 0;
     pointer-events: none;
 }
 .fold-entry:not(.folded) .fold-marker::after {
     content: '';
     position: absolute;
-    left: calc(-1ch - 0.5px);
+    left: calc(-1ch - 2px);
     top: calc(50% + 6px);
     bottom: -3px;
-    width: 1px;
-    background: var(--tree-guide);
+    width: 4px;
 }
 .fold-close::before {
     content: '';
     position: absolute;
-    left: calc(-1ch - 0.5px);
+    left: calc(-1ch - 2px);
     top: -3px;
-    width: calc(1ch - 2px);
+    width: 1ch;
     height: calc(50% + 3px);
-    border-left: 1px solid var(--tree-guide);
-    border-bottom: 1px solid var(--tree-guide);
-    border-bottom-left-radius: 3px;
-}
-.fold-entry.fold-scope:not(.folded) .fold-marker::after {
-    background: var(--tree-guide-active);
-}
-.fold-scope .fold-close::before {
-    border-color: var(--tree-guide-active);
 }

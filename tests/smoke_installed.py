@@ -70,6 +70,9 @@ class InstalledPackageTest(unittest.TestCase):
         self.assertIn('data-help-view="compare" hidden', report)
         self.assertIn('id="fgTreeGuides"', report)
         self.assertIn(read_asset('report/tree.css'), report)
+        self.assertIn(read_asset('report/report.js'), report)
+        self.assertNotIn('linear-gradient', read_asset('report/tree.css'))
+        self.assertIn('const strokePixels = Math.max(1, Math.round(scale));', report)
         self.assertIn('data-fold-end="L4"', report)
         self.assertIn('data-fold-start="L2"', report)
 

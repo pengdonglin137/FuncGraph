@@ -785,30 +785,42 @@ class BrowserSmokeTest(unittest.TestCase):
 
     def test_fold_guides_hover_only_emphasizes_the_current_pair(self):
         parent, child, grandchild, outside = self.nested_fold_rows()
-        connector = "id => getComputedStyle(document.getElementById(id).querySelector('.fold-marker'), '::after').backgroundColor"
-        parent_color = self.ev(connector, parent['row'])
-        base_color = self.ev(connector, child['row'])
+        self.record_guide_paint()
         row = self.page.locator('#' + child['row'])
         for marker in [row.locator('.fold-icon'), self.page.locator('#' + row.get_attribute('data-fold-end') + ' .fold-close')]:
             marker.hover()
-            self.assertNotEqual(self.ev(connector, child['row']), base_color)
-            self.assertEqual(self.ev(connector, parent['row']), parent_color)
+            self.page.wait_for_function('guidePaint.length > 0')
+            self.assertGreater(self.ev('guideBasePaint.length'), 0)
             self.assertEqual(self.page.locator('.fold-scope').count(), 2)
             self.page.mouse.move(0, 0)
-            self.assertEqual(self.ev(connector, child['row']), base_color)
+            self.page.wait_for_function('guidePaint.length === 0')
+        close = self.page.locator('#' + row.get_attribute('data-fold-end') + ' .fold-close')
+        close.scroll_into_view_if_needed()
+        corner = close.evaluate('''node => {
+            const rect = node.getBoundingClientRect();
+            const unit = parseFloat(getComputedStyle(node.closest('.line-container').querySelector('.call-indent'), '::before').width) / 2;
+            return {x:rect.left - unit, y:rect.top + 2};
+        }''')
+        self.page.mouse.move(corner['x'], corner['y'])
+        self.assertEqual(self.page.locator('.fold-scope').count(), 2)
+        self.page.mouse.move(0, 0)
         self.assertEqual(self.page.locator('.fold-scope').count(), 0)
 
     def record_guide_paint(self):
         self.ev("""() => {
             window.guidePaint = [];
+            window.guideBasePaint = [];
             const fill = CanvasRenderingContext2D.prototype.fillRect;
             const clear = CanvasRenderingContext2D.prototype.clearRect;
             CanvasRenderingContext2D.prototype.fillRect = function (left, top, width, height) {
-                if (this.canvas.classList.contains('fold-guide-layer')) guidePaint.push({left, top, width, height, color:this.fillStyle});
+                if (this.canvas.classList.contains('fold-guide-layer')) {
+                    const active = getComputedStyle(document.documentElement).getPropertyValue('--tree-guide-active').trim();
+                    (this.fillStyle === active ? guidePaint : guideBasePaint).push({left, top, width, height, color:this.fillStyle});
+                }
                 return fill.call(this, left, top, width, height);
             };
             CanvasRenderingContext2D.prototype.clearRect = function (...args) {
-                if (this.canvas.classList.contains('fold-guide-layer')) guidePaint = [];
+                if (this.canvas.classList.contains('fold-guide-layer')) { guidePaint = []; guideBasePaint = []; }
                 return clear.apply(this, args);
             };
         }""")
@@ -824,23 +836,21 @@ class BrowserSmokeTest(unittest.TestCase):
                     const entry = document.getElementById(id);
                     const guide = getComputedStyle(entry).getPropertyValue('--tree-guide').trim();
                     const active = getComputedStyle(entry).getPropertyValue('--tree-guide-active').trim();
-                    const gradient = getComputedStyle(entry.querySelector('.call-indent'), '::before').backgroundImage;
-                    const connector = getComputedStyle(entry.querySelector('.fold-marker'), '::after').backgroundColor;
-                    const exit = document.getElementById(entry.getAttribute('data-fold-end'));
-                    const corner = getComputedStyle(exit.querySelector('.fold-close'), '::before').borderLeftColor;
                     const source = document.createElement('div');
                     source.className = 'expanded-content src-chain';
+                    source.style.color = guide;
                     source.innerHTML = '<details class="src-frame"><summary>traced</summary><details class="src-frame src-call"><summary>inline</summary></details></details>';
                     document.body.append(source);
                     const frameColors = Array.from(source.querySelectorAll('.src-frame'), frame => getComputedStyle(frame).borderLeftColor);
                     const outer = getComputedStyle(source).borderLeftColor;
+                    const guideRgb = getComputedStyle(source).color;
                     source.remove();
-                    return {guide, active, gradient, connector, corner, frameColors, outer};
+                    return {guide, guideRgb, active, frameColors, outer};
                 }""", child['row'])
-                self.assertIn(colors['connector'], colors['gradient'])
-                self.assertEqual(colors['corner'], colors['connector'])
-                self.assertEqual(colors['frameColors'], [colors['connector']] * 2)
-                self.assertEqual(colors['outer'], colors['connector'])
+                self.page.wait_for_function('guideBasePaint.length > 0')
+                self.assertTrue(all(segment['color'] == colors['guide'] for segment in self.ev('guideBasePaint')))
+                self.assertEqual(colors['frameColors'], [colors['outer']] * 2)
+                self.assertEqual(colors['outer'], colors['guideRgb'])
                 self.assertTrue(colors['guide'].startswith('#'))
                 self.assertNotEqual(colors['guide'], colors['active'])
                 self.page.locator('#' + child['row'] + ' .fold-icon').hover()
@@ -859,9 +869,79 @@ class BrowserSmokeTest(unittest.TestCase):
                     visible = indent.screenshot()
                     page.locator('#foldGuidesBtn').click()
                     hidden = indent.screenshot()
-                    self.assertNotEqual(visible, hidden, 'Ancestor gradient must paint pixels, not just have a CSS color')
+                    self.assertNotEqual(visible, hidden, 'Ancestor guides must paint pixels, not just have a CSS color')
                     page.locator('#foldGuidesBtn').click()
                     self.assertEqual(indent.screenshot(), visible)
+                finally:
+                    page.close()
+
+    def test_deep_guides_have_uniform_physical_width_before_and_during_hover(self):
+        depth = 18
+        lines = ['# tracer: function_graph\n']
+        for level in range(depth):
+            lines.append(' 0)               |  ' + '  ' * level + f'frame_{level}() {{ /* <-caller+0x1/0x20 */\n')
+        lines.append(' 0)   0.001 us    |  ' + '  ' * depth + 'leaf(); /* <-caller+0x1/0x20 */\n')
+        for level in reversed(range(depth)):
+            lines.append(' 0)   0.002 us    |  ' + '  ' * level + f'}} /* frame_{level} */\n')
+        path = os.path.join(self.k.dir, 'deep-guides.txt')
+        with open(path, 'w', encoding='utf-8') as stream:
+            stream.writelines(lines)
+        self.k.run(path, '--enable-fold', out='deep-guides.html')
+        url = 'file://' + os.path.join(self.k.dir, 'deep-guides.html')
+        for scale, theme in product([1, 1.25, 1.5, 2], ['light', 'dark']):
+            with self.subTest(scale=scale, theme=theme):
+                page = self.browser.new_page(viewport=dict(width=1500, height=900), device_scale_factor=scale)
+                try:
+                    page.goto(url, wait_until='load')
+                    page.evaluate('theme => document.documentElement.dataset.theme = theme', theme)
+                    leaf = page.locator('[data-func=leaf]')
+                    leaf.scroll_into_view_if_needed()
+                    clip = leaf.evaluate('''row => {
+                        const rect = row.getBoundingClientRect();
+                        const indent = row.querySelector('.call-indent');
+                        const bounds = indent.getBoundingClientRect();
+                        const step = document.querySelector('.fold-icon').getBoundingClientRect().width;
+                        return {x:Math.floor(bounds.left), y:Math.floor(rect.top + rect.height / 2) - 1,
+                            width:Math.floor(bounds.width - step), height:3};
+                    }''')
+                    page.evaluate('() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))')
+                    visible = page.screenshot(clip=clip)
+                    page.evaluate('''() => document.querySelector('[data-func=frame_6] .fold-icon')
+                        .dispatchEvent(new PointerEvent('pointerover', {bubbles:true}))''')
+                    page.evaluate('() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))')
+                    hovered = page.screenshot(clip=clip)
+                    page.evaluate("document.getElementById('foldGuidesBtn').click()")
+                    page.evaluate('() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))')
+                    hidden = page.screenshot(clip=clip)
+                    widths = page.evaluate('''async images => {
+                        const decode = async encoded => {
+                            const image = new Image(); image.src = 'data:image/png;base64,' + encoded;
+                            await image.decode();
+                            const canvas = document.createElement('canvas');
+                            canvas.width = image.width; canvas.height = image.height;
+                            const context = canvas.getContext('2d'); context.drawImage(image, 0, 0);
+                            return {pixels:context.getImageData(0, 0, image.width, image.height).data,
+                                width:image.width, height:image.height};
+                        };
+                        const [normal, hovered, hidden] = await Promise.all(images.map(decode));
+                        return [normal, hovered].map(image => {
+                            const runs = []; let width = 0;
+                            const row = Math.floor(image.height / 2);
+                            for (let column = 0; column < image.width; column++) {
+                                const offset = (row * image.width + column) * 4;
+                                const changed = [0, 1, 2].some(channel =>
+                                    Math.abs(image.pixels[offset + channel] - hidden.pixels[offset + channel]) >= 12);
+                                if (changed) width++;
+                                else if (width) { runs.push(width); width = 0; }
+                            }
+                            if (width) runs.push(width);
+                            return runs;
+                        });
+                    }''', [base64.b64encode(image).decode() for image in [visible, hovered, hidden]])
+                    for measured in widths:
+                        self.assertEqual(len(measured), depth, measured)
+                        self.assertEqual(measured, [max(1, int(scale + 0.5))] * depth)
+                    self.assertNotEqual(visible, hovered)
                 finally:
                     page.close()
 
@@ -909,9 +989,6 @@ class BrowserSmokeTest(unittest.TestCase):
                         const entry = document.getElementById(parent.row);
                         const icon = entry.querySelector('.fold-icon');
                         const iconRect = icon.getBoundingClientRect();
-                        const exit = document.getElementById(entry.dataset.foldEnd);
-                        const close = exit.querySelector('.fold-close');
-                        const corner = getComputedStyle(close, '::before');
                         const arrow = getComputedStyle(icon, '::before');
                         const rows = Array.from(document.querySelectorAll('#content .line-container'));
                         const start = rows.findIndex(row => row.id === child.row);
@@ -925,13 +1002,10 @@ class BrowserSmokeTest(unittest.TestCase):
                         return {clip:{x:Math.floor(axis - 2), y:Math.floor(first.top), width:5,
                                       height:Math.ceil(last.bottom) - Math.floor(first.top)},
                             centerOffset:iconRect.top + iconRect.height / 2 - row.top - row.height / 2,
-                            cornerOffset:close.getBoundingClientRect().left + parseFloat(corner.left) + 0.5 - axis,
-                            radius:parseFloat(corner.borderBottomLeftRadius), arrow:arrow.content,
+                            arrow:arrow.content,
                             stroke:parseFloat(arrow.borderRightWidth)};
                     }""", dict(parent=parent, child=child))
                     self.assertAlmostEqual(facts['centerOffset'], 0, delta=0.02)
-                    self.assertAlmostEqual(facts['cornerOffset'], 0, delta=0.05)
-                    self.assertGreaterEqual(facts['radius'], 2)
                     self.assertEqual(facts['arrow'], '\"\"')
                     self.assertEqual(facts['stroke'], 1)
                     page.mouse.move(0, 0)
@@ -988,6 +1062,12 @@ class BrowserSmokeTest(unittest.TestCase):
         self.record_guide_paint()
         self.ev("""id => {
             document.elementFromPoint = () => { throw new Error('full-document hit test during guide hover'); };
+            const query = Element.prototype.querySelectorAll;
+            Element.prototype.querySelectorAll = function(selector) {
+                if (this.id === 'content' && selector.includes('.line-container'))
+                    throw new Error('full-document row query during guide hover');
+                return query.call(this, selector);
+            };
             document.getElementById(id).querySelector('.fold-icon')
                 .dispatchEvent(new PointerEvent('pointerover', {bubbles:true}));
         }""", child['row'])
@@ -2416,7 +2496,7 @@ class BrowserSmokeTest(unittest.TestCase):
     def test_timeline_control_enter_keeps_native_button_activation(self):
         self.open_timeline()
         self.ev("fgView('timeline').probe().select(0)")
-        self.page.press('[data-act=help]', 'Enter')
+        self.page.press('#viewHelpBtn', 'Enter')
         self.assertEqual(self.ev('fgCurrentView()'), 'timeline')
         self.assertTrue(self.page.locator('.tl-help').is_visible())
 
