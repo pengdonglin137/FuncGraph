@@ -87,4 +87,6 @@ CLI 使用的 `inputs.read_lines()` 直接保留原生解码器生成的归一�
 
 ## 验证
 
+构建脚本对三个上游库的编译与安装同时指定 `libdir_relative=lib` 和绝对 `libdir`。64 位主机若只指定后者，libtraceevent/libtracefs 的 pkg-config 文件仍可能指向 `lib64`，与实际安装的 `lib` 不一致，导致干净环境无法链接后续库。安装时还通过 Make 的 `-W` 模板依赖强制重新生成元数据，重试已有 checkout 也能修复旧路径，不必删除生成文件或全部重新编译。不要通过安装系统库、添加 `lib64` 符号链接或放宽 CI 检查掩盖问题。CI 在解码测试前核对每个包的 `pkg-config --variable=libdir`，必须等于私有前缀下的 `lib` 目录。
+
 `PYTHONPATH=tests FG_RAW_REQUIRED=1 python3 -m unittest test_raw -v` 强制要求原生依赖存在，不允许跳过。离线合成容器覆盖大小端/字长、亚微秒 duration、参数、返回值、retaddr、模块归属、调度、丢事件、非法时钟/字段和截断；CLI 覆盖比较/导出。安装态 smoke 测试支持 `--with-raw`。CI 在 Ubuntu 24.04 构建固定版本库，测试 wheel/sdist 后才允许后续打包/Release。

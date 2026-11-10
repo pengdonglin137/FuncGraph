@@ -24,9 +24,10 @@ fi
 export PKG_CONFIG_PATH="$prefix/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
 export LD_LIBRARY_PATH="$prefix/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 for library in libtraceevent libtracefs trace-cmd; do
-    make -C "$root/$library" -j"${JOBS:-2}" prefix="$prefix" libdir="$prefix/lib" \
+    pkgconfig_template="${library/trace-cmd/libtracecmd}.pc.template"
+    make -C "$root/$library" -j"${JOBS:-2}" prefix="$prefix" libdir_relative=lib libdir="$prefix/lib" \
         pkgconfig_dir="$prefix/lib/pkgconfig" NO_PYTHON=1 libs
-    make -C "$root/$library" prefix="$prefix" libdir="$prefix/lib" \
+    make -C "$root/$library" -W "$pkgconfig_template" prefix="$prefix" libdir_relative=lib libdir="$prefix/lib" \
         pkgconfig_dir="$prefix/lib/pkgconfig" NO_PYTHON=1 DESTDIR=/ install_libs
 done
 printf '\nUse these variables when running FuncGraph:\n'

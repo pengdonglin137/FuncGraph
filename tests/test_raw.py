@@ -5,6 +5,7 @@ import json
 import lzma
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -16,6 +17,82 @@ from fglib import inputs, prefilter, raw, timeline
 from fglib.cli import build_parser
 from fglib.util import format_args_info
 from raw_fixture import container
+
+
+@unittest.skipUnless(shutil.which('bash'), 'bash not installed')
+class RawLibraryBuildTest(unittest.TestCase):
+    def setUp(self):
+        self.directory = tempfile.TemporaryDirectory(prefix='fg-raw-build-')
+        self.addCleanup(self.directory.cleanup)
+        self.root = Path(self.directory.name)
+        self.build = self.root / 'build.sh'
+        shutil.copyfile(Path(helpers.ROOT) / 'third_party' / 'build.sh', self.build)
+        for library in ['libtraceevent', 'libtracefs', 'trace-cmd']:
+            (self.root / library).mkdir()
+            (self.root / library / 'Makefile').touch()
+        tools = self.root / 'tools'
+        tools.mkdir()
+        self.log = self.root / 'calls.jsonl'
+        tool = '#!' + sys.executable + '''
+import json, os, pathlib, sys
+with open(os.environ['BUILD_CALLS'], 'a') as stream:
+    stream.write(json.dumps([pathlib.Path(sys.argv[0]).name, sys.argv[1:]]) + '\\n')
+if pathlib.Path(sys.argv[0]).name == 'cc':
+    sys.exit(int(os.environ.get('FAIL_HEADERS', '0')))
+settings = dict(argument.split('=', 1) for argument in sys.argv[1:] if '=' in argument)
+actual = settings['libdir']
+metadata = actual if pathlib.Path(sys.argv[2]).name == 'trace-cmd' else settings['prefix'] + '/' + settings.get('libdir_relative', 'lib64')
+if actual != metadata:
+    sys.exit('pkg-config library directory does not match installed libraries')
+'''
+        for name in ['cc', 'make']:
+            path = tools / name
+            path.write_text(tool)
+            path.chmod(0o755)
+        self.env = dict(os.environ, PATH=str(tools) + os.pathsep + os.environ['PATH'],
+                        CC='cc', BUILD_CALLS=str(self.log), JOBS='3', EXTRA_CFLAGS='-I/custom/uapi')
+
+    def run_build(self, prefix=None, **environment):
+        return subprocess.run(['bash', str(self.build), prefix or str(self.root / 'raw prefix')],
+                              env=dict(self.env, **environment), capture_output=True, text=True)
+
+    def calls(self):
+        return [json.loads(line) for line in self.log.read_text().splitlines()] if self.log.exists() else []
+
+    def test_private_lib_directory_agrees_with_pkgconfig_for_every_build_and_install(self):
+        result = self.run_build()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        calls = self.calls()
+        self.assertEqual(len(calls), 7)
+        self.assertEqual(calls[0], ['cc', ['-I/custom/uapi', '-x', 'c', '-', '-fsyntax-only']])
+        for index, (name, arguments) in enumerate(calls[1:]):
+            self.assertEqual(name, 'make')
+            self.assertEqual(arguments[:2], ['-C', str(self.root / ['libtraceevent', 'libtracefs', 'trace-cmd'][index // 2])])
+            self.assertIn('prefix=' + str(self.root / 'raw prefix'), arguments)
+            self.assertIn('libdir=' + str(self.root / 'raw prefix' / 'lib'), arguments)
+            self.assertIn('libdir_relative=lib', arguments)
+            self.assertIn('pkgconfig_dir=' + str(self.root / 'raw prefix' / 'lib' / 'pkgconfig'), arguments)
+            self.assertIn('NO_PYTHON=1', arguments)
+            self.assertEqual(arguments[-1], 'install_libs' if index % 2 else 'libs')
+            self.assertIn('DESTDIR=/' if index % 2 else '-j3', arguments)
+            if index % 2:
+                self.assertEqual(arguments[2:4], ['-W', ['libtraceevent', 'libtracefs', 'libtracecmd'][index // 2] + '.pc.template'])
+
+    def test_old_headers_fail_before_building_or_installing(self):
+        result = self.run_build(FAIL_HEADERS='1')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('Recent Linux UAPI headers', result.stderr)
+        self.assertEqual([name for name, arguments in self.calls()], ['cc'])
+
+    def test_missing_submodule_and_relative_prefix_do_not_invoke_tools(self):
+        (self.root / 'libtracefs' / 'Makefile').unlink()
+        result = self.run_build()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('Missing submodules', result.stderr)
+        result = self.run_build(prefix='relative-prefix')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('prefix must be absolute', result.stderr)
+        self.assertEqual(self.calls(), [])
 
 
 class RawInputTest(unittest.TestCase):

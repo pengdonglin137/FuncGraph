@@ -60,6 +60,10 @@ jobs:
           LD_LIBRARY_PATH: ${{ runner.temp }}/funcgraph-raw/lib
           FG_RAW_REQUIRED: "1"
         run: |
+          pkg-config --modversion libtracecmd libtraceevent libtracefs
+          for library in libtracecmd libtraceevent libtracefs; do
+            test "$(pkg-config --variable=libdir "$library")" = "$RUNNER_TEMP/funcgraph-raw/lib"
+          done
           PYTHONPATH=tests python -m unittest test_raw -v
           python -m build
           workspace="$PWD"

@@ -173,6 +173,8 @@ assets live in `assets/`, while wheels install them under `fglib/_assets/`.
 
 ## Troubleshooting
 
+Sample updates follow branch CI, not the release-tag workflow. Pages deploys only after **all** shared checks pass, including the native raw build and package jobs; successful Python test jobs alone do not prove deployment. If a raw build fails, Pages is skipped and keeps serving the last successfully deployed sample and screenshots. Inspect the failed job, push a fix when source changes are required, and verify the new push's `pages` job and online files. Re-running an old failed commit cannot pick up a later fix; a manual `workflow_dispatch` CI run does not deploy Pages. Compare the online `sample.html`, `sample.png` and `sample_text.png` with the files at the deployed commit, rather than treating a browser refresh as deployment verification.
+
 | Symptom | Check / action |
 | --- | --- |
 | Feature branch push has no Actions run | Expected without a PR. Open a PR or manually run `ci`; only `master` branch pushes trigger CI automatically. |
