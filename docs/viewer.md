@@ -26,7 +26,27 @@ Browser preferences belong to the HTTP origin. Use the same explicit `--port` an
 
 **File mode** serves only the selected HTML file. Siblings are not accessible, even if their names are known. This is appropriate for current self-contained reports and does not expose the surrounding source/work directory.
 
-**Directory mode** requires `index.html` and serves ordinary non-hidden files below the selected directory, including nested JSON resources. It has no directory listing. Use a dedicated report directory: this mode is not a manifest-only allowlist and must not point at an entire source/work directory containing other private files. External-resource prototypes and future sidecar bundles use this mode so relative fetches work. The CLI does not yet produce these bundles.
+**Directory mode** requires `index.html` and serves ordinary non-hidden files below the selected directory, including nested JSON resources. It has no directory listing. Use a dedicated report directory: this mode is not a manifest-only allowlist and must not point at an entire source/work directory containing other private files. Sidecar bundles use this mode so relative fetches work.
+
+## Generate A Sidecar Report
+
+```bash
+funcgraph trace.txt --timeline --report-mode sidecar --enable-fold --filter --output trace-report
+fgview trace-report --open
+```
+
+Text and binary raw inputs use the same output mode; raw input still requires its optional native dependencies. `--report-mode single` is the default. No size/line threshold changes it automatically. Sidecar requires `--timeline`, an HTTP URL, and a dedicated output directory, not a filename.
+
+- First Timeline loads its complete model but does not fetch Text or Compare and creates no per-record Text DOM. Sources and their index remain embedded and parse synchronously when used.
+- Text loads **in full once** when entering Text, jumping to a trace line, following `#L<number>`, or applying the Timeline unified filter. Filtering waits for every Text row while retaining the current Timeline view. The complete Text DOM then remains cached; it is not virtualized or bounded. Its first mount can still be expensive. Saved Text preferences and hash anchors open Text directly.
+- Fetch/integrity failures expose Retry; Escape/back cancels pending view loading without allowing late data to activate it. A failure during Text initialization instead offers **Reload report**, avoiding reuse of partially initialized listeners/state.
+- `--no-text-view` still omits Text and never creates a Text resource; `--keep-source` retains its existing source-resolution semantics.
+
+The bundle contains `index.html`, a hidden ownership marker and immutable `data-<report-id>/` resources (manifest, Timeline, optional Compare and complete Text). Every resource has exact UTF-8 bytes and SHA-256 metadata. Share/archive the **whole directory**, not only index.html.
+
+For the measured 72,176-line trace, median complete Timeline readiness drops from 1.87s to 0.34s and sampled renderer RSS from 758 to 202 MiB, while the first complete Text mount still costs 8.46s in one observation. These are local measurements, not guarantees; methodology, limitations and the repeatable benchmark are in [design §8.7](design.md#87-显式-sidecar-的首次-timeline2026-11-10).
+
+Publication stages a complete bundle beside the destination. New/empty directories publish only after successful rendering and syncing; unmanaged nonempty directories, file targets and output symlinks are refused. Updates to marked bundles publish new versioned resources before atomically replacing index.html, preserving the old entry on failure. Old resource directories are intentionally retained for already-open pages, so repeated updates consume disk space; for cleanup, close old viewers/pages and remove the old bundle directory before regenerating, or publish to a new dedicated directory.
 
 The viewer fixes the selected root through an open directory handle. Symlinks below that root, traversal paths, hidden paths, FIFOs and other non-regular files are not served. Selecting a path that is itself a symlink explicitly selects its resolved target. Platforms must support directory-relative, no-follow file access; unsupported platforms fail clearly instead of falling back to an unrestricted server.
 

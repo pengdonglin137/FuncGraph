@@ -1,6 +1,7 @@
 import bz2
 import gzip
 import io
+import json
 import lzma
 import os
 from pathlib import Path
@@ -165,6 +166,26 @@ class NativeRawTest(unittest.TestCase):
     def decode(self, **options):
         self.path.write_bytes(container(**options))
         return inputs.read_lines([str(self.path)])[0]
+
+    def test_raw_sidecar_preserves_the_single_file_timeline(self):
+        self.path.write_bytes(container(sched=True, retaddr=True))
+        single = Path(self.directory.name) / 'single.html'
+        sidecar = Path(self.directory.name) / 'sidecar'
+        for output, mode in [(single, 'single'), (sidecar, 'sidecar')]:
+            result = subprocess.run([sys.executable, str(Path(helpers.ROOT) / 'funcgraph.py'), '--no-config',
+                                     '--timeline', '--report-mode', mode, '--output', str(output), str(self.path)],
+                                    capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        descriptor = helpers.json_script((sidecar / 'index.html').read_text(), 'fgDataManifest')
+        manifest_path = sidecar / descriptor['manifest']['file']
+        manifest = json.loads(manifest_path.read_text())
+        resource = manifest_path.parent / manifest['resources']['tlData']['file']
+        actual = json.loads(resource.read_text())
+        expected = helpers.json_script(single.read_text(), 'tlData')
+        actual['stats'].pop('build_time', None)
+        expected['stats'].pop('build_time', None)
+        self.assertEqual(actual, expected)
+        self.assertIn('fgText', manifest['resources'])
 
     def test_endian_and_word_size(self):
         for endian in ('<', '>'):

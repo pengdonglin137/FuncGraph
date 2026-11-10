@@ -1,4 +1,5 @@
 """Run with an installed distribution's Python: python -I tests/smoke_installed.py."""
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -189,6 +190,25 @@ class InstalledPackageTest(unittest.TestCase):
             self.assertTrue(json.loads(match.group(1)))
         self.assertIn('id="filterInput"', report)
         self.assertTrue(json.loads(exported.read_text(encoding='utf-8'))['functions'])
+
+    def test_sidecar_report_from_installed_package(self):
+        output = Path(self.tmp.name, 'sidecar report')
+        trace = str(ROOT / 'tests' / 'data' / 'pi4_sched.txt')
+        self.run_command(self.executable('funcgraph'), '--no-config', '--timeline', '--report-mode', 'sidecar',
+                         '--compare', trace, '--output', str(output), trace)
+        report = (output / 'index.html').read_text(encoding='utf-8')
+        match = re.search(r'<script[^>]+id="fgDataManifest"[^>]*>(.*?)</script>', report, re.S)
+        descriptor = json.loads(match.group(1))
+        manifest_path = output / descriptor['manifest']['file']
+        manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
+        self.assertEqual(manifest['report_id'], descriptor['report_id'])
+        self.assertEqual(set(manifest['resources']), {'tlData', 'cmpData', 'fgText'})
+        for resource in manifest['resources'].values():
+            payload = (manifest_path.parent / resource['file']).read_bytes()
+            self.assertEqual(len(payload), resource['bytes'])
+            self.assertEqual(hashlib.sha256(payload).hexdigest(), resource['sha256'])
+        self.assertIn('data-fg-text="true"', report)
+        self.assertNotIn('<div class="line-container', report)
 
     def test_fgreport(self):
         output = Path(self.tmp.name, 'wrapper.html')

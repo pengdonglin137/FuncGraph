@@ -80,7 +80,8 @@ class FakeKernel:
         p = subprocess.run(cmd, capture_output=True, text=True, env=env, timeout=600)
         if p.returncode != 0:
             raise AssertionError(f'funcgraph.py failed ({p.returncode}):\n{p.stdout}\n{p.stderr}')
-        with open(out, encoding='utf-8') as f:
+        entry = os.path.join(out, 'index.html') if os.path.isdir(out) else out
+        with open(entry, encoding='utf-8') as f:
             return f.read(), p
 
     def close(self):

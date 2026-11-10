@@ -1786,9 +1786,10 @@ document.documentElement.setAttribute('data-theme', currentTheme);
     if (!script.dataset.views) return;
     const views = (script.dataset.views || '').split(' ');
     let name = script.dataset.defaultView || 'text';
-    if (name === 'text' && !location.hash) {
+    if (script.dataset.deferredText && location.hash) name = 'text';
+    if ((name === 'text' || script.dataset.deferredText) && !location.hash) {
         const saved = localStorage.getItem(_lsPrefix + 'view');
-        if (saved && views.includes(saved)) name = saved;
+        if (saved && (views.includes(saved) || (script.dataset.deferredText && saved === 'text'))) name = saved;
     }
     const initial = window.fgInitialView = { name, style: null };
     if (name === 'text') return;
@@ -1836,11 +1837,11 @@ document.documentElement.setAttribute('data-theme', currentTheme);
                 <div class="info-item"><div class="info-label">OS:</div><div class="info-value">Linux 6.8.0-138-generic</div></div>
                 <div class="info-item"><div class="info-label">Hostname:</div><div class="info-value">pengdl-pc</div></div>
                 <div class="info-item"><div class="info-label">Processor:</div><div class="info-value">x86_64</div></div>
-                <div class="info-item"><div class="info-label">Generated At:</div><div class="info-value">2026-11-10 16:15:33</div></div>
+                <div class="info-item"><div class="info-label">Generated At:</div><div class="info-value">2026-11-10 16:58:44</div></div>
                 <div class="info-section-divider"></div>
                 <div class="info-section-title">Processing Stats</div>
                 <div class="info-item"><div class="info-label">Parse Time:</div><div class="info-value">0.03s</div></div>
-                <div class="info-item"><div class="info-label">Vmlinux Time:</div><div class="info-value">6.18s</div></div>
+                <div class="info-item"><div class="info-label">Vmlinux Time:</div><div class="info-value">5.94s</div></div>
                 <div class="info-item"><div class="info-label">Modules Time:</div><div class="info-value">0.00s</div></div>
                 <div class="info-item"><div class="info-label">Total Lines:</div><div class="info-value">695</div></div>
                 <div class="info-item"><div class="info-label">Expandable:</div><div class="info-value">442</div></div>
@@ -2160,6 +2161,7 @@ document.documentElement.setAttribute('data-theme', currentTheme);
     }
     window.fgData = {
         read, load, ready,
+        release: name => cache.delete('data:' + name),
         external: name => !!descriptorNode && !embedded(name),
         length: name => {
             const element = embedded(name);
@@ -2364,11 +2366,13 @@ document.documentElement.setAttribute('data-theme', currentTheme);
             container.classList.add('grouped');
         }
         function fgToggleTextOrder() { fgSetTextOrder(fgTextOrder === 'task' ? 'time' : 'task'); }
-        document.addEventListener('DOMContentLoaded', () => {
+        function fgRestoreTextOrder() {
+            if (fgTextDeferred()) return;
             const b = document.getElementById('textOrderBtn');
             if (b) b.textContent = 'Order: ' + (fgTextOrder === 'task' ? 'by task' : 'time');
             if (fgTextOrder === 'task') fgSetTextOrder('task');
-        });
+        }
+        document.addEventListener('DOMContentLoaded', fgRestoreTextOrder);
         function escapeHtml(s) {
             return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
         }
@@ -2416,6 +2420,9 @@ document.documentElement.setAttribute('data-theme', currentTheme);
         let keyboardSelectedLine = null;
         let keyboardSelectedIndex = -1;
         let allLines = [];
+        let fgTextInitialized = false;
+        let fgFilterGeneration = 0;
+        function fgTextDeferred() { return document.getElementById('content').hasAttribute('data-fg-text'); }
         let textGuideRevision = 0;
         let expandableLines = [];
         let expandableLineIndices = [];
@@ -3234,6 +3241,13 @@ document.documentElement.setAttribute('data-theme', currentTheme);
         // ====== Main Filter Functions ======
 
         function applyFilter() {
+            const generation = ++fgFilterGeneration;
+            if (fgTextDeferred()) return Promise.resolve(fgEnsureText()).then(api => {
+                if (generation !== fgFilterGeneration) return null;
+                if (!api) return false;
+                applyFilter();
+                return true;
+            });
             const filterInput = document.getElementById('filterInput');
             const text = filterInput ? filterInput.value.trim() : '';
 
@@ -3327,6 +3341,7 @@ document.documentElement.setAttribute('data-theme', currentTheme);
 
         // Clear filter
         function clearFilter() {
+            fgFilterGeneration++;
             const filterInput = document.getElementById('filterInput');
             if (filterInput) filterInput.value = '';
 
@@ -4269,6 +4284,7 @@ document.documentElement.setAttribute('data-theme', currentTheme);
             }
 
             // 恢复折叠状态
+            if (fgTextDeferred()) return;
             initTextFolds();
             restoreFoldedState();
         });
@@ -4282,6 +4298,7 @@ document.documentElement.setAttribute('data-theme', currentTheme);
                 return;
             }
             if (typeof fgCurrentView === 'function' && fgCurrentView() !== 'text') return;
+            if (fgTextDeferred()) return;
             if ((event.key === 'Enter' || event.key === ' ') &&
                 event.target.closest('.fold-icon, .fold-brace, #foldGuidesBtn, #viewHelpBtn, .keyboard-hint-close')) return;
             
@@ -4835,6 +4852,13 @@ document.documentElement.setAttribute('data-theme', currentTheme);
         
         // 处理锚点导航
         function handleAnchorNavigation() {
+            if (fgTextDeferred() && location.hash) {
+                const anchor = location.hash;
+                Promise.resolve(fgSwitchView('text')).then(api => {
+                    if (api && fgCurrentView() === 'text' && location.hash === anchor) handleAnchorNavigation();
+                });
+                return;
+            }
             const hash = window.location.hash.substring(1);
             if (hash) {
                 // 尝试查找锚点元素
@@ -5048,7 +5072,14 @@ document.documentElement.setAttribute('data-theme', currentTheme);
             if (summary) summary.remove();
         }
 
-        window.addEventListener('load', function() {
+        function fgInitText(mounted = false) {
+            if (fgTextInitialized || fgTextDeferred()) return;
+            fgTextInitialized = true;
+            if (mounted) {
+                fgRestoreTextOrder();
+                initTextFolds();
+                restoreFoldedState();
+            }
             // 初始化总行数
             // (the old .summary element no longer exists; count the rendered lines)
             total_lines = document.querySelectorAll('.line-container').length;
@@ -5058,22 +5089,6 @@ document.documentElement.setAttribute('data-theme', currentTheme);
 
             // 移除自动滚动，保持当前视图位置
             // restoreViewState(); // 注释掉，避免自动滚动
-
-            // 初始化信息面板
-            initInfoPanel();
-
-            // 初始化浮动控件显示状态
-            if (typeof initFloatingControls === 'function') {
-                try { initFloatingControls(); } catch (e) { console.warn('initFloatingControls failed', e); }
-            }
-
-            // 初始化浮动按钮的拖动功能
-            if (typeof initFloatingToggleDrag === 'function') {
-                try { initFloatingToggleDrag(); } catch (e) { console.warn('initFloatingToggleDrag failed', e); }
-            }
-
-            // 监听滚动事件
-            window.addEventListener('scroll', updateProgressBar);
 
             // 初始化键盘导航
             initKeyboardNavigation();
@@ -5093,6 +5108,18 @@ document.documentElement.setAttribute('data-theme', currentTheme);
             Object.keys(foldedBlocks).forEach(foldId => {
                 addFoldSummary(foldId);
             });
+        }
+
+        window.addEventListener('load', function() {
+            initInfoPanel();
+            if (typeof initFloatingControls === 'function') {
+                try { initFloatingControls(); } catch (error) { console.warn('initFloatingControls failed', error); }
+            }
+            if (typeof initFloatingToggleDrag === 'function') {
+                try { initFloatingToggleDrag(); } catch (error) { console.warn('initFloatingToggleDrag failed', error); }
+            }
+            window.addEventListener('scroll', updateProgressBar);
+            fgInitText();
         });
         
         // 监听hash变化，支持动态锚点导航
@@ -9011,6 +9038,9 @@ function showRangeSummary() {
 // ---- jump to the text view ----
 function gotoText(n) {
     if (D.no_text) { toast('Report generated with --no-text-view: no text view (trace line ' + n + ')'); return; }
+    if (fgTextDeferred()) return Promise.resolve(window.fgSwitchView('text')).then(api => {
+        if (api && window.fgCurrentView() === 'text') gotoText(n);
+    });
     const el = document.getElementById('L' + n);
     if (!el) { toast('Line ' + n + ' not found'); return; }
     // unfold folded ancestors so the line becomes visible
@@ -9078,7 +9108,13 @@ elFtext.addEventListener('keydown', ev => {
         const fi = document.getElementById('filterInput');
         fi.value = elFtext.value;
         elFtext.blur();
-        if (elFtext.value.trim()) applyFilter(); else clearFilter();
+        if (elFtext.value.trim()) {
+            const pending = applyFilter();
+            if (pending && typeof pending.then === 'function') {
+                elFcount.textContent = 'Loading Text for full-trace filtering…';
+                pending.then(applied => { if (applied === false) toast('Text filter not applied. Open Text to retry loading its data.'); });
+            }
+        } else clearFilter();
     } else if (ev.key === 'Escape') { elFtext.value = (window.fgFilterState || {}).text || ''; elFtext.blur(); }
 });
 elFbar.addEventListener('click', ev => {
@@ -9314,11 +9350,29 @@ function __tlBoot() {
     const pending = {};
     let current = 'text';
     let textScroll = 0;
+    let textFailed = false;
     const get = k => (typeof lsGet === 'function' ? lsGet(k) : null);
     const set = (k, v) => { if (typeof lsSet === 'function') lsSet(k, v); };
     if (typeof __tlBoot === 'function' || document.getElementById('tlData')) {
         views.timeline = { el: 'timelineView', data: ['tlData'], init: () => __tlBoot(), steps: () => __tlSteps(),
             staged: window.fgData.external('tlData') || window.fgData.length('tlData') >= 1024 * 1024 };
+    }
+    if (fgTextDeferred()) {
+        views.text = { el: 'content', data: ['fgText'], init: () => {
+            const content = document.getElementById('content');
+            content.innerHTML = window.fgData.read('fgText');
+            content.removeAttribute('data-fg-text');
+            try { fgInitText(true); }
+            catch (error) {
+                textFailed = true;
+                content.setAttribute('data-fg-text', 'true');
+                throw error;
+            }
+            window.fgData.release('fgText');
+            document.querySelector('.controls').inert = false;
+            return {};
+        } };
+        document.querySelector('.controls').inert = true;
     }
     function stopScheduled(state) {
         cancelAnimationFrame(state.frame);
@@ -9335,8 +9389,9 @@ function __tlBoot() {
         return apis[state.name];
     }
     function backToText() {
-        window.fgSwitchView('text');
-        const tab = pageChrome().tabs.find(button => button.dataset.view === 'text');
+        const next = current === 'text' && views.text ? 'timeline' : 'text';
+        window.fgSwitchView(next);
+        const tab = pageChrome().tabs.find(button => button.dataset.view === next);
         if (tab) tab.focus({ preventScroll: true });
     }
     function loadingContent(el, message, failed) {
@@ -9351,7 +9406,7 @@ function __tlBoot() {
         status.textContent = message;
         const back = document.createElement('button');
         back.type = 'button';
-        back.textContent = 'Back to Text';
+        back.textContent = el.id === 'content' ? 'Back to Timeline' : 'Back to Text';
         back.addEventListener('click', backToText);
         box.append(status, back);
         el.appendChild(box);
@@ -9363,11 +9418,12 @@ function __tlBoot() {
         delete pending[state.name];
         state.el.removeAttribute('aria-busy');
         loadingContent(state.el, 'Unable to open ' + state.name + ': ' + error.message, true);
-        if (state.loadingData) {
+        if (state.loadingData || textFailed && state.name === 'text') {
             const retry = document.createElement('button');
             retry.type = 'button';
-            retry.textContent = 'Retry';
-            retry.addEventListener('click', () => window.fgSwitchView(state.name));
+            const reload = textFailed && state.name === 'text';
+            retry.textContent = reload ? 'Reload report' : 'Retry';
+            retry.addEventListener('click', () => reload ? window.location.reload() : window.fgSwitchView(state.name));
             state.el.querySelector('.fg-loading').appendChild(retry);
         }
         state.controller.abort();
@@ -9423,6 +9479,7 @@ function __tlBoot() {
         return (views[name].data || []).filter(resource => !window.fgData.ready(resource));
     }
     function open(name) {
+        if (name === 'text' && textFailed) return null;
         if (apis[name]) return apis[name];
         if (pending[name]) return pending[name].promise;
         const missing = missingData(name);
@@ -9442,6 +9499,7 @@ function __tlBoot() {
         return state.promise;
     }
     function ensure(name) {
+        if (name === 'text' && textFailed) return null;
         const state = pending[name];
         if (state) {
             if (!state.steps) return state.promise;
@@ -9461,6 +9519,7 @@ function __tlBoot() {
         return apis[name];
     }
     window.fgView = ensure;
+    window.fgEnsureText = () => views.text ? open('text') : {};
     // Page chrome, looked up once: querySelectorAll over a 1M-element text view costs ~40 ms per call.
     let chrome = null;
     function pageChrome() {
@@ -9480,7 +9539,7 @@ function __tlBoot() {
     window.fgSwitchView = function (which) {
         if (which !== 'text' && !views[which]) return;
         if (which === current) {
-            if (which === 'text') return;
+            if (which === 'text' && !views.text) return;
             const api = open(which);
             if (apis[which] && apis[which].resize) apis[which].resize();
             return api;
@@ -9506,6 +9565,7 @@ function __tlBoot() {
         set('view', which);
         if (which === 'text') {
             window.scrollTo(0, textScroll);
+            if (views.text) return open('text');
         } else {
             window.scrollTo(0, 0);
             const api = open(which);
@@ -9537,6 +9597,7 @@ function __tlBoot() {
         try {
             const name = initial ? initial.name : (!location.hash && get('view'));
             if (name && name !== 'text' && views[name]) window.fgSwitchView(name);
+            else if (views.text) window.fgSwitchView('text');
         } finally {
             if (initial && initial.style) initial.style.remove();
             delete window.fgInitialView;

@@ -26,7 +26,27 @@ fgview /path/to/dedicated-report-directory --port 9000
 
 **单文件模式**只提供指定的 HTML 文件，不能通过猜测文件名访问任何兄弟文件。适用于当前的自包含报告，不会顺带暴露旁边的源码或工作目录。
 
-**目录模式**要求存在 `index.html`，会提供所选目录下普通、非隐藏的文件，包括嵌套 JSON 资源，但不提供目录列表。必须选择独立报告目录：它不是仅允许 manifest 资源的白名单，不能指向包含其他私人文件的整个源码/工作目录。外部资源原型以及后续的 sidecar 使用目录模式，才能读取相对资源；当前 CLI 尚不生成这种资源包。
+**目录模式**要求存在 `index.html`，会提供所选目录下普通、非隐藏的文件，包括嵌套 JSON 资源，但不提供目录列表。必须选择独立报告目录：它不是仅允许 manifest 资源的白名单，不能指向包含其他私人文件的整个源码/工作目录。Sidecar 使用此模式读取相对资源。
+
+## 生成 Sidecar 报告
+
+```bash
+funcgraph trace.txt --timeline --report-mode sidecar --enable-fold --filter --output trace-report
+fgview trace-report --open
+```
+
+文本和二进制 raw 输入共用此输出模式；raw 仍需要原生依赖。默认 `--report-mode single`，不会按文件大小或行数自动切换。Sidecar 必须配合 `--timeline`，输出为独立目录而非文件，并通过 HTTP 打开。
+
+- 首次 Timeline 读取完整模型，不获取 Text/Compare，不创建逐行 Text DOM。源码池及索引仍内嵌，使用时同步解析。
+- 首次进入 Text、跳转 trace 行号、访问 `#L<number>` 或应用 Timeline 统一过滤时，**一次完整加载 Text**。过滤等待全部行挂载，保留当前 Timeline；不会只分析已加载部分。挂载后保留完整 DOM 并复用，不是虚拟列表或有界内存，首次 Text 挂载仍可能很慢。保存的 Text 偏好和行号锚点会直接打开 Text。
+- 资源请求/校验失败可 Retry；Escape/返回可取消当前视图的等待，迟到响应不会激活旧视图。若 Text 初始化中途失败，提供 **Reload report**，不复用半初始化的监听器/状态。
+- `--no-text-view` 继续省略 Text，也不生成 Text 资源；`--keep-source` 的源码解析语义不变。
+
+产物含 `index.html`、隐藏归属标记及不可变的 `data-<report-id>/` 资源（manifest、Timeline、可选 Compare 和完整 Text），记录精确 UTF-8 字节数及 SHA-256。共享/归档必须携带**整个目录**，不能只复制 index.html。
+
+本地 72,176 行 trace 实测，完整 Timeline 就绪中位数由 1.87s 降到 0.34s，采样 renderer RSS 由约 758 降到 202 MiB；但首次完整 Text 挂载单次仍需 8.46s。不是所有机器/trace 的性能承诺，方法、限制与可复测脚本见[设计 §8.7](design.md#87-显式-sidecar-的首次-timeline2026-11-10)。
+
+发布先在目标同级目录完整生成、同步。新/空目录仅在全部成功后发布；拒绝非空且无标记的目录、文件目标及输出符号链接。更新已标记资源包时先发布新版本资源，最后原子替换 index.html；失败保留旧入口。旧资源目录故意保留，保证已打开页面仍能读取，所以反复更新会增加磁盘占用；清理时先关闭旧查看器/页面，再删除旧资源包目录后重新生成，或改用新的独立目录。
 
 查看器通过打开的目录句柄固定所选根目录；不提供根下的符号链接、路径逃逸、隐藏路径、FIFO 或其他非普通文件。若显式选择的入口路径本身是符号链接，则选中其解析后的目标。平台必须支持目录相对且不跟随符号链接的文件访问；缺少能力时明确报错，不降级成不受限服务器。
 

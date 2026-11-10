@@ -2,7 +2,7 @@
 
 **raw 采集文件**：自动识别 trace-cmd 二进制容器：`funcgraph trace.dat --timeline --output trace.html`。原生依赖、固定子模块、buffer 选择及边界见 [raw 输入文档](raw-input.cn.md)；不支持独立 trace_pipe_raw 裸页。
 
-报告加载：普通报告仍是可离线打开的单文件。可用 `fgview report.html` 通过本机只读 HTTP 打开，详见[查看器指南](viewer.cn.md)。Timeline/Compare 的外部资源原型支持取消、完整性检查及重试；CLI 尚无 sidecar 导出器，Text/源码分块及自动切换仍未实现。
+报告加载：普通报告仍为离线单文件。大报告可显式运行 `funcgraph TRACE --timeline --report-mode sidecar --output REPORT_DIRECTORY`，再用 `fgview REPORT_DIRECTORY` 打开。默认 Timeline 不加载 Text 行，Compare 按需读取；首次进入 Text、跳转 trace 行号/锚点或统一过滤时**完整加载 Text**，不会只过滤已加载部分。保存的 Text 偏好和行号锚点优先于初始 Timeline。源码仍内嵌；尚无 Text 虚拟化、源码分块或自动阈值。共享、更新和错误恢复见[查看器指南](viewer.cn.md)。
 
 本文介绍从采集 trace 到阅读报告的完整流程，并逐一说明报告中每个视图的字段和配色。命令行参数的完整列表见 `python3 funcgraph.py --help`，实现细节见 [design.md](design.md)。English: [guide.en.md](guide.en.md).
 
@@ -213,6 +213,7 @@ python3 funcgraph.py --timeline --pid 1234 --graph vfs_read --vmlinux vmlinux --
 | `--overhead CHILD[,SELF]` | 跟踪开销估计值（纳秒）。默认从 `fgcapture.sh --calibrate` 写入的文件头读取 |
 | `--export FILE.json\|FILE.csv` | 另外导出分析结果（见第 9 节） |
 | `--output FILE` | 输出的 HTML 文件，默认 `ftrace_viz.html` |
+| `--report-mode single\|sidecar` | 默认离线文件，或专用 HTTP 报告目录；需 Timeline，首次使用时完整加载 Text |
 
 **预过滤**：在转换前执行，保留完整的调用树，不会从中间截断。
 
@@ -1041,7 +1042,7 @@ EOF
 
 准备仍在**主线程**执行，在模型阶段及每 8192 个内联调用之间让出控制权。8ms 是协作式工作预算而非硬上限：JSON 解析、排序、单个阶段、样式/布局和 GC 仍可能阻塞。状态已显示、能取消，**不等于画布已经就绪**，也不保证总启动时间更短。逐行文本 DOM 仍然存在；首次打开没有保存状态的大型文本报告，仍建议预过滤或 `--no-text-view`。反馈、完整就绪及长任务分别测量，见 [设计文档性能数据](design.md#8-性能数据)。
 
-生成报告现在逐段写出 UTF-8，不再拼装完整 HTML 字符串；成功完成后原子发布，失败保留原报告。输出必须是普通文件（不能是 `/dev/null`、FIFO 或目录），目标目录必须可写；已有文件权限和输出符号链接会保留。旧 Python `generate_html()` 字符串 API 仍可使用。这是后续仅在**完整单文件 HTML 字节数严格超过可配置阈值**时选用 sidecar 的基础；自动分流、默认阈值和文本虚拟化尚未提供，不改变浏览器加载路径。详见 [生成实测](design.md#83-分段写出的生成阶段内存2026-11-10)，其中带内核符号流水线的峰值 RSS 几乎不变。
+默认单文件逐段写出 UTF-8，成功后原子发布，失败保留旧文件。其目标必须为普通文件（非 `/dev/null`、FIFO 或目录），上级目录必须可写；保留已有权限和输出符号链接，旧 `generate_html()` 字符串 API 不变。显式 `--report-mode sidecar` 则发布独立目录，延迟完整 Text 的传输，见[查看器指南](viewer.cn.md)。尚无自动大小/行数阈值或 Text 虚拟化。生成阶段仍解析完整 trace，见[生成实测](design.md#83-分段写出的生成阶段内存2026-11-10)，带内核符号流水线的峰值 RSS 几乎不变。
 
 **时间轴上没有空隙，横轴写着 compressed time**
 

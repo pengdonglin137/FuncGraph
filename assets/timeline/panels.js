@@ -588,6 +588,9 @@ function showRangeSummary() {
 // ---- jump to the text view ----
 function gotoText(n) {
     if (D.no_text) { toast('Report generated with --no-text-view: no text view (trace line ' + n + ')'); return; }
+    if (fgTextDeferred()) return Promise.resolve(window.fgSwitchView('text')).then(api => {
+        if (api && window.fgCurrentView() === 'text') gotoText(n);
+    });
     const el = document.getElementById('L' + n);
     if (!el) { toast('Line ' + n + ' not found'); return; }
     // unfold folded ancestors so the line becomes visible
@@ -655,7 +658,13 @@ elFtext.addEventListener('keydown', ev => {
         const fi = document.getElementById('filterInput');
         fi.value = elFtext.value;
         elFtext.blur();
-        if (elFtext.value.trim()) applyFilter(); else clearFilter();
+        if (elFtext.value.trim()) {
+            const pending = applyFilter();
+            if (pending && typeof pending.then === 'function') {
+                elFcount.textContent = 'Loading Text for full-trace filtering…';
+                pending.then(applied => { if (applied === false) toast('Text filter not applied. Open Text to retry loading its data.'); });
+            }
+        } else clearFilter();
     } else if (ev.key === 'Escape') { elFtext.value = (window.fgFilterState || {}).text || ''; elFtext.blur(); }
 });
 elFbar.addEventListener('click', ev => {

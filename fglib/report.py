@@ -1466,7 +1466,14 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
 
 def write_html(path, parsed_lines, vmlinux_path, faddr2line_path, **options):
     """Stream a complete report atomically and return output metadata and resolver times."""
+    report_mode = options.pop('report_mode', 'single')
+    if report_mode not in ('single', 'sidecar'):
+        raise ValueError('report mode must be single or sidecar')
     generator = HtmlGenerator(parsed_lines, vmlinux_path, faddr2line_path, **options)
+    if report_mode == 'sidecar':
+        from .sidecar import write_sidecar
+        written = write_sidecar(path, generator)
+        return written, generator.vmlinux_time, generator.module_time
     with ReportSpool(path) as spool:
         spool.write_sections(generator.iter_sections())
         written = spool.publish()

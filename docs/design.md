@@ -510,6 +510,34 @@ python3 tests/benchmark_sources.py BEFORE.html AFTER.html \
 
 回归测试禁止现代路径上的整页选择器与 class collection 查询，验证 1,200 个未填充块不被访问、初次使用前不解析源码池、断开/重挂载及重排仍同步、缺少弱引用时的兼容行为。另通过浏览器强制 GC 验证移除的源码面板可回收，防止登记表因保存节点强引用而造成详情页内存泄漏。
 
+### 8.7 显式 Sidecar 的首次 Timeline（2026-11-10）
+
+真实 `/tmp/pi4/traceB.txt`，72,176 行 / 55,186 个记录调用，使用 Pi 4 vmlinux/源码，`--timeline --enable-fold --filter --func-links --highlight-code --fast`，分别生成默认 single 与显式 sidecar。两者均通过实际 `fgview` HTTP/CSP；Chromium 145.0.7632.6，1500×900，有滚动条，每次全新浏览器进程/context，三轮交替顺序。单文件预存 Timeline 偏好，避免把先绘制整个 Text 的成本混入对比；sidecar 同样停在 Timeline。
+
+| 指标（三轮中位数） | single | sidecar |
+|---|---:|---:|
+| 导航到完整 Timeline + 两次 rAF（ms） | 1873.5 | 340.1 |
+| 首次 loading/canvas 的 rAF 反馈代理（ms） | 1767.0 | 173.9 |
+| 启动观察到的最长主线程长任务（ms） | 186 | 0 |
+| 长任务超过 50ms 的部分之和（ms） | 136 | 0 |
+| 首屏响应体字节（不含 HTTP 头） | 133,883,020 | 16,321,652 |
+| 初始 DOM 元素 | 1,051,768 | 440 |
+| 初始 Text 行 | 72,176 | 0 |
+| 就绪后采样的 renderer RSS 总和（MiB，非峰值） | 757.6 | 201.8 |
+
+Sidecar 外壳 12,055,186 字节，首屏只请求入口、manifest 和完整 Timeline（4,266,049 字节），不请求 Text 或 Compare。两种产物的完整 Timeline（仅排除已有 `stats.build_time` 测量值）、3,210 条源码池及 55,186 项行号索引完全一致；真实/inline/调度/错误等数据未抽样或截断。源码仍内嵌，以上收益来自避免未访问 Text 的传输、解析和 DOM，并非把完整模型移出主线程。
+
+代价必须单列：最后一轮首次 Text 请求 117,562,202 字节并完整挂载 72,176 行，至两次 rAF **8,462.3ms（单次观测）**；之后 Text DOM 常驻，回访没有第二次请求，HTML 字符串缓存已释放。统一过滤也会承担首次完整挂载成本；这不是虚拟列表、源码分块或有界内存。rAF 是反馈/就绪代理，不等于物理呈现；没有观察到 ≥50ms 长任务不代表所有机器/trace 都不会阻塞。浏览器错误和 CSP 违规均为零。
+
+可复测（需 Playwright/Chromium，renderer RSS 采样使用 Linux `/proc`）：
+
+```bash
+python3 tests/benchmark_sidecar.py SAME_TRACE_SINGLE.html SAME_TRACE_SIDECAR_DIRECTORY \
+    --rounds 3 --text --output /tmp/sidecar-startup.json
+```
+
+脚本使用相同 HTTP 查看器、安全策略和保存标签，记录产物 SHA-256、浏览器版本、完整就绪、rAF 反馈、长任务、请求/响应体大小、DOM 和采样 RSS；核对模型数量，拒绝 sidecar 首屏意外加载 Text/Compare，`--text` 检查完整行数、一次请求及回访复用。完整 payload 一致性另由生成/浏览器回归与本次产物比对验证，不将相同数量等同于相同数据。
+
 ## 9. 自测
 
 ```bash
@@ -572,7 +600,11 @@ CI（`.github/workflows/ci.yml`）：每次推送到 master 和每个 PR 在 Pyt
 
 ### 报告数据提供者（2026-11-10）
 
-`assets/report/data.js` 提供 `fgData.read/load/ready/external/length`；Timeline/Compare 不再直接解析 DOM JSON。普通输出保持内嵌数据、离线打开；`fgview` 提供本地只读 HTTP 打开入口，但当前没有生产 sidecar 导出器。Text/源码的按需分块传输、缓存淘汰、自动阈值也未实现；静态 `text-chunk` 绘制包装不是外部数据块。
+`assets/report/data.js` 提供 `fgData.read/load/ready/external/length/release`；Timeline/Compare 不再直接解析 DOM JSON。普通输出保持内嵌数据、离线打开；显式 `--timeline --report-mode sidecar` 由 `fglib/sidecar.py` 导出目录，通过 `fgview DIRECTORY` 打开。Text/源码按块传输、缓存淘汰和自动阈值仍未实现；静态 `text-chunk` 绘制包装不是外部数据块。
+
+Sidecar 第一阶段使用 deferred-full Text：默认 Timeline 首屏只读取外壳/manifest/Timeline，不获取 Text/Compare，也不创建逐调用 Text DOM；源码池及索引仍内嵌。进入 Text、行号/锚点跳转或统一过滤时完整获取 `text.html` 并一次挂载，过滤仍处理完整 trace，且不切走 Timeline。挂载后释放 HTML 字符串缓存，保留完整 DOM，回访不重复初始化/请求；这不限制首次 Text 的成本或后续内存。Text 工具栏在挂载前 inert；保存的 Text 偏好/行号锚点优先。网络错误允许 Retry，Text 初始化失败则要求 Reload report，防止复用半初始化状态；取消后迟到数据不会挂载或激活视图。
+
+产物为 `index.html`、隐藏归属标记、唯一 `data-<report-id>/`（manifest、Timeline、可选 Compare/Text），资源大小/SHA-256/UTF-8 和报告身份逐一校验。`ReportSpool` 的完整单文件计数保留；以不超过 1 MiB 的读取提取资源和改写外壳，不重新拼完整 HTML。新/空目录完整暂存后发布；更新先发布不可变资源、最后原子替换 index.html，失败保留旧入口，入口替换后即使中断也不能删除已提交资源。旧版本为已打开页面保留，增加磁盘占用；拒绝未托管非空目录、文件和输出符号链接。全 trace 解析/符号解析未减少，也不自动判断大小/行数阈值。使用/清理见双语查看器指南。
 
 原型通过 `fgDataManifest` JSON 配置 `{version:1, report_id, manifest:{file,bytes,sha256,format:"json"}}`。ID 为 32 位小写十六进制；manifest 内容为 `{version:1,report_id,resources:{tlData:{file,bytes,sha256,format:"json"}}}`，也可包含 `cmpData` 或 `text` 格式资源。manifest 路径相对 HTML，资源路径相对 manifest 目录。只允许 HTTP(S) 下同目录内的相对路径；禁止跨域、目录逃逸、编码路径和重定向，不带凭据。响应按声明大小有界读取，逐一验证长度、SHA-256、严格 UTF-8、JSON、版本及报告 ID；Web Crypto 需要安全上下文（如 loopback HTTP）。
 

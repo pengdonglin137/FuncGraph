@@ -343,6 +343,8 @@ def format_args_info(args):
             continue
         if (key == 'input_format' and value == 'auto') or (key == 'raw_instance' and not value):
             continue
+        if key == 'report_mode' and value == 'single':
+            continue
         # Timeline options are only listed when used (keeps output identical otherwise)
         if key in ('timeline', 'tail_calls', 'btf', 'no_btf', 'pid', 'comm', 'cpu', 'time_range', 'graph', 'notrace', 'compare', 'overhead', 'no_text_view', 'keep_source', 'config', 'preset', 'no_config', 'source_url', 'source_rev', 'source_cache', 'export') and not value:
             continue

@@ -1,6 +1,7 @@
 """Command line interface: argument parsing, toolchain discovery, pipeline."""
 
 import os
+import shlex
 import subprocess
 import argparse
 import sys
@@ -127,7 +128,9 @@ def build_parser():
                         help='Module source code root directories (can specify multiple paths)')
     parser.add_argument('--base-url', help='Base URL for source code links')
     parser.add_argument('--module-url', action='append', help='Module URL mapping (can be specified multiple times, format: url:mod1,mod2)')
-    parser.add_argument('--output', default='ftrace_viz.html', help='Output HTML file path')
+    parser.add_argument('--output', default='ftrace_viz.html', help='Output HTML file path or sidecar report directory')
+    parser.add_argument('--report-mode', choices=('single', 'sidecar'), default='single',
+                        help='single: offline HTML (default); sidecar: HTTP report directory, requires --timeline; Text loads in full on first use')
     parser.add_argument('--auto-search', action='store_true',
                         help='Automatically search common module directories')
     parser.add_argument('--verbose', action='store_true',
@@ -201,6 +204,12 @@ def build_parser():
 
 def validate_args(args):
     """Check paths/URLs; exits on fatal errors, warns otherwise."""
+    if args.report_mode not in ('single', 'sidecar'):
+        print('Error: report mode must be single or sidecar', file=sys.stderr)
+        sys.exit(1)
+    if args.report_mode == 'sidecar' and not args.timeline:
+        print('Error: --report-mode sidecar requires --timeline', file=sys.stderr)
+        sys.exit(1)
     if args.tail_calls and not (args.timeline and args.vmlinux):
         print('Error: --tail-calls needs --timeline and --vmlinux', file=sys.stderr)
         sys.exit(1)
@@ -553,6 +562,7 @@ def main():
             text_lines,
             vmlinux_path,
             faddr2line_path,
+            report_mode=args.report_mode,
             omit_text=args.no_text_view and args.keep_source,
             module_dirs=module_dirs,  # 传递原始模块目录列表（用于auto-search）
             base_url=args.base_url,
@@ -596,6 +606,9 @@ def main():
     print("=============================\n")
     
     print(f"Generated interactive visualization: {args.output}")
+    if args.report_mode == 'sidecar':
+        print(f"Open with: fgview {shlex.quote(os.path.abspath(args.output))}")
+        print('HTTP directory report: Text loads in full on first use or unified filtering; no automatic size threshold.')
     print(f"Processed {len(parsed_lines)} lines, with {expandable_count} expandable entries")
     print(f"Resolved {module_count} module functions, {kernel_count} kernel functions")
     

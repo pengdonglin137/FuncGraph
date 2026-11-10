@@ -16,9 +16,10 @@ document.documentElement.setAttribute('data-theme', currentTheme);
     if (!script.dataset.views) return;
     const views = (script.dataset.views || '').split(' ');
     let name = script.dataset.defaultView || 'text';
-    if (name === 'text' && !location.hash) {
+    if (script.dataset.deferredText && location.hash) name = 'text';
+    if ((name === 'text' || script.dataset.deferredText) && !location.hash) {
         const saved = localStorage.getItem(_lsPrefix + 'view');
-        if (saved && views.includes(saved)) name = saved;
+        if (saved && (views.includes(saved) || (script.dataset.deferredText && saved === 'text'))) name = saved;
     }
     const initial = window.fgInitialView = { name, style: null };
     if (name === 'text') return;

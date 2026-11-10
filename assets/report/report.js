@@ -193,11 +193,13 @@
             container.classList.add('grouped');
         }
         function fgToggleTextOrder() { fgSetTextOrder(fgTextOrder === 'task' ? 'time' : 'task'); }
-        document.addEventListener('DOMContentLoaded', () => {
+        function fgRestoreTextOrder() {
+            if (fgTextDeferred()) return;
             const b = document.getElementById('textOrderBtn');
             if (b) b.textContent = 'Order: ' + (fgTextOrder === 'task' ? 'by task' : 'time');
             if (fgTextOrder === 'task') fgSetTextOrder('task');
-        });
+        }
+        document.addEventListener('DOMContentLoaded', fgRestoreTextOrder);
         function escapeHtml(s) {
             return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
         }
@@ -245,6 +247,9 @@
         let keyboardSelectedLine = null;
         let keyboardSelectedIndex = -1;
         let allLines = [];
+        let fgTextInitialized = false;
+        let fgFilterGeneration = 0;
+        function fgTextDeferred() { return document.getElementById('content').hasAttribute('data-fg-text'); }
         let textGuideRevision = 0;
         let expandableLines = [];
         let expandableLineIndices = [];
@@ -1063,6 +1068,13 @@
         // ====== Main Filter Functions ======
 
         function applyFilter() {
+            const generation = ++fgFilterGeneration;
+            if (fgTextDeferred()) return Promise.resolve(fgEnsureText()).then(api => {
+                if (generation !== fgFilterGeneration) return null;
+                if (!api) return false;
+                applyFilter();
+                return true;
+            });
             const filterInput = document.getElementById('filterInput');
             const text = filterInput ? filterInput.value.trim() : '';
 
@@ -1156,6 +1168,7 @@
 
         // Clear filter
         function clearFilter() {
+            fgFilterGeneration++;
             const filterInput = document.getElementById('filterInput');
             if (filterInput) filterInput.value = '';
 
@@ -2098,6 +2111,7 @@
             }
 
             // 恢复折叠状态
+            if (fgTextDeferred()) return;
             initTextFolds();
             restoreFoldedState();
         });
@@ -2111,6 +2125,7 @@
                 return;
             }
             if (typeof fgCurrentView === 'function' && fgCurrentView() !== 'text') return;
+            if (fgTextDeferred()) return;
             if ((event.key === 'Enter' || event.key === ' ') &&
                 event.target.closest('.fold-icon, .fold-brace, #foldGuidesBtn, #viewHelpBtn, .keyboard-hint-close')) return;
             
@@ -2664,6 +2679,13 @@
         
         // 处理锚点导航
         function handleAnchorNavigation() {
+            if (fgTextDeferred() && location.hash) {
+                const anchor = location.hash;
+                Promise.resolve(fgSwitchView('text')).then(api => {
+                    if (api && fgCurrentView() === 'text' && location.hash === anchor) handleAnchorNavigation();
+                });
+                return;
+            }
             const hash = window.location.hash.substring(1);
             if (hash) {
                 // 尝试查找锚点元素
@@ -2877,7 +2899,14 @@
             if (summary) summary.remove();
         }
 
-        window.addEventListener('load', function() {
+        function fgInitText(mounted = false) {
+            if (fgTextInitialized || fgTextDeferred()) return;
+            fgTextInitialized = true;
+            if (mounted) {
+                fgRestoreTextOrder();
+                initTextFolds();
+                restoreFoldedState();
+            }
             // 初始化总行数
             // (the old .summary element no longer exists; count the rendered lines)
             total_lines = document.querySelectorAll('.line-container').length;
@@ -2887,22 +2916,6 @@
 
             // 移除自动滚动，保持当前视图位置
             // restoreViewState(); // 注释掉，避免自动滚动
-
-            // 初始化信息面板
-            initInfoPanel();
-
-            // 初始化浮动控件显示状态
-            if (typeof initFloatingControls === 'function') {
-                try { initFloatingControls(); } catch (e) { console.warn('initFloatingControls failed', e); }
-            }
-
-            // 初始化浮动按钮的拖动功能
-            if (typeof initFloatingToggleDrag === 'function') {
-                try { initFloatingToggleDrag(); } catch (e) { console.warn('initFloatingToggleDrag failed', e); }
-            }
-
-            // 监听滚动事件
-            window.addEventListener('scroll', updateProgressBar);
 
             // 初始化键盘导航
             initKeyboardNavigation();
@@ -2922,6 +2935,18 @@
             Object.keys(foldedBlocks).forEach(foldId => {
                 addFoldSummary(foldId);
             });
+        }
+
+        window.addEventListener('load', function() {
+            initInfoPanel();
+            if (typeof initFloatingControls === 'function') {
+                try { initFloatingControls(); } catch (error) { console.warn('initFloatingControls failed', error); }
+            }
+            if (typeof initFloatingToggleDrag === 'function') {
+                try { initFloatingToggleDrag(); } catch (error) { console.warn('initFloatingToggleDrag failed', error); }
+            }
+            window.addEventListener('scroll', updateProgressBar);
+            fgInitText();
         });
         
         // 监听hash变化，支持动态锚点导航

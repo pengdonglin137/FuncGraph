@@ -168,6 +168,7 @@
     }
     window.fgData = {
         read, load, ready,
+        release: name => cache.delete('data:' + name),
         external: name => !!descriptorNode && !embedded(name),
         length: name => {
             const element = embedded(name);

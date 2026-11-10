@@ -8,11 +8,29 @@
     const pending = {};
     let current = 'text';
     let textScroll = 0;
+    let textFailed = false;
     const get = k => (typeof lsGet === 'function' ? lsGet(k) : null);
     const set = (k, v) => { if (typeof lsSet === 'function') lsSet(k, v); };
     if (typeof __tlBoot === 'function' || document.getElementById('tlData')) {
         views.timeline = { el: 'timelineView', data: ['tlData'], init: () => __tlBoot(), steps: () => __tlSteps(),
             staged: window.fgData.external('tlData') || window.fgData.length('tlData') >= 1024 * 1024 };
+    }
+    if (fgTextDeferred()) {
+        views.text = { el: 'content', data: ['fgText'], init: () => {
+            const content = document.getElementById('content');
+            content.innerHTML = window.fgData.read('fgText');
+            content.removeAttribute('data-fg-text');
+            try { fgInitText(true); }
+            catch (error) {
+                textFailed = true;
+                content.setAttribute('data-fg-text', 'true');
+                throw error;
+            }
+            window.fgData.release('fgText');
+            document.querySelector('.controls').inert = false;
+            return {};
+        } };
+        document.querySelector('.controls').inert = true;
     }
     function stopScheduled(state) {
         cancelAnimationFrame(state.frame);
@@ -29,8 +47,9 @@
         return apis[state.name];
     }
     function backToText() {
-        window.fgSwitchView('text');
-        const tab = pageChrome().tabs.find(button => button.dataset.view === 'text');
+        const next = current === 'text' && views.text ? 'timeline' : 'text';
+        window.fgSwitchView(next);
+        const tab = pageChrome().tabs.find(button => button.dataset.view === next);
         if (tab) tab.focus({ preventScroll: true });
     }
     function loadingContent(el, message, failed) {
@@ -45,7 +64,7 @@
         status.textContent = message;
         const back = document.createElement('button');
         back.type = 'button';
-        back.textContent = 'Back to Text';
+        back.textContent = el.id === 'content' ? 'Back to Timeline' : 'Back to Text';
         back.addEventListener('click', backToText);
         box.append(status, back);
         el.appendChild(box);
@@ -57,11 +76,12 @@
         delete pending[state.name];
         state.el.removeAttribute('aria-busy');
         loadingContent(state.el, 'Unable to open ' + state.name + ': ' + error.message, true);
-        if (state.loadingData) {
+        if (state.loadingData || textFailed && state.name === 'text') {
             const retry = document.createElement('button');
             retry.type = 'button';
-            retry.textContent = 'Retry';
-            retry.addEventListener('click', () => window.fgSwitchView(state.name));
+            const reload = textFailed && state.name === 'text';
+            retry.textContent = reload ? 'Reload report' : 'Retry';
+            retry.addEventListener('click', () => reload ? window.location.reload() : window.fgSwitchView(state.name));
             state.el.querySelector('.fg-loading').appendChild(retry);
         }
         state.controller.abort();
@@ -117,6 +137,7 @@
         return (views[name].data || []).filter(resource => !window.fgData.ready(resource));
     }
     function open(name) {
+        if (name === 'text' && textFailed) return null;
         if (apis[name]) return apis[name];
         if (pending[name]) return pending[name].promise;
         const missing = missingData(name);
@@ -136,6 +157,7 @@
         return state.promise;
     }
     function ensure(name) {
+        if (name === 'text' && textFailed) return null;
         const state = pending[name];
         if (state) {
             if (!state.steps) return state.promise;
@@ -155,6 +177,7 @@
         return apis[name];
     }
     window.fgView = ensure;
+    window.fgEnsureText = () => views.text ? open('text') : {};
     // Page chrome, looked up once: querySelectorAll over a 1M-element text view costs ~40 ms per call.
     let chrome = null;
     function pageChrome() {
@@ -174,7 +197,7 @@
     window.fgSwitchView = function (which) {
         if (which !== 'text' && !views[which]) return;
         if (which === current) {
-            if (which === 'text') return;
+            if (which === 'text' && !views.text) return;
             const api = open(which);
             if (apis[which] && apis[which].resize) apis[which].resize();
             return api;
@@ -200,6 +223,7 @@
         set('view', which);
         if (which === 'text') {
             window.scrollTo(0, textScroll);
+            if (views.text) return open('text');
         } else {
             window.scrollTo(0, 0);
             const api = open(which);
@@ -231,6 +255,7 @@
         try {
             const name = initial ? initial.name : (!location.hash && get('view'));
             if (name && name !== 'text' && views[name]) window.fgSwitchView(name);
+            else if (views.text) window.fgSwitchView('text');
         } finally {
             if (initial && initial.style) initial.style.remove();
             delete window.fgInitialView;

@@ -2,7 +2,7 @@
 
 **Raw capture files:** binary trace-cmd containers are auto-detected: `funcgraph trace.dat --timeline --output trace.html`. Native dependencies, pinned submodules, buffer selection and limitations are documented in [Binary raw input](raw-input.md); bare trace_pipe_raw pages are not supported.
 
-Report loading: ordinary reports remain self-contained and work offline. Use `fgview report.html` for optional read-only local HTTP access; see the [viewer guide](viewer.md). Timeline/Compare use a shared internal data provider with cancellable loading, integrity checks and retry for external-resource prototypes. There is no CLI sidecar exporter yet; Text/source chunking and automatic switching are not implemented.
+Report loading: ordinary reports remain self-contained and work offline. Opt into `funcgraph TRACE --timeline --report-mode sidecar --output REPORT_DIRECTORY`, then use `fgview REPORT_DIRECTORY` for large-report deferred delivery. Timeline opens without Text rows; Compare loads on demand. Text loads **in full** on first use, a trace-line jump/hash anchor, or unified filtering, preserving complete-trace semantics. Saved Text preferences and line anchors override the initial Timeline view. Sources remain embedded; no Text virtualization, source chunking or automatic threshold is implemented. See the [viewer guide](viewer.md) for sharing, updates and error recovery.
 
 This guide covers the whole workflow from capturing a trace to reading the report, and explains every field and color in each view. For the full option list run `python3 funcgraph.py --help`; for implementation details see [design.md](design.md). 中文版：[guide.cn.md](guide.cn.md).
 
@@ -213,6 +213,7 @@ With either origin the tool checks whether the source matches the vmlinux and re
 | `--overhead CHILD[,SELF]` | tracing overhead estimate in ns; default: read from the header written by `fgcapture.sh --calibrate` |
 | `--export FILE.json\|FILE.csv` | also export the analyses (section 9) |
 | `--output FILE` | output HTML, default `ftrace_viz.html` |
+| `--report-mode single\|sidecar` | Offline file (default) or a dedicated HTTP report directory; requires Timeline; Text loads in full on first use |
 
 **Pre-filter**: applied before conversion; call trees are kept whole, never cut in the middle.
 
@@ -1039,7 +1040,7 @@ The screenshot pauses the real sample's first preparation stage; it does not dep
 
 Preparation stays on the **main thread**, yielding between model phases and batches of 8,192 inline calls. The cooperative 8 ms work budget is not a hard limit: JSON parsing, sorting, individual phases, style/layout and garbage collection can still block. Painting the status and allowing cancellation do **not** mean the canvas is ready, nor guarantee a shorter total startup time. The full Text DOM is still present. For a large report without saved state, pre-filtering or `--no-text-view` remains recommended. See the [design measurements](design.md#8-性能数据) for separate feedback, full-readiness and long-task timings.
 
-Report generation now streams UTF-8 sections instead of assembling one complete HTML string. It publishes the file atomically after a successful render; a failure preserves the previous report. The output must be a regular file (not `/dev/null`, a FIFO or a directory), and the destination directory must be writable. Existing file permissions and output symlinks are preserved. The legacy Python `generate_html()` string API remains available. This is groundwork for selecting sidecar only when the **complete single-file HTML byte count strictly exceeds a configurable threshold**; automatic selection, a default threshold and text virtualization are not available yet. It does not change browser loading. See the [generation measurements](design.md#83-分段写出的生成阶段内存2026-11-10), including the near-unchanged peak RSS with kernel symbols.
+Default single-file generation streams UTF-8 sections and atomically publishes after rendering; failures preserve the previous file. Its output must be a regular file (not `/dev/null`, a FIFO or a directory); the destination directory must be writable. Existing file permissions/output symlinks are preserved. The legacy `generate_html()` string API remains available. Explicit `--report-mode sidecar` instead publishes a dedicated directory with deferred-full Text delivery; see the [viewer guide](viewer.md). No automatic size/line threshold or Text virtualization is implemented. Generation still resolves the complete trace; see the [generation measurements](design.md#83-分段写出的生成阶段内存2026-11-10), including near-unchanged peak RSS with kernel symbols.
 
 **The timeline has no gaps and says compressed time**
 
