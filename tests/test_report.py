@@ -109,6 +109,22 @@ class ReportTest(unittest.TestCase):
                        'Timeline:</div><div class="info-value">Yes'):
             self.assertTrue(marker in self.html_tl, f'marker {marker!r} missing')
 
+    def test_recorded_call_count_is_in_header_not_timeline_tab(self):
+        self.assertRegex(self.html_tl, r'header-calls[^>]*>336 recorded calls</span>')
+        self.assertIn('excludes inline and untraced context frames', self.html_tl)
+        self.assertRegex(self.html_tl, r'data-view="timeline"[^>]*>Timeline</button>')
+        self.assertNotIn('class="header-calls"', self.html)
+
+    def test_timeline_sources_reuse_resolved_functions_and_call_sites(self):
+        data = helpers.json_script(self.html_tl, 'tlData')
+        positions = data['sources']
+        self.assertTrue(positions['functions'])
+        self.assertTrue(positions['callers'])
+        for position in positions['functions'].values():
+            self.assertEqual(position, ['kernel/fake.c', 2, 'https://example.org/src/kernel/fake.c#L2'])
+        for chain in positions['callers'].values():
+            self.assertEqual(chain[0][1:], ['kernel/fake.c', 2, 'https://example.org/src/kernel/fake.c#L2'])
+
     def test_view_bootstrap_precedes_text_and_keeps_storage_namespace(self):
         self.assertIn('data-views="timeline" data-default-view="text"', self.html_tl)
         self.assertIn('data-views="" data-default-view="text"', self.html)

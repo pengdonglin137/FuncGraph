@@ -12,7 +12,7 @@ from collections import defaultdict
 
 from .assets import COMPARE_CSS, COMPARE_JS, REPORT_CSS, REPORT_DATA_JS, REPORT_JS, REPORT_TREE_CSS, TIMELINE_CSS, VIEWS_BOOT_JS, VIEWS_CSS, VIEWS_EARLY_JS, read_asset, timeline_script
 from .constants import APP_AUTHOR, APP_TITLE, APP_VERSION, ERROR_CODE_MAP, PROJECT_DIR
-from .inline import timeline_inline_map
+from .inline import parse_chain, timeline_inline_map
 from .output import ReportSpool
 from .sources import rewrite as rewrite_sources
 from .highlight import highlight_ftrace_line
@@ -112,6 +112,12 @@ class HtmlGenerator:
         # 计算统计数据
         total_lines = len(self.parsed_lines)
         expandable_entries = sum(1 for l in self.parsed_lines if l['expandable'])
+        call_stats = ''
+        if self.timeline_json is not None:
+            call_stats = ('<span class="header-sep">·</span> '
+                          '<span class="header-calls" title="Recorded function calls, before display filters; '
+                          'excludes inline and untraced context frames. Not a count of unique functions or trace lines.">'
+                          f'{self.timeline_json.get("n", 0):,} recorded calls</span>')
 
         # 生成信息面板内容
         info_items = format_args_info(self.script_args)
@@ -184,6 +190,7 @@ class HtmlGenerator:
             <span class="header-sep">·</span>
             <span class="header-stats">
                 <span>{total_lines} lines</span>
+                {call_stats}
                 <span class="header-sep">·</span>
                 <span>{expandable_entries} expandable</span>
                 <span class="header-sep">·</span>
@@ -302,7 +309,7 @@ class HtmlGenerator:
         """[(name, label, badge, container_id, css, data_id, data, js)] for the enabled views."""
         v = []
         if self.timeline_json:
-            v.append(('timeline', 'Timeline', f"{self.timeline_json.get('n', 0)} calls", 'timelineView',
+            v.append(('timeline', 'Timeline', '', 'timelineView',
                       read_asset(TIMELINE_CSS), 'tlData', self.timeline_json, timeline_script()))
         if self.compare_json:
             v.append(('compare', 'Compare', f"vs {self.compare_json['names'][0]}", 'compareView',
@@ -322,8 +329,9 @@ class HtmlGenerator:
         h = ('        <div class="view-tabs">\n'
              '            <button class="view-tab active" data-view="text" onclick="fgSwitchView(\'text\')">Text</button>\n')
         for name, label, badge, *_ in views:
+            badge_html = f'<span class="tab-badge">{html.escape(badge)}</span>' if badge else ''
             h += (f'            <button class="view-tab" data-view="{name}" onclick="fgSwitchView(\'{name}\')">'
-                  f'{label}<span class="tab-badge">{html.escape(badge)}</span></button>\n')
+                  f'{label}{badge_html}</button>\n')
         return h + '        </div>\n'
 
     def _view_containers(self):
@@ -354,11 +362,44 @@ class HtmlGenerator:
     def _timeline_scripts(self):
         return ''.join(fragment for name, fragment in self._iter_view_parts())
 
+    def _timeline_position(self, source_file, line, module=None):
+        line = int(line)
+        clean_path = clean_file_path(source_file, self.kernel_src, self.module_srcs)
+        path = get_relative_path(clean_path, self.kernel_src)
+        base = self.combined_module_url_map.get(module, self.default_module_url) if module else self.base_url
+        return [path, line, build_source_url(base, path, line) if base else '']
+
+    def _attach_timeline_sources(self):
+        timeline = self.timeline_json
+        if timeline is None or 'sources' in timeline:
+            return
+        columns, strings = timeline['cols'], timeline['strings']
+        functions, callers = {}, {}
+        modules = columns.get('module')
+        names = set(zip(columns['name'], modules)) if modules else {(name, -1) for name in columns['name']}
+        for name, module_index in sorted(names):
+            position = self.func_name_results.get(strings[name])
+            if position and position[0] != '??' and position[0] and re.fullmatch(r'[1-9][0-9]*', str(position[1])):
+                module = strings[module_index] if module_index >= 0 else None
+                functions[f'{name}:{module_index}'] = self._timeline_position(*position, module)
+        for caller in sorted(set(columns.get('caller') or [])):
+            if caller < 0:
+                continue
+            address = strings[caller]
+            chain = parse_chain(self.func_locations_map.get(self._adjust_func_info(address, remove_suffix=False)))
+            module_match = re.search(r'\[([^]]+)\]', address)
+            module = module_match.group(1) if module_match else None
+            if chain and all(frame[2] > 0 and frame[1] != '??' for frame in chain):
+                callers[str(caller)] = [[frame[0]] + self._timeline_position(frame[1], frame[2], module) for frame in chain]
+        if functions or callers:
+            timeline['sources'] = {'functions': functions, 'callers': callers}
+
     def _iter_view_parts(self):
         views = self._views()
         if not views:
             return
         self._attach_inline()
+        self._attach_timeline_sources()
         for x in views:
             data = json.dumps(x[6], separators=(',', ':')).replace('<', '\\u003c')
             yield 'view_open:' + x[5], f'    <script type="application/json" id="{x[5]}">'

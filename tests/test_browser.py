@@ -830,7 +830,7 @@ class BrowserSmokeTest(unittest.TestCase):
         data.update(n=count, mode=mode, strings=strings,
                     tasks=[dict(pid=1, comm='range-test', kind=0, cpu=0)],
                     errs=[], chains=[], offcpu=[], resched=[], wakeups=[], irqoff=[],
-                    sections=[], atomic=[], inline={}, overhead=None)
+                    sections=[], atomic=[], inline={}, sources={}, overhead=None)
         data['cols'] = dict(task=[0] * count, depth=[0] * count,
                             start=[start - (starts[index - 1] if index else 0)
                                    for index, start in enumerate(starts)],
@@ -2257,6 +2257,112 @@ class BrowserSmokeTest(unittest.TestCase):
         self.assertRegex(at, r'\.[ch]:\d+$')
         self.assertTrue(self.ev("(document.querySelector('.tl-cs-at a') || {}).href || ''").startswith('https://example.org/src/'))
 
+    def test_timeline_tab_has_no_counter_and_header_explains_recorded_calls(self):
+        self.assertEqual(self.page.locator('[data-view=timeline]').inner_text(), 'Timeline')
+        count = self.ev("fgData.read('tlData').n")
+        self.assertEqual(self.page.locator('.header-calls').inner_text(), f'{count:,} recorded calls')
+        self.assertIn('Not a count of unique functions or trace lines', self.page.locator('.header-calls').get_attribute('title'))
+        self.open_timeline()
+        self.page.fill('.tl-ftext', 'no such function')
+        self.page.press('.tl-ftext', 'Enter')
+        self.assertEqual(self.page.locator('.header-calls').inner_text(), f'{count:,} recorded calls')
+
+    def test_call_stack_source_links_are_separate_native_links_without_text_dom(self):
+        self.open_timeline()
+        selected = self.ev('''() => {
+            document.getElementById('content').replaceChildren();
+            const data = fgData.read('tlData');
+            const index = data.cols.parent.findIndex(parent => parent >= 0);
+            fgView('timeline').probe().select(index);
+            return index;
+        }''')
+        section = self.page.locator('[data-context-list=stack]')
+        rows = section.locator('[data-context-kind=traced]')
+        self.assertGreaterEqual(rows.count(), 2)
+        self.assertEqual(rows.count(), section.locator('.tl-context-source a').count())
+        self.assertEqual(section.locator('button a').count(), 0)
+        self.assertIn('entry', rows.last.locator('.tl-context-source').inner_text())
+        self.assertIn('call site', rows.first.locator('.tl-context-source').inner_text())
+        exported = self.download_csv('[data-context-export=stack]')
+        self.assertEqual(exported[-1]['source_kind'], 'function_entry')
+        self.assertEqual(exported[0]['source_kind'], 'call_site')
+        self.assertTrue(all(row['source_url'].startswith('https://example.org/src/') for row in exported))
+        self.page.context.route('https://example.org/**', lambda route: route.fulfill(body='source fixture'))
+        with self.page.expect_popup() as popup:
+            rows.first.locator('.tl-context-source a').press('Enter')
+        popup.value.wait_for_load_state()
+        self.assertIn('kernel/fake.c', popup.value.url)
+        popup.value.close()
+        self.assertEqual(self.ev("fgView('timeline').probe().sel()"), selected)
+
+    def test_call_stack_unresolved_sources_are_explicit_and_unsafe_urls_stay_text(self):
+        self.open_range_data(['root', 'leaf'], starts=[0, 1], durations=[10000, 1000], parents=[-1, 0],
+                             columns={'depth': [0, 1]},
+                             extra={'sources': {'functions': {'0:-1': ['<b>root.c</b>', 10, 'javascript:alert(1)']}, 'callers': {}}})
+        self.ev("fgView('timeline').probe().select(1)")
+        section = self.page.locator('[data-context-list=stack]')
+        self.assertIn('<b>root.c</b>:10', section.inner_text())
+        self.assertIn('Source unavailable', section.inner_text())
+        self.assertEqual(section.locator('.tl-context-source a, .tl-context-source b').count(), 0)
+
+    def test_dive_deeper_skips_leaf_children_and_back_restores_the_actual_path(self):
+        self.open_range_data(['root', 'first_leaf', 'branch', 'other_leaf', 'deep_branch', 'last_leaf'],
+                             starts=[0, 1, 2, 3, 4, 5], durations=[10000, 0, 8000, 0, 6000, 1000],
+                             parents=[-1, 0, 0, 2, 2, 4], columns={'depth': [0, 1, 1, 2, 2, 3]})
+        self.ev("fgView('timeline').probe().select(0)")
+        self.assertTrue(self.page.locator('[data-call-nav=back]').is_disabled())
+        self.page.locator('[data-call-nav=child]').press('Enter')
+        self.assertEqual(self.ev("fgView('timeline').probe().sel()"), 1)
+        self.assertTrue(self.page.locator('[data-call-nav=dive]').is_disabled())
+        self.page.locator('[data-call-nav=back]').press('Space')
+        for expected in [2, 4, 5]:
+            self.page.locator('[data-call-nav=dive]').press('Enter')
+            self.assertEqual(self.ev("fgView('timeline').probe().sel()"), expected)
+        for expected in [4, 2, 0]:
+            self.page.locator('[data-call-nav=back]').press('Enter')
+            self.assertEqual(self.ev("fgView('timeline').probe().sel()"), expected)
+        self.assertTrue(self.page.locator('[data-call-nav=back]').is_disabled())
+        self.ev("fgView('timeline').probe().select(4)")
+        self.page.locator('[data-call-nav=parent]').press('Enter')
+        self.page.locator('[data-call-nav=back]').press('Enter')
+        self.assertEqual(self.ev("fgView('timeline').probe().sel()"), 4)
+        previous = self.page.locator('[data-call-nav=back]').get_attribute('title')
+        self.page.click('[data-act=adj]')
+        self.ev("fgView('timeline').probe().inline(true)")
+        self.ev("fgNotifyFilter('keep selected', new Set([5]))")
+        self.assertEqual(self.page.locator('[data-call-nav=back]').get_attribute('title'), previous)
+
+    def test_stack_sources_distinguish_inline_sites_entries_and_mismatched_parents(self):
+        sources = {'functions': {'0:-1': ['root.c', 1, 'https://example.org/root#L1'],
+                                 '1:-1': ['leaf.c', 40, 'https://example.org/leaf#L40']},
+                   'callers': {'2': [['root', 'root.c', 10, 'https://example.org/root#L10'],
+                                     ['helper', 'helper.h', 20, 'https://example.org/helper#L20']]}}
+        self.open_range_data(['root', 'leaf'], starts=[0, 100], durations=[10000, 1000], parents=[-1, 0],
+                             callers=[None, 'root+0x1/0x20'], columns={'depth': [0, 1]},
+                             extra={'inline': {'2': [['root', 'root.c', 10], ['helper', 'helper.h', 20]]}, 'sources': sources})
+        self.ev("fgView('timeline').probe().select(1)")
+        section = self.page.locator('[data-context-list=stack]')
+        self.assertEqual(section.locator('.tl-context-source a').count(), 3)
+        self.assertEqual(section.locator('.tl-source-kind').all_text_contents(), ['call site', 'call site', 'entry'])
+        rows = self.download_csv('[data-context-export=stack]')
+        self.assertEqual([row['source_line'] for row in rows], ['10', '20', '40'])
+        self.assertEqual([row['kind'] for row in rows], ['traced', 'inline', 'traced'])
+        self.assertEqual(section.locator('button a').count(), 0)
+        synthetic = self.ev("() => { const probe = fgView('timeline').probe(); probe.select(probe.N); return probe.N; }")
+        self.page.locator('[data-call-nav=child]').click()
+        self.page.locator('[data-call-nav=back]').click()
+        self.assertEqual(self.ev("fgView('timeline').probe().sel()"), synthetic)
+        self.assertEqual(self.page.locator('[data-context-list=inline] .tl-context-source a').count(), 2)
+        self.ev("fgSwitchView('text')")
+        self.page.reload()
+        sources['callers']['2'][0][0] = 'different_parent'
+        self.open_range_data(['root', 'leaf'], starts=[0, 100], durations=[10000, 1000], parents=[-1, 0],
+                             callers=[None, 'root+0x1/0x20'], columns={'depth': [0, 1]}, extra={'sources': sources})
+        self.ev("fgView('timeline').probe().select(1)")
+        root = self.page.locator('[data-context-list=stack] [data-context-kind=traced]').first
+        self.assertIn('entry', root.inner_text())
+        self.assertEqual(root.locator('a').get_attribute('href'), 'https://example.org/root#L1')
+
     def test_detail_source_position_does_not_depend_on_text_dom(self):
         self.open_timeline()
         selected = self.ev("""() => {
@@ -2286,6 +2392,7 @@ class BrowserSmokeTest(unittest.TestCase):
             }""")
             self.assertGreaterEqual(selected, 0)
             self.assertTrue(self.ev("Object.keys(fgData.read('tlData').inline).length > 0"))
+            self.assertGreater(self.page.locator('[data-context-list=stack] [data-context-kind=inline] .tl-context-source a').count(), 0)
             self.assertEqual(self.page.locator('#content .expandable').count(), 0)
             self.assertGreater(self.page.locator('.tl-cs .source-line').count(), 0)
             self.assertEqual(self.page.locator('.tl-cs .src-frame').count(), 2)
@@ -2939,7 +3046,8 @@ class BrowserSmokeTest(unittest.TestCase):
                     self.assertLessEqual(close['x'] + close['width'], width)
                     self.assertEqual(self.ev("getComputedStyle(document.querySelector('.tl-slice-head')).top"), 'auto' if width <= 640 or height <= 600 else '0px')
                     self.assertEqual(self.page.locator('.tl-context-text b').count(), 0)
-                    self.assertLessEqual(self.page.locator('.tl-context-row').first.evaluate('(node) => node.offsetHeight'), 40)
+                    self.assertLessEqual(self.page.locator('.tl-context-select').first.evaluate('(node) => node.offsetHeight'), 40)
+                    self.assertLessEqual(self.page.locator('.tl-context-row').first.evaluate('(node) => node.offsetHeight'), 64)
                     self.assertLessEqual(self.ev('document.documentElement.scrollWidth'), width)
                     self.assertTrue(self.page.locator('[data-context-export=stack]').is_enabled())
 

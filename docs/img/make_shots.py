@@ -242,9 +242,10 @@ def tl_detail(b, rep):
     r = box(pg, '.tl-resizer')
     pg.mouse.move(r['x'] + r['width'] / 2, r['y'] + 4)
     pg.mouse.down()
-    pg.mouse.move(r['x'] + r['width'] / 2, r['y'] - 180, steps=4)
+    pg.mouse.move(r['x'] + r['width'] / 2, r['y'] - 260, steps=4)
     pg.mouse.up()
     pg.wait_for_timeout(400)
+    pg.locator('[data-context-list=stack] .tl-context-source a').first.hover()
     d = box(pg, '.tl-detail')
     shot(pg, 'tl_detail', {'x': 0, 'y': d['y'] - 70, 'width': W, 'height': 980 - d['y'] + 70})
 

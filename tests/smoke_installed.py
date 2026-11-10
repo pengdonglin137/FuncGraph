@@ -83,6 +83,8 @@ class InstalledPackageTest(unittest.TestCase):
         self.assertIsNotNone(match)
         data = json.loads(match.group(1))
         self.assertEqual(data['n'], 2)
+        self.assertIn('2 recorded calls</span>', report)
+        self.assertRegex(report, r'data-view="timeline"[^>]*>Timeline</button>')
         self.assertTrue(data['caps']['sched_events'])
         self.assertTrue(data['caps']['retaddr'])
 

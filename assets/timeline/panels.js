@@ -4,12 +4,14 @@ function kv(k, v, cls) { return '<span class="k">' + k + '</span><span class="v'
 function lineLink(n, label) { return '<a class="tl-link" data-line="' + n + '">' + (label || 'line ' + n) + '</a>'; }
 
 function callNavigationHtml(index) {
-    const controls = [['parent', '↑ Parent', 'Recorded parent', '↑'],
+    const controls = [['back', '← Back', 'Previously selected call (selection history)', ''],
+        ['parent', '↑ Parent', 'Recorded parent', '↑'],
         ['child', isSyn(index) ? '↓ First recorded call' : '↓ First child', 'First recorded child', '↓'],
+        ['dive', '↓ Dive deeper', 'First child with recorded children, or first child if all are leaves', ''],
         ['previous', '‹ Previous', 'Previous recorded sibling / task root', '['],
         ['next', 'Next ›', 'Next recorded sibling / task root', ']']];
     return '<div class="tl-call-nav" role="group" aria-label="Recorded call navigation">' + controls.map(([action, label, title, key]) => {
-        const target = callTarget(index, action), description = title + ' (' + key + '): ' + (target >= 0 ? nameOf(target) : 'none');
+        const target = callTarget(index, action), description = title + (key ? ' (' + key + ')' : '') + ': ' + (target >= 0 ? nameOf(target) : 'none');
         return '<button class="tl-btn" data-call-nav="' + action + '" title="' + esc(description) + '" aria-label="' + esc(description) + '"' +
             (target < 0 ? ' disabled' : '') + '>' + label + '</button>';
     }).join('') + '</div>';
@@ -32,7 +34,17 @@ function detailParents(start, stop) {
     if (status === 'complete' && stop !== undefined && ids[ids.length - 1] !== stop) status = 'missing_chain_top';
     return { ids: ids.reverse(), status };
 }
-function detailRealRow(index, level) { return { kind: 'traced', name: nameOf(index), index, owner: index, depth: sDepth[index], level }; }
+function detailSourceChain(index) {
+    return D.sources && D.sources.callers && D.sources.callers[sCaller && sCaller[index]] || inlChain(index);
+}
+function detailSourceFields(position, basis) {
+    return position ? { file: position[0], line: position[1], href: position[2] || '', sourceKind: basis } : {};
+}
+function detailRealRow(index, level, site) {
+    const position = D.sources && D.sources.functions && D.sources.functions[sName[index] + ':' + (sMod ? sMod[index] : -1)];
+    return { kind: 'traced', name: nameOf(index), index, owner: index, depth: sDepth[index], level,
+        ...detailSourceFields(site ? site.slice(1) : position, site ? 'call_site' : 'function_entry') };
+}
 function detailList(kind, title, count, createRows, status) {
     const list = { kind, title, count, createRows, status: status || 'complete', rows: [], visible: Math.min(DETAIL_PAGE, count) };
     list.iterator = createRows();
@@ -49,29 +61,33 @@ function detailContextData(root) {
         }));
         if (!isGhost(root)) data.lists.set('inline', detailList('inline', 'Inline chain at the call site', facts.ch.length, function* () {
             for (let position = 0; position < facts.ch.length; position++) {
-                const frame = facts.ch[position];
+                const frame = (detailSourceChain(facts.kids[0]) || facts.ch)[position];
                 yield { kind: position ? 'inline' : 'call_site', name: frame[0], owner: facts.kids[0], level: position,
-                    file: frame[1], line: frame[2], current: position === facts.k };
+                    ...detailSourceFields(frame.slice(1), 'call_site'), current: position === facts.k };
             }
         }));
     } else {
         const path = detailParents(root), first = path.ids[0];
         const outside = path.status === 'complete' && sDepth[first] > 0 ? sDepth[first] : 0;
         let count = outside ? 1 : 0;
-        for (const index of path.ids) count += 1 + Math.max(0, gapOf(index)) + Math.max(0, (inlChain(index) || []).length - 1);
+        for (const index of path.ids) count += 1 + Math.max(0, gapOf(index)) + Math.max(0, (detailSourceChain(index) || []).length - 1);
         data.lists.set('stack', detailList('stack', 'Call stack (' + path.ids.length + ' recorded frames)', count, function* () {
             let level = 0;
             if (outside) yield { kind: 'outside', name: '… ' + outside + ' frame(s) outside trace window', owner: first, level: 0, missing: outside };
-            for (const index of path.ids) {
+            for (let position = 0; position < path.ids.length; position++) {
+                const index = path.ids[position];
                 const gap = Math.max(0, gapOf(index));
+                const chain = detailSourceChain(index);
                 for (let offset = 0; offset < gap; offset++) yield { kind: 'untraced', name: offset === gap - 1 ? callerFn(index) : '?',
-                    owner: index, depth: sDepth[index] - gap + offset, level: level++ };
-                const chain = inlChain(index);
+                    owner: index, depth: sDepth[index] - gap + offset, level: level++,
+                    ...detailSourceFields(offset === gap - 1 && chain && chain[0][0] === callerFn(index) ? chain[0].slice(1) : null, 'call_site') };
                 if (chain) for (let frameIndex = 1; frameIndex < chain.length; frameIndex++) {
                     const frame = chain[frameIndex];
-                    yield { kind: 'inline', name: frame[0], owner: index, level: level++, file: frame[1], line: frame[2] };
+                    yield { kind: 'inline', name: frame[0], owner: index, level: level++, ...detailSourceFields(frame.slice(1), 'call_site') };
                 }
-                yield detailRealRow(index, level++);
+                const child = path.ids[position + 1], childChain = child === undefined || gapOf(child) ? null : detailSourceChain(child);
+                const site = childChain && childChain[0][0] === nameOf(index) ? childChain[0] : null;
+                yield detailRealRow(index, level++, site);
             }
         }, path.status));
         if (eChain[root] >= 0) {
@@ -97,13 +113,28 @@ function detailRowsHtml(list, rows) {
     return rows.map(row => {
         const traced = row.kind === 'traced', current = traced ? row.index === detailContext.root : row.current;
         const label = traced ? list.kind === 'error' ? String(row.depth) : fmtDur(durOf(row.index)) : row.kind === 'outside' ? '' : row.kind === 'call_site' ? 'call site' : row.kind;
-        const source = row.file ? row.file + ':' + row.line : '';
-        const suffix = list.kind === 'error' ? retOf(row.index) || '' : source;
+        const suffix = list.kind === 'error' ? retOf(row.index) || '' : '';
         const title = row.name + (suffix ? ' — ' + suffix : '') + (row.kind === 'untraced' ? ' (not traced: skipped depth)' : '');
-        return '<' + (traced ? 'button type="button"' : 'div') + ' class="tl-crumb tl-context-row' + (current ? ' cur' : '') +
-            (traced ? '' : ' inl') + '" data-context-kind="' + row.kind + '"' + (traced ? ' data-slice="' + row.index + '"' : '') +
-            ' title="' + esc(title) + '"><span class="tl-context-value">' + esc(label) + '</span><span class="tl-context-text" style="padding-left:' +
-            Math.min(row.level, 6) * 4 + 'px">' + esc(row.name) + (suffix ? ' <span class="d">' + esc(suffix) + '</span>' : '') + '</span></' + (traced ? 'button' : 'div') + '>';
+        const main = '<' + (traced ? 'button type="button"' : 'div') + ' class="tl-crumb tl-context-select' + (current ? ' cur' : '') + '"' + (traced ? ' data-slice="' + row.index + '"' : '') +
+            ' title="' + esc(title) + '"><span class="tl-context-value">' + esc(label) + '</span><span class="tl-context-text">' + esc(row.name) +
+            (suffix ? ' <span class="d">' + esc(suffix) + '</span>' : '') + '</span></' + (traced ? 'button' : 'div') + '>';
+        let source = '';
+        if (row.kind !== 'outside') {
+            const at = row.file ? row.file + ':' + row.line : 'Source unavailable';
+            const basis = row.file ? row.sourceKind === 'function_entry' ? 'entry' : 'call site' : '';
+            let href = '';
+            if (row.href) {
+                try {
+                    const url = new URL(row.href, document.baseURI);
+                    if (['http:', 'https:', 'file:', 'vscode:', 'vscodium:'].includes(url.protocol)) href = url.href;
+                } catch (error) {}
+            }
+            source = '<div class="tl-context-source">' + (basis ? '<span class="tl-source-kind">' + basis + '</span>' : '') +
+                '<' + (href ? 'a href="' + esc(href) + '" target="_blank" rel="noopener noreferrer"' : 'span') +
+                ' title="' + esc(at + (row.file && !href ? ' — no source URL configured' : '')) + '">' + esc(at) + '</' + (href ? 'a' : 'span') + '></div>';
+        }
+        return '<div class="tl-context-row' + (traced ? '' : ' inl') + '" data-context-kind="' + row.kind + '"' +
+            ' style="padding-left:' + Math.min(row.level, 6) * 4 + 'px">' + main + source + '</div>';
     }).join('');
 }
 function detailListHtml(kind) {
@@ -128,14 +159,16 @@ function appendDetailRows(kind) {
 }
 function detailContextHint() {
     return '<div class="tl-context-note">Context is unfiltered. Durations follow Overhead; frame durations overlap and must not be summed. ' +
-        'Inline, untraced and outside-window rows are context, not extra measured calls.</div>';
+        'Inline, untraced and outside-window rows are context, not extra measured calls. ' +
+        'Source: call site = position inside the frame; entry = resolved function entry, not the calling line. Unresolved locations are not guessed.</div>';
 }
 function exportDetailCsv(kind) {
     const data = detailContext, list = data.lists.get(kind), unit = MODE === 'count' ? 'units' : 'ns', scale = MODE === 'count' ? 1000 : 1;
     const columns = ['list', 'position', 'kind', 'function', 'recorded_slice_index', 'owner_slice_index', 'depth', 'display_level',
         'trace_line', 'exit_trace_line', 'task_index', 'pid', 'comm', 'cpu', 'return', 'call_site', 'args', 'module', 'source_file', 'source_line',
         'outside_frame_count', 'duration_' + unit, 'self_' + unit, 'start_' + unit, 'end_' + unit, 'time_mode', 'duration_basis', 'position_basis',
-        'selected_slice_index', 'chain_index', 'chain_origin_slice', 'chain_top_slice', 'chain_reported_frames', 'errno', 'fate', 'path_status'];
+        'selected_slice_index', 'chain_index', 'chain_origin_slice', 'chain_top_slice', 'chain_reported_frames', 'errno', 'fate', 'path_status',
+        'source_kind', 'source_url'];
     function* rows() {
         let position = 0;
         for (const row of list.createRows()) {
@@ -150,7 +183,7 @@ function exportDetailCsv(kind) {
                 traced ? MODE === 'count' ? 'call_order' : adjOn ? 'overhead_subtracted_estimate' : 'measured_duration' : '',
                 traced ? TIMED ? 'relative_timestamp_span' : MODE === 'count' ? 'call_order_geometry' : 'packed_geometry' : '',
                 data.root, chainIndex >= 0 ? chainIndex : '', chain ? chain[0] : '', chain ? chain[1] : '', chain ? chain[4] : '',
-                chain ? chain[2] : '', chain ? ERROR_FATES[chain[3]] : '', list.status];
+                chain ? chain[2] : '', chain ? ERROR_FATES[chain[3]] : '', list.status, row.sourceKind || '', row.href || ''];
         }
     }
     downloadTimelineCsv('funcgraph-context-' + kind + '-' + (MODE === 'count' ? 'count' : adjOn ? 'adjusted' : 'raw') + '.csv', columns, rows());

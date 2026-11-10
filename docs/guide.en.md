@@ -278,7 +278,7 @@ Rules:
 
 *Text view (sample.html, filter `graph:udp_sendmsg`, first line expanded). 1 header, 2 tabs, 3 toolbar, 4 filter (5.7), 5 one trace line (5.2), 6 the expanded source block as an inline chain (5.5).*
 
-- **Header**: total lines, expandable lines, resolved kernel functions; `Filtered: N` while a filter is active. On the right: **Theme** (dark/light), **?** (shortcuts) and **ⓘ** (info panel: environment, processing times, source origin and version check, the options used).
+- **Header**: total lines, expandable lines and resolved kernel functions; with Timeline enabled, `N recorded calls` now appears here rather than on the Timeline tab. This is the report's total recorded call count, not unique functions or trace lines (one call may have separate entry/exit lines). It excludes synthetic inline/untraced frames and does not change with display filters. It indicates report size and capture volume, not pending work; hover for its definition. Filter matches remain separate in each view, with `Filtered: N` while a Text filter is active. On the right: **Theme** (dark/light), **?** (shortcuts) and **ⓘ** (info panel: environment, processing times, source origin and version check, the options used).
 - **Tabs**: Text / Timeline / Compare.
 - The header stays within the window width even when trace lines are very long. On narrow screens, statistics move to a separate row so Theme, ? and ⓘ remain reachable. Trace content keeps its original formatting and can still scroll horizontally.
 - **Top toolbar** (stays at the top while scrolling):
@@ -585,7 +585,7 @@ Inline/untraced frames stay bright if any recorded child matches the **intersect
 
 ![tl_detail](img/tl_detail.png)
 
-*Detail panel of `udp_sendmsg` (dragged taller): values, the call site `net/socket.c:800` and its source block on the left; the time breakdown, call stack (inline frames in italics) and children on the right.*
+*Detail panel of `udp_sendmsg` (dragged taller): values, the call site `net/socket.c:800` and its source block on the left; the time breakdown, call stack with clickable source positions (inline frames in italics) and children on the right. Hover emphasizes a source link; the navigation row supports history back and repeated descent.*
 
 **Hovering a slice** shows:
 
@@ -629,6 +629,10 @@ Inline/untraced frames stay bright if any recorded child matches the **intersect
 - Links at the top right: **Duration distribution (H)** (7.2) and **Open in text view ↵**.
 
 **Recorded call navigation**: the detail panel's **↑ Parent**, **↓ First child**, **‹ Previous** and **Next ›** buttons have the same behavior as ↑/↓/`[`/`]`. Navigation follows the nearest **recorded real parent**, not the adjacent visual depth row: children with different depth gaps remain siblings, while calls belonging to another parent are never substituted. Calls without a recorded parent are navigable roots within their own task, not proof of a common runtime caller. Order follows the original slice indexes, including timestamp ties and zero-duration calls; endpoints do not wrap.
+
+**↓ Dive deeper** supports repeated descent: choose the first direct recorded child that itself has recorded children, skipping earlier leaves; if all children are leaves, choose the first child. Each activation moves down one **recorded level**, not straight to the deepest leaf, and does not invent missing frames. **← Back** retraces actual call selections, including stack, child and inline-detail jumps, rather than simply selecting the parent. For example, after returning from the second child to its parent, Back returns to that child while First child always chooses the first. Numerical refreshes, Inline toggles and filter refreshes do not add history. History lasts for the open report session and resets on page reload.
+
+**Per-frame source positions** occupy a separate, muted small-text line below the function name, leaving names and durations readable. Both recorded and inline frames can show locations. `call site` denotes the position inside that frame leading to the next frame; the innermost recorded frame, or one without a matching call site, uses its existing resolved function entry labeled `entry`, never presented as a calling line or declaration. Entry positions require `--func-links` when generating the report. Missing DWARF/resolution is explicitly `Source unavailable`, not a guessed line. Paths are native links separate from call-selection buttons, supporting Tab/Enter, opening in a new tab and copying the link. Configured `--base-url` / module URLs determine destinations; without a URL the path remains text. This reuses resolved data and existing URL rules, with no browser symbolization or Text DOM scans; `--no-text-view --keep-source` is supported too. Context CSV retains the same provenance in `source_file/source_line/source_kind/source_url`.
 
 Inline/untraced detail panels offer the recorded parent and **First recorded call**; synthetic frames are not inserted into the recorded sibling sequence. Filtering does not rewrite this context, and Overhead/Inline do not change the navigation links. Buttons expose the target function in a safely escaped tooltip, disable missing targets and work with Tab/Enter/Space. Navigation reveals the target and returns its details to the top. The activated control retains focus when another target exists; at the endpoint focus returns to the canvas rather than silently activating a different direction. Narrow layouts wrap the controls.
 
