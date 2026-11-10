@@ -644,6 +644,31 @@ traceB 的完整 Timeline、去重源码池和导出 Text 与独立 single 逐�
 
 回归记录：`FG_RAW_REQUIRED=1 tests/run.sh` 共 480 项，477 通过、3 跳过；wheel/sdist 分别在独立 venv 以 `python -I tests/smoke_installed.py --with-raw` 运行 11 项（各 9 通过、2 个 extras 测试跳过），覆盖两个已安装入口的 auto 双分支。真实 `fgreport --open` 在两种判断结果下均返回可访问的 loopback HTTP 入口，Ctrl+C 正常退出；启动浏览器命令使用 `/bin/true` 替身，不启动桌面浏览器。套件仍报告既有未关闭 socket 的 ResourceWarning，未在本次修改无关代码。
 
+### 完整 Text 的协作准备（2026-11-10）
+
+首次 Text 仍下载、校验完整 `fgText`，不新增网络分块。准备生成器识别 `_iter_content_chunks()` 生成的唯一完整块起始标记，按原有最多 512 条完整记录及相邻源码占位逐块解析，而非按任意 `</div>` 截断嵌套 HTML。trace 文本已转义，不能伪造这个起始标记；解析后还核对单个顶层 text-chunk。使用与最终容器相同文档的 detached div 解析，累计到 DocumentFragment，不将半成品行暴露给过滤、折叠或导航。
+
+准备期间保留 `data-fg-text`，工具栏保持 inert；共享调度器以约 8ms 协作预算推进，块之间可返回 Timeline、切换标签或 Escape 取消。百分比按已处理的 HTML 字符位置计算，不是下载字节或 trace 行百分比，也不是每块耗时上限。取消调用生成器 return/finally 丢弃节点，保留已校验的 HTML 以供重入；未完成结果不能激活旧视图。解析阶段没有安装 Text 监听器，失败可以 Retry；最后初始化失败仍要求 Reload report。
+
+生成器可返回 `{label, paint:true}`，调度器在继续前提供双 rAF 绘制机会。Text 在最终整块挂载前用它显示 **Finishing Text layout…**，避免进度一直停在 100% 而没有阶段说明。随后仍同步执行完整挂载、排序/折叠/源码状态恢复、当前过滤和键盘/锚点初始化；成功才释放 HTML/索引字符串缓存，完整 DOM 常驻。直接 `fgView()` probe 兼容同步排空；正常视图入口使用 readiness Promise。普通离线 single 路径不启用 deferred Text，不增加依赖或改变阈值策略。
+
+这不是虚拟列表、按块下载、Worker 或有界内存。单个复杂块、GC、最终初始化及浏览器样式/布局仍可阻塞；保持完整语义与更频繁让出主线程，也可能增加总打开时间。后续仍需完整 Text 模型与渲染解耦，而不是据此宣称大 trace 的 Text 卡顿已解决。
+
+真实 traceB 对照保留同一 72,176 行、55,186 个调用、84,453 个模型帧和 12 个任务。Chromium 145.0.7632.6、1500×900、fgview HTTP、Timeline 预选，三轮交替旧/新报告，每次独立浏览器/context，无并行测试或基准。重复运行 `tests/benchmark_sidecar.py SINGLE.html SIDECAR_DIRECTORY --rounds 1 --text --output result.json` 可记录完整首开、准备反馈、最终阶段和长任务；对比旧/新 sidecar 时保持 trace/options 相同。以下为三轮中位数，不是跨机器承诺：
+
+| 首次完整 Text 指标 | 旧版整体解析 | 协作准备 |
+|---|---:|---:|
+| 到双 rAF 就绪的总耗时 | 7,340.8ms | 7,954.7ms |
+| 观测到的最长长任务 | 6,218ms | 3,780ms |
+| 长任务超过 50ms 部分之和 | 7,136ms | 4,719ms |
+| 准备进度的 rAF 采样次数 | 0 | 119 |
+
+新版本约 1.18s 出现准备反馈、约 3.13s 出现最终布局阶段（均从首次 Text 打开计时，包含资源请求），但最大长任务仍达约 3.78s；总时间反而增加约 8.4%，不能称为“首开加速”。rAF 只是绘制机会，不是物理输入/呈现测量。挂载后采样 renderer RSS 仍约 3.4GiB，不是峰值或内存上限。每轮都完整恢复 72,176 行，释放 HTML 字符串，重入不重复请求 Text。
+
+另用 `duration:>10 AND NOT graph:finish_task_switch` 核对统一索引过滤再完整挂载，双方均命中 4,804 行，行号 SHA-256 同为 `77070d8005bf1352b0fa19eeef9a4e7a050200ba8fd02e71038f6c02a49acedc`；过滤时不挂载 Text、不请求 text.html，进入 Text 后只请求一次完整资源。已有过滤、源码、任务排序、折叠、行号/锚点语义仍须保持。
+
+回归记录：`FG_RAW_REQUIRED=1 tests/run.sh` 共 490 项，487 通过、3 跳过；本次新增 7 项浏览器用例，覆盖完整未挂载准备、取消/缓存重入、最终状态绘制机会、紧凑窗口双主题、Escape/Compare 切换、同步 probe 和解析失败重试。wheel/sdist 分别在独立新 venv 安装并运行 `python -I tests/smoke_installed.py --with-raw`，各 11 项（9 通过、2 个 extras 测试跳过）。以本次修改前的 `f2f4160fdfed` 重新建立真实内核基线，七组 golden 均仅在有视图脚本时替换有意变化的 `assets/views/boot.js`，再应用既有时间/环境掩码后完全一致；两组无 Timeline 的默认 Text 报告无需替换。JS 语法和 diff 检查通过，既有文件/socket ResourceWarning 未在本次修改无关代码。固定 sample HTML/PNG 未改动，本次不增加版本标签或发布。
+
 原型通过 `fgDataManifest` JSON 配置 `{version:1, report_id, manifest:{file,bytes,sha256,format:"json"}}`。ID 为 32 位小写十六进制；manifest 内容为 `{version:1,report_id,resources:{tlData:{file,bytes,sha256,format:"json"}}}`，也可包含 `cmpData` 或 `text` 格式资源。manifest 路径相对 HTML，资源路径相对 manifest 目录。只允许 HTTP(S) 下同目录内的相对路径；禁止跨域、目录逃逸、编码路径和重定向，不带凭据。响应按声明大小有界读取，逐一验证长度、SHA-256、严格 UTF-8、JSON、版本及报告 ID；Web Crypto 需要安全上下文（如 loopback HTTP）。
 
 重复请求共享底层 fetch，但每个订阅者独立取消；最后一个订阅者退出才 abort。请求身份校验避免取消后的旧结果污染缓存。切标签/Back/Escape 取消加载和模型迭代；失败显示原生 Retry 按钮。Timeline 拷贝 strings 和每条 offcpu 行，防止半初始化或重试污染缓存。`fgView()` 在外部请求期间返回 readiness Promise；内嵌兼容同步 probe。15 项真实 loopback HTTP 浏览器测试覆盖共享取消、重入、重试、紧凑窗口、损坏响应和模型一致性。

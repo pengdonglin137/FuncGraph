@@ -89,14 +89,38 @@ def measure(browser, report, timeout, mount_text, filter_query=None):
                     raise RuntimeError('--text needs a sidecar report retaining Text')
                 mounted = page.evaluate('''async () => {
                     const start = performance.now();
-                    await fgSwitchView('text');
+                    const labels = new Set();
+                    let preparationFeedback = null, preparationFrames = 0, finishingFeedback = null;
+                    const ready = fgSwitchView('text');
+                    function sample() {
+                        const status = document.querySelector('#content .fg-loading-status');
+                        if (status) {
+                            labels.add(status.textContent);
+                            if (status.textContent.startsWith('Preparing Text')) {
+                                if (preparationFeedback === null) preparationFeedback = performance.now() - start;
+                                preparationFrames++;
+                            }
+                            if (status.textContent === 'Finishing Text layout…' && finishingFeedback === null) {
+                                finishingFeedback = performance.now() - start;
+                            }
+                        }
+                        if (document.getElementById('content').hasAttribute('aria-busy')) requestAnimationFrame(sample);
+                    }
+                    requestAnimationFrame(sample);
+                    await ready;
                     await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+                    const tasks = startupTasks.filter(task => task.start >= start).map(task => task.duration);
                     return {duration_ms:performance.now() - start,
+                        preparation_feedback_ms:preparationFeedback, preparation_frames:preparationFrames,
+                        finishing_feedback_ms:finishingFeedback,
+                        labels:Array.from(labels), longest_task_ms:Math.max(0, ...tasks),
+                        blocked_ms:tasks.reduce((sum, duration) => sum + Math.max(0, duration - 50), 0),
                         rows:document.querySelectorAll('#content .line-container').length,
                         cached_html:fgData.ready('fgText')};
                 }''')
                 page.evaluate('async () => { await fgSwitchView("timeline"); await fgSwitchView("text"); }')
                 mounted['text_requests'] = sum(url.endswith('text.html') for url in requests)
+                mounted['renderer_rss_bytes'] = sum(process['rss_bytes'] for process in renderer_memory(browser))
                 if mounted['cached_html'] or mounted['text_requests'] != 1:
                     raise RuntimeError('Text did not release HTML or reuse its mounted view')
                 facts['first_text'] = mounted

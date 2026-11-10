@@ -57,8 +57,8 @@ CLI 输出实际模式、完整 HTML 字节数、阈值和入口路径；进入 
 
 - 首次 Timeline 读取完整模型，不获取 Text/Compare，不创建逐行 Text DOM。源码池及索引仍内嵌，使用时同步解析。
 - Timeline 统一过滤首次读取 `text-index.json`，按 Text 表达式和调用树语义扫描全部 trace 行，不创建 Text DOM。进度可用 Escape / Clear 取消，新查询替代旧查询；失败保留上次结果并提供 **Retry filter**。完整索引缓存至 Text 挂载；下载、解析和调用树准备仍占用主线程及内存。
-- 首次进入 Text、跳转 trace 行号或访问 `#L<number>` 时，**一次完整加载 Text**，先重新应用当前过滤，再释放索引及 HTML 字符串缓存。完整 Text DOM 随后常驻，不是虚拟列表，也没有 DOM 上限；首次挂载仍可能很慢。保存的 Text 偏好和行号锚点直接打开 Text。没有索引的旧 sidecar 报告仍以完整 Text 进行过滤。
-- 资源请求/校验失败可 Retry；Escape/返回可取消当前视图的等待，迟到响应不会激活旧视图。若 Text 初始化中途失败，提供 **Reload report**，不复用半初始化的监听器/状态。
+- 首次进入 Text、跳转 trace 行号或访问 `#L<number>` 时，**一次完整加载 Text**。校验后的 HTML 在文档外按完整记录分批准备，显示百分比进度，期间可返回 Timeline、切换标签或按 Escape；取消会丢弃未挂载节点，但保留已校验的 HTML，重入不重复下载，不暴露半成品行。完整结果挂载前，**Finishing Text layout…** 会先获得绘制机会；最后的初始化/布局仍同步执行，可能阻塞。使用前重新应用当前过滤，成功后释放索引及 HTML 字符串缓存。完整 Text DOM 随后常驻，不是虚拟列表，也没有 DOM 上限；总打开时间不保证更短。保存的 Text 偏好和行号锚点直接打开 Text。没有索引的旧 sidecar 报告仍以完整 Text 进行过滤。
+- 资源请求/校验或文档外 Text 解析失败可 Retry；Escape/返回可取消当前视图的等待/准备，迟到结果不会激活旧视图。若最后的 Text 初始化中途失败，提供 **Reload report**，不复用半初始化的监听器/状态。已有报告需要重新生成才能使用新的准备流程。
 - `--no-text-view` 继续省略 Text，也不生成 Text 资源；`--keep-source` 的源码解析语义不变。
 
 产物含 `index.html`、隐藏归属标记及不可变的 `data-<report-id>/` 资源（manifest、Timeline、可选 Compare 和完整 Text），记录精确 UTF-8 字节数及 SHA-256。共享/归档必须携带**整个目录**，不能只复制 index.html。

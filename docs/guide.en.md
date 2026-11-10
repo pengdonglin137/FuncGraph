@@ -2,7 +2,7 @@
 
 **Raw capture files:** binary trace-cmd containers are auto-detected: `funcgraph trace.dat --timeline --output trace.html`. Native dependencies, pinned submodules, buffer selection and limitations are documented in [Binary raw input](raw-input.md); bare trace_pipe_raw pages are not supported.
 
-Report loading: ordinary reports remain self-contained and work offline. Opt into `funcgraph TRACE --timeline --report-mode sidecar --output REPORT_DIRECTORY`, then use `fgview REPORT_DIRECTORY` for large-report deferred delivery. Timeline opens without Text rows; Compare loads on demand. Unified filtering loads a complete Text filter index, not Text DOM; it reports progress, supports cancellation and retains the previous result on error with a Retry button. Text loads **in full** on first use or a trace-line jump/hash anchor, then reapplies the active filter. Saved Text preferences and line anchors override the initial Timeline view. Sources remain embedded; no Text virtualization, source chunking or automatic threshold is implemented. See the [viewer guide](viewer.md) for sharing, updates and error recovery.
+Report loading: ordinary reports remain self-contained and work offline. Opt into `funcgraph TRACE --timeline --report-mode sidecar --output REPORT_DIRECTORY`, then use `fgview REPORT_DIRECTORY` for large-report deferred delivery. Timeline opens without Text rows; Compare loads on demand. Unified filtering loads a complete Text filter index, not Text DOM; it reports progress, supports cancellation and retains the previous result on error with a Retry button. Text loads **in full** on first use or a trace-line jump/hash anchor, prepares detached batches with progress/cancellation, then reapplies the active filter. Final layout can still block and the complete DOM remains cached; this is not virtualization or a guarantee of faster opening. Saved Text preferences and line anchors override the initial Timeline view. Sources remain embedded; no Text virtualization or source chunking is implemented. Optional `--report-mode auto --sidecar-threshold BYTES` selects sidecar strictly above the explicit complete-HTML byte threshold; there is no default threshold. See the [viewer guide](viewer.md) for sharing, updates and error recovery.
 
 This guide covers the whole workflow from capturing a trace to reading the report, and explains every field and color in each view. For the full option list run `python3 funcgraph.py --help`; for implementation details see [design.md](design.md). 中文版：[guide.cn.md](guide.cn.md).
 
@@ -217,7 +217,8 @@ With either origin the tool checks whether the source matches the vmlinux and re
 | `--overhead CHILD[,SELF]` | tracing overhead estimate in ns; default: read from the header written by `fgcapture.sh --calibrate` |
 | `--export FILE.json\|FILE.csv` | also export the analyses (section 9) |
 | `--output FILE` | output HTML, default `ftrace_viz.html` |
-| `--report-mode single\|sidecar` | Offline file (default) or a dedicated HTTP report directory; requires Timeline; Text loads in full on first use |
+| `--report-mode single\|sidecar\|auto` | Offline file (default) or a dedicated report directory; directory modes require Timeline; sidecar prepares complete Text on first use |
+| `--sidecar-threshold BYTES` | Required with auto: sidecar only strictly above complete uncompressed UTF-8 HTML bytes; smaller/equal stays offline index.html; no default |
 
 **Pre-filter**: applied before conversion; call trees are kept whole, never cut in the middle.
 

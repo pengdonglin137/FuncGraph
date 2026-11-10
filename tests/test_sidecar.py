@@ -488,6 +488,187 @@ class SidecarBrowserTest(unittest.TestCase):
         self.assertEqual(self.page.locator('#content .line-container').count(), count)
         self.assertEqual(sum(url.endswith('text.html') for url in self.requests), 1)
 
+    def stage_text(self):
+        self.page.evaluate('''async () => {
+            await fgData.load('fgText');
+            window.textChunks = 0;
+            window.textClosed = 0;
+            window.holdText = true;
+            const descriptor = Object.getOwnPropertyDescriptor(Element.prototype, 'innerHTML');
+            Object.defineProperty(Element.prototype, 'innerHTML', {...descriptor, set(value) {
+                descriptor.set.call(this, value);
+                if (this.tagName === 'DIV' && value.startsWith('<div class="text-chunk"')) textChunks++;
+            }});
+            const original = fgViews.text.steps;
+            fgViews.text.steps = function* () {
+                const steps = original();
+                try {
+                    while (true) {
+                        const result = steps.next();
+                        if (result.done) return result.value;
+                        yield result.value;
+                        while (holdText && textChunks) yield result.value;
+                    }
+                } finally { steps.return(); textClosed++; }
+            };
+        }''')
+
+    def test_text_parses_complete_detached_chunks_without_exposing_partial_rows(self):
+        self.page.evaluate('''async () => {
+            const html = await fgData.load('fgText');
+            const expected = document.createElement('template');
+            expected.innerHTML = html;
+            window.expectedText = expected.innerHTML;
+            window.chunkFacts = [];
+            const descriptor = Object.getOwnPropertyDescriptor(Element.prototype, 'innerHTML');
+            Object.defineProperty(Element.prototype, 'innerHTML', {...descriptor, set(value) {
+                descriptor.set.call(this, value);
+                if (this.tagName === 'DIV' && value.startsWith('<div class="text-chunk"')) chunkFacts.push({
+                    rows:this.querySelectorAll('.line-container').length,
+                    blocks:this.children.length,
+                    mounted:document.querySelectorAll('#content .line-container').length,
+                    deferred:fgTextDeferred(), inert:document.querySelector('.controls').inert});
+            }});
+            const original = fgInitText;
+            fgInitText = (...args) => {
+                window.sameText = document.getElementById('content').innerHTML === expectedText;
+                return original(...args);
+            };
+            await fgEnsureText();
+        }''')
+        chunks = self.page.evaluate('chunkFacts')
+        self.assertGreater(len(chunks), 1)
+        self.assertTrue(all(0 < chunk['rows'] <= 512 and chunk['blocks'] == 1
+                            and chunk['mounted'] == 0 and chunk['deferred'] and chunk['inert'] for chunk in chunks))
+        self.assertEqual(sum(chunk['rows'] for chunk in chunks), self.page.locator('#content .line-container').count())
+        self.assertTrue(self.page.evaluate('sameText'))
+        self.assertFalse(self.page.evaluate('document.querySelector(".controls").inert'))
+
+    def test_text_preparation_cancels_safely_and_reuses_verified_data_on_reentry(self):
+        self.stage_text()
+        self.page.evaluate('''() => {
+            window.textOpening = fgSwitchView('text');
+            window.textShared = fgEnsureText() === textOpening;
+        }''')
+        self.page.wait_for_function('() => textChunks > 0')
+        self.assertTrue(self.page.evaluate('textShared'))
+        self.assertIn('Preparing Text', self.page.locator('#content [role=status]').inner_text())
+        self.assertEqual(self.page.locator('#content .line-container').count(), 0)
+        self.page.locator('#content button', has_text='Back to Timeline').click()
+        self.assertIsNone(self.page.evaluate('textOpening'))
+        self.assertEqual(self.page.evaluate('textClosed'), 1)
+        self.assertTrue(self.page.evaluate('fgTextDeferred() && fgData.ready("fgText")'))
+        self.page.wait_for_timeout(80)
+        self.assertEqual(self.page.locator('#content .line-container').count(), 0)
+        self.assertEqual(self.page.evaluate('fgCurrentView()'), 'timeline')
+        self.page.evaluate('async () => { holdText = false; await fgEnsureText(); }')
+        self.assertEqual(self.page.evaluate('textClosed'), 2)
+        self.assertGreater(self.page.locator('#content .line-container').count(), 100)
+        self.assertFalse(self.page.evaluate('fgData.ready("fgText")'))
+        self.assertEqual(sum(url.endswith('text.html') for url in self.requests), 1)
+
+    def test_text_final_layout_status_has_a_paint_opportunity_before_initialization(self):
+        self.page.evaluate('''async () => {
+            window.finishPainted = false;
+            const original = fgViews.text.steps;
+            fgViews.text.steps = function* () {
+                const steps = original();
+                try {
+                    while (true) {
+                        const result = steps.next();
+                        if (result.done) return result.value;
+                        if (result.value.paint) requestAnimationFrame(() => requestAnimationFrame(() => {
+                            window.finishPainted = document.querySelector('#content [role=status]')?.textContent === 'Finishing Text layout…'
+                                && !document.querySelector('#content .line-container');
+                        }));
+                        yield result.value;
+                    }
+                } finally { steps.return(); }
+            };
+            const initialize = fgInitText;
+            fgInitText = (...args) => {
+                window.finishedBeforeInit = finishPainted;
+                return initialize(...args);
+            };
+            await fgEnsureText();
+        }''')
+        self.assertTrue(self.page.evaluate('finishedBeforeInit'))
+        self.assertGreater(self.page.locator('#content .line-container').count(), 100)
+
+    def test_text_preparation_status_fits_compact_light_and_dark_viewports(self):
+        self.stage_text()
+        self.page.set_viewport_size({'width': 360, 'height': 640})
+        for theme in ['light', 'dark']:
+            with self.subTest(theme=theme):
+                self.page.evaluate('''theme => {
+                    document.documentElement.setAttribute('data-theme', theme);
+                    textChunks = 0;
+                    fgSwitchView('text');
+                }''', theme)
+                self.page.wait_for_function('() => textChunks > 0')
+                for selector in ['#content [role=status]', '#content .fg-loading button']:
+                    bounds = self.page.locator(selector).bounding_box()
+                    self.assertIsNotNone(bounds)
+                    self.assertGreaterEqual(bounds['x'], 0)
+                    self.assertLessEqual(bounds['x'] + bounds['width'], 360)
+                self.page.locator('#content .fg-loading button').focus()
+                self.page.keyboard.press('Enter')
+                self.assertEqual(self.page.evaluate('fgCurrentView()'), 'timeline')
+                self.assertEqual(self.page.locator('#content .line-container').count(), 0)
+
+    def test_escape_and_compare_switch_discard_detached_text_preparation(self):
+        self.stage_text()
+        for cancel in ['escape', 'compare']:
+            with self.subTest(cancel=cancel):
+                self.page.evaluate('() => { textChunks = 0; window.textOpening = fgSwitchView("text"); }')
+                self.page.wait_for_function('() => textChunks > 0')
+                if cancel == 'escape':
+                    self.page.keyboard.press('Escape')
+                else:
+                    self.page.locator('[data-view=compare]').click()
+                self.assertIsNone(self.page.evaluate('textOpening'))
+                self.assertEqual(self.page.locator('#content .line-container').count(), 0)
+                self.assertTrue(self.page.evaluate('fgTextDeferred()'))
+                self.assertEqual(self.page.evaluate('fgCurrentView()'), 'timeline' if cancel == 'escape' else 'compare')
+        self.assertEqual(self.page.evaluate('textClosed'), 2)
+
+    def test_synchronous_text_probe_drains_the_pending_iterator_once(self):
+        self.stage_text()
+        self.page.evaluate('() => { window.textOpening = fgSwitchView("text"); }')
+        self.page.wait_for_function('() => textChunks > 0')
+        self.page.evaluate('''() => {
+            holdText = false;
+            window.textAPI = fgView('text');
+            window.textCached = fgView('text') === textAPI;
+        }''')
+        self.assertTrue(self.page.evaluate('textCached'))
+        self.assertTrue(self.page.evaluate('textOpening.then(api => api === textAPI)'))
+        self.assertEqual(self.page.evaluate('textClosed'), 1)
+        self.assertFalse(self.page.locator('#content').get_attribute('aria-busy'))
+        self.assertGreater(self.page.locator('#content .line-container').count(), 100)
+
+    def test_detached_text_parse_failure_can_retry_without_initializing_partial_state(self):
+        self.page.evaluate('''async () => {
+            await fgData.load('fgText');
+            const descriptor = Object.getOwnPropertyDescriptor(Element.prototype, 'innerHTML');
+            let chunks = 0;
+            Object.defineProperty(Element.prototype, 'innerHTML', {...descriptor, set(value) {
+                if (this.tagName === 'DIV' && value.startsWith('<div class="text-chunk"') && ++chunks === 2) throw new Error('injected chunk failure');
+                descriptor.set.call(this, value);
+            }});
+        }''')
+        self.page.locator('[data-view=text]').click()
+        self.page.locator('#content [role=alert]').wait_for()
+        self.assertIn('injected chunk failure', self.page.locator('#content [role=alert]').inner_text())
+        self.assertTrue(self.page.evaluate('fgTextDeferred() && !fgTextInitialized'))
+        self.assertEqual(self.page.locator('#content .line-container').count(), 0)
+        self.page.locator('#content button', has_text='Retry').click()
+        self.page.locator('#content .fold-icon').first.wait_for()
+        self.assertGreater(self.page.locator('#content .line-container').count(), 100)
+        icon = self.page.locator('#content .fold-icon').first
+        icon.press('Enter')
+        self.assertEqual(icon.get_attribute('aria-expanded'), 'false')
+
     def test_timeline_unified_filter_uses_all_rows_without_loading_text_or_switching_views(self):
         self.page.locator('.tl-ftext').fill('duration:>1')
         self.page.locator('.tl-ftext').press('Enter')

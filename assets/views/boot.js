@@ -16,19 +16,48 @@
             staged: window.fgData.external('tlData') || window.fgData.length('tlData') >= 1024 * 1024 };
     }
     if (fgTextDeferred()) {
-        views.text = { el: 'content', data: ['fgText'], init: () => {
+        function* textSteps() {
             const content = document.getElementById('content');
-            content.innerHTML = window.fgData.read('fgText');
-            content.removeAttribute('data-fg-text');
-            try { fgInitText(true); }
-            catch (error) {
-                textFailed = true;
-                content.setAttribute('data-fg-text', 'true');
-                throw error;
+            const fragment = document.createDocumentFragment();
+            const parser = document.createElement('div');
+            try {
+                yield 'Preparing Text…';
+                const html = window.fgData.read('fgText');
+                const marker = html.match(/^<div class="text-chunk" data-chunk-size="[1-9][0-9]*">/)?.[0];
+                if (html && !marker) throw new Error('Unrecognized Text chunk format');
+                let position = 0;
+                while (position < html.length) {
+                    const next = html.indexOf(marker, position + marker.length);
+                    const end = next < 0 ? html.length : next;
+                    parser.innerHTML = html.slice(position, end);
+                    if (parser.childNodes.length !== 1 || !parser.firstElementChild?.classList.contains('text-chunk')) {
+                        throw new Error('Invalid Text chunk boundary');
+                    }
+                    fragment.appendChild(parser.firstElementChild);
+                    position = end;
+                    yield 'Preparing Text… ' + Math.floor(position / html.length * 100) + '%';
+                }
+                yield { label: 'Finishing Text layout…', paint: true };
+                content.replaceChildren(fragment);
+                content.removeAttribute('data-fg-text');
+                try { fgInitText(true); }
+                catch (error) {
+                    textFailed = true;
+                    content.setAttribute('data-fg-text', 'true');
+                    throw error;
+                }
+                window.fgData.release('fgText');
+                window.fgData.release('fgTextIndex');
+                document.querySelector('.controls').inert = false;
+                return {};
+            } finally {
+                parser.replaceChildren();
+                fragment.replaceChildren();
             }
-            window.fgData.release('fgText');
-            window.fgData.release('fgTextIndex');
-            document.querySelector('.controls').inert = false;
+        }
+        views.text = { el: 'content', data: ['fgText'], staged: true, steps: textSteps, init: () => {
+            const steps = textSteps();
+            while (!steps.next().done) {}
             return {};
         } };
         document.querySelector('.controls').inert = true;
@@ -77,7 +106,7 @@
         delete pending[state.name];
         state.el.removeAttribute('aria-busy');
         loadingContent(state.el, 'Unable to open ' + state.name + ': ' + error.message, true);
-        if (state.loadingData || textFailed && state.name === 'text') {
+        if (state.loadingData || state.name === 'text') {
             const retry = document.createElement('button');
             retry.type = 'button';
             const reload = textFailed && state.name === 'text';
@@ -100,6 +129,14 @@
         state.el.textContent = '';
         state.resolve(null);
     }
+    function updateStatus(state, step) {
+        const label = typeof step === 'string' ? step : step.label;
+        if (state.label !== label) {
+            state.label = label;
+            state.status.textContent = label;
+        }
+        return typeof step !== 'string' && step.paint === true;
+    }
     function schedule(state, first) {
         const next = () => {
             state.timer = setTimeout(() => {
@@ -110,10 +147,7 @@
                     do {
                         result = state.steps.next();
                         if (result.done) { complete(state, result.value); return; }
-                        if (state.label !== result.value) {
-                            state.label = result.value;
-                            state.status.textContent = result.value;
-                        }
+                        if (updateStatus(state, result.value)) { schedule(state, true); return; }
                     } while (performance.now() - start < 8);
                     schedule(state);
                 } catch (error) { fail(state, error); }
@@ -131,7 +165,7 @@
             state.steps = views[state.name].steps();
             const first = state.steps.next();
             if (first.done) complete(state, first.value);
-            else { state.label = first.value; state.status.textContent = first.value; schedule(state, true); }
+            else { updateStatus(state, first.value); schedule(state, true); }
         } catch (error) { fail(state, error); }
     }
     function missingData(name) {
