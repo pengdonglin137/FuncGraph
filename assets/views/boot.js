@@ -11,10 +11,8 @@
     const get = k => (typeof lsGet === 'function' ? lsGet(k) : null);
     const set = (k, v) => { if (typeof lsSet === 'function') lsSet(k, v); };
     if (typeof __tlBoot === 'function' || document.getElementById('tlData')) {
-        const data = document.getElementById('tlData');
-        const first = data && data.firstChild;
-        const length = first && first === data.lastChild ? first.length : (data ? data.textContent.length : 0);
-        views.timeline = { el: 'timelineView', init: () => __tlBoot(), steps: () => __tlSteps(), staged: length >= 1024 * 1024 };
+        views.timeline = { el: 'timelineView', data: ['tlData'], init: () => __tlBoot(), steps: () => __tlSteps(),
+            staged: window.fgData.external('tlData') || window.fgData.length('tlData') >= 1024 * 1024 };
     }
     function stopScheduled(state) {
         cancelAnimationFrame(state.frame);
@@ -59,6 +57,14 @@
         delete pending[state.name];
         state.el.removeAttribute('aria-busy');
         loadingContent(state.el, 'Unable to open ' + state.name + ': ' + error.message, true);
+        if (state.loadingData) {
+            const retry = document.createElement('button');
+            retry.type = 'button';
+            retry.textContent = 'Retry';
+            retry.addEventListener('click', () => window.fgSwitchView(state.name));
+            state.el.querySelector('.fg-loading').appendChild(retry);
+        }
+        state.controller.abort();
         state.resolve(null);
         console.error('[' + state.name + '] startup failed:', error);
     }
@@ -66,8 +72,9 @@
         const state = pending[name];
         if (!state) return;
         stopScheduled(state);
-        state.steps.return();
         delete pending[name];
+        state.controller.abort();
+        if (state.steps) state.steps.return();
         state.el.removeAttribute('aria-busy');
         state.el.textContent = '';
         state.resolve(null);
@@ -96,26 +103,42 @@
         });
         else next();
     }
-    function open(name) {
-        if (apis[name]) return apis[name];
-        if (pending[name]) return pending[name].promise;
-        if (!views[name].staged || !views[name].steps) return ensure(name);
-        const state = { name, steps: views[name].steps(), start: performance.now(), frame: 0, timer: 0,
-            el: document.getElementById(views[name].el), resolve: null, promise: null, status: null, label: null };
-        state.promise = new Promise(resolve => { state.resolve = resolve; });
-        pending[name] = state;
-        state.el.setAttribute('aria-busy', 'true');
-        state.status = loadingContent(state.el, 'Preparing ' + name + '…', false);
+    function prepare(state) {
+        if (pending[state.name] !== state) return;
         try {
+            if (!views[state.name].steps) { complete(state, views[state.name].init()); return; }
+            state.steps = views[state.name].steps();
             const first = state.steps.next();
             if (first.done) complete(state, first.value);
             else { state.label = first.value; state.status.textContent = first.value; schedule(state, true); }
         } catch (error) { fail(state, error); }
+    }
+    function missingData(name) {
+        return (views[name].data || []).filter(resource => !window.fgData.ready(resource));
+    }
+    function open(name) {
+        if (apis[name]) return apis[name];
+        if (pending[name]) return pending[name].promise;
+        const missing = missingData(name);
+        if (!missing.length && (!views[name].staged || !views[name].steps)) return ensure(name);
+        const state = { name, steps: null, controller: new AbortController(), loadingData: missing.length > 0,
+            start: performance.now(), frame: 0, timer: 0, el: document.getElementById(views[name].el),
+            resolve: null, promise: null, status: null, label: null };
+        state.promise = new Promise(resolve => { state.resolve = resolve; });
+        pending[name] = state;
+        state.el.setAttribute('aria-busy', 'true');
+        state.status = loadingContent(state.el, (missing.length ? 'Loading ' : 'Preparing ') + name + '…', false);
+        if (missing.length) {
+            Promise.all(missing.map(resource => window.fgData.load(resource, { signal: state.controller.signal }))).then(() => {
+                prepare(state);
+            }, error => { if (pending[name] === state) fail(state, error); });
+        } else prepare(state);
         return state.promise;
     }
     function ensure(name) {
         const state = pending[name];
         if (state) {
+            if (!state.steps) return state.promise;
             stopScheduled(state);
             try {
                 let result;
@@ -123,6 +146,7 @@
                 return complete(state, result.value);
             } catch (error) { fail(state, error); throw error; }
         }
+        if (missingData(name).length) return open(name);
         if (!apis[name]) {
             const t0 = performance.now();
             apis[name] = views[name].init() || {};

@@ -1,7 +1,7 @@
 /* FuncGraph Compare view: per-function differences between a base trace and this one. */
 window.fgViews = window.fgViews || {};
-window.fgViews.compare = { el: 'compareView', init: function () {
-    const D = JSON.parse(document.getElementById('cmpData').textContent);
+window.fgViews.compare = { el: 'compareView', data: ['cmpData'], init: function () {
+    const D = window.fgData.read('cmpData');
     const root = document.getElementById('compareView');
     // row: 0 name | base 1 calls 2 incl 3 self 4 max 5 err | cur 6 calls 7 incl 8 self 9 max 10 err
     const COLS = [

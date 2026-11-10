@@ -10,7 +10,7 @@ import time
 import json
 from collections import defaultdict
 
-from .assets import COMPARE_CSS, COMPARE_JS, REPORT_CSS, REPORT_JS, TIMELINE_CSS, VIEWS_BOOT_JS, VIEWS_CSS, VIEWS_EARLY_JS, read_asset, timeline_script
+from .assets import COMPARE_CSS, COMPARE_JS, REPORT_CSS, REPORT_DATA_JS, REPORT_JS, TIMELINE_CSS, VIEWS_BOOT_JS, VIEWS_CSS, VIEWS_EARLY_JS, read_asset, timeline_script
 from .constants import APP_AUTHOR, APP_TITLE, APP_VERSION, ERROR_CODE_MAP, PROJECT_DIR
 from .inline import timeline_inline_map
 from .output import ReportSpool
@@ -1362,7 +1362,7 @@ class HtmlGenerator:
 
     def _generate_javascript(self):
         """Main report JavaScript (assets/report/report.js)."""
-        return '\n    <script>\n' + read_asset(REPORT_JS) + '    </script>\n'
+        return '\n    <script>\n' + read_asset(REPORT_DATA_JS) + read_asset(REPORT_JS) + '    </script>\n'
 
     def _generate_css(self):
         """Main report CSS (assets/report/report.css)."""

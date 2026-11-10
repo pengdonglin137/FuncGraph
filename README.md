@@ -1,5 +1,7 @@
 # FuncGraph - Specialized Linux ftrace Visualization Tool
 
+Timeline and Compare share a report data provider. Ordinary CLI output still embeds all data and opens offline. External-resource loading is a tested internal interface, not yet a sidecar export mode: the exporter, local viewer, Text/source chunking and automatic threshold remain future work.
+
 [![ci](https://github.com/pengdonglin137/FuncGraph/actions/workflows/ci.yml/badge.svg)](https://github.com/pengdonglin137/FuncGraph/actions/workflows/ci.yml)
 
 [![FuncGraph Visualization Example (click to open the sample report)](sample.png)](https://pengdonglin137.github.io/FuncGraph/sample.html)

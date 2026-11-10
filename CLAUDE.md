@@ -101,6 +101,7 @@ Data flow: `FtraceParser.parse()` → `AddressResolver.resolve_batch()` → (opt
 
 - Front-end code lives in `assets/` (`report/` for the text view, `timeline/` for the Timeline tab) and is inlined by `fglib/assets.py` (read with `newline=''` so output stays byte-stable). `HtmlGenerator` only emits markup and data.
 - The generated HTML is fully self-contained with zero external dependencies.
+- Timeline/Compare read through `fgData`; cached inputs must not be mutated by models. The external manifest interface is internal only: no CLI sidecar exporter/viewer or automatic threshold exists yet. External loads require HTTP(S), same-directory relative paths, exact size/SHA-256/UTF-8 checks, independently cancellable shared requests and retry without stale-view activation. Keep embedded reports offline-compatible.
 - Environment variables `CROSS_COMPILE` and `LLVM` control toolchain selection for cross-architecture support.
 - Python code lives in the `fglib` package; `funcgraph.py` is a thin entry point that re-exports the public names. Dependencies between modules are one-way (see docs/design.md §2).
 - Use `PROJECT_DIR` (fglib/constants.py) for repo-relative paths, never `__file__` of a module.

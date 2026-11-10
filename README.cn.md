@@ -1,5 +1,7 @@
 # FuncGraph - 专业 Linux ftrace 可视化工具
 
+Timeline 和 Compare 共用报告数据提供者。普通 CLI 输出仍内嵌全部数据、支持离线打开。外部资源加载只是已测试的内部接口，尚非可用的 sidecar 输出模式：导出器、本地查看器、Text/源码分块及自动阈值仍待实现。
+
 [![ci](https://github.com/pengdonglin137/FuncGraph/actions/workflows/ci.yml/badge.svg)](https://github.com/pengdonglin137/FuncGraph/actions/workflows/ci.yml)
 
 [![FuncGraph 可视化示例（点击打开示例报告）](sample.png)](https://pengdonglin137.github.io/FuncGraph/sample.html)

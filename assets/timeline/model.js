@@ -2,7 +2,8 @@
  * model/render/interact/panels.js are concatenated (in that order) inside function __tlBoot() and share its scope. */
 yield 'Reading Timeline data…';
 const tlRoot = document.getElementById('timelineView');
-const D = JSON.parse(document.getElementById('tlData').textContent);
+const input = window.fgData.read('tlData');
+const D = { ...input, strings: input.strings.slice(), offcpu: input.offcpu.map(record => record.slice()) };
 const N = D.n, C = D.cols, S = D.strings;
 const MODE = D.mode;
 const TIMED = MODE === 'abs' || MODE === 'rel';
