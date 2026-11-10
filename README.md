@@ -80,9 +80,11 @@ The sample trace reports `7.2.0+`; its QEMU runtime and host build both identify
 Download a wheel from GitHub Releases and install it with optional dependencies:
 
 ```bash
-python3 -m pip install './funcgraph-0.9.1-py3-none-any.whl[all]'
+python3 -m pip install './funcgraph-<version>-py3-none-any.whl[all]'
 fgreport -P trace.txt
 ```
+
+Replace `<version>` with the version in the downloaded filename; a source version bump does not publish a GitHub Release.
 
 The package installs `funcgraph`, `fgreport`, `fastfaddr2line`, and `fgcapture.sh`;
 the base install works without Python dependencies, while `[all]` adds pyelftools
@@ -480,6 +482,6 @@ Open source project, contributions welcome!
 
 ---
 
-**Version**: v0.9.1
+**Version**: v0.9.2 (source version; Release pending)
 **Last Updated**: 2026-11-10
 **Status**: ✅ Production Ready

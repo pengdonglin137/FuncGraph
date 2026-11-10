@@ -22,6 +22,10 @@ workflow must finish successfully.
 Push the tag with your normal authenticated Git connection, not another
 workflow's default `GITHUB_TOKEN`, which does not trigger new workflow runs.
 
+## Prepared Source Version: v0.9.2
+
+The source version was updated to `0.9.2` on November 10, 2026, together with the sample report and screenshots. This is release preparation only: no `v0.9.2` tag or GitHub Release is created by a version change. Follow the checklist below, verify tag availability again, and check the actual workflow and attachments before marking publication complete. Keep the verified `v0.9.1` record below as history.
+
 ## Release checklist
 
 Run commands from the repository root in the same Bash session. **Stop if any

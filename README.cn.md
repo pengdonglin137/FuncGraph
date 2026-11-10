@@ -84,9 +84,11 @@ python3 funcgraph.py --timeline --enable-fold --filter --func-links --highlight-
 从 GitHub Releases 下载 wheel，安装时可以一并启用可选依赖：
 
 ```bash
-python3 -m pip install './funcgraph-0.9.1-py3-none-any.whl[all]'
+python3 -m pip install './funcgraph-<version>-py3-none-any.whl[all]'
 fgreport -P trace.txt
 ```
+
+将 `<version>` 替换为实际下载文件名中的版本；源码升版并不表示已经发布 GitHub Release。
 
 安装后可使用 `funcgraph`、`fgreport`、`fastfaddr2line` 和 `fgcapture.sh`。
 基础包不依赖第三方 Python 库，`[all]` 额外安装 pyelftools 和 Pygments。
@@ -479,6 +481,6 @@ tests/run.sh --golden              # 修改后与基线比较
 
 ---
 
-**版本**: v0.9.1
+**版本**: v0.9.2（源码版本，尚未发布 Release）
 **最后更新**: 2026-11-10
 **状态**: ✅ 生产就绪
