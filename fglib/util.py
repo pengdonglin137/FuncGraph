@@ -6,6 +6,13 @@ import subprocess
 import sys
 import html
 import fnmatch
+from urllib.parse import quote
+
+
+SOURCE_BROWSERS = {
+    'github': ('https://github.com/torvalds/linux/blob/{rev}', 'master'),
+    'elixir': ('https://elixir.bootlin.com/linux/{rev}/source', 'latest'),
+}
 
 
 def verbose_print(message, verbose_flag, end='\n'):
@@ -122,6 +129,17 @@ def find_module_path(module_name, module_dirs, verbose=False):
 
     verbose_print(f"Module '{module_name}' not found in any directory", verbose)
     return None
+
+
+def source_browser_url(browser, revision=None):
+    """Resolve a built-in browser without changing the embedded source provider."""
+    if browser not in SOURCE_BROWSERS:
+        raise ValueError('--source-browser must be github or elixir')
+    template, default_revision = SOURCE_BROWSERS[browser]
+    revision = default_revision if revision is None else revision
+    if not revision.strip():
+        raise ValueError('--source-browser-rev must not be empty')
+    return template.format(rev=quote(revision, safe=''))
 
 
 def build_source_url(base_url, relative_path, line_no):
@@ -344,6 +362,8 @@ def format_args_info(args):
         if (key == 'input_format' and value == 'auto') or (key == 'raw_instance' and not value):
             continue
         if key == 'report_mode' and value == 'single':
+            continue
+        if key in ('source_browser', 'source_browser_rev') and not value:
             continue
         # Timeline options are only listed when used (keeps output identical otherwise)
         if key in ('timeline', 'tail_calls', 'btf', 'no_btf', 'pid', 'comm', 'cpu', 'time_range', 'graph', 'notrace', 'compare', 'overhead', 'no_text_view', 'keep_source', 'config', 'preset', 'no_config', 'source_url', 'source_rev', 'source_cache', 'export') and not value:

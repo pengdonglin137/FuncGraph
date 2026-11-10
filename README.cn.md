@@ -103,7 +103,7 @@ fgreport -P trace.txt
 ```bash
 # 每个内核做一次：把 vmlinux、源码目录等写进 ~/.config/funcgraph/config.ini
 ./fgreport init pi4 --vmlinux /path/to/vmlinux --kernel-src /path/to/linux \
-    --cross-compile aarch64-linux-gnu- --base-url https://elixir.bootlin.com/linux/v6.18/source --default
+    --cross-compile aarch64-linux-gnu- --source-browser github --source-browser-rev v6.18 --default
 
 ./fgreport trace.txt                 # 生成 trace.html，放在 trace 旁边（时间轴、折叠、过滤、源码链接、语法高亮）
 ./fgreport -p vm72 --open trace.txt  # 换一个预设，并在浏览器中打开
@@ -142,7 +142,9 @@ python3 funcgraph.py trace.txt \
 | `--kernel-src` | 路径 | 内核源码树根目录（用于本地源码链接和语法高亮） | `--kernel-src /usr/src/linux` |
 | `--module-dirs` | 路径... | 搜索内核模块的目录（可指定多个） | `--module-dirs /lib/modules /usr/lib/modules` |
 | `--module-srcs` | 路径... | 模块源码目录用于模块特定的源码链接 | `--module-srcs /path/to/module/src` |
-| `--base-url` | URL | 在线源码链接的基础 URL（如 Bootlin） | `--base-url https://elixir.bootlin.com/linux/v6.18/source` |
+| `--source-browser` | `github`（默认）/ `elixir` | 在线内核源码浏览器：GitHub torvalds/linux 或 Bootlin Elixir | `--source-browser elixir` |
+| `--source-browser-rev` | 版本 | 网页端版本；GitHub 默认 `master`，Elixir 默认 `latest`，独立于内嵌源码 | `--source-browser-rev v7.4-rc2` |
+| `--base-url` | URL | 自定义源码链接根地址，覆盖内置浏览器设置 | `--base-url https://elixir.bootlin.com/linux/v6.18/source` |
 | `--module-url` | url:mods（可追加） | 将特定模块映射到源码 URL；格式：`url:mod1,mod2`。可指定多次。 | `--module-url https://url1.com:modA,modB` |
 | `--output` | 路径（默认：`ftrace_viz.html`） | HTML 文件路径，sidecar 模式下为独立目录 | `--output result.html` |
 | `--report-mode` | `single`（默认）/ `sidecar` | 离线 HTML 或 HTTP 报告目录；sidecar 需 Timeline，首次使用时完整加载 Text | `--timeline --report-mode sidecar --output report-dir` |
@@ -173,6 +175,20 @@ python3 funcgraph.py trace.txt \
 **说明：**
 - `--fast` 和 `--use-external` 不应同时使用；如果都指定了，`--use-external` 会被忽略。
 - `--module-url` 支持纯 URL（对所有模块默认）或 `url:mod1,mod2` 映射；重复该标志以添加多个映射。
+
+### 在线源码浏览器
+
+```bash
+# 默认 GitHub；固定标签，避免分支更新导致行号漂移
+python3 funcgraph.py trace.txt --vmlinux vmlinux --source-browser-rev v7.4-rc2
+
+# 切换到 Elixir
+python3 funcgraph.py trace.txt --vmlinux vmlinux --source-browser elixir --source-browser-rev v6.18
+```
+
+该选项统一控制 Text、源码块、Timeline（含 CALL STACK）的外部跳转，不下载文件，也不改变内嵌源码。`--source-rev` 仍用于选择本地/URL 源码版本，**不会**自动复用到网页链接：本地定制提交未必存在于上游。GitHub 应选择其仓库中存在的标签、分支或提交；Elixir 应选择该站点已发布的版本。不指定 `--source-browser-rev` 时，链接跟随会变化的 `master` / `latest`，不会自动推断内核版本；需要复现时应显式固定。定制内核与上游基线可能存在行号差异。
+
+显式 `--base-url` 优先于浏览器设置。已有 `base-url` 预设继续有效；命令行显式指定 `--source-browser` 可覆盖配置中继承的 `base-url`。新参数支持 INI 和 `fgreport init`；封装命令临时覆盖放在 `--` 后，例如 `fgreport trace.txt -- --source-browser elixir --source-browser-rev v6.18`。模块专用的 `--module-url` 仍优先。
 
 ### 模块 URL 示例
 

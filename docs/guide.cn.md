@@ -176,13 +176,17 @@ python3 funcgraph.py --timeline --pid 1234 --graph vfs_read --vmlinux vmlinux --
 | `--vmlinux PATH` | 用于地址到源码的解析、函数名链接和 BTF。可选 |
 | `--kernel-src DIR` | 内核源码根目录，用来显示源码内容和计算相对路径 |
 | `--fast` | 使用自带的 `fastfaddr2line.py` 解析地址（需要 pyelftools），比内核脚本快得多 |
-| `--base-url URL` | 在线源码的根地址，例如 bootlin。源码位置会变成可点击的链接 |
+| `--source-browser github\|elixir` | 在线内核源码浏览器，默认 GitHub torvalds/linux |
+| `--source-browser-rev REV` | 网页端版本：GitHub 标签/分支/提交或 Elixir 版本；默认会变化的 `master` / `latest` |
+| `--base-url URL` | 自定义在线源码根地址，覆盖内置浏览器设置 |
 | `--func-links` | 把文本视图里的函数名也解析成源码链接 |
 | `--highlight-code` | 源码块使用 C 语法高亮（需要 Pygments） |
 | `--module-dirs DIR...` / `--module-srcs DIR...` | 内核模块 `.ko` 文件所在目录 / 模块源码目录 |
 | `--module-url URL:mod1,mod2` | 指定某些模块使用的在线源码地址，可以重复多次 |
 | `--path-prefix PATH...` | 编译时的路径前缀，从 DWARF 文件名中去掉 |
 | `--entry-offset N` | 函数入口地址的偏移量，用于 `-fpatchable-function-entry` 编译的内核 |
+
+用 `--source-browser github --source-browser-rev v7.4-rc2` 固定 GitHub 链接，也可以选择 `elixir` 及其已发布的版本。Text、源码块和 Timeline CALL STACK 共用该设置，不增加源码下载。这两个参数只改变外部跳转，不选择内嵌文件，也不会自动推断内核版本。尽量固定实际的上游标签/提交；本地定制补丁可能使行号偏移。下方的 `--source-rev` 是独立设置，不会自动复制到网页链接。命令行显式 `--source-browser` 可覆盖配置/预设中的 `base-url`；显式 `--base-url` 优先于内置设置。模块专用 URL 的优先级不变。
 
 **源码来源**（默认读取 faddr2line 能找到的本地文件）
 
@@ -250,7 +254,8 @@ enable-fold = true
 [preset pi4]
 vmlinux = /vol_1t/raspi/linux/vmlinux
 kernel-src = /vol_1t/raspi/linux
-base-url = https://elixir.bootlin.com/linux/v6.18/source
+source-browser = github
+source-browser-rev = v6.18
 cross-compile = aarch64-linux-gnu-
 timeline = true
 
@@ -258,6 +263,8 @@ timeline = true
 vmlinux = /vol_1t/Qemu/trim_retval/x86_64/vmlinux
 kernel-src = /vol_1t/Qemu/trim_retval
 source-rev = HEAD
+source-browser = github
+source-browser-rev = v7.2
 timeline = true
 ```
 

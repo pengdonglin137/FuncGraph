@@ -15,7 +15,7 @@ import lzma
 from . import config, inputs, prefilter
 from .parser import parse_ftrace_file
 from .report import write_html
-from .util import check_gawk_available, find_module_path, verbose_print
+from .util import SOURCE_BROWSERS, check_gawk_available, find_module_path, source_browser_url, verbose_print
 
 
 def build_compare_data(args, raw_lines, parsed_lines, timeline_json, vmlinux_path, module_dirs):
@@ -126,7 +126,13 @@ def build_parser():
                         help='Directories to search for kernel modules')
     parser.add_argument('--module-srcs', nargs='*', default=[],
                         help='Module source code root directories (can specify multiple paths)')
-    parser.add_argument('--base-url', help='Base URL for source code links')
+    parser.add_argument('--source-browser', choices=tuple(SOURCE_BROWSERS),
+                        help='Online kernel source browser (default: github, torvalds/linux); '
+                             'overrides a base-url inherited from config')
+    parser.add_argument('--source-browser-rev', metavar='REV',
+                        help='Online source tag/branch/commit (default: master for github, latest for elixir); '
+                             'independent of --source-rev, which controls embedded source')
+    parser.add_argument('--base-url', help='Custom base URL for source code links; overrides built-in browser settings')
     parser.add_argument('--module-url', action='append', help='Module URL mapping (can be specified multiple times, format: url:mod1,mod2)')
     parser.add_argument('--output', default='ftrace_viz.html', help='Output HTML file path or sidecar report directory')
     parser.add_argument('--report-mode', choices=('single', 'sidecar'), default='single',
@@ -418,6 +424,9 @@ def parse_args(argv=None):
             path = config.find_config(pre.config)
             if path:
                 values, used = config.load(path, pre.preset)
+                if pre.source_browser is not None and pre.base_url is None:
+                    values = {key: value for key, value in values.items()
+                              if key.strip().lower().replace('_', '-') != 'base-url'}
                 config.apply(parser, values, path)
                 if pre.verbose:
                     print(f"[INFO] config {path}: {', '.join(used)}", file=sys.stderr)
@@ -426,7 +435,15 @@ def parse_args(argv=None):
         except (config.ConfigError, OSError, configparser.Error) as e:
             print(f"Error: {e}", file=sys.stderr)
             sys.exit(1)
-    return parser.parse_args(argv)
+    args = parser.parse_args(argv)
+    try:
+        browser_url = source_browser_url(args.source_browser or 'github', args.source_browser_rev)
+    except ValueError as error:
+        parser.error(str(error))
+    if args.base_url is None:
+        args.source_browser = args.source_browser or 'github'
+        args.base_url = browser_url
+    return args
 
 
 def main():

@@ -9,7 +9,8 @@
     [preset pi4]
     vmlinux = /vol_1t/raspi/linux/vmlinux
     kernel-src = /vol_1t/raspi/linux
-    base-url = https://elixir.bootlin.com/linux/v6.18/source
+    source-browser = github
+    source-browser-rev = v6.18
     cross-compile = aarch64-linux-gnu-
     timeline = true
 

@@ -10,7 +10,7 @@
 Kernel paths are kept in presets of funcgraph's config file (~/.config/funcgraph/config.ini):
 
     fgreport init pi4 --vmlinux /vol_1t/raspi/linux/vmlinux --kernel-src /vol_1t/raspi/linux \\
-             --cross-compile aarch64-linux-gnu- --base-url https://elixir.bootlin.com/linux/v6.18/source
+             --cross-compile aarch64-linux-gnu- --source-browser github --source-browser-rev v6.18
     fgreport init vm72 --vmlinux /vol_1t/Qemu/trim_retval/x86_64/vmlinux \\
              --kernel-src /vol_1t/Qemu/trim_retval --source-rev HEAD --default
     fgreport presets                        # list them (* = used when -p is not given)
@@ -31,7 +31,7 @@ from fglib.raw import MAGIC
 FUNCGRAPH = os.path.join(PROJECT_DIR, 'funcgraph.py')
 CONFIG = os.path.join(os.path.expanduser('~'), '.config', 'funcgraph', 'config.ini')
 BIG = 150000          # lines; above this the text view is too heavy for browsers
-PRESET_KEYS = ('vmlinux', 'kernel-src', 'base-url', 'source-rev', 'source-url', 'cross-compile', 'llvm',
+PRESET_KEYS = ('vmlinux', 'kernel-src', 'base-url', 'source-browser', 'source-browser-rev', 'source-rev', 'source-url', 'cross-compile', 'llvm',
                'module-dirs', 'module-srcs', 'path-prefix', 'btf', 'overhead')
 
 
@@ -81,6 +81,9 @@ def cmd_init(argv):
     sec = 'preset ' + a.name
     if not cp.has_section(sec):
         cp.add_section(sec)
+    if a.source_browser is not None and a.base_url is None:
+        cp.remove_option(sec, 'base-url')
+        cp.remove_option(sec, 'base_url')
     for k, v in vals.items():
         cp[sec][k] = os.path.abspath(v) if k in ('vmlinux', 'kernel-src') else v
     if a.default:

@@ -62,6 +62,19 @@ class FgreportTest(unittest.TestCase):
         self.assertIn('--no-text-view', self.command(big))
         self.assertNotIn('--no-text-view', self.command('--text', big))
 
+    def test_source_browser_preset_and_passthrough(self):
+        self.run_fg('init', 'links', '--base-url', 'https://legacy.test/src')
+        self.run_fg('init', 'links', '--source-browser', 'github', '--source-browser-rev', 'v7.2', '--default')
+        config_path = self.env['FG_CONFIG']
+        with open(config_path, encoding='utf-8') as source:
+            preset = source.read()
+        self.assertIn('source-browser = github', preset)
+        self.assertIn('source-browser-rev = v7.2', preset)
+        self.assertNotIn('base-url', preset)
+        command = self.command('t.txt', '--', '--source-browser', 'elixir', '--source-browser-rev', 'v6.18')
+        self.assertEqual(command[command.index('--source-browser') + 1], 'elixir')
+        self.assertEqual(command[command.index('--source-browser-rev') + 1], 'v6.18')
+
     def test_raw_binary_is_not_counted_as_text_lines(self):
         path = os.path.join(self.tmp.name, 'trace.dat')
         with open(path, 'wb') as output:

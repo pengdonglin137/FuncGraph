@@ -176,13 +176,17 @@ python3 funcgraph.py --timeline --pid 1234 --graph vfs_read --vmlinux vmlinux --
 | `--vmlinux PATH` | for address to source resolution, function links and BTF. Optional |
 | `--kernel-src DIR` | kernel source root, used to show source and compute relative paths |
 | `--fast` | resolve addresses with the bundled `fastfaddr2line.py` (needs pyelftools), much faster than the kernel script |
-| `--base-url URL` | root of an online source browser such as bootlin; locations become links |
+| `--source-browser github\|elixir` | online kernel browser; defaults to torvalds/linux on GitHub |
+| `--source-browser-rev REV` | web revision: GitHub tag/branch/commit or Elixir version; defaults to moving `master` / `latest` |
+| `--base-url URL` | custom online source root; overrides the built-in browser |
 | `--func-links` | turn function names in the text view into source links too |
 | `--highlight-code` | C syntax highlighting in source blocks (needs Pygments) |
 | `--module-dirs DIR...` / `--module-srcs DIR...` | where module `.ko` files / module sources are |
 | `--module-url URL:mod1,mod2` | online source URL for some modules; may be repeated |
 | `--path-prefix PATH...` | build path prefixes to strip from DWARF file names |
 | `--entry-offset N` | entry address offset for kernels built with `-fpatchable-function-entry` |
+
+Use `--source-browser github --source-browser-rev v7.4-rc2` for version-pinned GitHub links, or select `elixir` with a version available there. Text, source blocks and Timeline CALL STACK share this setting; no source download is added. These options only change outgoing links: they do not select embedded files or automatically detect the kernel version. Pin the actual upstream tag/commit when possible; custom local patches can shift line numbers. `--source-rev` below is independent and is never silently copied into web links. An explicit CLI `--source-browser` replaces a config/preset `base-url`; an explicit `--base-url` takes precedence over built-in settings. Existing module URL mappings retain priority.
 
 **Source origin** (default: the local files faddr2line finds)
 
@@ -250,7 +254,8 @@ enable-fold = true
 [preset pi4]
 vmlinux = /vol_1t/raspi/linux/vmlinux
 kernel-src = /vol_1t/raspi/linux
-base-url = https://elixir.bootlin.com/linux/v6.18/source
+source-browser = github
+source-browser-rev = v6.18
 cross-compile = aarch64-linux-gnu-
 timeline = true
 
@@ -258,6 +263,8 @@ timeline = true
 vmlinux = /vol_1t/Qemu/trim_retval/x86_64/vmlinux
 kernel-src = /vol_1t/Qemu/trim_retval
 source-rev = HEAD
+source-browser = github
+source-browser-rev = v7.2
 timeline = true
 ```
 

@@ -100,7 +100,7 @@ verification commands, and troubleshooting.
 ```bash
 # once per kernel: store vmlinux / sources in ~/.config/funcgraph/config.ini
 ./fgreport init pi4 --vmlinux /path/to/vmlinux --kernel-src /path/to/linux \
-    --cross-compile aarch64-linux-gnu- --base-url https://elixir.bootlin.com/linux/v6.18/source --default
+    --cross-compile aarch64-linux-gnu- --source-browser github --source-browser-rev v6.18 --default
 
 ./fgreport trace.txt                 # -> trace.html next to the trace (timeline, folding, filter, links, highlighting)
 ./fgreport -p vm72 --open trace.txt  # another preset, open in the browser
@@ -143,7 +143,9 @@ The following table documents each command-line option supported by `funcgraph.p
 | `--kernel-src` | path | Kernel source tree root (used for local source linking and syntax highlighting) | `--kernel-src /usr/src/linux` |
 | `--module-dirs` | paths... | Directories to search for kernel modules (can specify multiple) | `--module-dirs /lib/modules /usr/lib/modules` |
 | `--module-srcs` | paths... | Module source directories for module-specific source linking | `--module-srcs /path/to/module/src` |
-| `--base-url` | URL | Base URL for online source links (e.g., Bootlin) | `--base-url https://elixir.bootlin.com/linux/v6.18/source` |
+| `--source-browser` | `github` (default) / `elixir` | Online kernel source browser: torvalds/linux on GitHub or Bootlin Elixir | `--source-browser elixir` |
+| `--source-browser-rev` | revision | Online revision; default `master` on GitHub, `latest` on Elixir. Independent of embedded source | `--source-browser-rev v7.4-rc2` |
+| `--base-url` | URL | Custom source-link root, overriding the built-in browser | `--base-url https://elixir.bootlin.com/linux/v6.18/source` |
 | `--module-url` | url:mods (appendable) | Map specific modules to a source URL; format: `url:mod1,mod2`. Can be specified multiple times. | `--module-url https://url1.com:modA,modB` |
 | `--output` | path (default: `ftrace_viz.html`) | HTML file path, or a dedicated directory in sidecar mode | `--output result.html` |
 | `--report-mode` | `single` (default) / `sidecar` | Offline HTML or an HTTP report directory; sidecar requires Timeline and loads Text in full on first use | `--timeline --report-mode sidecar --output report-dir` |
@@ -175,6 +177,20 @@ The following table documents each command-line option supported by `funcgraph.p
 **Notes:**
 - `--fast` and `--use-external` should not be used together; if both are specified, `--use-external` will be ignored.
 - `--module-url` supports either a bare URL (default for all modules) or `url:mod1,mod2` mappings; repeat the flag to add multiple mappings.
+
+### Online source browser
+
+```bash
+# GitHub is the default; pin a tag to avoid moving line numbers
+python3 funcgraph.py trace.txt --vmlinux vmlinux --source-browser-rev v7.4-rc2
+
+# Select Elixir instead
+python3 funcgraph.py trace.txt --vmlinux vmlinux --source-browser elixir --source-browser-rev v6.18
+```
+
+This selects outgoing links in Text, source blocks and Timeline, including CALL STACK; it does not fetch files or change embedded source. `--source-rev` still selects the local/URL source revision and is **not** automatically reused for web links: a custom local commit may not exist upstream. Choose a tag/branch/commit available on GitHub, or a version published on Elixir. Without `--source-browser-rev`, links follow moving `master` / `latest`, not an automatically detected kernel version; for reproducible reports, always pin it. Custom kernels and upstream baselines may differ in line numbers.
+
+An explicit `--base-url` overrides browser settings. Existing `base-url` presets continue to work; an explicit CLI `--source-browser` overrides an inherited `base-url`. Both new options can be stored in INI files and with `fgreport init`; one-off wrapper overrides go after `--`, e.g. `fgreport trace.txt -- --source-browser elixir --source-browser-rev v6.18`. Module-specific `--module-url` mappings keep their precedence.
 
 ### Module URL Example
 
