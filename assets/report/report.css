@@ -152,6 +152,12 @@
             -ms-user-select: none;
             user-select: none;
         }
+        @supports (overflow-clip-margin: 6px) {
+            .text-chunk {
+                contain: paint;
+                overflow-clip-margin: 6px;
+            }
+        }
         .line-container.expandable {
             cursor: pointer;
         }

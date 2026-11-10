@@ -20,6 +20,9 @@ from .resolver import call_faddr2line_batch, call_faddr2line_for_func_names, cre
 from .util import build_source_url, clean_file_path, escape_html_preserve_spaces, find_module_path, format_args_info, get_environment_info, get_relative_path, remove_compiler_suffix, verbose_print
 
 
+TEXT_CHUNK_ROWS = 512
+
+
 class _Background:
     """Run fn(*args, **kw) in a thread; result() joins and re-raises errors."""
 
@@ -246,7 +249,7 @@ class HtmlGenerator:
         yield section('chrome', html_str)
 
         # 3. Generate content lines
-        for fragment in self._iter_content_lines():
+        for fragment in self._iter_content_chunks():
             yield section('text', fragment)
 
         yield section('chrome', """
@@ -1063,9 +1066,21 @@ class HtmlGenerator:
     def _generate_content_lines(self):
         """Generate HTML for all ftrace content lines.
 
-        Returns a string of all line-container divs.
+        Returns all row/source pairs grouped into static paint chunks.
         """
-        return ''.join(self._iter_content_lines())
+        return ''.join(self._iter_content_chunks())
+
+    def _iter_content_chunks(self):
+        count = 0
+        for fragment in self._iter_content_lines():
+            if count % TEXT_CHUNK_ROWS == 0:
+                if count:
+                    yield '</div>'
+                yield f'<div class="text-chunk" data-chunk-size="{TEXT_CHUNK_ROWS}">'
+            yield fragment
+            count += 1
+        if count:
+            yield '</div>'
 
     def _source_index(self, func_info):
         cached = self._src_calls.get(func_info)

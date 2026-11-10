@@ -80,9 +80,11 @@
         function fgBlocks(container) {
             // [line, expandedContentOrNull] in DOM order
             const out = [];
-            for (const el of Array.from(container.children)) {
-                if (el.classList.contains('line-container')) out.push([el, null]);
-                else if (el.classList.contains('expanded-content') && out.length) out[out.length - 1][1] = el;
+            for (const child of container.children) {
+                for (const element of child.classList.contains('text-chunk') ? child.children : [child]) {
+                    if (element.classList.contains('line-container')) out.push([element, null]);
+                    else if (element.classList.contains('expanded-content') && out.length) out[out.length - 1][1] = element;
+                }
             }
             return out;
         }
@@ -97,18 +99,27 @@
             if (ctl) document.documentElement.style.setProperty('--ctl-h', ctl.offsetHeight + 'px');
             updateExpandableLines();
         }
-        function fgReorder(container, mode) {
+        function fgReorder(container, mode, orderedBlocks) {
             container.querySelectorAll('.task-group-head, .task-gap').forEach(e => e.remove());
-            const blocks = fgBlocks(container).sort((a, b) => +a[0].dataset.lineNumber - +b[0].dataset.lineNumber);
+            const blocks = orderedBlocks || fgBlocks(container).sort((a, b) => +a[0].dataset.lineNumber - +b[0].dataset.lineNumber);
             const frag = document.createDocumentFragment();
-            const put = b => { frag.appendChild(b[0]); if (b[1]) frag.appendChild(b[1]); };
+            const chunkSize = Number(container.querySelector('.text-chunk')?.dataset.chunkSize) || 512;
+            let chunk = null, chunkRows = 0;
+            const boundary = element => { chunk = null; chunkRows = 0; frag.appendChild(element); };
+            const put = block => {
+                if (!chunk || chunkRows >= chunkSize) {
+                    chunk = document.createElement('div'); chunk.className = 'text-chunk';
+                    chunk.dataset.chunkSize = chunkSize; frag.appendChild(chunk); chunkRows = 0;
+                }
+                chunk.appendChild(block[0]); if (block[1]) chunk.appendChild(block[1]); chunkRows++;
+            };
             fgTextOrder = mode;
             lsSet('textOrder', mode);
             const btn = document.getElementById('textOrderBtn');
             if (btn) btn.textContent = 'Order: ' + (mode === 'task' ? 'by task' : 'time');
             if (mode !== 'task') {
                 blocks.forEach(put);
-                container.appendChild(frag);
+                container.replaceChildren(frag);
                 container.classList.remove('grouped');
                 return;
             }
@@ -146,7 +157,7 @@
                 h.className = 'task-group-head';
                 h.textContent = (first.getAttribute('data-comm') || k) + '  ' + (first.getAttribute('data-pid') || '') +
                     '   ·  ' + real.length + ' lines  ·  CPU ' + Array.from(cpus).sort((a, b) => a - b).join(',');
-                frag.appendChild(h);
+                boundary(h);
                 let pendingSwitch = null, prevLn = -1, prevTs = null;
                 for (const b of list) {
                     const t = txt(b), ln = +b[0].dataset.lineNumber;
@@ -158,7 +169,7 @@
                         const dt = (tm && prevTs !== null) ? ' after ' + ((parseFloat(tm[1]) - prevTs) * 1e3).toFixed(3) + ' ms' : '';
                         gap.textContent = '⇣ switched out on CPU ' + pendingSwitch[1] + ' → ' + pendingSwitch[4].trim() + '-' + pendingSwitch[5] +
                             '; resumes at line ' + ln + dt + ' (' + (realBefore.get(ln) - realBefore.get(prevLn) - 1) + ' lines of other tasks in between)';
-                        frag.appendChild(gap);
+                        boundary(gap);
                         pendingSwitch = null;
                     }
                     if (sw) { pendingSwitch = sw; b[0].classList.add('task-switch'); }
@@ -167,7 +178,7 @@
                     put(b);
                 }
             }
-            container.appendChild(frag);
+            container.replaceChildren(frag);
             container.classList.add('grouped');
         }
         function fgToggleTextOrder() { fgSetTextOrder(fgTextOrder === 'task' ? 'time' : 'task'); }
@@ -314,7 +325,7 @@
                 context.setTransform(scale, 0, 0, scale, 0, 0);
                 context.fillStyle = getComputedStyle(entry).getPropertyValue('--tree-guide-active').trim();
                 if (guideRevision !== textGuideRevision) {
-                    guideRows = Array.from(content.children).filter(row =>
+                    guideRows = Array.from(content.querySelectorAll('.line-container')).filter(row =>
                         row.classList.contains('line-container') && row.style.display !== 'none' &&
                         !row.classList.contains('grp-hidden'));
                     guideRevision = textGuideRevision;
@@ -1034,30 +1045,27 @@
                 }
             });
 
-            // Update expandable lines
-            updateExpandableLines();
-            fgNotifyFilter(hasFilter ? text : '', passLines);
-
             // Apply duration sort if requested
             if (sortDir && visibleCount > 0) {
-                const visibleLines = Array.from(allLineElems).filter(l => l.style.display !== 'none');
-                visibleLines.sort((a, b) => {
-                    const dA = parseFloat(a.getAttribute('data-sort-duration') || a.getAttribute('data-duration') || '0');
-                    const dB = parseFloat(b.getAttribute('data-sort-duration') || b.getAttribute('data-duration') || '0');
-                    return sortDir === 'desc' ? dB - dA : dA - dB;
-                });
-                const container = visibleLines[0]?.parentElement;
+                const container = document.getElementById('content');
                 if (container) {
-                    visibleLines.forEach(l => l.remove());
-                    visibleLines.forEach(l => {
-                        const lastVis = Array.from(container.children).findLast(c =>
-                            c.classList.contains('line-container') && c.style.display !== 'none'
-                        );
-                        if (lastVis) lastVis.after(l);
-                        else container.insertBefore(l, container.firstChild);
+                    const blocks = fgBlocks(container);
+                    blocks.sort((left, right) => {
+                        const leftHidden = left[0].style.display === 'none', rightHidden = right[0].style.display === 'none';
+                        if (leftHidden !== rightHidden) return leftHidden ? 1 : -1;
+                        if (leftHidden) return 0;
+                        const leftDuration = parseFloat(left[0].dataset.sortDuration || left[0].dataset.duration || '0');
+                        const rightDuration = parseFloat(right[0].dataset.sortDuration || right[0].dataset.duration || '0');
+                        return sortDir === 'desc' ? rightDuration - leftDuration : leftDuration - rightDuration;
                     });
+                    fgReorder(container, 'time', blocks);
+                    const button = document.getElementById('textOrderBtn');
+                    if (button) button.textContent = 'Order: duration ' + (sortDir === 'desc' ? '↓' : '↑');
                 }
             }
+
+            updateExpandableLines();
+            fgNotifyFilter(hasFilter ? text : '', passLines);
 
             // Update visible lines count
             const visibleLinesContainer = document.getElementById('visibleLinesContainer');
@@ -1662,7 +1670,7 @@
                     }
                 }
             });
-            entryEl?.parentElement.dispatchEvent(new Event('fg-guides-change'));
+            entryEl?.closest('#content')?.dispatchEvent(new Event('fg-guides-change'));
         }
 
         // Public API: toggle a single fold block + save state

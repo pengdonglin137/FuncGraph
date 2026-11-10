@@ -1,5 +1,7 @@
 """Headless browser smoke test of a generated report (skipped without Playwright + Chromium)."""
+import base64
 import csv
+from itertools import product
 import os
 import unittest
 
@@ -527,6 +529,135 @@ class BrowserSmokeTest(unittest.TestCase):
                 self.assertEqual(guide_button.get_attribute('aria-pressed'), 'true')
                 self.assertFalse(self.ev("document.getElementById('fgTreeGuides').sheet.disabled"))
                 self.assertEqual(self.ev(snapshot, parent['row']), before)
+
+    def test_text_paint_containment_preserves_overflow_geometry_and_focus_pixels(self):
+        if not self.ev("CSS.supports('overflow-clip-margin', '6px')"):
+            self.skipTest('paint clip margins are not supported')
+        trace = '# tracer: function_graph\n' + '# padding\n' * 510
+        trace += (' 0)               |  parent() { /* <-caller+0x1/0x20 */\n'
+                  ' 0)               |    child() { /* <-caller+0x1/0x20 */\n'
+                  ' 0)   0.001 us    |      leaf(); /* <-caller+0x1/0x20 */\n'
+                  ' 0)   0.002 us    |    } /* child */\n'
+                  ' 0)   0.003 us    |  } /* parent */\n')
+        trace_path = os.path.join(self.k.dir, 'chunk-boundary.txt')
+        with open(trace_path, 'w') as stream:
+            stream.write(trace)
+        self.k.run(trace_path, '--enable-fold', '--filter', '--func-links', out='chunk-boundary.html')
+        self.page.goto('file://' + self.k.dir + '/chunk-boundary.html', wait_until='load')
+        parent = {'row': 'L512'}
+        self.assertEqual(self.page.locator('#L512').evaluate('row => row.parentElement.lastElementChild.id'), 'line_511_content')
+        self.assertEqual(self.page.locator('#L513').evaluate('row => row.parentElement.firstElementChild.id'), 'L513')
+        self.ev("id => document.getElementById(id).querySelector('.line-content').append(' long_argument=' + '0123456789'.repeat(100))",
+                parent['row'])
+        for width in [390, 1500]:
+            for theme, row_id in product(['light', 'dark'], ['L512', 'L513']):
+                with self.subTest(width=width, theme=theme, row=row_id):
+                    self.page.set_viewport_size({'width': width, 'height': 900})
+                    self.ev("theme => document.documentElement.setAttribute('data-theme', theme)", theme)
+                    baseline = self.page.add_style_tag(content='.text-chunk {contain:none; overflow-clip-margin:0px}')
+                    icon = self.page.locator('#' + row_id + ' .fold-icon')
+                    self.assertEqual(icon.evaluate("control => getComputedStyle(control.closest('.text-chunk')).contain"), 'none')
+                    icon.evaluate("control => control.scrollIntoView({block:'center', inline:'center'})")
+                    icon.focus()
+                    self.ev('async () => {await new Promise(requestAnimationFrame); await new Promise(requestAnimationFrame)}')
+                    bounds = icon.bounding_box()
+                    clip = dict(x=max(0, bounds['x'] - 5), y=max(0, bounds['y'] - 5),
+                                width=bounds['width'] + 10, height=bounds['height'] + 10)
+                    geometry = """() => ({pageWidth:document.documentElement.scrollWidth, pageHeight:document.documentElement.scrollHeight,
+                        rows:Array.from(document.querySelectorAll('#content .line-container'), row => {
+                            const rect = row.getBoundingClientRect();
+                            return [row.id, rect.x, rect.y, rect.width, rect.height, row.scrollWidth];
+                        })})"""
+                    before_geometry = self.ev(geometry)
+                    before_pixels = self.page.screenshot(clip=clip)
+                    hit_targets = """bounds => [bounds.y + 1, bounds.y + bounds.height - 1].map(top => {
+                        const hit = document.elementFromPoint(bounds.x + bounds.width / 2, top);
+                        return hit?.closest('.line-container')?.id;
+                    })"""
+                    before_hits = self.ev(hit_targets, bounds)
+                    baseline.evaluate('style => style.remove()')
+                    self.ev('async () => {await new Promise(requestAnimationFrame); await new Promise(requestAnimationFrame)}')
+                    self.assertEqual(self.ev(geometry), before_geometry)
+                    after_pixels = self.page.screenshot(clip=clip)
+                    clipped = self.page.add_style_tag(content='.text-chunk {overflow-clip-margin:0px}')
+                    clipped_pixels = self.page.screenshot(clip=clip)
+                    clipped.evaluate('style => style.remove()')
+                    outline_color = icon.evaluate("control => getComputedStyle(control).outlineColor.match(/[0-9.]+/g).slice(0, 3).map(Number)")
+                    outlines = self.ev("""async ({images, color}) => {
+                        const decode = async encoded => {
+                            const image = new Image();
+                            image.src = 'data:image/png;base64,' + encoded; await image.decode();
+                            const canvas = document.createElement('canvas');
+                            canvas.width = image.width; canvas.height = image.height;
+                            const context = canvas.getContext('2d'); context.drawImage(image, 0, 0);
+                            const pixels = context.getImageData(0, 0, canvas.width, canvas.height).data;
+                            const result = {count:0, left:canvas.width, top:canvas.height, right:0, bottom:0};
+                            for (let index = 0; index < pixels.length; index += 4) {
+                                const column = index / 4 % canvas.width, row = Math.floor(index / 4 / canvas.width);
+                                if (Math.abs(column - canvas.width / 2) <= 3) continue;
+                                if (!color.every((channel, offset) => Math.abs(pixels[index + offset] - channel) <= 24)) continue;
+                                result.count++; result.left = Math.min(result.left, column); result.right = Math.max(result.right, column);
+                                result.top = Math.min(result.top, row); result.bottom = Math.max(result.bottom, row);
+                            }
+                            return result;
+                        };
+                        return Promise.all(images.map(decode));
+                    }""", dict(images=[base64.b64encode(image).decode() for image in [before_pixels, after_pixels, clipped_pixels]], color=outline_color))
+                    self.assertGreater(outlines[0]['count'], 20)
+                    self.assertGreaterEqual(outlines[1]['count'], outlines[0]['count'] * 0.95, outlines)
+                    for edge in ['left', 'top']:
+                        self.assertLessEqual(outlines[1][edge], outlines[0][edge] + 1, outlines)
+                    for edge in ['right', 'bottom']:
+                        self.assertGreaterEqual(outlines[1][edge], outlines[0][edge] - 1, outlines)
+                    if row_id == 'L513':
+                        self.assertGreater(outlines[2]['top'], outlines[0]['top'] + 1, outlines)
+                    self.assertEqual(self.ev(hit_targets, bounds), before_hits)
+                    self.assertEqual(icon.evaluate("control => getComputedStyle(control.closest('.text-chunk')).contain"), 'paint')
+                    self.assertEqual(icon.evaluate("control => getComputedStyle(control.closest('.line-container')).contain"), 'none')
+                    self.assertGreater(before_geometry['pageWidth'], width)
+                    self.ev('document.activeElement.blur()')
+        self.ev("window.chunkGuideChanges = 0; document.getElementById('content').addEventListener('fg-guides-change', () => chunkGuideChanges++)")
+        self.ev("toggleFold(document.getElementById('L512').dataset.foldId, 'entry')")
+        self.assertEqual(self.ev('chunkGuideChanges'), 1)
+        for row in ['L513', 'L514', 'L515', 'L516']:
+            self.assertFalse(self.page.locator('#' + row).is_visible())
+        self.page.locator('#L512 .fold-icon').click()
+        for row in ['L513', 'L514', 'L515', 'L516']:
+            self.assertTrue(self.page.locator('#' + row).is_visible())
+        self.ev('document.activeElement.blur()')
+        self.page.mouse.move(0, 0)
+        self.record_guide_paint()
+        self.page.locator('#L512 .fold-icon').hover()
+        self.page.wait_for_function('guidePaint.length > 0')
+        child_center = self.page.locator('#L513').evaluate('row => { const bounds = row.getBoundingClientRect(); return bounds.top + bounds.height / 2; }')
+        self.assertTrue(any(segment['top'] <= child_center <= segment['top'] + segment['height']
+                            for segment in self.ev('guidePaint')))
+
+    def test_text_paint_containment_keeps_selection_and_source_panels_outside_rows(self):
+        parent, child, grandchild, outside = self.nested_fold_rows()
+        self.expand_fold_source(grandchild)
+        source = self.page.locator('#' + grandchild['line'] + '_content')
+        self.assertTrue(source.is_visible())
+        self.assertEqual(source.evaluate('panel => getComputedStyle(panel).contain'), 'none')
+        self.assertGreater(source.bounding_box()['height'], 0)
+        self.assertTrue(source.evaluate("panel => panel.parentElement.classList.contains('text-chunk')"))
+        self.assertEqual(source.evaluate('panel => panel.previousElementSibling.id'), grandchild['row'])
+        select = """ids => {
+            const range = document.createRange();
+            range.setStartBefore(document.getElementById(ids[0]).querySelector('.line-content'));
+            range.setEndAfter(document.getElementById(ids[1]).querySelector('.line-content'));
+            const selection = getSelection();
+            selection.removeAllRanges(); selection.addRange(range);
+            return selection.toString();
+        }"""
+        baseline = self.page.add_style_tag(content='.text-chunk {contain:none}')
+        before = self.ev(select, [parent['row'], grandchild['row']])
+        baseline.evaluate('style => style.remove()')
+        after = self.ev(select, [parent['row'], grandchild['row']])
+        self.assertEqual(after, before)
+        for entry in [parent, grandchild]:
+            self.assertIn(self.page.locator('#' + entry['row']).get_attribute('data-func'), after)
+        self.assertGreater(source.locator('.location-link').count(), 0)
 
     def test_fold_guides_restore_before_text_is_parsed(self):
         self.page.locator('#foldGuidesBtn').click()
@@ -3461,6 +3592,56 @@ class BrowserSmokeTest(unittest.TestCase):
         self.page.wait_for_timeout(300)
         self.assertTrue(self.ev("""(() => { const n = Array.from(document.querySelectorAll('#content .line-container')).map(l => +l.dataset.lineNumber);
             return n.every((x, i) => i === 0 || x > n[i - 1]) && !document.querySelector('.task-gap, .task-group-head'); })()"""))
+
+    def test_text_order_keeps_chunks_bounded_and_source_pairs_intact(self):
+        snapshot = """() => {
+            const content = document.getElementById('content');
+            const chunks = Array.from(content.querySelectorAll('.text-chunk'));
+            const rows = Array.from(content.querySelectorAll('.line-container'));
+            return {pairs:rows.map(row => [row.id, row.nextElementSibling?.classList.contains('expanded-content') ? row.nextElementSibling.id : null])
+                    .sort((left, right) => Number(left[0].slice(1)) - Number(right[0].slice(1))),
+                sizes:chunks.map(chunk => chunk.querySelectorAll('.line-container').length),
+                limits:chunks.map(chunk => Number(chunk.dataset.chunkSize)),
+                nested:chunks.some(chunk => chunk.parentElement !== content),
+                unpaired:content.querySelectorAll('.expanded-content').length - rows.filter(row => row.nextElementSibling?.classList.contains('expanded-content')).length,
+                headers:Array.from(content.querySelectorAll('.task-group-head, .task-gap'), head =>
+                    [head.parentElement === content, head.classList.contains('task-group-head'), getComputedStyle(head).position]),
+                looseRows:rows.filter(row => !row.parentElement.classList.contains('text-chunk')).length};
+        }"""
+        before = self.ev(snapshot)
+        self.assertGreater(len(before['sizes']), 1)
+        self.assertEqual(len(set(pair[0] for pair in before['pairs'])), len(before['pairs']))
+        for mode in ['task', 'time', 'desc', 'asc'] * 3:
+            with self.subTest(mode=mode):
+                if mode in ['task', 'time']:
+                    self.page.fill('#filterInput', '')
+                    self.ev('applyFilter()')
+                    self.ev('mode => fgSetTextOrder(mode)', mode)
+                else:
+                    self.page.fill('#filterInput', 'duration:>0 sort:' + mode)
+                    self.ev("""mode => {
+                        const original = parseFilterExpr;
+                        parseFilterExpr = text => ({...original(text.replace(/ sort:(asc|desc)$/, '')), sortDir:mode});
+                        try { applyFilter(); } finally { parseFilterExpr = original; }
+                    }""", mode)
+                    durations = self.ev("Array.from(document.querySelectorAll('#content .line-container')).filter(row => row.style.display !== 'none').map(row => Number(row.dataset.sortDuration || row.dataset.duration || 0))")
+                    self.assertGreater(len(durations), 512)
+                    self.assertEqual(durations, sorted(durations, reverse=mode == 'desc'))
+                    self.assertEqual(self.page.locator('#textOrderBtn').inner_text(), 'Order: duration ' + ('↓' if mode == 'desc' else '↑'))
+                after = self.ev(snapshot)
+                self.assertEqual(after['pairs'], before['pairs'])
+                self.assertTrue(all(0 < size <= 512 for size in after['sizes']))
+                self.assertEqual(set(after['limits']), {512})
+                self.assertFalse(after['nested'])
+                self.assertEqual(after['looseRows'], 0)
+                self.assertEqual(after['unpaired'], 0)
+                self.assertTrue(all(header[0] for header in after['headers']))
+                if mode != 'task':
+                    self.assertEqual(after['sizes'], before['sizes'])
+                    self.assertEqual(after['headers'], [])
+                else:
+                    self.assertGreater(len(after['headers']), 0)
+                    self.assertTrue(all(position == 'sticky' for _, is_head, position in after['headers'] if is_head))
 
     def open_dense_pixels(self, depth=1, inline=False, label='dense_child', mode='abs'):
         self.open_range_data(['root'] + [label] * 6, starts=[0, 100000, 100001, 100002, 100800, 100801, 100802],

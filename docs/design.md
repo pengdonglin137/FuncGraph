@@ -98,6 +98,8 @@ faddr2line 的查找顺序：`<kernel-src>/scripts/faddr2line`，然后 PATH，�
 
 trace 的每一行（包括注释行）对应一个 `div.line-container#L<行号>`。行上的 `data-*` 属性用来过滤：`cpu`、`pid`、`comm`、`func`、`params`、`duration`、`heat`、`irqs`、`resched`、`hirq`、`preempt`、`fold-id`、`fold-type`、`fold-ancestors`、`call-depth`。
 
+输出按 `TEXT_CHUNK_ROWS = 512` 条完整片段流式增加 `div.text-chunk[data-chunk-size]` 包装；片段中的原始行与相邻源码占位不拆开，不缓冲整块或整份 Text。所有行和源码仍保留，块不是请求或模型边界。支持 `overflow-clip-margin:6px` 才给块开启 `contain:paint`；不隔离每一行，也不启用 `content-visibility` 跳过块，以免改变选区、滚动和源码展开。`#content` 仍保留 fit-content 横向尺寸。
+
 ### 4.2 源码块懒加载
 
 可展开的行（带返回地址的行）后面跟一个空的 `div.expanded-content`，带 `data-src="N"` 属性。源码块的 HTML 去重后放在 `<script type="application/json" id="fgSrc">` 中，是一个 JSON 数组。`fgFill(el)` 在第一次显示时把内容填进去。任何要显示展开块的代码，都必须先调用 `fgFill`。
@@ -110,6 +112,7 @@ trace 的每一行（包括注释行）对应一个 `div.line-container#L<行号
 - `data-fold-ancestors` 是空格分隔的祖先 id 列表，JS 用 `[data-fold-ancestors~=id]` 选择器找到整个子树。
 - `_setFolded()` 是唯一修改折叠状态的函数，其他折叠操作都调用它。折叠状态按文件存入 localStorage，键名前缀是文档标题的哈希。
 - 更新可见性时只查询当前调用子树，在一次遍历中根据所有已折叠祖先决定每行及其源码块是否显示；不再先展开全部后递归重放子折叠。源码展开偏好与可见性分离：父调用折叠期间保留偏好，重新展开时只填充可见行的源码。恢复 localStorage 时强制应用已有折叠状态，再按相邻行恢复可见源码，隐藏行不提前填充；延迟的源码单击回调不能重新打开已隐藏行。
+- `fgBlocks` 同时读取旧平铺结构和新绘制块；任务/时间重排及旧耗时排序消费路径按完整行/源码对重建最多 512 行的块，不留下空旧块。任务标题和切换间隙是 `#content` 的直接孩子，不放在 paint containing block 内；排序后再重建键盘行缓存。折叠的 `fg-guides-change` 直接发给 `#content`，不能再假定行的父元素就是根。悬停绘制缓存跨块查询实际行，再按原折叠成员关系画可见列，不把块边界误当调用边界。
 - Text 折叠箭头移到函数名前、跟随原始缩进；原生空按钮的伪元素绘制 9px 灰色箭头，不改原始 trace 字符。入口 `{` 是独立辅助折叠按钮，跳过源码单击/双击和全局 Enter/Space 处理，数字深度快捷键仍可用。摘要放在 `{ … }` 后、调用点尾注前，计入全部已记录后代 entry/leaf，排除 exit 和自身；独立的 data-fold-ret 保存出口原文中的返回值并在插入摘要时转义，包含普通数值、指针和布尔值，不改过滤器 data-ret 的已知 errno 口径。普通返回值沿用灰色，错误状态沿用已有 errno 属性。
 - `.call-indent` 的重复 CSS 渐变画 1 CSS px 祖先线，入口/出口伪元素画当前层的短连接线；不按深度添加节点。原 0.75px 硬边渐变在 Chromium 普通像素密度下可能不绘出任何线条，不能仅凭 computedStyle 有颜色判断可见；测试需对比开关前后缩进空白区域的实际截图。浅色/深色主题的 `--tree-guide` 分别为 `#b2bcc6` / `#687582`，不再用极低透明度叠在不同热力图底色上；祖先线、短连接线、源码块及内联链边线共用此中性灰。源码帧边线为 1 CSS px 实线，保留 traced/inline 标签辨别身份，不再混用绿色实线与灰色虚线。`--tree-guide-active` 分别为 `#7a8998` / `#9aaaba`，仅用于当前悬停列及其端点。层级线是原始缩进的阅读辅助，不保证跨任务交错、过滤和源码块连续，也不重建缺失调用。`tree.css` 单独内嵌，左侧 Top 旁的 Tree guides 按钮通过 stylesheet.disabled 开关并按报告保存；head 的 early.js 在 trace DOM 之前恢复。无可折叠 Text 时不输出样式和按钮，旧 HTML 需重新生成。不开 body 状态后代选择器，开关不改行几何，但浏览器仍可能为全报告重算样式，不能宣称 O(1) 渲染或文本虚拟化。
 - `#content` 委托折叠点击和 pointer/focus 事件。生成的 `data-fold-end` / `data-fold-start` 保存实际配对行号，悬停经 getElementById 更新入口/出口最多两行；单个无交互 canvas 在视口内强调当前列（1 个设备像素）。只在初始化/过滤/折叠/重排使可见性版本变化后重建 Text 直接子行的引用缓存；其余悬停和滚动按实际行矩形二分定位视口，只绘制可见行，按原 fold-id/ancestors 跳过其他调用树和交错任务，自然跳过源码面板的空间。不逐行 elementFromPoint（百万 DOM 上原型每次约 0.2s）、不为全部后代修改 class、不在整行铺色。滚动、缩放、主题、内容尺寸和可见性变化经 rAF 合并重绘；关线或离开标识时清空，箭头焦点仍可强调当前列。层级线、源码、热力图和错误颜色互不代替。
@@ -400,6 +403,34 @@ Timeline 调用点不再通过 `L<n>` / `line_<n>_content` 查源码。`fgSrcLin
 
 真实 traceB 保留 55,186 个调用、84,453 个含合成帧的模型条目、3,210 个去重源码块、1,594 个内联调用点和全部 55,186 条源索引；新旧源码池及完整 Timeline（除现有耗时/no_text 元数据）逐项相同。新完整报告约 114.65 MiB，保留源码的无 Text 报告约 14.60 MiB，仅 16 行注释；索引 JSON 为 644,590 字节。此选项显式省略 Text，并非完整 Text 的按需加载；不能据此宣称 sidecar 或默认报告已虚拟化。
 
+### 8.5 大型 Text 的分块绘制隔离（2026-11-10）
+
+百万元素报告的悬停瓶颈包含浏览器的 Paint/HitTest/PrePaint，不只是委托事件函数的执行时间。逐行 `contain:paint` 虽有改善，另一组独立实验的末端 renderer RSS 样本却增加数百 MiB，因此没有采用。最终在生成器中每 512 条记录增加一个静态绘制边界；行与源码面板成对，任务标题/间隙留在块外，6px clip margin 保护第一行按钮越过块顶部的部分及原生焦点轮廓。浏览器不支持该 margin 时不启用隔离。
+
+对照 `63bdc0150d8a`，使用真实 traceB（输入 SHA-256 同 §8.1），开启 `--timeline --enable-fold --filter --func-links --highlight-code --fast`，使用 `/vol_1t/raspi/linux/vmlinux` 及其源码目录，设置 ARM64 工具链及 v6.18 Bootlin 源码 URL。报告约 127.7 MiB，72,176 行、55,186 个真实调用；DOM 从 1,051,447 增至 1,051,588，恰好增加 141 个包装元素，不删减 trace、源码、高亮或模型。Chromium 145.0.7632.6、1500×900、浅色主题，三轮交替顺序，每次独立浏览器和 context，清空该 context 的存储，不清文件系统缓存；测量时不并发测试/构建等重负载。
+
+| 指标 | 修改前 → 分块，中位数 |
+|---|---|
+| 默认 Text：导航至 load 后双 rAF，三轮 | 37,636.2 → 12,934.4ms |
+| 首次真实鼠标进入折叠按钮，三轮 | 1,058.5 → 338.6ms |
+| warm 鼠标进入 / 离开，各十二个样本 | 760.2 → 174.1ms / 442.7 → 178.3ms |
+| 原生 DOM focus / blur，各十五个样本 | 307.2 → 89.7ms / 298.7 → 87.2ms |
+| 交互结束时 renderer RSS 样本之和，三轮 | 3,354.1 → 3,178.0 MiB，约减少 176 MiB；不是峰值 |
+| 另测保存 Timeline 后冷恢复，三轮 | 完整就绪双 rAF 1,818.9 → 1,784.1ms；最长长任务 208 → 159ms。启动保持同量级，不据此宣称新的 Timeline 提速；该组三轮有 2,785.5ms 的旧版就绪样本，不能忽略变异 |
+
+`tests/benchmark_text.py` 使用真实 `page.mouse.move` 进入/离开同一可见折叠按钮，记录动作至双 rAF 的代理延迟；每轮五次，第一次单列为冷交互，其余十二个样本汇总为 warm。另以原生 DOM `focus/blur` 测焦点反馈，不冒称真实 Tab 键输入。双 rAF 不是物理呈现完成时间，单机结果不保证其他设备的比例；仍保留完整 DOM，较大的交互及加载延迟并没有被消除。RSS 是交互结束时该浏览器全部 renderer 进程的 `/proc/<pid>/status` 样本之和，不是峰值、JS heap 或整个浏览器的内存，也不能称常量内存。
+
+复现（JSON 保留报告字节数/SHA-256、浏览器版本、行/元素/块数、实际 containment、全部冷/warm 样本、renderer PID/RSS 和残留 scope 检查）：
+
+```bash
+python3 tests/benchmark_text.py /tmp/before.html /tmp/after.html \
+    --rounds 3 --samples 5 --output /tmp/text-paint.json
+python3 tests/benchmark_startup.py /tmp/before.html /tmp/after.html \
+    --mode restore --rounds 3 --output /tmp/text-restore.json
+```
+
+保真检查只精确去掉新增的 `text-chunk` 开闭包装，然后比较**完整原始 Text HTML**；七组真实内核 golden、完整 traceB 和仓库样例的行/源码 markup 均相同，全部 JSON 载荷仅沿用已有 `stats.build_time` 屏蔽。没有扩大 golden normalization 来消除呈现差异。浏览器回归覆盖跨块父子折叠/悬停、390/1500px 与 light/dark、长行横向溢出、选区、源码相邻关系、反复任务/时间/排序消费重排后的行唯一性及块上限；针对块首行实际截图确认 `overflow-clip-margin:0` 会裁焦点，而生产 6px 保留轮廓。这里的静态绘制块与未来按最终 HTML 字节大小触发的 sidecar/按需加载没有关系，后者尚未实现。
+
 ## 9. 自测
 
 ```bash
@@ -414,7 +445,7 @@ python3 tests/golden.py --update   # 修改代码前先记录基线
 | `test_btf.py` | 用代码构造 BTF 数据和最小 ELF，测试类型分类、`.BTF` 段读取、split BTF、原始数据作为基础、错误的 magic；设置 `FG_VMLINUX` 时再测真实 vmlinux |
 | `test_timeline.py` | 构造的边界格式（完整选项、无 proc、孤儿行、无 duration、上下文切换、BTF 过滤）；pi4 上 6 种选项组合实测数据的模式和能力识别；所有切片的不变量；`FG_TRACES` 可以指定额外的 trace |
 | `test_report.py` | 用假的 vmlinux 和 faddr2line 跑完整命令行：功能标记、行数、懒加载池、折叠引用、有无时间轴时文本部分一致、HTML 和 `<script>` 注入、`node --check` 检查所有内联脚本、每种实测数据都能生成时间轴 |
-| `test_output.py` | UTF-8 精确大小与严格阈值、单次增量迭代、区段合并/有界提取、旧字符串 API 字节一致、权限/符号链接/普通文件约束、生成及写入/发布失败不破坏旧报告 |
+| `test_output.py` | UTF-8 精确大小与严格阈值、单次增量迭代、区段合并/有界提取、绘制块 0/1/512/513/1025 片段边界及行/源码对保留、跨块旧字符串 API 字节一致、权限/符号链接/普通文件约束、生成及写入/发布失败不破坏旧报告 |
 | `test_fastfaddr2line.py` | 符号匹配：精确长度、别名、编译器后缀、同名符号按长度区分、entry offset、最后一个符号；设置 `FG_VMLINUX` 时与内核的 `scripts/faddr2line` 对比结果 |
 | `test_browser.py` | Playwright：展开源码块、折叠、错误导航和跳到文本、过滤联动、范围汇总、主题和配色切换，同时检查页面没有 JS 错误 |
 | `test_prefilter.py` | 各过滤条件、保留完整调用树、时间窗口语义、过滤后的实测数据仍满足不变量 |
@@ -461,7 +492,7 @@ CI（`.github/workflows/ci.yml`）：每次推送到 master 和每个 PR 在 Pyt
 
 ### 报告数据提供者（2026-11-10）
 
-`assets/report/data.js` 提供 `fgData.read/load/ready/external/length`；Timeline/Compare 不再直接解析 DOM JSON。普通输出保持内嵌数据、离线打开；当前没有生产 sidecar 导出器或查看器。Text/源码分块、缓存淘汰、自动阈值也未实现。
+`assets/report/data.js` 提供 `fgData.read/load/ready/external/length`；Timeline/Compare 不再直接解析 DOM JSON。普通输出保持内嵌数据、离线打开；当前没有生产 sidecar 导出器或查看器。Text/源码的按需分块传输、缓存淘汰、自动阈值也未实现；静态 `text-chunk` 绘制包装不是外部数据块。
 
 原型通过 `fgDataManifest` JSON 配置 `{version:1, report_id, manifest:{file,bytes,sha256,format:"json"}}`。ID 为 32 位小写十六进制；manifest 内容为 `{version:1,report_id,resources:{tlData:{file,bytes,sha256,format:"json"}}}`，也可包含 `cmpData` 或 `text` 格式资源。manifest 路径相对 HTML，资源路径相对 manifest 目录。只允许 HTTP(S) 下同目录内的相对路径；禁止跨域、目录逃逸、编码路径和重定向，不带凭据。响应按声明大小有界读取，逐一验证长度、SHA-256、严格 UTF-8、JSON、版本及报告 ID；Web Crypto 需要安全上下文（如 loopback HTTP）。
 

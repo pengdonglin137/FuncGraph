@@ -13,7 +13,7 @@ from unittest.mock import patch
 import helpers
 from fglib.output import ReportSpool, SectionRange
 from fglib.parser import FtraceParser
-from fglib.report import HtmlGenerator, generate_html, write_html
+from fglib.report import TEXT_CHUNK_ROWS, HtmlGenerator, generate_html, write_html
 from fglib.timeline import build_timeline
 
 
@@ -243,7 +243,7 @@ class ReportSectionsTest(unittest.TestCase):
     def test_named_payloads_extract_without_markup_and_rows_are_incremental(self):
         generator = HtmlGenerator(self.lines, None, None, timeline_json=self.timeline, enable_fold=True)
         sections = list(generator.iter_sections())
-        self.assertEqual(sum(name == 'text' for name, fragment in sections), len(self.lines))
+        self.assertEqual(sum(name == 'text' for name, fragment in sections), len(self.lines) + 2)
         self.assertEqual(sum(name == 'source_data' for name, fragment in sections), 1)
         with ReportSpool(self.path) as spool:
             spool.write_sections(iter(sections))
@@ -255,6 +255,54 @@ class ReportSectionsTest(unittest.TestCase):
             self.assertLess(len(spool.sections), 20)
             spool.publish()
         self.assertEqual(helpers.json_script(self.path.read_text(), 'tlData')['n'], self.timeline['n'])
+
+    def test_text_chunks_are_bounded_balanced_and_preserve_complete_fragments(self):
+        generator = HtmlGenerator(self.lines, None, None)
+        opening = f'<div class="text-chunk" data-chunk-size="{TEXT_CHUNK_ROWS}">'
+        for count in [0, 1, TEXT_CHUNK_ROWS, TEXT_CHUNK_ROWS + 1, TEXT_CHUNK_ROWS * 2 + 1]:
+            with self.subTest(count=count):
+                fragments = [f'<div class="line-container" id="L{index}">中文🙂</div>'
+                             f'<div class="expanded-content" id="source{index}"></div>' for index in range(count)]
+                with patch.object(generator, '_iter_content_lines', return_value=iter(fragments)):
+                    result = list(generator._iter_content_chunks())
+                offset = 0
+                for start in range(0, count, TEXT_CHUNK_ROWS):
+                    rows = fragments[start:start + TEXT_CHUNK_ROWS]
+                    self.assertEqual(result[offset], opening)
+                    self.assertEqual(result[offset + 1:offset + 1 + len(rows)], rows)
+                    self.assertEqual(result[offset + 1 + len(rows)], '</div>')
+                    offset += len(rows) + 2
+                self.assertEqual(len(result), offset)
+
+    def test_text_chunk_iterator_does_not_buffer_rows_or_repeat_iteration(self):
+        generator = HtmlGenerator(self.lines, None, None)
+        consumed = []
+
+        def rows():
+            for index in range(TEXT_CHUNK_ROWS + 1):
+                consumed.append(index)
+                yield f'row{index}'
+
+        with patch.object(generator, '_iter_content_lines', return_value=rows()) as source:
+            result = generator._iter_content_chunks()
+            self.assertEqual(consumed, [])
+            self.assertIn('class="text-chunk"', next(result))
+            self.assertEqual(consumed, [0])
+            self.assertEqual(next(result), 'row0')
+            self.assertEqual(consumed, [0])
+            remaining = list(result)
+            self.assertEqual(consumed, list(range(TEXT_CHUNK_ROWS + 1)))
+            self.assertEqual([fragment for fragment in remaining if fragment.startswith('row')],
+                             [f'row{index}' for index in range(1, TEXT_CHUNK_ROWS + 1)])
+            self.assertEqual(remaining[-1], '</div>')
+            source.assert_called_once_with()
+
+    def test_legacy_and_streamed_output_match_across_text_chunk_boundary(self):
+        lines = FtraceParser().parse('unused', lines=['# 中文🙂'] * (TEXT_CHUNK_ROWS + 1))
+        text, _, _ = generate_html(lines, None, None)
+        write_html(self.path, lines, None, None)
+        self.assertEqual(self.path.read_bytes(), text.encode('utf-8'))
+        self.assertEqual(text.count('class="text-chunk"'), 2)
 
     def test_streaming_path_does_not_call_full_string_builders(self):
         with patch.object(HtmlGenerator, 'generate', side_effect=AssertionError('full document')):
