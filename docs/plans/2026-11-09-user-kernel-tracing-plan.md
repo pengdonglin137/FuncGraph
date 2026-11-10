@@ -110,7 +110,7 @@ uftrace 是 GPL-2.0。FuncGraph 只调用它的可执行文件、读取它的输
 ## 7. 分阶段
 
 2026-11-11 进展：固定 uftrace v0.20（842ed731248a），完成可复现 build / check /
-refresh 和四份维护补丁（含 Pi 实测发现的 kallsyms 模块符号区间错误修复）；QEMU 实际是 7.4.0-rc2，Pi 是 6.18.56-v8-MY_CUSTOM_KERNEL+。
+refresh 和五份维护补丁（含 Pi 实测发现的 kallsyms 模块符号区间错误修复、用户态标量参数和返回值导出）；QEMU 实际是 7.4.0-rc2，Pi 是 6.18.56-v8-MY_CUSTOM_KERNEL+。
 采用方案 B（版本化 JSONL），原始导出明确声明分流顺序和分地址空间深度，P2 导入器
 负责稳定合并及连续深度。已加入无 root 的跨字节序 / 字长 / 参数布局 / 损坏数据测试
 及 CI；真实采集通过独立 ring-page 解码核对，不用已读空的 cat trace 伪装同次基准。
@@ -118,7 +118,8 @@ refresh 和四份维护补丁（含 Pi 实测发现的 kallsyms 模块符号区�
 原始 QEMU 和 Pi 记录各识别 5 处同线程跨态边界，保留 Pi 不完整帧。可视化路径不再
 经过 ftrace 文本解析器；同名函数不跨态归并。已用真实 QEMU 截取记录生成
 `sample_mixed.html` 和截图，供离线浏览及 Pages 部署，原纯内核示例保留。CI 回归验证重建、
-三种采集模式和 Pages 路径。仍待 `fgcapture.sh --user`、分态开销标定、
+三种采集模式和 Pages 路径。加入 [pigz + zlib 实战](../pigz.cn.md)，在 QEMU 上实测从记录的
+exec 到退出约 277 ms，Timeline 显示已采集的端点，可跳转到 Text。仍待 `fgcapture.sh --user`、分态开销标定、
 更细的耗时拆分，以及未验证的多会话 / TID 复用。详见 `docs/uftrace.cn.md`。
 
 | 阶段 | 内容 | 验收标准 |

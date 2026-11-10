@@ -1,7 +1,7 @@
 From a708c66b999a55b7a5f4191a214fd9b9425dbb41 Mon Sep 17 00:00:00 2001
 From: pengdonglin <pengdonglin@xiaomi.com>
 Date: Wed, 11 Nov 2026 05:49:12 +0800
-Subject: [PATCH 4/4] symbol: derive kernel function ranges after sorting
+Subject: [PATCH 4/5] symbol: derive kernel function ranges after sorting
  kallsyms addresses
 
 A real Pi 4 mixed capture resolved __arm64_sys_read and many other kernel functions as vc4_cec_irq_handler_rx_bare. Module addresses can precede core text and arrive later in kallsyms, so deriving sizes in input order underflows unsigned ranges and corrupts bsearch matches after sorting. Recompute kernel-only ranges from the next distinct sorted address, sharing alias extents and leaving terminal or unrepresentable gaps unknown. Do not change explicitly sized userspace symbol-file loading. This fixes symbol identity before mixed user/kernel visualization; exported raw addresses remain the authoritative evidence.

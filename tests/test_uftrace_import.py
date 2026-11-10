@@ -41,6 +41,11 @@ def capture():
             call('exit', 'kernel', 950, 0, 'outside', 6)]
 
 
+def lifecycle_event(phase, timestamp):
+    return dict(type='event', space='kernel', time_ns=ORIGIN + timestamp, tid=42, cpu=0,
+                name=f'sched:sched_process_{phase}', text='pid=42')
+
+
 def stream(records, metadata=HEADER, complete=True):
     return '\n'.join(json.dumps(record) for record in [metadata, *records, {'type': 'end', 'complete': complete}]) + '\n'
 
@@ -55,6 +60,86 @@ def invoke(*args):
 
 
 class UftraceImportTest(unittest.TestCase):
+    def test_kernel_context_bits_are_preserved_when_joined_under_user(self):
+        records = capture()
+        records[4].update(common_flags=0x85, common_preempt_count=0x23)
+        records[5].update(common_flags=0x48, common_preempt_count=0)
+        records[6].update(common_flags=0x11, common_preempt_count=1)
+        records[7].update(common_flags=0, common_preempt_count=1)
+        builder = build(records)
+        data = builder.to_data()
+        cols = data['cols']
+        self.assertEqual(cols['parent'][2:4], [1, 2])
+        self.assertEqual(data['preempt_base'], 1)
+        self.assertEqual(cols['flags'][2], timeline.F_BOUNDARY | timeline.F_HAS_LAT | timeline.F_IRQOFF |
+                         timeline.F_BHOFF | 1 << timeline.F_RESCHED_SHIFT | 3 << timeline.F_PREEMPT_SHIFT |
+                         2 << timeline.F_MIGRATE_SHIFT)
+        self.assertEqual(cols['flags'][3], timeline.F_HAS_LAT | timeline.CTX_NMI)
+        for index in (0, 1):
+            self.assertFalse(cols['flags'][index] & timeline.F_HAS_LAT)
+            self.assertIsNone(builder.parsed[cols['line'][index] - 1].preempt_depth)
+        for lineno, expected in ((cols['line'][2], ('D', 'n', '.', '3')),
+                                 (cols['line'][3], ('.', '.', 'Z', '0')),
+                                 (cols['eline'][3], ('d', '.', 's', '1'))):
+            row = builder.parsed[lineno - 1]
+            self.assertEqual((row.irqs_off, row.need_resched, row.hardirq_softirq, row.preempt_depth), expected)
+        records[6]['common_flags'] = 0x81
+        sections = build(records).to_data()['sections']
+        self.assertEqual({section[1] for section in sections},
+                         {timeline.SEC_IRQ, timeline.SEC_BH, timeline.SEC_PREEMPT})
+
+    def test_kernel_context_matches_linux_flag_combinations(self):
+        for raw, expected in ((0, '....'), (0x01, 'd...'), (0x80, 'b...'), (0x81, 'D...'),
+                              (0x04, '.n..'), (0x24, '.N..'), (0x20, '.p..'), (0x02, '.l..'),
+                              (0x22, '.L..'), (0x06, '.b..'), (0x26, '.B..'),
+                              (0x08, '..h.'), (0x10, '..s.'), (0x18, '..H.'),
+                              (0x40, '..z.'), (0x58, '..Z.')):
+            with self.subTest(raw=raw):
+                raw_record = dict(common_flags=raw, common_preempt_count=0x42)
+                flags, context, latency = uftrace._latency(raw_record, True)
+                self.assertEqual(latency, expected[:3] + '24')
+                self.assertEqual((flags, context), timeline.TimelineBuilder._lat_flags(expected[:3] + '24'))
+
+    def test_kernel_release_disambiguates_reused_flag_bit_and_missing_data(self):
+        records = capture()
+        records[4].update(common_flags=0x22, common_preempt_count=2)
+        records[5].update(common_flags=0x80)
+        records[8].update(common_flags=0, common_preempt_count=256)
+        for release, expected in (('6.12.99', ('X', 'p')), ('6.13.0-rc1', ('.', 'L')),
+                                  ('6.18.56-v8-MY_CUSTOM_KERNEL+', ('.', 'L')),
+                                  ('unknown', ('.', 'p'))):
+            with self.subTest(release=release):
+                metadata = dict(HEADER, kernel_settings=dict(HEADER['kernel_settings'], kernel_release=release))
+                builder = build(records, metadata)
+                data = builder.to_data()
+                cols = data['cols']
+                row = builder.parsed[cols['line'][2] - 1]
+                self.assertEqual((row.irqs_off, row.need_resched), expected)
+                self.assertEqual(data['preempt_base'], 1)
+                for index in (3, 4):
+                    self.assertFalse(cols['flags'][index] & timeline.F_HAS_LAT)
+                    self.assertIsNone(builder.parsed[cols['line'][index] - 1].irqs_off)
+
+    def test_lifecycle_keeps_exact_kernel_milestones_and_clock_separation(self):
+        records = capture()[:4] + [lifecycle_event('exec', 70), lifecycle_event('exit', 980)]
+        for metadata, shared in ((HEADER, True), (dict(HEADER, clock=None), False)):
+            with self.subTest(shared=shared):
+                builder = build(records, metadata)
+                data = builder.to_data()
+                events = data['uftrace']['lifecycle']
+                self.assertEqual(data['uftrace']['origin_ns'], str(ORIGIN + 70))
+                self.assertEqual([(timestamp, phase) for _, timestamp, phase, _ in events],
+                                 [(0, 'exec'), (910, 'exit')])
+                self.assertEqual(events[0][0] == data['cols']['task'][0], shared)
+                self.assertEqual(events[0][0], events[1][0])
+                self.assertEqual(data['n'], 2)
+                self.assertEqual(data['stats']['user_kernel_boundaries'], 0)
+                for _, _, phase, line in events:
+                    self.assertIn(f'sched:sched_process_{phase}', builder.parsed[line - 1].raw_line)
+        only_exec = build(capture()[:4] + [lifecycle_event('exec', 70)]).to_data()
+        self.assertEqual([event[2] for event in only_exec['uftrace']['lifecycle']], ['exec'])
+        self.assertNotIn('lifecycle', build(capture()).to_data()['uftrace'])
+
     def test_shared_clock_joins_at_two_actual_depths_and_preserves_ns(self):
         builder = build(capture())
         data = builder.to_data()
@@ -148,12 +233,19 @@ class UftraceBrowserTest(unittest.TestCase):
             except Exception as error:
                 self.skipTest(str(error))
             root = Path(directory)
-            (root / 'capture.jsonl').write_text(stream(capture()), encoding='utf-8')
-            (root / 'demo.c').write_text('/* recorded user source */\nint main(void) {}\n', encoding='utf-8')
-            result = invoke(root / 'capture.jsonl', '--timeline', '--enable-fold', '--filter', '--user-src', root,
-                            '--report-mode', 'sidecar', '--output', root / 'report')
-            self.assertEqual(result.returncode, 0, result.stderr)
-            with create_server(root / 'report') as server:
+            kernel = helpers.FakeKernel()
+            self.addCleanup(kernel.close)
+            records = capture() + [lifecycle_event('exit', 980)]
+            records[0]['source'] = {'file': str(Path(kernel.ksrc) / 'kernel' / 'fake.c'), 'line': 2}
+            records[1]['source'] = {'file': 'demo.c', 'line': 3}
+            trace = root / 'capture.jsonl'
+            trace.write_text(stream(records), encoding='utf-8')
+            (root / 'demo.c').write_text('/* recorded user source */\nint main(void) {}\nint user_work(void) {}\n',
+                                         encoding='utf-8')
+            kernel_url = 'https://kernel.invalid/source'
+            kernel.run(str(trace), '--no-config', '--timeline', '--enable-fold', '--filter', '--user-src', str(root),
+                       '--func-links', '--base-url', kernel_url, '--report-mode', 'sidecar', out='report')
+            with create_server(Path(kernel.dir) / 'report') as server:
                 thread = threading.Thread(target=server.serve_forever, daemon=True)
                 thread.start()
                 try:
@@ -163,6 +255,9 @@ class UftraceBrowserTest(unittest.TestCase):
                     page.on('request', lambda request: requests.append(request.url))
                     page.goto(server.url)
                     page.locator('.tl-space-key').wait_for()
+                    page.get_by_role('button', name='Exec / exit').click()
+                    page.get_by_text('exit (task exiting)', exact=True).wait_for(state='visible')
+                    self.assertEqual(page.get_by_text('exec (new image installed)', exact=True).count(), 0)
                     page.evaluate('''() => {
                         const model = fgView('timeline').probe();
                         model.select(2);
@@ -170,6 +265,14 @@ class UftraceBrowserTest(unittest.TestCase):
                     boundary = page.locator('[data-context-list=stack] [data-space-boundary]')
                     self.assertEqual(boundary.count(), 1)
                     self.assertIn('work<int>', boundary.inner_text())
+                    kernel_link = boundary.locator('.tl-context-source a').get_attribute('href')
+                    self.assertTrue(kernel_link.startswith(kernel_url + '/'), kernel_link)
+                    stack = page.locator('[data-context-list=stack]')
+                    user_twin = stack.locator('.tl-source-open', has_text='demo.c:3')
+                    self.assertIsNone(user_twin.get_attribute('href'))
+                    outside = stack.locator('.tl-context-source', has_text='fake.c:2').first
+                    self.assertEqual(outside.locator('a, button').count(), 0)
+                    self.assertEqual(stack.locator('a[href^="' + kernel_url + '"]').count(), 1)
                     self.assertTrue(page.evaluate('''async () => {
                         const api = fgView('timeline'), model = api.probe();
                         const canvas = document.querySelector('.tl-canvas');
@@ -187,8 +290,8 @@ class UftraceBrowserTest(unittest.TestCase):
                         const width = (model.sEnd[2] - model.sStart[2]) * scale;
                         return lines.some(([x, w]) => Math.abs(x - left) < 2 && Math.abs(w - width) < 2);
                     }'''))
-                    page.locator('.tl-source-open').click()
-                    page.get_by_text('int main(void) {}', exact=False).wait_for()
+                    user_twin.click()
+                    page.locator('.tl-cs-src .current-line', has_text='int user_work(void) {}').wait_for()
                     page.locator('.tl-ftext').fill('space:user')
                     page.locator('.tl-ftext').press('Enter')
                     page.locator('.tl-fcount', has_text='2 of 6 calls').wait_for()
@@ -197,6 +300,7 @@ class UftraceBrowserTest(unittest.TestCase):
                     page.evaluate("fgSwitchView('text')")
                     boundary = page.locator('#content [data-boundary]')
                     self.assertEqual(boundary.count(), 2)
+                    self.assertEqual(page.locator('#content [data-space=user] a[href^="' + kernel_url + '"]').count(), 0)
                     page.locator('#content .fold-entry[data-space=user] .fold-icon').first.click()
                     self.assertFalse(boundary.first.is_visible())
                     self.assertEqual(errors, [])

@@ -1,4 +1,4 @@
-"""Rebuild and open the published demo_io sample without native dependencies."""
+"""Rebuild and open the published mixed sample without native dependencies."""
 
 from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
@@ -20,7 +20,7 @@ from test_uftrace_import import invoke
 ROOT = Path(helpers.ROOT)
 TRACE = ROOT / 'samples/sample_mixed.jsonl'
 REPORT = ROOT / 'sample_mixed.html'
-COUNTS = {'user': 15, 'kernel': 916}
+COUNTS = {'user': 25, 'kernel': 1067}
 PAGE_FILES = {'index.html', 'sample.html', 'sample.png', 'sample_text.png',
               'sample_mixed.html', 'sample_mixed.png', '.nojekyll'}
 
@@ -58,6 +58,11 @@ class MixedSampleTest(unittest.TestCase):
         self.assertIn('retaddr', sendto)
         self.assertIn('0xfffffffffffffff5', [record.get('retval') for record in records
                                              if record['name'] == '__x64_sys_recvfrom'])
+        dispatch = next(record for record in records if record['name'] == 'dispatch_datagram' and record['type'] == 'entry')
+        self.assertEqual(dispatch['user_args'][2], '512')
+        self.assertIn('payload_hex', dispatch)
+        self.assertEqual([record['user_retval'] for record in records
+                          if record['name'] == 'receive_frame' and record['type'] == 'exit'], ['512', '-1'])
 
         html = REPORT.read_text(encoding='utf-8')
         data = helpers.json_script(html, 'tlData')
@@ -69,6 +74,13 @@ class MixedSampleTest(unittest.TestCase):
             self.assertEqual(data['stats'][stat], 0, stat)
         cols = data['cols']
         names = [data['strings'][index] for index in cols['name']]
+        kernel_flags = [flags for flags in cols['flags'] if not flags & timeline.F_USER]
+        self.assertEqual(sum(bool(flags & timeline.F_IRQOFF) for flags in kernel_flags), 136)
+        self.assertEqual(sum(bool(flags & timeline.F_BHOFF) for flags in kernel_flags), 51)
+        self.assertEqual(sum(flags & timeline.F_CTX_MASK == timeline.CTX_HARDIRQ for flags in kernel_flags), 53)
+        self.assertEqual(sum(flags & timeline.F_CTX_MASK == timeline.CTX_SOFTIRQ for flags in kernel_flags), 386)
+        self.assertTrue(all(flags & timeline.F_HAS_LAT for flags in kernel_flags))
+        self.assertFalse(any(flags & timeline.F_HAS_LAT for flags in cols['flags'] if flags & timeline.F_USER))
         boundaries = [index for index, flags in enumerate(cols['flags']) if flags & timeline.F_BOUNDARY]
         self.assertEqual([(names[cols['parent'][index]], names[index]) for index in boundaries], [
             ('read', '__x64_sys_read'), ('write', '__x64_sys_write'), ('sendto', '__x64_sys_sendto'),
@@ -78,7 +90,13 @@ class MixedSampleTest(unittest.TestCase):
         while index >= 0:
             ancestry.append(names[index])
             index = cols['parent'][index]
-        self.assertEqual(ancestry[-3:], ['__x64_sys_sendto', 'sendto', 'main'])
+        self.assertEqual(ancestry[-7:], ['__x64_sys_sendto', 'sendto', 'dispatch_datagram', 'send_frame',
+                                         'exchange_loopback', 'run_round', 'main'])
+        detail = data['uftrace']['user_details'][str(cols['line'][names.index('dispatch_datagram')])]
+        self.assertEqual(detail['address'], dispatch['address'])
+        self.assertEqual(detail['args'], ', '.join(dispatch['user_args']))
+        self.assertEqual(detail['retval'], '512')
+        self.assertEqual(data['chains'], [])
         self.assertEqual(len(re.findall(r'<div class="line-container [^>]+data-boundary="user-kernel"', html)), 5)
         with tempfile.TemporaryDirectory() as directory:
             rebuilt = Path(directory) / REPORT.name
@@ -158,11 +176,30 @@ class MixedSampleBrowserTest(unittest.TestCase):
         divider = stack.locator('[data-space-boundary=user-kernel]', has_text='__x64_sys_sendto')
         divider.wait_for(state='visible')
         self.assertEqual(divider.evaluate('row => getComputedStyle(row).borderTopWidth'), '1px')
-        stack.locator('.tl-source-open', has_text='demo_io.c:22').click()
-        page.get_by_text('int main(int argc, char **argv)', exact=False).first.wait_for(state='visible')
+        stack.locator('.tl-source-open', has_text='demo_mixed.c:25').click()
+        page.get_by_text('static ssize_t dispatch_datagram(', exact=False).first.wait_for(state='visible')
+        page.evaluate('''() => {
+            const model = fgView('timeline').probe();
+            const index = Array.from({length: model.N}, (unused, candidate) => candidate)
+                .find(candidate => model.nameOf(candidate) === 'dispatch_datagram');
+            model.select(index);
+        }''')
+        page.locator('.k', has_text='recorded address').wait_for(state='visible')
+        self.assertIn('512', page.locator('.k:has-text("user args") + .v').inner_text())
+        self.assertEqual(page.locator('.k:has-text("user return") + .v').inner_text(), '512')
+        self.assertEqual(page.get_by_text('BH off', exact=True).count(), 0)
+        data = helpers.json_script(REPORT.read_text(encoding='utf-8'), 'tlData')
+        irq_bh = next(index for index, flags in enumerate(data['cols']['flags'])
+                      if flags & timeline.F_IRQOFF and flags & timeline.F_BHOFF)
+        page.evaluate('index => fgView("timeline").probe().select(index)', irq_bh)
+        page.locator('.tl-pill').get_by_text('BH off', exact=True).wait_for(state='visible')
+        page.locator('.tl-pill').get_by_text('irqs off', exact=True).wait_for(state='visible')
 
         page.get_by_role('button', name='Text', exact=True).click()
         marker = page.locator('#content [data-boundary=user-kernel][data-func=__x64_sys_sendto] .trace-space')
+        dispatch = page.locator('#content .fold-entry[data-func=dispatch_datagram]')
+        self.assertIn('512', dispatch.inner_text())
+        self.assertIn('recorded address 0x', dispatch.inner_text())
         self.assertEqual(marker.inner_text().strip(), 'K')
         self.assertEqual(marker.evaluate('tag => getComputedStyle(tag).borderBottomWidth'), '1px')
         main = page.locator('#content .fold-entry[data-space=user][data-func=main] .fold-icon')
@@ -175,6 +212,12 @@ class MixedSampleBrowserTest(unittest.TestCase):
         marker.wait_for(state='hidden')
         self.assertGreater(page.locator('.line-container[data-space=user]:visible').count(), 0)
         self.assertEqual(page.locator('.line-container[data-space=kernel]:visible').count(), 0)
+        page.locator('#filterInput').fill('space:kernel AND irqs:^d$')
+        page.locator('#filterInput').press('Enter')
+        irq_rows = page.locator('#content .line-container:is([data-irqs=d],[data-irqs=D]):visible')
+        irq_rows.first.wait_for(state='visible')
+        self.assertEqual(page.locator('.line-container[data-space=user]:visible').count(), 0)
+        self.assertEqual(page.locator('.line-container[data-space=kernel]:visible').count(), irq_rows.count())
         self.assertEqual(errors, [])
         self.assertEqual(requests, [REPORT.as_uri()])
 

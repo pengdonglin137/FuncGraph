@@ -9,21 +9,29 @@ mixed** recordings without a required `vmlinux` or native Python dependency.
 Existing ftrace text and trace-cmd inputs still work. The state-preserving
 `fgcapture.sh --user` wrapper is not implemented.
 
+For a real application and an instrumented third-party library, see the
+[pigz + zlib compression case](pigz.md).
+
 ## Mixed sample: follow `sendto` into the kernel
 
 Open [sample_mixed.html](../sample_mixed.html) in your browser, or use the
 [GitHub Pages sample](https://pengdonglin137.github.io/FuncGraph/sample_mixed.html).
-Switch to **Timeline** (default **Context** colors) and select
-`__x64_sys_sendto`. Follow `main → sendto → __x64_sys_sendto → … → loopback_xmit`.
-The thin line over `__x64_sys_sendto` marks the boundary for that call only.
-The call stack separates user and kernel frames at the same point; Text uses
-an underlined `K` on the kernel entry. In the call stack, click `demo_io.c:22`
-to view the embedded source. Use the shared Filter with `space:user` or
-`space:kernel` to inspect either address space.
+Switch to **Timeline** with default **Context** colors. Follow
+`main → run_round → exchange_loopback → send_frame → dispatch_datagram → sendto → __x64_sys_sendto → … → loopback_xmit`.
+Select `dispatch_datagram` to see its recorded function address, the five
+arguments (including the 512-byte length), and return value `512`. Click
+`demo_mixed.c:25` in the stack for source. The two `receive_frame` calls return
+`512` and `-1`; the latter uses `MSG_DONTWAIT` on an empty queue. Its user return
+is not the raw kernel return value.
+
+Select `__x64_sys_sendto` to see the boundary at the same point in the call
+stack and as a thin line over the recorded kernel interval. Text shows an
+underlined `K` on that entry, arguments and addresses on user entry rows, and
+returns on user exit rows. Use `space:user` or `space:kernel` to inspect one space.
 
 The [checked-in JSONL](../samples/sample_mixed.jsonl) is a scoped extract from
-the x86_64 QEMU Linux `7.4.0-rc2` capture of [`demo_io.c`](../samples/demo_io.c)
-on November 11, 2026. It contains 15 user calls, 916 kernel calls and five
+the x86_64 QEMU Linux `7.4.0-rc2` capture of [`demo_mixed.c`](../samples/demo_mixed.c)
+on November 11, 2026. It contains 25 user calls, 1,067 kernel calls and five
 linked transitions. The extract keeps the original call records (including
 addresses, parameters and raw return values), but not scheduler/perf events.
 No kernel debug image is used here; use the [kernel-only sample](../sample.html)
@@ -58,6 +66,11 @@ kernel names separately, even when their symbols have identical spelling.
   exactly that recorded interval, at the depth where it occurred. Text uses
   `U` / `K` and underlines the boundary tag; the call stack separates the two
   spaces at the same transition. Single-space reports omit the divider.
+- **Kernel context:** joining the call stacks keeps the recorded kernel flags
+  on kernel frames only. Timeline details use the entry's IRQ/BH, hardirq,
+  softirq, NMI, reschedule, preemption and migration state. Text filters each
+  record independently, e.g. `space:kernel AND irqs:d`. Missing context is
+  not inferred. The meaning of bit `0x02` depends on the saved kernel release.
 - **Matching:** pair native entry/exit by thread, address space, depth and
   address, then link a complete kernel root only inside a recorded user call
   of the same thread with a verified shared clock. This establishes temporal
@@ -66,16 +79,19 @@ kernel names separately, even when their symbols have identical spelling.
   use an unjoined lane. Missing or incompatible clock readbacks leave the
   spaces separate with a warning; do not compare their times.
 - **Sources:** recorded user file:line positions are shown independently of
-  kernel source resolution. `--user-src DIR` embeds small excerpts for files
-  under that root; click the source position in the stack or expand its Text
-  row. No user locations are routed to a kernel repository. Use
+  kernel source resolution. `--user-src DIR` embeds excerpts only for paths
+  that resolve within that root; click the source position in the stack or
+  expand its Text row. Missing and out-of-root files remain plain locations.
+  User frames never use the kernel `--base-url`, even for identical names. Use
   `--no-text-view --keep-source` to keep excerpts without mounting Text.
 - **Filtering:** with `--filter`, use `space:user` or `space:kernel` in Text
   or Timeline's shared Filter. Sidecar reports can apply this filter before
   Text loads. CLI tree pre-filters are not supported on uftrace streams yet.
 - **Uncertainty:** missing entries/exits and losses are marked, not filled in
-  as measured calls. CPU for user calls remains unknown; raw user payloads
-  are not decoded. Kernel returns are shown as raw bits, with errno analysis
+  as measured calls. CPU for user calls remains unknown. User values appear
+  when uftrace recorded supported scalar argument/return specifications;
+  otherwise recorded bytes are labeled as raw bytes, not guessed. The
+  recorded address is not a resolved source address. Kernel returns are shown as raw bits, with errno analysis
   only for known BTF types. Kernel scheduler tracepoints drive scheduling
   analysis; perf events do not produce duplicate intervals. The JSONL retains
   native fields not projected into the report.
@@ -152,6 +168,10 @@ frames as roots. There is no implicit clock adjustment or synthetic completion.
 - Kernel tracepoint `event` records retain the original **common PID**, name,
   formatted payload and flags, including scheduling events from other tasks.
   User event/argument payloads, when present, retain their `payload_hex` bytes.
+  Supported signed/unsigned integer and hex/pointer specifications (8, 16, 32,
+  or 64 bits) add optional `user_args` (entry list of strings) or `user_retval`
+  (exit string). Strings avoid losing 64-bit precision in browsers. An unsupported
+  or incomplete specification leaves the whole payload raw; older exports still work.
 - Perf `event` records have `origin=perf`, `space=null`, unknown `cpu=null`, an
   opaque stream index and the available scheduling/task/comm fields. Do not count
   perf scheduling and equivalent kernel tracepoints twice in an importer.
@@ -182,6 +202,20 @@ private input/output files, a shared `--clock=mono`, a suitable kernel buffer
 and architecture-specific syscall graph roots. Wide/deep unfiltered captures
 may overflow. Source files for Pi experiments were copied from this repository;
 the old `/vol_1t/raspi/linux` path does not exist on the currently reachable Pi.
+
+For the mixed demo, build `samples/demo_mixed.c` with the same flags. In the
+idle tracefs validation environment, pass separate exact syscall roots and
+explicit `-A`/`-R` specifications, for example:
+
+```bash
+uftrace record -K 30 --clock=mono --kernel-full-info --no-sched --srcline -d CAPTURE \
+    -F '__x64_sys_read@kernel;__x64_sys_write@kernel;__x64_sys_sendto@kernel;__x64_sys_recvfrom@kernel' \
+    -A 'dispatch_datagram@arg1/i32,arg2/x64,arg3/u64,arg4/x64,arg5/u32' \
+    -A 'receive_frame@arg1/i32,arg2/x64,arg3/u64,arg4/i32' \
+    -R '^(read_block|write_block|send_frame|dispatch_datagram|receive_frame)$@retval/i64' \
+    -R '^(transfer_file|exchange_loopback|run_round)$@retval/i32' \
+    ./demo_mixed INPUT OUTPUT
+```
 
 QEMU 7.4 exposes args and retaddr together. This must not be extrapolated to
 older kernels: the Pi 6.18 record layout/capabilities are validated separately.

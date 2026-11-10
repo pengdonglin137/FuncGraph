@@ -4,7 +4,7 @@
     python3 samples/make_shots.py
 
 Requires Playwright and Chromium. Captures the kernel overview and Text view,
-and the mixed Timeline around sendto with loopback_xmit selected.
+and the mixed Timeline around sendto with dispatch_datagram selected.
 """
 import importlib.util
 from pathlib import Path
@@ -46,12 +46,12 @@ def main():
 
         page = shots.open_page(browser, str(ROOT / 'sample_mixed.html'), 'timeline', width=1600, height=900)
         sendto = shots.find(page, 'sendto')
-        loopback = shots.find(page, 'loopback_xmit')
-        if min(sendto, loopback) < 0:
+        dispatch = shots.find(page, 'dispatch_datagram')
+        if min(sendto, dispatch) < 0:
             raise RuntimeError('sample_mixed.html is missing the recorded UDP path')
         shots.zoom(page, sendto, pad=0.04, select=False)
-        page.evaluate('index => fgView("timeline").probe().select(index)', loopback)
-        page.locator('[data-context-list=stack] [data-space-boundary]').wait_for(state='visible')
+        page.evaluate('index => fgView("timeline").probe().select(index)', dispatch)
+        page.locator('.k', has_text='recorded address').wait_for(state='visible')
         save(page, ROOT / 'sample_mixed.png')
         browser.close()
 

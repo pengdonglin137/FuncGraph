@@ -9,13 +9,16 @@ import time
 from .model import FtraceLine
 from .parser import _base36
 from .timeline import (TimelineBuilder, _Frame, F_USER, F_BOUNDARY, F_ORPHAN, F_TRUNCATED,
-                       F_HAS_LAT, F_IRQOFF, F_PREEMPT_SHIFT, F_RESCHED_SHIFT, RE_MAY_SLEEP,
-                       RE_SCHED_SWITCH, CTX_TASK, CTX_HARDIRQ, CTX_SOFTIRQ)
+                       F_HAS_LAT, F_IRQOFF, F_BHOFF, F_PREEMPT_SHIFT, RE_MAY_SLEEP,
+                       RE_SCHED_SWITCH, CTX_TASK)
 
 
 SCHEMA = 'funcgraph.uftrace.v1'
 HEX = re.compile(r'0x[0-9a-fA-F]{1,16}\Z')
+SCALAR = re.compile(r'(?:-?[0-9]{1,20}|0x[0-9a-fA-F]{1,16})\Z')
 CLOCK = re.compile(r'\[([^\]]+)\]')
+KERNEL_VERSION = re.compile(r'^([0-9]+)\.([0-9]+)(?:[.+-]|$)')
+LIFECYCLE = {'sched:sched_process_exec': 'exec', 'sched:sched_process_exit': 'exit'}
 
 
 class UftraceInputError(ValueError):
@@ -63,6 +66,13 @@ def _check_record(record):
     if 'args' in record and (not isinstance(record['args'], list) or
                              not all(isinstance(value, str) and HEX.fullmatch(value) for value in record['args'])):
         raise UftraceInputError('invalid arguments')
+    if 'user_args' in record and ((space, kind) != ('user', 'entry') or
+                                  not isinstance(record['user_args'], list) or not record['user_args'] or
+                                  not all(isinstance(value, str) and SCALAR.fullmatch(value) for value in record['user_args'])):
+        raise UftraceInputError('invalid user argument values')
+    if 'user_retval' in record and ((space, kind) != ('user', 'exit') or
+                                    not isinstance(record['user_retval'], str) or not SCALAR.fullmatch(record['user_retval'])):
+        raise UftraceInputError('invalid user return value')
     for field in ('common_flags', 'common_preempt_count', 'overrun'):
         if field in record and not _uint(record[field]):
             raise UftraceInputError('invalid ' + field)
@@ -130,16 +140,20 @@ def _display(value):
     return ''.join(char if char.isprintable() else f'\\u{ord(char):04x}' for char in value)
 
 
-def _latency(record):
+def _latency(record, lazy_resched):
     raw = record.get('common_flags')
     preempt = record.get('common_preempt_count')
-    if raw is None or preempt is None:
+    if raw is None or preempt is None or raw > 0xff or preempt > 0xff:
         return 0, None, None
-    context = CTX_HARDIRQ if raw & 8 else CTX_SOFTIRQ if raw & 16 else CTX_TASK
-    resched = 6 if raw & 6 == 6 else 1 if raw & 4 else 4 if raw & 2 else 0
-    flags = (F_HAS_LAT | context | (F_IRQOFF if raw & 1 else 0) |
-             (min(preempt, 15) << F_PREEMPT_SHIFT) | (resched << F_RESCHED_SHIFT))
-    lat = ('d' if raw & 1 else '.') + '.n..l.b'[resched] + '.sh'[context] + format(min(preempt, 15), 'x')
+    irq, bh = bool(raw & 0x01), bool(raw & 0x80)
+    nmi, hard, soft = bool(raw & 0x40), bool(raw & 0x08), bool(raw & 0x10)
+    irq_char = '.dbD'[irq + 2 * bh]
+    if irq_char == '.' and lazy_resched is False and raw & 0x02:
+        irq_char = 'X'
+    resched = bool(raw & 0x04) + 2 * bool(raw & 0x20) + 4 * bool(lazy_resched and raw & 0x02)
+    ctx_char = ('Z' if hard else 'z') if nmi else '.hsH'[hard + 2 * soft]
+    lat = irq_char + '.npNlbLB'[resched] + ctx_char + f'{preempt & 0xf:x}{preempt >> 4:x}'
+    flags, context = TimelineBuilder._lat_flags(lat)
     return flags, context, lat
 
 
@@ -150,8 +164,12 @@ class UftraceTimeline(TimelineBuilder):
         super().__init__([], **options)
         self.metadata = metadata
         self.records = records
-        self.spaces = {record['space'] for record in records if record['type'] in ('entry', 'exit')}
+        self.spaces = {record['space'] for record in records if record['type'] in ('entry', 'exit') or
+                       (record.get('space') == 'kernel' and record['type'] == 'event' and
+                        record.get('name') in LIFECYCLE)}
         clock, settings = metadata['clock'], metadata['kernel_settings']
+        version = KERNEL_VERSION.match(settings.get('kernel_release', ''))
+        self.lazy_resched = tuple(map(int, version.groups())) >= (6, 13) if version else None
         selected = CLOCK.search(settings.get('trace_clock', ''))
         self.aligned = clock in ('mono', 'mono_raw', 'boot') and selected is not None and selected[1] == clock
         self.mixed = len(self.spaces) == 2
@@ -159,6 +177,8 @@ class UftraceTimeline(TimelineBuilder):
         self.record_slices = {}
         self.positions = {}
         self.position_ids = {}
+        self.user_details = {}
+        self.lifecycle = []
         self.native_depths = []
         self.addresses = []
         self.joined = 0
@@ -187,6 +207,8 @@ class UftraceTimeline(TimelineBuilder):
                 self.s_ret[index] = retval
                 self.s_eline[index] = lineno
                 self.record_slices[lineno] = index
+                if user:
+                    self._user_exit(record, self.s_line[index])
                 return
             self._close_frame(frame, timestamp)
         name = _display(record['name']) or record['address']
@@ -194,6 +216,8 @@ class UftraceTimeline(TimelineBuilder):
         flags |= F_USER if user else 0
         flags |= F_ORPHAN if is_exit else 0
         args = (', '.join(record['args']) or '[]') if 'args' in record else record.get('payload_hex')
+        if user and is_exit:
+            args = None
         caller = self._s(record.get('retaddr')) if not user else -1
         self.caps['args'] |= bool(args)
         self.caps['retaddr'] |= caller >= 0
@@ -204,12 +228,18 @@ class UftraceTimeline(TimelineBuilder):
         self.addresses.append(address)
         self.record_slices[lineno] = index
         if user:
+            detail = self.user_details[lineno] = {'address': record['address']}
+            if 'user_args' in record:
+                detail['args'] = ', '.join(_display(value) for value in record['user_args'])
+            if is_exit:
+                self._user_exit(record, lineno)
             source = record.get('source')
             if source:
                 position = (_display(source['file']), source['line'], '')
                 self.positions[lineno] = self.position_ids.setdefault(position, len(self.position_ids))
         elif not is_exit and flags & F_HAS_LAT and RE_MAY_SLEEP.match(name):
-            reasons = (1 if flags & F_IRQOFF else 0) | (2 if ((flags >> F_PREEMPT_SHIFT) & 15) > self.preempt_base else 0)
+            reasons = ((1 if flags & F_IRQOFF else 0) | (2 if ((flags >> F_PREEMPT_SHIFT) & 15) > self.preempt_base else 0)
+                       | (8 if flags & F_BHOFF else 0))
             if context != CTX_TASK:
                 reasons |= 4
             if reasons:
@@ -219,13 +249,21 @@ class UftraceTimeline(TimelineBuilder):
         else:
             stack.append(_Frame(index, depth, name, context if context is not None else CTX_TASK))
 
+    def _user_exit(self, record, lineno):
+        detail = self.user_details[lineno]
+        if 'user_retval' in record:
+            detail['retval'] = _display(record['user_retval'])
+        if 'payload_hex' in record:
+            detail['return_payload'] = _display(record['payload_hex'])
+
     def build(self, enable_fold=False, include_text=True):
         start = time.monotonic()
         self.caps.update(abs=True, proc=True, duration=True)
-        preempts = [min(record['common_preempt_count'], 15) for record in self.records
+        preempts = (record['common_preempt_count'] & 0xf for record in self.records
                     if record['type'] == 'entry' and record.get('space') == 'kernel' and
-                    'common_preempt_count' in record and record.get('common_flags', 0) & 24 == 0]
-        self.preempt_base = min(preempts, default=0)
+                    record.get('common_flags', 256) < 256 and not record['common_flags'] & 0x58 and
+                    record.get('common_preempt_count', 256) < 256)
+        self.preempt_base = min(1, min(preempts, default=0))
         user_comms = {record['tid']: _display(record['comm']) for record in self.records
                       if record.get('space') == 'user' and record.get('comm')}
         user_stacks = defaultdict(list)
@@ -255,7 +293,7 @@ class UftraceTimeline(TimelineBuilder):
                 if kind in ('entry', 'exit'):
                     self._call(record, task, user_stacks[tid], lineno, 0, None)
                 continue
-            flags, context, lat = _latency(record)
+            flags, context, lat = _latency(record, self.lazy_resched)
             self.caps['cpu'] = True
             self.caps['latency'] |= lat is not None
             previous = task.last_ts
@@ -265,6 +303,9 @@ class UftraceTimeline(TimelineBuilder):
                 self._track_lat(task, lat, flags, timestamp, lineno, previous)
             if kind == 'event':
                 self._event(record, task, timestamp, cpu, context)
+                phase = LIFECYCLE.get(record.get('name'))
+                if phase is not None:
+                    self.lifecycle.append((task.tid, timestamp, phase, lineno))
             else:
                 if record.get('overrun'):
                     while task.stack:
@@ -385,8 +426,12 @@ class UftraceTimeline(TimelineBuilder):
                 boundary = kind == 'entry' and bool(flags & F_BOUNDARY)
                 if kind == 'entry':
                     args = self.strings[self.s_args[index]] if self.s_args[index] >= 0 else None
+                    if space == 'user':
+                        args = self.user_details[lineno].get('args') or ('raw bytes: ' + args if args else None)
                     detail = ' (' + args + ')' if args else '()'
                     body = name + detail + ' {'
+                    if space == 'user':
+                        body += ' /* recorded address ' + record['address'] + ' */'
                     if record.get('retaddr'):
                         body += ' /* caller address ' + record['retaddr'] + ' */'
                     pos = record.get('source')
@@ -396,7 +441,14 @@ class UftraceTimeline(TimelineBuilder):
                     retval = self.s_ret[index]
                     duration = (self.s_end[index] - self.s_start[index]) / 1000 if not flags & F_ORPHAN else None
                     elapsed = f' · {duration:.3f} µs' if duration is not None else ' · entry not recorded'
-                    body = '} /* ' + name + elapsed + (' · raw return ' + retval if retval is not None else '') + ' */'
+                    returned = ' · raw return ' + retval if retval is not None else ''
+                    if space == 'user':
+                        detail = self.user_details[self.s_line[index]]
+                        if 'retval' in detail:
+                            returned = ' · return ' + detail['retval']
+                        elif 'return_payload' in detail:
+                            returned = ' · raw return bytes: ' + detail['return_payload']
+                    body = '} /* ' + name + elapsed + returned + ' */'
                 if enable_fold:
                     path = ancestors.get(parent, '')
                     if not flags & (F_ORPHAN | F_TRUNCATED):
@@ -413,7 +465,7 @@ class UftraceTimeline(TimelineBuilder):
                     prefix = '     timestamp ? |   – | ' + f'{tid:>7} | {tag} | '
             else:
                 body = '/* ' + _display(record.get('name', 'perf event')) + ': ' + _display(record.get('text', '')) + ' */'
-            flags, context, lat = _latency(record) if space == 'kernel' else (0, None, None)
+            _, _, lat = _latency(record, self.lazy_resched) if space == 'kernel' else (0, None, None)
             lines.append(UftraceLine(raw_line=prefix + body, raw_func_name=name if kind == 'entry' else None,
                                      display_func_name=name, cpu=cpu, pid=tid, comm=comm, params=args,
                                      duration=duration, sort_duration=duration, fold_id=fold_id, fold_type=fold_type,
@@ -426,6 +478,11 @@ class UftraceTimeline(TimelineBuilder):
         data = super().to_data(preserve_zero=True)
         data['uftrace'] = {'clock': self.metadata['clock'], 'aligned': self.aligned, 'origin_ns': str(data['t0']),
                           'spaces': sorted(self.spaces), 'kernel_settings': self.metadata['kernel_settings']}
+        if self.user_details:
+            data['uftrace']['user_details'] = self.user_details
+        if self.lifecycle:
+            data['uftrace']['lifecycle'] = [[task, timestamp - data['t0'], phase, line]
+                                           for task, timestamp, phase, line in self.lifecycle]
         if self.positions:
             data['sources'] = {'functions': {}, 'callers': {}, 'user_lines': self.positions,
                                'user_positions': list(self.position_ids)}

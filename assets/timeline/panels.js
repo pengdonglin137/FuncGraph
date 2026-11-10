@@ -2,6 +2,15 @@
 function pill(cls, txt, title) { return '<span class="tl-pill ' + cls + '"' + (title ? ' title="' + esc(title) + '"' : '') + '>' + esc(txt) + '</span>'; }
 function kv(k, v, cls) { return '<span class="k">' + k + '</span><span class="v' + (cls ? ' ' + cls : '') + '">' + v + '</span>'; }
 function lineLink(n, label) { return '<a class="tl-link" data-line="' + n + '">' + (label || 'line ' + n) + '</a>'; }
+function showProcessEvents() {
+    const rows = PROCESS_EVENTS.map(([task, time, phase, line]) => '<tr><td>' +
+        (phase === 'exec' ? 'exec (new image installed)' : 'exit (task exiting)') + '</td><td>' +
+        esc(trackLabel(TRACKS[task])) + '</td><td>+' + fmtDur(time) + '</td><td>' + lineLink(line) + '</td></tr>');
+    openDetail('<div class="tl-detail-head"><b>Recorded exec / exit</b><span class="sp"></span>' +
+        '<button class="tl-close" title="Close (Esc)">×</button></div>' +
+        '<table class="tl-table"><thead><tr><th>Event</th><th>Task</th><th>Trace time</th><th>Text</th></tr></thead>' +
+        '<tbody>' + rows.join('') + '</tbody></table>');
+}
 function safeSourceUrl(href) {
     if (!href) return '';
     try {
@@ -291,7 +300,14 @@ function showDetail(i) {
             ' · ' + (url ? '<a class="tl-link" href="' + esc(url) + '" target="_blank" rel="noopener noreferrer">' + position + '</a>' : position) + '</div>';
     }).join('') + '<div class="tl-context-note tl-tail-note">Static sites in supplied binary; actual branch site not captured.</div>');
     const a = argsOf(i);
-    if (a) h += kv(D.uftrace ? (f & FL.USER ? 'raw payload' : 'raw args') : 'args', esc(a));
+    const userDetail = f & FL.USER ? D.uftrace?.user_details?.[sLine[i]] : null;
+    if (userDetail) {
+        h += kv('recorded address', esc(userDetail.address));
+        if (userDetail.args !== undefined) h += kv('user args', esc(userDetail.args));
+        else if (a) h += kv('raw argument bytes', esc(a));
+        if (userDetail.retval !== undefined) h += kv('user return', esc(userDetail.retval));
+        else if (userDetail.return_payload) h += kv('raw return bytes', esc(userDetail.return_payload));
+    } else if (a) h += kv(D.uftrace ? (f & FL.USER ? 'raw payload' : 'raw args') : 'args', esc(a));
     if (ATOMIC.has(i)) h += kv('context', 'called with ' + esc(atomicText(ATOMIC.get(i))) + ' (sleeping function in atomic context)', 'err');
     h += kv('trace lines', lineLink(sLine[i]) + (sEline && sEline[i] && sEline[i] !== sLine[i] ? ' → ' + lineLink(sEline[i]) : ''));
     h += '</div><details class="tl-cs" open><summary class="tl-sec">' + (f & FL.USER ? 'User source' : 'Call site source') + '</summary><div class="tl-cs-src"></div></details></div><div>';
@@ -788,6 +804,7 @@ tlRoot.querySelector('.tl-toolbar').addEventListener('click', ev => {
         case 'an-lat': showLatency(); break;
         case 'an-sec': showSections(); break;
         case 'an-tasks': showTasks(null); break;
+        case 'process-events': showProcessEvents(); break;
         case 'expand': {
             const any = ORDER.some(t => t.collapsed);
             for (const t of ORDER) t.collapsed = !any;

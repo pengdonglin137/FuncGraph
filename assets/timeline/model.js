@@ -239,6 +239,13 @@ const TRACKS = D.tasks.map((t, i) => ({
     lo: -1, hi: -1, maxD: -1, rows: [], rowsT: [], rowsI: [], maxDT: -1, maxDI: -1, busy: 0, off: [], rs: [], io: [], errs: [], cpus: new Set(),
     collapsed: false, hidden: false, hits: 0, y: 0, h: 0
 }));
+const PROCESS_EVENTS = D.uftrace?.lifecycle || [];
+const PROCESS_BY_TASK = new Map();
+for (const event of PROCESS_EVENTS) {
+    const task = event[0];
+    if (!PROCESS_BY_TASK.has(task)) PROCESS_BY_TASK.set(task, []);
+    PROCESS_BY_TASK.get(task).push(event);
+}
 for (let i = 0; i < N; i++) {
     const t = TRACKS[sTask[i]];
     if (t.lo < 0) t.lo = i;
@@ -301,6 +308,7 @@ for (const records of [D.offcpu, D.resched, D.irqoff]) for (const record of reco
 }
 for (const section of D.sections || []) { observeEnd(section[2]); observeEnd(section[3]); }
 for (const wake of D.wakeups || []) observeEnd(wake[1]);
+for (const event of PROCESS_EVENTS) observeEnd(event[1]);
 const OPEN_OFF = new Set(D.offcpu.filter(record => record[2] === null));
 for (const r of D.offcpu) if (r[2] === null) r[2] = tMax;
 // wakeups: [waker_task, ts, target_task, ctx, waker_slice, offcpu_index]
@@ -309,7 +317,7 @@ const OFF_IDX = new Map(D.offcpu.map((r, i) => [r, i]));
 const WAKE_OF_OFF = new Map();
 for (const w of WAKES) if (w[5] >= 0) WAKE_OF_OFF.set(w[5], w);
 
-const ORDER = TRACKS.filter(t => t.lo >= 0 || t.off.length).sort((a, b) => {
+const ORDER = TRACKS.filter(t => t.lo >= 0 || t.off.length || PROCESS_BY_TASK.has(t.id)).sort((a, b) => {
     if (a.kind !== b.kind) return a.kind - b.kind;
     if (a.kind === 1) return (a.cpu || 0) - (b.cpu || 0);
     return b.busy - a.busy;
@@ -440,6 +448,7 @@ function lbStart(row, t, lo) {  // first j >= lo with start >= t
 // Fit and the initial view start at the first call so leading idle time does not shrink the calls.
 let tCall = tMax;
 for (let i = 0; i < N; i++) if (sStart[i] < tCall) tCall = sStart[i];
+for (const event of PROCESS_EVENTS) if (event[1] < tCall) tCall = event[1];
 if (tCall >= tMax) tCall = 0;
 
 // ---- view state ----
@@ -503,6 +512,7 @@ tlRoot.innerHTML = `
     <button class="tl-btn" data-act="an-errors" title="Error summary by syscall / origin / errno">Errors</button>
     <button class="tl-btn" data-act="an-sec" title="Critical sections: irqs-off / preempt-off / BH-off regions">Sections</button>
     <button class="tl-btn" data-act="an-lat" title="Scheduling latency: need-resched windows and what delayed them">Sched latency</button>
+    ${PROCESS_EVENTS.length ? '<button class="tl-btn" data-act="process-events" title="Recorded kernel exec and exit events">Exec / exit</button>' : ''}
     <button class="tl-btn" data-act="notes" title="Show / hide the notes about this trace">Notes</button>
     <button class="tl-btn" data-act="max" title="Maximize: hide the page header and tabs (M)">Max</button>
     <button class="tl-btn" data-act="help" title="Timeline help (?)" aria-label="Timeline help" hidden>?</button>

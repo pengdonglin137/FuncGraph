@@ -496,6 +496,11 @@ Text 的焦点与滚动分开处理：初始化、恢复选中或其他明确要
 用户态有独立配色。单态报告无分界线。Text / Timeline 共用的 Filter 支持
 `space:user` 和 `space:kernel`。
 可打开[混合示例](../sample_mixed.html)实际体验，操作和重建步骤见 [uftrace 指南](uftrace.cn.md)。
+选中 `dispatch_datagram` 可看采集到的函数地址、参数和返回值。Text 将这些字段放在对应的入口、
+退出行；无法解码的 payload 保留为原始字节，不猜测其含义。
+跟踪真实工具和依赖库的编译与操作步骤见 [pigz + zlib 压缩实战](pigz.cn.md)。
+采到 `sched_process_exec` 或 `sched_process_exit` 时，**Exec / exit** 显示实测生命周期事件，
+可跳到 Text；**Markers** 切换轨道刻度。缺失事件不会由 `main` 或最后一帧推算。
 
 ### 6.1 布局
 

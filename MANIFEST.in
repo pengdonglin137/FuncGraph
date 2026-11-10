@@ -5,5 +5,7 @@ include docs/releasing.md docs/releasing.cn.md
 include docs/raw-input.md docs/raw-input.cn.md
 include docs/viewer.md docs/viewer.cn.md
 include docs/uftrace.md docs/uftrace.cn.md
+include docs/pigz.md docs/pigz.cn.md
+include samples/pigz_case.sh samples/demo_mixed.c
 include scripts/uftrace.sh
 recursive-include tests *.py *.sh *.txt

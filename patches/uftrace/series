@@ -2,3 +2,4 @@
 0002-kernel-decode-return-address-entries-and-retain-raw-.patch
 0003-dump-add-explicit-FuncGraph-JSONL-export-of-original.patch
 0004-symbol-derive-kernel-function-ranges-after-sorting-k.patch
+0005-dump-export-user-scalar-values-from-recorded-argumen.patch

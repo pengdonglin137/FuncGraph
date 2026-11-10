@@ -29,11 +29,16 @@ class UftraceExportTest(unittest.TestCase):
         cls.addClassCleanup(cls.workspace.cleanup)
         cls.root = Path(cls.workspace.name)
         source = cls.root / 'workload.c'
-        source.write_text('__attribute__((noinline)) int child(int value) { return value + 1; }\n'
-                          'int main(void) { return child(1) != 2; }\n')
+        source.write_text('int child(int);\nint main(void) { return child(1) != 2; }\n')
+        library = cls.root / 'workload_lib.c'
+        library.write_text('int child(int value) { return value + 1; }\n')
+        subprocess.run(['gcc', '-pg', '-g', '-O0', '-c', 'workload_lib.c'], cwd=cls.root,
+                       check=True, capture_output=True)
+        subprocess.run(['ar', 'rcs', 'libworkload.a', 'workload_lib.o'], cwd=cls.root,
+                       check=True, capture_output=True)
         cls.binary = cls.root / 'workload'
-        subprocess.run(['gcc', '-pg', '-g', '-O0', '-o', str(cls.binary), str(source)], check=True,
-                       capture_output=True)
+        subprocess.run(['gcc', '-pg', '-g', '-O0', '-o', 'workload', 'workload.c', 'libworkload.a'],
+                       cwd=cls.root, check=True, capture_output=True)
         cls.base = cls.root / 'base'
         result = subprocess.run([str(EXECUTABLE), 'record', '--no-sched', '--no-libcall', '--srcline',
                                  '-d', str(cls.base), str(cls.binary)], capture_output=True, text=True)
@@ -67,8 +72,32 @@ class UftraceExportTest(unittest.TestCase):
         self.assertTrue(all(record['cpu'] is None for record in calls))
         self.assertTrue(all(type(record['time_ns']) is int for record in calls))
         child = next(record for record in calls if record['name'] == 'child' and record['type'] == 'entry')
-        self.assertEqual(Path(child['source']['file']).name, 'workload.c')
+        self.assertEqual(Path(child['source']['file']).name, 'workload_lib.c')
         self.assertEqual(child['source']['line'], 1)
+        self.assertNotIn('user_args', child)
+
+    def record_user_with_spec(self, arg_spec):
+        directory = Path(self.workspace.name) / 'typed'
+        subprocess.run([str(EXECUTABLE), 'record', '--no-sched', '--no-libcall',
+                        '-A', arg_spec, '-R', 'child@retval/i32',
+                        '-d', str(directory), str(self.binary)], check=True, capture_output=True)
+        self.capture = directory
+        return [record for record in self.records() if record.get('name') == 'child']
+
+    def test_user_scalars_use_recorded_specifications_and_keep_payload(self):
+        entry, exit_record = self.record_user_with_spec('child@arg1/i32')
+        self.assertEqual(entry['user_args'], ['1'])
+        self.assertEqual(exit_record['user_retval'], '2')
+        for record in (entry, exit_record):
+            self.assertIn('payload_hex', record)
+        self.assertNotIn('user_retval', entry)
+        self.assertNotIn('user_args', exit_record)
+
+    def test_unsupported_user_format_keeps_raw_bytes_only(self):
+        entry, exit_record = self.record_user_with_spec('child@arg1/o32')
+        self.assertIn('payload_hex', entry)
+        self.assertNotIn('user_args', entry)
+        self.assertEqual(exit_record['user_retval'], '2')
 
     def test_recorded_settings_not_export_host(self):
         (self.capture / 'kernel-funcgraph.info').write_text(

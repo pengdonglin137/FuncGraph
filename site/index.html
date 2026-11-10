@@ -64,10 +64,10 @@
     <h2 lang="en">User → kernel: follow a UDP send</h2>
     <h2 lang="zh">从用户态到内核态：追踪一次 UDP 发送</h2>
     <a href="sample_mixed.html"><img class="shot" src="sample_mixed.png" width="1600" height="900" alt="FuncGraph Timeline with a user-to-kernel divider in the sendto call stack"></a>
-    <p class="cap" lang="en">In this real QEMU <code>demo_io</code> recording, the Timeline follows <code>main → sendto → __x64_sys_sendto → … → loopback_xmit</code>.
-      The thin line marks the top edge of each linked kernel call. In Text, look for the underlined <code>K</code> beside the same call.</p>
-    <p class="cap" lang="zh">这份真实的 QEMU <code>demo_io</code> 记录，在 Timeline 中可以沿 <code>main → sendto → __x64_sys_sendto → … → loopback_xmit</code> 下探。
-      细线标在匹配的内核调用顶边；在 Text 中，同一个调用旁的 <code>K</code> 带有下划线。</p>
+    <p class="cap" lang="en">Follow <code>main → run_round → exchange_loopback → send_frame → dispatch_datagram → sendto → __x64_sys_sendto</code> in a real QEMU capture.
+      Select <code>dispatch_datagram</code> for its recorded address, arguments and return value. The thin line marks the linked kernel call; Text underlines its <code>K</code> tag.</p>
+    <p class="cap" lang="zh">在真实的 QEMU 记录中，沿 <code>main → run_round → exchange_loopback → send_frame → dispatch_datagram → sendto → __x64_sys_sendto</code> 下探。
+      选中 <code>dispatch_datagram</code> 可看记录的地址、参数和返回值。细线标在内核调用顶边，Text 中对应入口的 <code>K</code> 带下划线。</p>
   </section>
 
   <section id="kernel-sample">

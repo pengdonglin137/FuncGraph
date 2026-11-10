@@ -10,6 +10,7 @@ are generated from committed changes in `build/uftrace-dev`, never hand-edited.
 | 0002 | Decode `fgraph_retaddr_entry`; retain format-driven raw context without replay PID reassignment. | Not submitted. Remove after the complete raw export context is available upstream. |
 | 0003 | Versioned `dump --fgraph` JSONL export of original streams, recorded clock, sparse CPU identity, perf events and explicit completion. | Not submitted. Remove after an upstream export preserves this contract (or migrate the importer explicitly). |
 | 0004 | Fix sorted kernel symbol ranges on Pi; final native validation fixes declaration diagnostics and rejects malformed/trailing user records instead of reporting completion. | Not submitted. Remove after equivalent upstream fixes land and the regression tests pass. |
+| 0005 | Export supported user scalar arguments/returns from saved specifications while preserving raw payload bytes. | Not submitted. Remove when an upstream export offers both forms. |
 
 The native executable is optional and is **not** linked into FuncGraph or
 included in Python distributions. uftrace is GPL-2.0; anyone distributing its

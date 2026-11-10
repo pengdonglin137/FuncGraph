@@ -498,6 +498,12 @@ has its own Context color. Single-space reports have no divider. Use
 `space:user` or `space:kernel` in the shared Text/Timeline Filter.
 Try the [mixed sample](../sample_mixed.html) or see the
 [uftrace walkthrough](uftrace.md#mixed-sample-follow-sendto-into-the-kernel).
+Select `dispatch_datagram` to inspect its recorded address, arguments and
+return value. Text shows these on the corresponding entry/exit rows. Values
+that uftrace could not decode stay labeled as raw bytes.
+See the [pigz + zlib case](pigz.md) to build and trace a real tool and its library.
+When recorded, **Exec / exit** lists kernel lifecycle events and links to Text;
+**Markers** toggles their task-track ticks. Missing endpoints are not inferred.
 
 ### 6.1 Layout
 

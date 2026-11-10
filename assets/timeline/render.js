@@ -314,6 +314,14 @@ function drawTrack(t, y, vs, ve, k) {
     ctx.fillText(trackSub(t), 18 + lw, y + 9.5);
     ctx.font = FONT;
     const top = y + HDR;
+    if (ov.mk && PROCESS_BY_TASK.has(t.id)) {
+        ctx.fillStyle = P.hdrText;
+        for (const [, time] of PROCESS_BY_TASK.get(t.id)) {
+            if (time < vs || time > ve) continue;
+            const position = Math.min(W - 1, Math.max(0, Math.round((time - vs) * k)));
+            ctx.fillRect(position, top - 6, 1, 6);
+        }
+    }
     if (t.kind === 9) { if (!t.collapsed) drawCpuTrack(top, vs, ve, k); return; }
     if (t.collapsed) {
         if (t.rows.length) drawRow(t.rows[0], top + 1, MINI - 2, vs, ve, k, false);

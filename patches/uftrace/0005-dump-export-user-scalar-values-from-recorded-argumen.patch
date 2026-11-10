@@ -1,0 +1,98 @@
+From a23fbb507c33967ec4539c8b26c034ed74c09537 Mon Sep 17 00:00:00 2001
+From: pengdonglin <pengdonglin@xiaomi.com>
+Date: Wed, 11 Nov 2026 07:05:55 +0800
+Subject: [PATCH 5/5] dump: export user scalar values from recorded argument
+ specifications
+
+Keep raw payloads, use capture byte order and native alignment, and add user_args/user_retval only for complete supported scalar records. Leave other argument formats uninterpreted.
+---
+ cmds/dump.c | 65 +++++++++++++++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 65 insertions(+)
+
+diff --git a/cmds/dump.c b/cmds/dump.c
+index 8f808a68f0f6..11c71fc8856a 100644
+--- a/cmds/dump.c
++++ b/cmds/dump.c
+@@ -1,3 +1,4 @@
++#include <elf.h>
+ #include <inttypes.h>
+ #include <stdbool.h>
+ #include <stdint.h>
+@@ -1527,6 +1528,68 @@ static void dump_fgraph_header(struct uftrace_dump_ops *ops, struct uftrace_data
+ 	pr_out("}\n");
+ }
+ 
++static void fgraph_user_values(struct uftrace_task_reader *task, bool retval)
++{
++	const struct uftrace_fstack_args *args = &task->args;
++	const unsigned char *bytes = args->data;
++	const int endian = task->h->hdr.endian;
++	struct uftrace_arg_spec *spec;
++	char values[32][32];
++	size_t offset = 0;
++	unsigned count = 0, index;
++
++	if (!args->args || (endian != ELFDATA2LSB && endian != ELFDATA2MSB))
++		return;
++	list_for_each_entry(spec, args->args, list) {
++		unsigned size = spec->size;
++		unsigned padded = (size + 3) & ~3U;
++		uint64_t value = 0, sign, mask;
++
++		if (retval != (spec->idx == RETVAL_IDX))
++			continue;
++		if (count >= ARRAY_SIZE(values) || (size != 1 && size != 2 && size != 4 && size != 8) ||
++		    padded > args->len - offset)
++			return;
++		for (index = 0; index < size; index++) {
++			unsigned shift = endian == ELFDATA2LSB ? index : size - 1 - index;
++			value |= (uint64_t)bytes[offset + index] << (8 * shift);
++		}
++		switch (spec->fmt) {
++		case ARG_FMT_SINT:
++			sign = UINT64_C(1) << (8 * size - 1);
++			mask = sign | (sign - 1);
++			snprintf(values[count], sizeof(values[count]), "%" PRId64,
++				 value & sign ? -(int64_t)(mask ^ value) - 1 : (int64_t)value);
++			break;
++		case ARG_FMT_UINT:
++			snprintf(values[count], sizeof(values[count]), "%" PRIu64, value);
++			break;
++		case ARG_FMT_HEX:
++		case ARG_FMT_PTR:
++			snprintf(values[count], sizeof(values[count]), "0x%" PRIx64, value);
++			break;
++		default:
++			return;
++		}
++		offset += padded;
++		count++;
++	}
++	if (!count || offset != args->len || (retval && count != 1))
++		return;
++	if (retval) {
++		pr_out(",\"user_retval\":");
++		fgraph_string(values[0]);
++		return;
++	}
++	pr_out(",\"user_args\":[");
++	for (index = 0; index < count; index++) {
++		if (index)
++			pr_out(",");
++		fgraph_string(values[index]);
++	}
++	pr_out("]");
++}
++
+ static void dump_fgraph_task(struct uftrace_dump_ops *ops, struct uftrace_task_reader *task,
+ 			     char *name)
+ {
+@@ -1547,6 +1610,8 @@ static void dump_fgraph_task(struct uftrace_dump_ops *ops, struct uftrace_task_r
+ 		for (index = 0; index < task->args.len; index++)
+ 			pr_out("%02x", ((unsigned char *)task->args.data)[index]);
+ 		pr_out("\"");
++		if (record->type == UFTRACE_ENTRY || record->type == UFTRACE_EXIT)
++			fgraph_user_values(task, record->type == UFTRACE_EXIT);
+ 	}
+ 	loc = task_find_loc_addr(&task->h->sessions, task, record->time, record->addr);
+ 	if (loc && loc->file && loc->line) {

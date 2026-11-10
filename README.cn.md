@@ -77,7 +77,7 @@ FG_CONFIG=/dev/null python3 docs/img/make_shots.py
 
 [![混合时间轴：从用户态 sendto 进入内核](sample_mixed.png)](https://pengdonglin137.github.io/FuncGraph/sample_mixed.html)
 
-本地打开 [sample_mixed.html](sample_mixed.html)，也可以点截图在线查看。在 **Timeline** 选中 `__x64_sys_sendto`，调用顶边有细分界线，调用栈在同一位置分隔用户态和内核态；切换到 Text，同一入口旁的 `K` 带下划线。这份真实的 QEMU `demo_io` 示例有 5 处匹配的跨态边界。采集范围、保留字段和重建命令见 [uftrace 指南](docs/uftrace.cn.md)。
+本地打开 [sample_mixed.html](sample_mixed.html)，也可以点截图在线查看。在 **Timeline** 选中 `dispatch_datagram` 可看用户态参数、返回值和记录的函数地址；选中 `__x64_sys_sendto` 可看调用顶边细线和调用栈分界。Text 同一入口旁的 `K` 带下划线。这份 QEMU 上对 [`demo_mixed.c`](samples/demo_mixed.c) 的实际采集有 5 处匹配的跨态边界，采集和重建步骤见 [uftrace 指南](docs/uftrace.cn.md)。
 
 ---
 

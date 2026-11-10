@@ -74,7 +74,7 @@ The sample was recaptured on November 10, 2026. The trace, QEMU runtime and host
 
 [![Mixed Timeline: sendto from user space into the kernel](sample_mixed.png)](https://pengdonglin137.github.io/FuncGraph/sample_mixed.html)
 
-Open [sample_mixed.html](sample_mixed.html) locally or click the screenshot to open it online. In **Timeline**, select `__x64_sys_sendto` to see the thin boundary line and the matching separator in the call stack. The same entry has an underlined `K` in Text. This real QEMU `demo_io` example has five linked user → kernel transitions. See the [uftrace guide](docs/uftrace.md#mixed-sample-follow-sendto-into-the-kernel) for the raw fields, scope, and rebuild command.
+Open [sample_mixed.html](sample_mixed.html) locally or click the screenshot to open it online. In **Timeline**, select `dispatch_datagram` for user arguments, return value and recorded function address, then `__x64_sys_sendto` for the boundary line and matching call-stack separator. Text marks the same entry with an underlined `K`. This real QEMU [`demo_mixed.c`](samples/demo_mixed.c) recording has five linked transitions. See the [uftrace guide](docs/uftrace.md#mixed-sample-follow-sendto-into-the-kernel) for capture and rebuild steps.
 
 ---
 

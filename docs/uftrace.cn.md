@@ -8,19 +8,25 @@ FuncGraph 支持导入**仅用户态、仅内核态、混合**记录，不强制
 不需要原生 Python 扩展。现有 ftrace 文本和 trace-cmd 输入仍可使用。
 负责保护和恢复 tracefs 状态的 `fgcapture.sh --user` 包装尚未实现。
 
+真实业务示例见 [pigz + zlib 压缩实战](pigz.cn.md)，包含应用和依赖库一起编译的步骤。
+
 ## 混合示例：沿 `sendto` 进入内核
 
 用浏览器直接打开 [sample_mixed.html](../sample_mixed.html)，也可以打开
 [GitHub Pages 在线示例](https://pengdonglin137.github.io/FuncGraph/sample_mixed.html)。
-切到 **Timeline**，保留默认 **Context** 配色，点击 `__x64_sys_sendto`，沿
-`main → sendto → __x64_sys_sendto → … → loopback_xmit` 查看。`__x64_sys_sendto`
-顶边的细线只标出这次调用的跨态边界；调用栈在同一位置分隔两态，Text 在对应的内核入口旁显示
-带下划线的 `K`。调用栈里的 `demo_io.c:22` 可点击查看内嵌源码。两种视图均可用
-`space:user` 或 `space:kernel` 过滤。
+切到 **Timeline**，保留默认 **Context** 配色，沿
+`main → run_round → exchange_loopback → send_frame → dispatch_datagram → sendto → __x64_sys_sendto → … → loopback_xmit` 查看。
+点击 `dispatch_datagram`，详情会显示记录的函数地址、五个参数（其中长度为 `512`）和返回值
+`512`。点击调用栈里的 `demo_mixed.c:25` 可打开源码。两次 `receive_frame` 分别返回
+`512` 和 `-1`；后者在空队列上使用了 `MSG_DONTWAIT`，不要把用户态返回值当作内核原始返回值。
+
+点击 `__x64_sys_sendto`，调用栈会在同一位置分隔两态，顶边细线仅覆盖这次内核调用的时段。
+Text 在对应入口旁显示带下划线的 `K`，用户态入口行显示参数和地址，退出行显示返回值。
+两种视图均可用 `space:user` 或 `space:kernel` 过滤。
 
 [仓库内的 JSONL](../samples/sample_mixed.jsonl) 取自 2026 年 11 月 11 日在 x86_64 QEMU
-Linux `7.4.0-rc2` 上对 [`demo_io.c`](../samples/demo_io.c) 的实际采集，包含 15 次用户态调用、
-916 次内核态调用和 5 处匹配的跨态边界。截取时保留了原始调用记录，包括地址、参数和原始
+Linux `7.4.0-rc2` 上对 [`demo_mixed.c`](../samples/demo_mixed.c) 的实际采集，包含 25 次用户态调用、
+1,067 次内核态调用和 5 处匹配的跨态边界。截取时保留了原始调用记录，包括地址、参数和原始
 返回值；没有纳入调度 / perf 事件。这个报告不使用内核调试镜像；若要看内核源码解析和 BTF
 校验的错误路径，可打开[纯内核态示例](../sample.html)。在仓库根目录重建混合报告无需 uftrace
 可执行文件或 `vmlinux`：
@@ -49,18 +55,23 @@ Compare 与 `--export` 分开统计用户态、内核态的同名函数。
 - **混合展示**：Timeline 默认 Context 配色区分两态。分界线画在匹配的内核根调用
   顶边，长度就是该调用的记录时段，深度随实际调用关系变化，不横贯整条轨道。
   Text 用 `U` / `K` 标记，分界处加下划线，调用栈也标出转换。单态报告不画分界线。
+- **内核上下文**：跨态挂接不改变内核记录的 flags，也不把它们赋给用户态。Timeline 详情
+  根据记录显示关中断、BH 禁用、hardirq / softirq / NMI、调度请求、抢占及迁移计数；
+  内核调用的色块取入口状态，Text 按每条记录过滤，例如 `space:kernel AND irqs:d`。
+  缺少上下文字段时不补猜。`0x02` 在不同内核版本中含义不同，按保存的内核版本解释。
 - **匹配规则**：按线程、地址空间、原生深度及地址配对进出记录；只在核实共用时钟、
   同线程且完整的内核根调用落在记录的用户调用内时合并。这证明时间上的包含关系，
   不证明用户态具体哪条指令进入内核。排序和匹配不使用内核图内部计时器。没有匹配
   的调用保留；时间范围冲突的根调用放在独立轨道。时钟无法核实或不一致时分开展示
   并提示，不应跨态对比时间。
-- **源码**：展示记录中已有的用户态文件和行号，不借用内核源码链接。`--user-src DIR`
-  从目录内已有文件嵌入源码片段，可点击调用栈位置或展开 Text 行查看。使用
+- **源码**：展示记录中已有的用户态文件和行号，绝不套用内核的 `--base-url`，即使函数同名。
+  `--user-src DIR` 只嵌入解析后仍位于该目录内的源码；点击调用栈位置或展开 Text 行查看。
+  找不到源码或路径越出该目录时只显示记录的位置，不生成外链。使用
   `--no-text-view --keep-source` 可省略 Text DOM，但保留片段。
 - **过滤**：启用 `--filter` 后，Text 与 Timeline 共用的 Filter 支持 `space:user` 和
   `space:kernel`；sidecar 报告不必先加载 Text。命令行的调用树预过滤暂不适用于 uftrace。
 - **数据缺口**：缺失进出记录或丢失事件会标记，不补造实测帧。用户态 CPU 未知，
-  用户态原始 payload 不解码；内核返回值展示原始比特，只在 BTF 类型已知时做 errno
+  用户态仅在存在支持的标量参数规格时解码，否则保留原始字节；内核返回值展示原始比特，只在 BTF 类型已知时做 errno
   分析。调度分析使用内核 tracepoint，不与 perf 事件重复计入。未投影到报告中的原生
   字段仍保留在 JSONL 中。
 
@@ -133,7 +144,9 @@ build/uftrace-x86_64/bin/uftrace dump --fgraph --srcline -d CAPTURE > capture.js
   不伪造 BTF 类型或返回值来源。
 - 内核 tracepoint 的 `event` 保存原始 **common PID**、事件名、格式化 payload
   和 flags，包括在其它任务上下文发生的调度事件。存在用户事件 / 参数 payload
-  时，以 `payload_hex` 保存原始字节。
+  时，以 `payload_hex` 保存原始字节。支持的 8/16/32/64 位有符号、无符号、十六进制和指针
+  规格会附加 `user_args`（入口字符串列表）或 `user_retval`（出口字符串）。使用字符串保留
+  64 位精度；规格不受支持或不完整时保留原始 payload，不猜测。
 - perf `event` 标记 `origin=perf`、`space=null`、未知 `cpu=null`，并带不透明的
   stream 索引及可用的调度、task、comm 字段。导入器不能将 perf 调度和等价的
   内核调度事件重复计数。
@@ -158,6 +171,11 @@ build/uftrace-x86_64/bin/uftrace dump --fgraph --srcline -d CAPTURE > capture.js
 使用私有输入输出文件、统一的 `--clock=mono`、合适的内核 buffer 和对应架构的
 syscall 根过滤。范围过宽、深度过大的采集可能丢失。当前可连接的 Pi 不存在旧的
 `/vol_1t/raspi/linux` 路径，本次从本仓库复制样例源码进行原生构建。
+
+混合示例改为用相同参数编译 `samples/demo_mixed.c`。空闲实验环境中对每个 syscall 根
+分别使用精确名称，并通过 `-A`/`-R` 指定用户态参数、返回值规格。完整采集命令见
+[英文版示例](uftrace.md#capture-safety-and-current-limits)；压缩实战的完整命令见
+[pigz 指南](pigz.cn.md)。
 
 QEMU 7.4 上 args 和 retaddr 可以一起记录，不能据此外推老内核；Pi 6.18 的实际
 格式 / 能力单独验证。导出保留原始深度和 CPU，不宣称全局排序或有界内存。
