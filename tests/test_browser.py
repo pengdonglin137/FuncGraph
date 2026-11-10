@@ -1356,6 +1356,90 @@ class BrowserSmokeTest(unittest.TestCase):
         self.assertTrue(self.page.locator('#' + grandchild['row']).is_visible())
         self.assertTrue(self.page.locator('#' + grandchild['line'] + '_content').is_visible())
 
+    def test_filter_and_clear_preserve_collapsed_ancestors(self):
+        parent, child, grandchild, outside = self.nested_fold_rows()
+        self.ev('id => toggleFold(id)', parent['fold'])
+        self.ev('() => { document.getElementById("filterInput").value = "comm:.*"; applyFilter(); }')
+        self.assertFalse(self.page.locator('#' + child['row']).is_visible())
+        self.assertFalse(self.page.locator('#' + grandchild['row']).is_visible())
+        self.ev('clearFilter()')
+        self.assertFalse(self.page.locator('#' + child['row']).is_visible())
+        self.assertFalse(self.page.locator('#' + grandchild['row']).is_visible())
+
+    def test_unfold_does_not_reveal_filter_rejected_rows_or_sources(self):
+        parent, child, grandchild, outside = self.nested_fold_rows()
+        self.expand_fold_source(grandchild)
+        self.ev('''row => {
+            const name = document.getElementById(row).dataset.func;
+            document.getElementById('filterInput').value = 'func:^' + name + '$';
+            applyFilter();
+        }''', parent['row'])
+        self.assertFalse(self.page.locator('#' + grandchild['row']).is_visible())
+        matches = self.ev('Array.from(fgFilterState.lines)')
+        self.ev('id => { toggleFold(id); toggleFold(id); }', parent['fold'])
+        self.assertFalse(self.page.locator('#' + grandchild['row']).is_visible())
+        self.assertFalse(self.page.locator('#' + grandchild['line'] + '_content').is_visible())
+        self.assertEqual(self.ev('Array.from(fgFilterState.lines)'), matches)
+
+    def test_clear_filter_restores_only_visible_saved_source_expansions(self):
+        parent, child, grandchild, outside = self.nested_fold_rows()
+        self.expand_fold_source(grandchild)
+        self.expand_fold_source(outside)
+        self.ev('id => toggleFold(id)', parent['fold'])
+        self.ev('() => { document.getElementById("filterInput").value = "func:no_such_call"; applyFilter(); clearFilter(); }')
+        self.assertFalse(self.page.locator('#' + grandchild['line'] + '_content').is_visible())
+        self.assertTrue(self.page.locator('#' + outside['line'] + '_content').is_visible())
+        self.ev('id => toggleFold(id)', parent['fold'])
+        self.assertTrue(self.page.locator('#' + grandchild['line'] + '_content').is_visible())
+
+    def test_bulk_folding_projects_once_without_dom_membership_or_summary_scans(self):
+        parent, child, grandchild, outside = self.nested_fold_rows()
+        facts = self.ev('''id => {
+            const folding = fgGetTextFolding();
+            const rows = document.querySelectorAll('#content .line-container').length;
+            const project = fgProjectFoldRecords;
+            const documentQuery = Document.prototype.querySelectorAll;
+            const elementQuery = Element.prototype.querySelectorAll;
+            let projections = 0;
+            const guard = original => function(selector) {
+                if (selector.includes('data-fold')) throw new Error('DOM membership scan: ' + selector);
+                return original.call(this, selector);
+            };
+            fgProjectFoldRecords = (...args) => { projections++; return project(...args); };
+            Document.prototype.querySelectorAll = guard(documentQuery);
+            Element.prototype.querySelectorAll = guard(elementQuery);
+            try {
+                foldToDepth(1);
+                unfoldAllBlocks();
+                toggleFoldRecursive(id);
+            } finally {
+                fgProjectFoldRecords = project;
+                Document.prototype.querySelectorAll = documentQuery;
+                Element.prototype.querySelectorAll = elementQuery;
+            }
+            return {projections, rows, after:document.querySelectorAll('#content .line-container').length,
+                same:folding === fgGetTextFolding(),
+                navigable:expandableLines.every(line => line.style.display !== 'none')};
+        }''', parent['fold'])
+        self.assertEqual(facts['projections'], 3)
+        self.assertEqual(facts['rows'], facts['after'])
+        self.assertTrue(facts['same'])
+        self.assertTrue(facts['navigable'])
+        self.assertFalse(self.page.locator('#' + grandchild['row']).is_visible())
+
+    def test_reprojecting_unchanged_fold_visibility_does_not_rewrite_rows_or_sources(self):
+        facts = self.ev('''() => {
+            const folding = fgGetTextFolding();
+            const observer = new MutationObserver(() => {});
+            observer.observe(document.getElementById('content'), {attributes:true, childList:true, subtree:true});
+            fgProjectFoldRecords(folding, folding.records);
+            const changes = observer.takeRecords().map(record => ({type:record.type, attribute:record.attributeName}));
+            observer.disconnect();
+            return {changes, rows:folding.records.length};
+        }''')
+        self.assertGreater(facts['rows'], 100)
+        self.assertEqual(len(facts['changes']), 0, facts['changes'][:5])
+
     def test_parent_fold_cancels_pending_descendant_source_click(self):
         parent, child, grandchild, outside = self.nested_fold_rows()
         self.page.locator('#' + grandchild['row'] + ' .line-content').click()

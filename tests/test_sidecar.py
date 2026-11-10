@@ -914,6 +914,29 @@ class SidecarBrowserTest(unittest.TestCase):
         self.page.evaluate('clearFilter()')
         self.assertEqual(self.page.evaluate('fgFilterState.text'), '')
 
+    def test_folded_filter_projection_survives_sidecar_mount_and_view_reentry(self):
+        expected = self.apply_query('comm:.*')
+        self.page.evaluate('async () => { await fgSwitchView("text"); }')
+        facts = self.page.evaluate('''async () => {
+            const entry = document.querySelector('#content .fold-entry');
+            const foldId = entry.dataset.foldId;
+            toggleFold(foldId);
+            applyFilter();
+            await fgSwitchView('timeline');
+            await fgSwitchView('text');
+            const folding = fgGetTextFolding();
+            const members = Array.from(folding.members(foldId)).filter(record => record !== folding.blocks.get(foldId).entry);
+            return {hidden:members.every(record => document.getElementById('L' + record.row[0]).style.display === 'none'),
+                members:members.length, cached:fgData.ready('fgTextIndex'), rows:folding.records.length,
+                lines:Array.from(fgFilterState.lines).sort((left, right) => left - right)};
+        }''')
+        self.assertTrue(facts['hidden'])
+        self.assertGreater(facts['members'], 0)
+        self.assertEqual(facts['lines'], expected)
+        self.assertFalse(facts['cached'])
+        self.assertEqual(facts['rows'], self.page.locator('#content .line-container').count())
+        self.assertEqual(sum(url.endswith('text.html') for url in self.requests), 1)
+
     def test_filter_index_failure_retains_previous_result_and_retries_without_text(self):
         previous = self.apply_query('duration:>1')
         self.page.evaluate('fgData.release("fgTextIndex")')

@@ -3,6 +3,7 @@
         'fold-id', 'fold-type', 'fold-ancestors', 'irqs', 'resched', 'hirq', 'preempt']);
     const columns = new Map(fields.map((field, index) => ['data-' + field, index + 2]));
     const models = new WeakMap();
+    const foldModels = new WeakMap();
     class TextRecord {
         constructor(row) { this.row = row; }
         get textContent() { return this.row[1]; }
@@ -58,7 +59,56 @@
         const { graphSets, ...result } = yield* filter(model, text);
         return result;
     }
-    window.fgTextModel = { fields, prepare, filter };
+    function folding(model) {
+        if (foldModels.has(model)) return foldModels.get(model);
+        const blocks = new Map();
+        const ancestry = new Map();
+        const ancestors = record => {
+            const text = record.getAttribute('data-fold-ancestors') || '';
+            if (!ancestry.has(text)) ancestry.set(text, Array.from(new Set(text.split(/\s+/).filter(Boolean))));
+            return ancestry.get(text);
+        };
+        const block = id => {
+            if (!blocks.has(id)) blocks.set(id, { id, entry: null, exit: null, calls: 0 });
+            return blocks.get(id);
+        };
+        for (const record of model.records) {
+            const id = record.getAttribute('data-fold-id');
+            const type = record.getAttribute('data-fold-type');
+            if (id && (type === 'entry' || type === 'exit')) block(id)[type] = record;
+            if (type === 'entry' || type === 'inner' && record.getAttribute('data-func')) {
+                for (const ancestor of ancestors(record)) {
+                    if (ancestor !== id || type === 'inner') block(ancestor).calls++;
+                }
+                if (type === 'inner' && id && !ancestors(record).includes(id)) block(id).calls++;
+            }
+        }
+        const result = {
+            records: model.records,
+            blocks,
+            *members(id) {
+                for (const record of model.records) {
+                    if (record.getAttribute('data-fold-id') === id || ancestors(record).includes(id)) yield record;
+                }
+            },
+            visible(record, folds, matches) {
+                if (matches !== null && !matches.has(record.row[0])) return false;
+                const own = record.getAttribute('data-fold-id');
+                return !(record.getAttribute('data-fold-type') !== 'entry' && folds[own] === true) &&
+                    !ancestors(record).some(ancestor => folds[ancestor] === true);
+            },
+            visibleLines(folds, matches) {
+                const lines = new Set();
+                for (const record of model.records) {
+                    if (result.visible(record, folds, matches)) lines.add(record.row[0]);
+                }
+                return lines;
+            },
+        };
+        foldModels.set(model, result);
+        return result;
+    }
+    window.fgTextModel = { fields, prepare, filter, folding };
     window.fgIndexedFilter = async function (data, text, signal, progress) {
         const iterator = steps(data, text);
         try {

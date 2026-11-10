@@ -503,11 +503,9 @@
         }
 
         // 恢复折叠状态
-        // Restore all folded states on page load — uses _setFolded for consistency
         function restoreFoldedState() {
-            for (const [foldId, isFolded] of Object.entries(foldedBlocks)) {
-                if (isFolded) _setFolded(foldId, true, true);
-            }
+            const saved = Object.entries(foldedBlocks).filter(([, folded]) => folded === true);
+            if (saved.length) fgSetFoldStates(saved, true);
         }
 
         // 保存展开状态
@@ -1206,10 +1204,12 @@
             } else {
                 _graphFoldIds = {};
             }
+            const visibleLines = Object.values(foldedBlocks).some(folded => folded === true)
+                ? fgTextModel.folding(fgGetTextModel(allLineElems)).visibleLines(foldedBlocks, passLines) : passLines;
 
             // Single-pass: filter lines + collapse expanded content
             allLineElems.forEach(line => {
-                const show = passLines === null || passLines.has(+line.getAttribute('data-line-number'));
+                const show = visibleLines === null || visibleLines.has(+line.getAttribute('data-line-number'));
                 line.style.display = show ? '' : 'none';
 
                 // Collapse expanded content for hidden or all filtered lines (single pass)
@@ -1269,25 +1269,11 @@
             document.querySelectorAll('.field-btn.active').forEach(b => b.classList.remove('active'));
 
             const allLineElems = document.querySelectorAll('.line-container');
+            const visibleLines = Object.values(foldedBlocks).some(folded => folded === true)
+                ? fgTextModel.folding(fgGetTextModel(allLineElems)).visibleLines(foldedBlocks, null) : null;
             allLineElems.forEach(line => {
-                line.style.display = '';
-                const lineId = line.getAttribute('data-line-id');
-                if (lineId) {
-                    const content = document.getElementById(lineId + '_content');
-                    const btn = line.querySelector('.expand-btn');
-                    if (content && btn) {
-                        const isExpanded = localStorage.getItem(`expanded_${lineId}`) === 'true';
-                        if (isExpanded) {
-                            fgFill(content); content.style.display = 'block';
-                            btn.textContent = '-';
-                            line.classList.add('selected');
-                        } else {
-                            content.style.display = 'none';
-                            btn.textContent = '+';
-                            line.classList.remove('selected');
-                        }
-                    }
-                }
+                const show = visibleLines === null || visibleLines.has(+line.getAttribute('data-line-number'));
+                fgProjectFoldLine(line, show);
             });
 
             if (fgTextSort) fgSetTextOrder(fgTextOrder);
@@ -1787,23 +1773,43 @@
         // 切换展开/收起状态 - 只影响当前行，不滚动
         // 切换折叠状态
         // Core fold/unfold logic — does NOT write localStorage (P3 optimization)
-        function _setFolded(foldId, shouldFold, restore) {
-            const isFolded = foldedBlocks[foldId] === true;
-            if (shouldFold === isFolded && !restore) return; // no-op
-            textGuideRevision++;
+        function fgGetTextFolding() {
+            const root = document.getElementById('content');
+            const model = fgDomTextModels.get(root) || fgGetTextModel(root.querySelectorAll('.line-container'));
+            return fgTextModel.folding(model);
+        }
 
-            // P1: single DOM query for all related lines
-            const lines = document.querySelectorAll('[data-fold-id="' + foldId + '"], [data-fold-ancestors~="' + foldId + '"]');
-            // Find entry element from the query results (avoid extra querySelector)
-            let entryEl = null;
-            for (let i = 0; i < lines.length; i++) {
-                if (lines[i].getAttribute('data-fold-type') === 'entry' && lines[i].getAttribute('data-fold-id') === foldId) {
-                    entryEl = lines[i]; break;
-                }
+        function fgProjectFoldLine(line, visible) {
+            if (!line) return;
+            const display = visible ? '' : 'none';
+            if (line.style.display !== display) line.style.display = display;
+            const content = line.nextElementSibling;
+            if (!content?.classList.contains('expanded-content')) return;
+            const expanded = visible && expandedLines[line.getAttribute('data-line-id')] === true;
+            if (expanded) fgFill(content);
+            const sourceDisplay = expanded ? 'block' : 'none';
+            if (content.style.display !== sourceDisplay) content.style.display = sourceDisplay;
+            const button = line.querySelector('.expand-btn');
+            const symbol = expanded ? '-' : '+';
+            if (button && button.textContent !== symbol) button.textContent = symbol;
+            line.classList.toggle('selected', expanded);
+        }
+
+        function fgProjectFoldRecords(folding, records) {
+            for (const record of records) {
+                const line = document.getElementById('L' + record.row[0]);
+                fgProjectFoldLine(line, folding.visible(record, foldedBlocks, window.fgFilterState.lines));
             }
+            updateExpandableLines();
+        }
+
+        function fgUpdateFoldState(folding, foldId, shouldFold, restore) {
+            const isFolded = foldedBlocks[foldId] === true;
+            if (shouldFold === isFolded && !restore) return false;
+            const record = folding.blocks.get(foldId)?.entry;
+            const entryEl = record && document.getElementById('L' + record.row[0]);
 
             if (shouldFold) {
-                // Collapse
                 foldedBlocks[foldId] = true;
                 if (entryEl) {
                     entryEl.classList.add('folded');
@@ -1812,7 +1818,6 @@
                 }
                 addFoldSummary(foldId);
             } else {
-                // Expand
                 delete foldedBlocks[foldId];
                 removeFoldSummary(foldId);
                 if (entryEl) {
@@ -1831,24 +1836,23 @@
                 });
             }
 
-            lines.forEach(line => {
-                const ancestors = (line.getAttribute('data-fold-ancestors') || '').split(' ');
-                const ownFold = line.getAttribute('data-fold-id');
-                const hidden = (line.getAttribute('data-fold-type') !== 'entry' && foldedBlocks[ownFold] === true) ||
-                    ancestors.some(ancestor => foldedBlocks[ancestor] === true);
-                line.style.display = hidden ? 'none' : '';
-                const lineId = line.getAttribute('data-line-id');
-                const content = document.getElementById(lineId + '_content');
-                if (content) {
-                    if (!hidden && expandedLines[lineId]) {
-                        fgFill(content);
-                        content.style.display = 'block';
-                    } else {
-                        content.style.display = 'none';
-                    }
-                }
-            });
-            entryEl?.closest('#content')?.dispatchEvent(new Event('fg-guides-change'));
+            return true;
+        }
+
+        function fgSetFoldStates(changes, restore = false) {
+            const folding = fgGetTextFolding();
+            let changed = false;
+            for (const [foldId, shouldFold] of changes) {
+                if (fgUpdateFoldState(folding, foldId, shouldFold, restore)) changed = true;
+            }
+            if (changed) fgProjectFoldRecords(folding, folding.records);
+        }
+
+        function _setFolded(foldId, shouldFold, restore) {
+            const folding = fgGetTextFolding();
+            if (fgUpdateFoldState(folding, foldId, shouldFold, restore)) {
+                fgProjectFoldRecords(folding, folding.members(foldId));
+            }
         }
 
         // Public API: toggle a single fold block + save state
@@ -2856,33 +2860,34 @@
         // ============================================================
         // P3: batch operations — write localStorage once at the end
         function foldToDepth(maxDepth) {
-            const entries = document.querySelectorAll('[data-fold-type="entry"]');
-            entries.forEach(entry => {
+            const changes = [];
+            for (const block of fgGetTextFolding().blocks.values()) {
+                if (!block.entry) continue;
+                const entry = document.getElementById('L' + block.entry.row[0]);
+                if (!entry) continue;
                 const depth = parseInt(entry.getAttribute('data-call-depth'));
-                if (isNaN(depth)) return;
-                const foldId = entry.getAttribute('data-fold-id');
-                if (!foldId) return;
-                _setFolded(foldId, depth >= maxDepth);
-            });
+                if (!isNaN(depth)) changes.push([block.id, depth >= maxDepth]);
+            }
+            fgSetFoldStates(changes);
             lsSet('foldedBlocks', JSON.stringify(foldedBlocks));
         }
 
         function unfoldAllBlocks() {
             const foldIds = Object.keys(foldedBlocks);
-            foldIds.forEach(foldId => _setFolded(foldId, false));
+            if (foldIds.length) fgSetFoldStates(foldIds.map(foldId => [foldId, false]));
             lsSet('foldedBlocks', JSON.stringify(foldedBlocks));
         }
 
         // F1: Recursive fold — fold/unfold block and all its child blocks
         function toggleFoldRecursive(foldId) {
             const shouldFold = !foldedBlocks[foldId];
-            _setFolded(foldId, shouldFold);
-            // Find all child entry blocks whose ancestors include this foldId
-            const childEntries = document.querySelectorAll('[data-fold-type="entry"][data-fold-ancestors~="' + foldId + '"]');
-            childEntries.forEach(child => {
-                const childId = child.getAttribute('data-fold-id');
-                if (childId) _setFolded(childId, shouldFold);
-            });
+            const changes = [];
+            for (const record of fgGetTextFolding().members(foldId)) {
+                if (record.getAttribute('data-fold-type') === 'entry') {
+                    changes.push([record.getAttribute('data-fold-id'), shouldFold]);
+                }
+            }
+            fgSetFoldStates(changes);
             lsSet('foldedBlocks', JSON.stringify(foldedBlocks));
         }
 
@@ -2890,47 +2895,30 @@
         // P2: Fold Summary
         // ============================================================
         function addFoldSummary(foldId) {
-            let entryEl = null;
-            try {
-                entryEl = document.querySelector('[data-fold-id="' + foldId + '"][data-fold-type="entry"]');
-            } catch(e) { return; }
+            const block = fgGetTextFolding().blocks.get(foldId);
+            const entryEl = block?.entry && document.getElementById('L' + block.entry.row[0]);
             if (!entryEl) return;
 
             // Remove existing summary if any
             const existing = entryEl.querySelector('.fold-summary');
             if (existing) existing.remove();
 
-            // Find all inner/exit lines belonging to this fold
-            const innerLines = document.querySelectorAll('[data-fold-id="' + foldId + '"], [data-fold-ancestors~="' + foldId + '"]');
-
-            let childCalls = 0;
+            const childCalls = block.calls;
             let totalDuration = 0;
             let hasDuration = false;
             let retValue = null;
             let hasErrorReturn = false;
-
-            innerLines.forEach(line => {
-                const thisId = line.getAttribute('data-fold-id');
-                const thisType = line.getAttribute('data-fold-type');
-
-                if ((thisType === 'entry' && thisId !== foldId) ||
-                    (thisType === 'inner' && line.hasAttribute('data-func'))) {
-                    childCalls++;
+            const exitEl = block.exit && document.getElementById('L' + block.exit.row[0]);
+            if (exitEl) {
+                const ret = exitEl.getAttribute('data-fold-ret') || exitEl.getAttribute('data-ret');
+                if (ret) retValue = ret;
+                hasErrorReturn = exitEl.hasAttribute('data-ret');
+                const dur = exitEl.getAttribute('data-sort-duration') || exitEl.getAttribute('data-duration');
+                if (dur) {
+                    totalDuration = parseFloat(dur);
+                    hasDuration = true;
                 }
-
-                // Get return value from exit line of this fold
-                if (thisType === 'exit' && thisId === foldId) {
-                    const ret = line.getAttribute('data-fold-ret') || line.getAttribute('data-ret');
-                    if (ret) retValue = ret;
-                    hasErrorReturn = line.hasAttribute('data-ret');
-                    // Get duration from exit line
-                    const dur = line.getAttribute('data-sort-duration') || line.getAttribute('data-duration');
-                    if (dur) {
-                        totalDuration = parseFloat(dur);
-                        hasDuration = true;
-                    }
-                }
-            });
+            }
 
             // If no duration from exit, try from entry itself
             if (!hasDuration) {
@@ -2956,9 +2944,7 @@
             if (retValue) {
                 // Look up error code name from the ERROR_CODE_MAP if embedded
                 let retDisplay = 'ret=' + retValue;
-                const errSpan = entryEl.closest('.line-container');
                 // Try to find error name from sibling exit line
-                const exitEl = document.querySelector('[data-fold-id="' + foldId + '"][data-fold-type="exit"]');
                 if (exitEl) {
                     const exitContent = exitEl.querySelector('.line-content');
                     if (exitContent) {
@@ -2981,10 +2967,8 @@
         }
 
         function removeFoldSummary(foldId) {
-            let entryEl = null;
-            try {
-                entryEl = document.querySelector('[data-fold-id="' + foldId + '"][data-fold-type="entry"]');
-            } catch(e) { return; }
+            const record = fgGetTextFolding().blocks.get(foldId)?.entry;
+            const entryEl = record && document.getElementById('L' + record.row[0]);
             if (!entryEl) return;
             const summary = entryEl.querySelector('.fold-summary');
             if (summary) summary.remove();

@@ -117,6 +117,53 @@ class TextModelTest(unittest.TestCase):
             assert.equal(sorted.visible, 4);
         ''')
 
+    def test_folding_counts_members_and_visibility_compose_without_dom(self):
+        self.run_model('''
+            const input = data([[1, 'A {', {'fold-id':'a', 'fold-type':'entry', func:'A'}],
+                [2, 'B {', {'fold-id':'b', 'fold-type':'entry', 'fold-ancestors':'a', func:'B'}],
+                [3, 'leaf()', {'fold-id':'b', 'fold-type':'inner', 'fold-ancestors':'a b b', func:'leaf'}],
+                [4, 'B }', {'fold-id':'b', 'fold-type':'exit', 'fold-ancestors':'a'}],
+                [5, 'A }', {'fold-id':'a', 'fold-type':'exit'}], [6, 'outside', {}]]);
+            const original = JSON.stringify(input);
+            const model = drain(fgTextModel.prepare(input));
+            const folding = fgTextModel.folding(model);
+            assert.equal(fgTextModel.folding(model), folding);
+            assert.equal(folding.records, model.records);
+            assert.equal(folding.blocks.get('a').calls, 2);
+            assert.equal(folding.blocks.get('b').calls, 1);
+            assert.equal(folding.blocks.get('a').entry, model.records[0]);
+            assert.equal(folding.blocks.get('b').exit, model.records[3]);
+            assert.deepEqual(Array.from(folding.members('a'), record => record.row[0]), [1,2,3,4,5]);
+            assert.deepEqual(Array.from(folding.members('b'), record => record.row[0]), [2,3,4]);
+            assert.deepEqual(Array.from(folding.visibleLines({a:true}, null)), [1,6]);
+            assert.deepEqual(Array.from(folding.visibleLines({b:true}, null)), [1,2,5,6]);
+            assert.deepEqual(Array.from(folding.visibleLines({a:true,b:true}, new Set([2,3,6]))), [6]);
+            assert.deepEqual(Array.from(folding.visibleLines({b:true}, new Set([2,3,6]))), [2,6]);
+            assert.deepEqual(Array.from(folding.visibleLines({}, new Set([2,3,6]))), [2,3,6]);
+            assert.equal(JSON.stringify(input), original);
+        ''')
+
+    def test_folding_handles_interleaved_tasks_missing_entries_and_deep_ancestry(self):
+        self.run_model('''
+            const depth = 600;
+            const ancestors = Array.from({length:depth}, (unused, index) => 'scope' + index);
+            const input = data([[1, 'root', {'fold-id':'root', 'fold-type':'entry', func:'same'}],
+                [2, 'other', {'fold-id':'other', 'fold-type':'entry', func:'same'}],
+                [3, 'leaf', {'fold-id':'root', 'fold-type':'inner', 'fold-ancestors':'root', func:'leaf'}],
+                [4, 'other exit', {'fold-id':'other', 'fold-type':'exit'}],
+                [5, 'root exit', {'fold-id':'root', 'fold-type':'exit'}],
+                [6, 'partial', {'fold-id':'partial', 'fold-type':'inner', 'fold-ancestors':ancestors.join(' '), func:'leaf'}]]);
+            const model = drain(fgTextModel.prepare(input));
+            const folding = fgTextModel.folding(model);
+            assert.deepEqual(Array.from(folding.members('root'), record => record.row[0]), [1,3,5]);
+            assert.deepEqual(Array.from(folding.visibleLines({root:true}, null)), [1,2,4,6]);
+            assert.equal(folding.blocks.get('scope599').entry, null);
+            assert.equal(folding.blocks.get('scope599').calls, 1);
+            assert.equal(folding.visible(model.records[5], {scope599:true}, null), false);
+            assert.deepEqual(Array.from(folding.members('scope59'), record => record.row[0]), [6]);
+            assert.deepEqual(Array.from(folding.members('scope600')), []);
+        ''')
+
     def test_async_indexed_filter_preserves_result_shape_and_cancellation(self):
         self.run_model('''
             globalThis.parseFilterExpr = text => ({ast:text ? {type:'COND'} : null, sortDir:null});
