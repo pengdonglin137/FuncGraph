@@ -13,6 +13,7 @@ if not os.path.isdir(ASSET_DIR):
     ASSET_DIR = os.path.join(PROJECT_DIR, 'assets')
 
 REPORT_CSS = 'report/report.css'
+REPORT_TREE_CSS = 'report/tree.css'
 REPORT_JS = 'report/report.js'
 REPORT_DATA_JS = 'report/data.js'
 VIEWS_CSS = 'views/views.css'
@@ -44,4 +45,4 @@ def timeline_script():
 
 
 def all_asset_paths():
-    return (REPORT_CSS, REPORT_JS, REPORT_DATA_JS, VIEWS_CSS, VIEWS_EARLY_JS, VIEWS_BOOT_JS, TIMELINE_CSS, COMPARE_CSS, COMPARE_JS) + TIMELINE_JS_PARTS
+    return (REPORT_CSS, REPORT_TREE_CSS, REPORT_JS, REPORT_DATA_JS, VIEWS_CSS, VIEWS_EARLY_JS, VIEWS_BOOT_JS, TIMELINE_CSS, COMPARE_CSS, COMPARE_JS) + TIMELINE_JS_PARTS

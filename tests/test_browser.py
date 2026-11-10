@@ -437,6 +437,288 @@ class BrowserSmokeTest(unittest.TestCase):
         self.page.locator('#' + entry['row'] + ' .line-content').click()
         self.page.locator('#' + entry['line'] + '_content').wait_for(state='visible')
 
+    def test_fold_controls_follow_actual_function_indentation(self):
+        rows = self.nested_fold_rows()[:3]
+        facts = self.ev("""entries => entries.map(entry => {
+            const row = document.getElementById(entry.row);
+            const icon = row.querySelector('.fold-icon');
+            const name = row.querySelector('.func-name-link, .hl-func');
+            return {icon:icon.getBoundingClientRect().x, right:icon.getBoundingClientRect().right,
+                name:name.getBoundingClientRect().x, indent:row.querySelector('.call-indent').getBoundingClientRect().width,
+                height:row.getBoundingClientRect().height, text:icon.textContent,
+                nested:icon.closest('.line-content') !== null};
+        })""", rows)
+        for fact in facts:
+            self.assertTrue(fact['nested'])
+            self.assertEqual(fact['text'], '')
+            self.assertAlmostEqual(fact['right'], fact['name'], delta=1)
+            self.assertLessEqual(fact['height'], 26)
+        for before, after in zip(facts, facts[1:]):
+            self.assertGreater(after['icon'], before['icon'])
+            self.assertAlmostEqual(after['icon'] - before['icon'], after['indent'] - before['indent'], delta=1)
+        self.assertEqual(self.page.locator('.line-container > .fold-marker').count(), 0)
+
+    def test_fold_braces_are_independent_native_controls_with_truthful_summary(self):
+        parent, child, grandchild, outside = self.nested_fold_rows()
+        self.expand_fold_source(grandchild)
+        row = self.page.locator('#' + parent['row'])
+        row.locator('.fold-brace').click()
+        for selector in ['.fold-icon', '.fold-brace']:
+            self.assertEqual(row.locator(selector).get_attribute('aria-expanded'), 'false')
+            self.assertIn('Expand call', row.locator(selector).get_attribute('aria-label'))
+        self.assertFalse(self.page.locator('#' + grandchild['line'] + '_content').is_visible())
+        self.assertFalse(self.page.locator('#' + parent['line'] + '_content').is_visible())
+        expected = self.ev("""id => [...document.querySelectorAll('[data-fold-ancestors~="' + id + '"]')]
+            .filter(row => row.hasAttribute('data-func') && row.dataset.foldType !== 'exit').length""", parent['fold'])
+        self.assertEqual(row.locator('.summary-count').inner_text(), str(expected) + ' calls')
+        self.assertEqual(row.locator('.fold-brace + .fold-summary').count(), 1)
+        row.locator('.fold-icon').press('Enter')
+        self.assertTrue(self.page.locator('#' + grandchild['line'] + '_content').is_visible())
+        self.assertEqual(row.locator('.fold-brace').get_attribute('aria-expanded'), 'true')
+        row.locator('.fold-icon').press('Space')
+        self.assertEqual(row.locator('.fold-brace').get_attribute('aria-expanded'), 'false')
+        self.assertFalse(self.page.locator('#' + parent['line'] + '_content').is_visible())
+        row.locator('.fold-icon').press('0')
+        self.assertTrue(self.page.locator('#' + grandchild['row']).is_visible())
+
+    def test_fold_scope_highlights_only_the_matching_braces(self):
+        parent, child, grandchild, outside = self.nested_fold_rows()
+        for entry in [parent, child]:
+            row = self.page.locator('#' + entry['row'])
+            row.locator('.fold-icon').hover()
+            self.assertEqual(self.ev("[...document.querySelectorAll('.fold-scope')].map(row => row.id)"),
+                             [entry['row'], row.get_attribute('data-fold-end')])
+            row.locator('.fold-brace').hover()
+            self.assertIn('Shift-click', row.locator('.fold-brace').get_attribute('title'))
+        self.page.mouse.move(0, 0)
+        self.assertEqual(self.page.locator('.fold-scope').count(), 0)
+        self.page.locator('#' + parent['row'] + ' .fold-icon').focus()
+        self.assertEqual(self.page.locator('.fold-scope').count(), 2)
+        self.ev('document.activeElement.blur()')
+        self.assertEqual(self.page.locator('.fold-scope').count(), 0)
+
+    def test_fold_guides_toggle_preserves_text_geometry_and_controls(self):
+        parent, child, grandchild, outside = self.nested_fold_rows()
+        row = self.page.locator('#' + parent['row'])
+        guide_button = self.page.locator('#foldGuidesBtn')
+        snapshot = """id => {
+            const row = document.getElementById(id);
+            const icon = row.querySelector('.fold-icon').getBoundingClientRect();
+            return {text:row.querySelector('.line-content').textContent,
+                width:row.getBoundingClientRect().width, height:row.getBoundingClientRect().height,
+                icon:icon.x, name:row.querySelector('.func-name-link, .hl-func').getBoundingClientRect().x};
+        }"""
+        before = self.ev(snapshot, parent['row'])
+        for theme in ['light', 'dark']:
+            with self.subTest(theme=theme):
+                self.ev("theme => document.documentElement.setAttribute('data-theme', theme)", theme)
+                guide_button.press('Enter')
+                self.assertEqual(guide_button.inner_text(), 'Tree guides: off')
+                self.assertEqual(guide_button.get_attribute('aria-pressed'), 'false')
+                self.assertTrue(self.ev("document.getElementById('fgTreeGuides').sheet.disabled"))
+                self.assertEqual(self.ev("id => getComputedStyle(document.getElementById(id).querySelector('.call-indent'), '::before').content", parent['row']), 'none')
+                self.assertEqual(self.ev(snapshot, parent['row']), before)
+                row.locator('.fold-icon').press(' ')
+                self.assertFalse(self.page.locator('#' + child['row']).is_visible())
+                row.locator('.fold-icon').press('Enter')
+                self.assertTrue(self.page.locator('#' + child['row']).is_visible())
+                guide_button.press(' ')
+                self.assertEqual(guide_button.inner_text(), 'Tree guides: on')
+                self.assertEqual(guide_button.get_attribute('aria-pressed'), 'true')
+                self.assertFalse(self.ev("document.getElementById('fgTreeGuides').sheet.disabled"))
+                self.assertEqual(self.ev(snapshot, parent['row']), before)
+
+    def test_fold_guides_restore_before_text_is_parsed(self):
+        self.page.locator('#foldGuidesBtn').click()
+        self.assertEqual(self.ev("lsGet('foldGuides')"), 'false')
+        self.assertIsNone(self.ev("localStorage.getItem('foldGuides')"))
+        with open(os.path.join(self.k.dir, 'report.html'), encoding='utf-8') as stream:
+            report = stream.read()
+        instrument = """<script>
+            window.initialGuides = {
+                disabled:document.getElementById('fgTreeGuides').sheet.disabled,
+                rows:document.querySelectorAll('.line-container').length
+            };
+        </script>"""
+        path = os.path.join(self.k.dir, 'guides-startup.html')
+        with open(path, 'w', encoding='utf-8') as stream:
+            stream.write(report.replace('</head>', instrument + '</head>', 1))
+        self.page.goto('file://' + path, wait_until='load')
+        self.assertEqual(self.ev('initialGuides'), dict(disabled=True, rows=0))
+        self.assertEqual(self.page.locator('#foldGuidesBtn').get_attribute('aria-pressed'), 'false')
+        self.page.locator('#foldGuidesBtn').click()
+        self.page.reload(wait_until='load')
+        self.assertEqual(self.ev('initialGuides'), dict(disabled=False, rows=0))
+        self.assertEqual(self.page.locator('#foldGuidesBtn').get_attribute('aria-pressed'), 'true')
+
+    def test_fold_guides_hover_only_emphasizes_the_current_pair(self):
+        parent, child, grandchild, outside = self.nested_fold_rows()
+        connector = "id => getComputedStyle(document.getElementById(id).querySelector('.fold-marker'), '::after').backgroundColor"
+        parent_color = self.ev(connector, parent['row'])
+        base_color = self.ev(connector, child['row'])
+        row = self.page.locator('#' + child['row'])
+        for marker in [row.locator('.fold-icon'), self.page.locator('#' + row.get_attribute('data-fold-end') + ' .fold-close')]:
+            marker.hover()
+            self.assertNotEqual(self.ev(connector, child['row']), base_color)
+            self.assertEqual(self.ev(connector, parent['row']), parent_color)
+            self.assertEqual(self.page.locator('.fold-scope').count(), 2)
+            self.page.mouse.move(0, 0)
+            self.assertEqual(self.ev(connector, child['row']), base_color)
+        self.assertEqual(self.page.locator('.fold-scope').count(), 0)
+
+    def record_guide_paint(self):
+        self.ev("""() => {
+            window.guidePaint = [];
+            const fill = CanvasRenderingContext2D.prototype.fillRect;
+            const clear = CanvasRenderingContext2D.prototype.clearRect;
+            CanvasRenderingContext2D.prototype.fillRect = function (left, top, width, height) {
+                if (this.canvas.classList.contains('fold-guide-layer')) guidePaint.push({left, top, width, height});
+                return fill.call(this, left, top, width, height);
+            };
+            CanvasRenderingContext2D.prototype.clearRect = function (...args) {
+                if (this.canvas.classList.contains('fold-guide-layer')) guidePaint = [];
+                return clear.apply(this, args);
+            };
+        }""")
+
+    def test_fold_hover_highlights_the_visible_column_not_just_endpoints(self):
+        parent, child, grandchild, outside = self.nested_fold_rows()
+        self.record_guide_paint()
+        self.page.locator('#' + child['row'] + ' .fold-icon').hover()
+        self.page.wait_for_function('guidePaint.length > 3')
+        segments = self.ev('guidePaint')
+        self.assertGreater(len(segments), 3)
+        self.assertTrue(all(segment['width'] <= 1 for segment in segments))
+        self.assertLessEqual(max(segment['left'] for segment in segments) - min(segment['left'] for segment in segments), 1)
+        self.page.locator('#foldGuidesBtn').click()
+        self.page.wait_for_function('guidePaint.length === 0')
+        self.page.locator('#foldGuidesBtn').click()
+        self.page.locator('#' + child['row'] + ' .fold-icon').hover()
+        self.page.wait_for_function('guidePaint.length > 3')
+        self.page.mouse.move(0, 0)
+        self.page.wait_for_function('guidePaint.length === 0')
+
+    def test_fold_column_hover_does_not_hit_test_the_large_document(self):
+        child = self.nested_fold_rows()[1]
+        self.record_guide_paint()
+        self.ev("""id => {
+            document.elementFromPoint = () => { throw new Error('full-document hit test during guide hover'); };
+            document.getElementById(id).querySelector('.fold-icon')
+                .dispatchEvent(new PointerEvent('pointerover', {bubbles:true}));
+        }""", child['row'])
+        self.page.wait_for_function('guidePaint.length > 3')
+        self.ev('delete document.elementFromPoint')
+
+    def test_fold_hover_column_skips_source_panels_and_unrelated_tasks(self):
+        parent, child, grandchild, outside = self.nested_fold_rows()
+        self.expand_fold_source(grandchild)
+        self.ev("""id => {
+            const original = document.getElementById(id);
+            const foreign = original.cloneNode(true);
+            foreign.id = 'foreign-task-row';
+            foreign.setAttribute('data-fold-id', 'foreign');
+            foreign.removeAttribute('data-fold-ancestors');
+            original.before(foreign);
+        }""", grandchild['row'])
+        self.record_guide_paint()
+        self.page.locator('#' + child['row'] + ' .fold-icon').hover()
+        self.page.wait_for_function('guidePaint.length > 2')
+        segments = self.ev('guidePaint')
+        for selector in ['#foreign-task-row', '#' + grandchild['line'] + '_content']:
+            bounds = self.page.locator(selector).bounding_box()
+            self.assertGreater(bounds['height'], 0)
+            self.assertTrue(all(segment['top'] + segment['height'] <= bounds['y'] + 1 or
+                                segment['top'] >= bounds['y'] + bounds['height'] - 1 for segment in segments))
+
+    def test_fold_guides_button_is_at_the_left_and_visible_in_compact_windows(self):
+        for width in [380, 800, 1500]:
+            self.page.set_viewport_size({'width':width, 'height':600})
+            self.ev('window.scrollTo(0, 0)')
+            bounds = self.page.locator('#foldGuidesBtn').bounding_box()
+            self.assertGreaterEqual(bounds['x'], 0)
+            self.assertLess(bounds['x'] + bounds['width'], width)
+            self.assertLess(bounds['x'], 150)
+            self.assertLess(bounds['y'], 200)
+            self.page.locator('#foldGuidesBtn').click()
+
+    def test_fold_palette_remains_muted_in_both_themes(self):
+        parent = self.nested_fold_rows()[0]
+        self.page.locator('#' + parent['row'] + ' .fold-icon').click()
+        self.page.mouse.move(0, 0)
+        self.ev('document.activeElement.blur()')
+        for theme in ['light', 'dark']:
+            with self.subTest(theme=theme):
+                self.ev("theme => document.documentElement.setAttribute('data-theme', theme)", theme)
+                colors = self.ev("""id => {
+                    const row = document.getElementById(id);
+                    const style = getComputedStyle(row);
+                    return {icon:getComputedStyle(row.querySelector('.fold-icon')).color,
+                        guide:style.getPropertyValue('--tree-guide'), background:style.getPropertyValue('--fold-bg'),
+                        summary:getComputedStyle(row.querySelector('.fold-summary')).color,
+                        count:getComputedStyle(row.querySelector('.summary-count')).color};
+                }""", parent['row'])
+                self.assertEqual(colors['summary'], colors['count'])
+                for name in ['icon', 'guide', 'background']:
+                    components = [float(value) for value in colors[name].strip().split('(')[1].rstrip(')').split(',')]
+                    self.assertLessEqual(max(components[:3]) - min(components[:3]), 40)
+                    if len(components) == 4:
+                        self.assertLessEqual(components[3], 0.25)
+
+    def test_fold_summary_reserves_error_color_for_known_errors(self):
+        trace = '# tracer: function_graph\n'
+        for name, returned in [('normal', '0x0'), ('error', '-2'), ('unknown', '-9999'), ('boolean', 'false')]:
+            trace += (' 0)               |  ' + name + '() { /* <-caller+0x1/0x20 */\n'
+                      ' 0)   0.001 us    |    leaf(); /* <-caller+0x1/0x20 */\n'
+                      ' 0)   0.010 us    |  } /* ' + name + ' ret=' + returned + ' */\n')
+        path = os.path.join(self.k.dir, 'fold-returns.txt')
+        with open(path, 'w', encoding='utf-8') as stream:
+            stream.write(trace)
+        self.k.run(path, '--enable-fold', out='fold-returns.html')
+        self.page.goto('file://' + self.k.dir + '/fold-returns.html', wait_until='load')
+        entries = self.ev("""() => {
+            const cases = {};
+            for (const row of document.querySelectorAll('[data-fold-end]')) {
+                cases[row.getAttribute('data-func')] = row.id;
+            }
+            return cases;
+        }""")
+        self.assertEqual(set(entries), {'error', 'normal', 'unknown', 'boolean'})
+        for kind, row_id in entries.items():
+            self.ev("id => _setFolded(document.getElementById(id).getAttribute('data-fold-id'), true)", row_id)
+            for theme in ['light', 'dark']:
+                self.ev("theme => document.documentElement.setAttribute('data-theme', theme)", theme)
+                colors = self.ev("""id => {
+                    const summary = document.getElementById(id).querySelector('.fold-summary');
+                    const returned = summary.querySelector('.summary-ret');
+                    return {summary:getComputedStyle(summary).color, returned:getComputedStyle(returned).color, text:returned.textContent,
+                        error:returned.classList.contains('summary-error')};
+                }""", row_id)
+                self.assertEqual(colors['error'], kind == 'error')
+                self.assertEqual(colors['summary'] == colors['returned'], kind != 'error')
+                self.assertIn({'normal':'0x0', 'error':'-2', 'unknown':'-9999', 'boolean':'false'}[kind], colors['text'])
+
+    def test_fold_control_stays_reachable_with_long_arguments(self):
+        parent = self.nested_fold_rows()[0]
+        name = self.page.locator('#' + parent['row']).get_attribute('data-func')
+        with open(helpers.fixture('pi4_sched')) as stream:
+            trace = stream.read()
+        long_call = name + '(arg=0x' + 'a' * 400 + ')'
+        trace = trace.replace(name + '()', long_call, 1)
+        path = os.path.join(self.k.dir, 'long-fold.txt')
+        with open(path, 'w') as stream:
+            stream.write(trace)
+        self.k.run(path, '--enable-fold', '--func-links', out='long-fold.html')
+        self.page.set_viewport_size({'width':800, 'height':600})
+        self.page.goto('file://' + self.k.dir + '/long-fold.html', wait_until='load')
+        row = self.page.locator('#' + parent['row'])
+        self.assertGreater(row.locator('.fold-brace').bounding_box()['x'], 800)
+        icon = row.locator('.fold-icon').bounding_box()
+        self.assertGreaterEqual(icon['x'], 0)
+        self.assertLess(icon['x'] + icon['width'], 800)
+        row.locator('.fold-icon').click()
+        self.assertEqual(row.locator('.fold-icon').get_attribute('aria-expanded'), 'false')
+        self.assertEqual(self.ev('window.scrollX'), 0)
+
     def test_fold_hides_expanded_descendant_sources(self):
         for grouped in [False, True]:
             with self.subTest(grouped=grouped):

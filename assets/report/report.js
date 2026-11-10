@@ -218,6 +218,7 @@
         let keyboardSelectedLine = null;
         let keyboardSelectedIndex = -1;
         let allLines = [];
+        let textGuideRevision = 0;
         let expandableLines = [];
         let expandableLineIndices = [];
         let keyboardHintTimer = null;
@@ -252,6 +253,148 @@
             if (event.key === 'Enter' || event.key === ' ') {
                 event.preventDefault();
                 handleFoldIconClick(event, icon);
+            }
+        }
+
+        function initTextFolds() {
+            const content = document.getElementById('content');
+            if (!content) return;
+            const guideStyle = document.getElementById('fgTreeGuides');
+            const guideButton = document.getElementById('foldGuidesBtn');
+            if (guideStyle && guideButton) {
+                const updateGuideButton = () => {
+                    const enabled = !guideStyle.sheet.disabled;
+                    guideButton.textContent = 'Tree guides: ' + (enabled ? 'on' : 'off');
+                    guideButton.setAttribute('aria-pressed', String(enabled));
+                };
+                updateGuideButton();
+                guideButton.addEventListener('click', () => {
+                    guideStyle.sheet.disabled = !guideStyle.sheet.disabled;
+                    lsSet('foldGuides', String(!guideStyle.sheet.disabled));
+                    updateGuideButton();
+                    scheduleGuideScope();
+                });
+            }
+            let scopeId = null;
+            let scopeRows = [];
+            let guideLayer = null;
+            let guideFrame = null;
+            let guideRows = [];
+            let guideRevision = -1;
+            const foldControl = target => target?.closest?.('.fold-icon, .fold-brace');
+            const scopeControl = target => target?.closest?.('.fold-icon, .fold-brace, .fold-marker, .fold-close');
+            function drawGuideScope() {
+                guideFrame = null;
+                if (guideLayer) guideLayer.getContext('2d').clearRect(0, 0, guideLayer.width, guideLayer.height);
+                const entry = scopeRows[0];
+                if (!entry || !guideStyle || guideStyle.sheet.disabled || entry.classList.contains('folded')) return;
+                const contentRect = content.getBoundingClientRect();
+                if (contentRect.height === 0) return;
+                const viewportWidth = document.documentElement.clientWidth;
+                const viewportHeight = window.innerHeight;
+                const indent = entry.querySelector('.call-indent');
+                const icon = entry.querySelector('.fold-icon');
+                if (!indent || !icon) return;
+                const iconRect = icon.getBoundingClientRect();
+                const offset = iconRect.left + iconRect.width / 2 - indent.getBoundingClientRect().left;
+                if (!guideLayer) {
+                    guideLayer = document.createElement('canvas');
+                    guideLayer.className = 'fold-guide-layer';
+                    guideLayer.setAttribute('aria-hidden', 'true');
+                    document.body.appendChild(guideLayer);
+                }
+                const scale = window.devicePixelRatio || 1;
+                const width = Math.round(viewportWidth * scale);
+                const height = Math.round(viewportHeight * scale);
+                if (guideLayer.width !== width || guideLayer.height !== height) {
+                    guideLayer.width = width;
+                    guideLayer.height = height;
+                }
+                const context = guideLayer.getContext('2d');
+                context.setTransform(scale, 0, 0, scale, 0, 0);
+                context.fillStyle = getComputedStyle(entry).getPropertyValue('--tree-guide-active').trim();
+                if (guideRevision !== textGuideRevision) {
+                    guideRows = Array.from(content.children).filter(row =>
+                        row.classList.contains('line-container') && row.style.display !== 'none' &&
+                        !row.classList.contains('grp-hidden'));
+                    guideRevision = textGuideRevision;
+                }
+                const toolbarBottom = content.previousElementSibling?.getBoundingClientRect().bottom || 0;
+                const viewportTop = Math.max(0, contentRect.top, toolbarBottom);
+                const bottom = Math.min(viewportHeight, contentRect.bottom);
+                let lower = 0;
+                let upper = guideRows.length;
+                while (lower < upper) {
+                    const middle = Math.floor((lower + upper) / 2);
+                    if (guideRows[middle].getBoundingClientRect().bottom <= viewportTop) lower = middle + 1;
+                    else upper = middle;
+                }
+                for (let index = lower; index < guideRows.length; index++) {
+                    const row = guideRows[index];
+                    const rect = row.getBoundingClientRect();
+                    if (rect.top >= bottom) break;
+                    const ancestors = (row.getAttribute('data-fold-ancestors') || '').split(' ');
+                    if (row.getAttribute('data-fold-id') === scopeId || ancestors.includes(scopeId)) {
+                        const rowIndent = row.querySelector('.call-indent');
+                        const indentRect = rowIndent?.getBoundingClientRect();
+                        if (indentRect && indentRect.width >= offset) {
+                            const top = Math.max(viewportTop, row === entry ? iconRect.bottom - 3 : rect.top);
+                            const end = row === scopeRows[1] ? rect.top + rect.height / 2 : rect.bottom;
+                            const left = Math.round((indentRect.left + offset) * scale - 0.5) / scale;
+                            if (end > top) context.fillRect(left, top, 1 / scale, end - top);
+                        }
+                    }
+                }
+            }
+            function scheduleGuideScope() {
+                if (guideFrame === null && (scopeId || guideLayer)) guideFrame = requestAnimationFrame(drawGuideScope);
+            }
+            function showScope(control) {
+                const row = control?.closest('.line-container');
+                const entry = row?.getAttribute('data-fold-type') === 'exit'
+                    ? document.getElementById(row.getAttribute('data-fold-start')) : row;
+                const foldId = entry?.getAttribute('data-fold-id') || null;
+                if (control?.matches('.fold-icon, .fold-brace')) {
+                    const action = foldedBlocks[foldId] ? 'Expand' : 'Collapse';
+                    control.title = action + ' call; Shift-click: entire subtree';
+                }
+                if (foldId === scopeId) return;
+                scopeRows.forEach(row => row.classList.remove('fold-scope'));
+                scopeId = foldId;
+                scopeRows = [];
+                if (entry) {
+                    const exit = document.getElementById(entry.getAttribute('data-fold-end'));
+                    scopeRows = exit ? [entry, exit] : [entry];
+                    scopeRows.forEach(row => row.classList.add('fold-scope'));
+                }
+                scheduleGuideScope();
+            }
+            content.addEventListener('click', event => {
+                const control = foldControl(event.target);
+                if (control) {
+                    handleFoldIconClick(event, control);
+                    scheduleGuideScope();
+                }
+            });
+            window.addEventListener('scroll', scheduleGuideScope, {passive:true});
+            window.addEventListener('resize', scheduleGuideScope);
+            content.addEventListener('fg-guides-change', scheduleGuideScope);
+            if (window.ResizeObserver) new ResizeObserver(scheduleGuideScope).observe(content);
+            new MutationObserver(scheduleGuideScope).observe(document.documentElement,
+                {attributes:true, attributeFilter:['data-theme']});
+            for (const type of ['pointerover', 'focusin']) {
+                content.addEventListener(type, event => {
+                    const control = scopeControl(event.target);
+                    if (control) showScope(control);
+                });
+            }
+            for (const type of ['pointerout', 'focusout']) {
+                content.addEventListener(type, event => {
+                    if (scopeControl(event.target)) {
+                        showScope(scopeControl(event.relatedTarget) ||
+                            (type === 'pointerout' ? foldControl(document.activeElement) : null));
+                    }
+                });
             }
         }
 
@@ -972,6 +1115,7 @@
 
         // 更新展开行列表（只包含可见的）
         function updateExpandableLines() {
+            textGuideRevision++;
             // 重新获取所有行（包括隐藏的）
             allLines = Array.from(document.querySelectorAll('.line-container'));
             expandableLines = Array.from(document.querySelectorAll('.line-container.expandable'))
@@ -982,6 +1126,7 @@
                     expandableLineIndices.push(index);
                 }
             });
+            document.getElementById('content')?.dispatchEvent(new Event('fg-guides-change'));
         }
 
         // 自动补全功能
@@ -1282,6 +1427,7 @@
         
         // 处理行点击事件 - 现在只处理单击
         function handleLineClick(event, lineId) {
+            if (event.target.closest('.fold-icon, .fold-brace')) return;
             // 记录点击前的滚动位置
             scrollPositionBeforeClick = {
                 x: window.scrollX,
@@ -1367,6 +1513,7 @@
         function handleDoubleClick(event, lineId) {
             // 阻止事件冒泡
             event.stopPropagation();
+            if (event.target.closest('.fold-icon, .fold-brace')) return;
             
             // 清除单击定时器
             if (clickTimer) {
@@ -1457,6 +1604,7 @@
         function _setFolded(foldId, shouldFold, restore) {
             const isFolded = foldedBlocks[foldId] === true;
             if (shouldFold === isFolded && !restore) return; // no-op
+            textGuideRevision++;
 
             // P1: single DOM query for all related lines
             const lines = document.querySelectorAll('[data-fold-id="' + foldId + '"], [data-fold-ancestors~="' + foldId + '"]');
@@ -1487,6 +1635,15 @@
                     if (icon) icon.classList.add('expanded');
                 }
             }
+            if (entryEl) {
+                const action = shouldFold ? 'Expand' : 'Collapse';
+                const name = entryEl.getAttribute('data-func') || 'function';
+                entryEl.querySelectorAll('.fold-icon, .fold-brace').forEach(control => {
+                    control.setAttribute('aria-expanded', String(!shouldFold));
+                    control.setAttribute('aria-label', action + ' call to ' + name);
+                    control.title = action + ' call; Shift-click: entire subtree';
+                });
+            }
 
             lines.forEach(line => {
                 const ancestors = (line.getAttribute('data-fold-ancestors') || '').split(' ');
@@ -1505,6 +1662,7 @@
                     }
                 }
             });
+            entryEl?.parentElement.dispatchEvent(new Event('fg-guides-change'));
         }
 
         // Public API: toggle a single fold block + save state
@@ -1858,12 +2016,15 @@
             }
 
             // 恢复折叠状态
+            initTextFolds();
             restoreFoldedState();
         });
 
         // 添加键盘快捷键支持
         document.addEventListener('keydown', function(event) {
             if (typeof fgCurrentView === 'function' && fgCurrentView() !== 'text') return;
+            if ((event.key === 'Enter' || event.key === ' ') &&
+                event.target.closest('.fold-icon, .fold-brace, #foldGuidesBtn')) return;
             
             // 检查是否在输入框中
             if (event.target.matches('input, textarea, select')) {
@@ -2545,20 +2706,22 @@
             let totalDuration = 0;
             let hasDuration = false;
             let retValue = null;
+            let hasErrorReturn = false;
 
             innerLines.forEach(line => {
                 const thisId = line.getAttribute('data-fold-id');
                 const thisType = line.getAttribute('data-fold-type');
 
-                // Count direct child entry calls (fold-ancestors contains our foldId)
-                if (thisType === 'entry' && thisId !== foldId) {
+                if ((thisType === 'entry' && thisId !== foldId) ||
+                    (thisType === 'inner' && line.hasAttribute('data-func'))) {
                     childCalls++;
                 }
 
                 // Get return value from exit line of this fold
                 if (thisType === 'exit' && thisId === foldId) {
-                    const ret = line.getAttribute('data-ret');
+                    const ret = line.getAttribute('data-fold-ret') || line.getAttribute('data-ret');
                     if (ret) retValue = ret;
+                    hasErrorReturn = line.hasAttribute('data-ret');
                     // Get duration from exit line
                     const dur = line.getAttribute('data-sort-duration') || line.getAttribute('data-duration');
                     if (dur) {
@@ -2602,15 +2765,17 @@
                         if (errMatch) retDisplay = errMatch[1].trim();
                     }
                 }
-                parts.push('<span class="summary-ret">' + retDisplay + '</span>');
+                parts.push('<span class="summary-ret' + (hasErrorReturn ? ' summary-error' : '') + '">' + escapeHtml(retDisplay) + '</span>');
             }
 
             if (parts.length > 0) {
                 const summary = document.createElement('span');
                 summary.className = 'fold-summary';
                 summary.innerHTML = ' [' + parts.join(', ') + ']';
+                const brace = entryEl.querySelector('.fold-brace');
                 const lineContent = entryEl.querySelector('.line-content');
-                if (lineContent) lineContent.appendChild(summary);
+                if (brace) brace.after(summary);
+                else if (lineContent) lineContent.appendChild(summary);
             }
         }
 

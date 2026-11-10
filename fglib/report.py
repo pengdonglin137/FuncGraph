@@ -10,7 +10,7 @@ import time
 import json
 from collections import defaultdict
 
-from .assets import COMPARE_CSS, COMPARE_JS, REPORT_CSS, REPORT_DATA_JS, REPORT_JS, TIMELINE_CSS, VIEWS_BOOT_JS, VIEWS_CSS, VIEWS_EARLY_JS, read_asset, timeline_script
+from .assets import COMPARE_CSS, COMPARE_JS, REPORT_CSS, REPORT_DATA_JS, REPORT_JS, REPORT_TREE_CSS, TIMELINE_CSS, VIEWS_BOOT_JS, VIEWS_CSS, VIEWS_EARLY_JS, read_asset, timeline_script
 from .constants import APP_AUTHOR, APP_TITLE, APP_VERSION, ERROR_CODE_MAP, PROJECT_DIR
 from .inline import timeline_inline_map
 from .output import ReportSpool
@@ -155,6 +155,12 @@ class HtmlGenerator:
             info_content_html = '                <div style="color: var(--summary-text); font-size: 12px;">No information available</div>'
 
         # 2. 构建HTML字符串
+        tree_css = ''
+        tree_button = ''
+        if self.enable_fold and not self.omit_text and any(line.get('fold_type') == 'entry' for line in self.parsed_lines):
+            tree_css = '    <style id="fgTreeGuides">\n' + read_asset(REPORT_TREE_CSS) + '    </style>\n'
+            tree_button = ('<button type="button" class="control-btn btn-guides" id="foldGuidesBtn" '
+                           'aria-pressed="true" title="Show or hide call hierarchy guides; folding remains available">Tree guides: on</button>')
         html_str = f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -163,7 +169,7 @@ class HtmlGenerator:
     <title>{APP_TITLE} v{APP_VERSION} - {APP_AUTHOR}</title>
     <style>
 {self._generate_css()}{self._timeline_css()}    </style>
-{self._early_view_script()}</head>
+{tree_css}{self._early_view_script()}</head>
 <body>
     <div class="progress-bar" id="progressBar"></div>
     <!-- 小悬浮切换按钮：用于显示/隐藏页面上的其他浮动控件 -->
@@ -205,6 +211,7 @@ class HtmlGenerator:
                 <div class="btn-group">
                     <button class="control-btn btn-nav" onclick="toggleFilterBox()">&#x1F50D; Filter</button>
                     <button class="control-btn btn-nav" onclick="scrollToTop()">Top</button>
+                    {tree_button}
                 </div>
                 <div class="btn-group">
                     <button class="control-btn btn-expand" onclick="expandAll()">Expand All</button>
@@ -1081,11 +1088,45 @@ class HtmlGenerator:
         self._src_calls[func_info] = source_index
         return source_index
 
+    @staticmethod
+    def _fold_line_html(text, fold_type, func_name):
+        opening = r'<span class="hl-symbol">}' if fold_type == 'exit' else r'(?:<span class="hl-func">|<a class="func-name-link")'
+        match = re.search(r'\|([ \t]*)(?=' + opening + ')', text)
+        if match:
+            prefix = text[:match.start(1)]
+            column = text[match.start(1):]
+        else:
+            prefix, separator, column = text.rpartition('|')
+            prefix += separator
+        indent = re.match(r'[ \t]*', column).group()
+        body = column[len(indent):]
+        marker = ''
+        if fold_type == 'entry':
+            label = html.escape('Collapse call to ' + (func_name or 'function'), quote=True)
+            attributes = f'aria-label="{label}" aria-expanded="true"'
+            marker = ('<span class="fold-marker"><button type="button" class="fold-icon expanded" '
+                      + attributes + '></button></span>')
+            brace = ('<button type="button" class="hl-symbol fold-brace" tabindex="-1" '
+                     + attributes + '>{</button>')
+            body = body.replace('<span class="hl-symbol">{</span>', brace, 1)
+        elif fold_type == 'exit':
+            body = body.replace('<span class="hl-symbol">}</span>',
+                                '<span class="hl-symbol fold-close">}</span>', 1)
+        return prefix + '<span class="call-indent">' + indent + '</span>' + marker + body
+
     def _iter_content_lines(self):
         """Yield each trace row with its source placeholder, retaining stable source IDs."""
 
         # 添加行号并输出原始ftrace日志
         header_count = 0
+        fold_ends = {}
+        fold_starts = {}
+        if self.enable_fold and not self.omit_text:
+            for index, line in enumerate(self.parsed_lines):
+                if line.get('fold_type') == 'entry':
+                    fold_starts[line.get('fold_id')] = index + 1
+                elif line.get('fold_type') == 'exit':
+                    fold_ends[line.get('fold_id')] = index + 1
         for idx, line_data in enumerate(self.parsed_lines):
             if self.omit_text:
                 if line_data['expandable'] and line_data['func_info']:
@@ -1179,19 +1220,16 @@ class HtmlGenerator:
             # 检查是否是可折叠的函数调用块
             is_foldable = self.enable_fold and fold_id is not None and fold_type in ['entry', 'exit', 'inner']
             fold_class = ""
-            fold_marker = ""
 
             if is_foldable:
                 if fold_type == 'entry':
                     fold_class = "fold-entry"
-                    # 默认展开状态：使用向下箭头表示展开（可通过 CSS/JS 旋转和替换）
-                    fold_marker = '<span class="fold-icon expanded">▶</span>'  # 折叠标记（默认展开）
                 elif fold_type == 'exit':
                     fold_class = "fold-exit"
-                    fold_marker = '<span class="fold-guide"></span>'
                 elif fold_type == 'inner':
                     fold_class = "fold-inner"
-                    fold_marker = '<span class="fold-guide"></span>'
+                escaped_line = self._fold_line_html(escaped_line, fold_type,
+                                                   line_data.get('display_func_name'))
 
             # 获取CPU、PID、进程名信息，用于过滤
             cpu = line_data.get('cpu')
@@ -1213,6 +1251,14 @@ class HtmlGenerator:
                 if line_data.get('fold_ancestors'):
                     ancestors_attr = line_data.get('fold_ancestors')
                 data_attrs += f' data-fold-id="{fold_id}" data-fold-type="{fold_type}"'
+                if fold_type == 'entry' and fold_id in fold_ends:
+                    data_attrs += f' data-fold-end="L{fold_ends[fold_id]}"'
+                if fold_type == 'exit' and fold_id in fold_starts:
+                    data_attrs += f' data-fold-start="L{fold_starts[fold_id]}"'
+                if fold_type == 'exit' and ret_value is not None:
+                    recorded_ret = re.search(r'\bret\s*=\s*([^\s*]+)', raw_line)
+                    fold_ret = recorded_ret.group(1) if recorded_ret else str(ret_value)
+                    data_attrs += f' data-fold-ret="{html.escape(fold_ret, quote=True)}"'
                 if call_depth is not None:
                     data_attrs += f' data-call-depth="{call_depth}"'
                 if ancestors_attr:
@@ -1292,17 +1338,6 @@ class HtmlGenerator:
             else:
                 content_parts.append('>')
             content_parts.append(f'<span class="line-number" onclick="updateAnchor(\'{line_anchor_id}\', event)" title="Click to copy anchor link">{line_number}</span>')
-
-            # 添加折叠标记
-            if is_foldable:
-                if fold_type == 'entry':
-                    # V2: Always use ▶, CSS rotate(90deg) for expanded state
-                    expanded_class = '' if 'folded' in fold_class else ' expanded'
-                    fold_marker = f'<span class="fold-icon{expanded_class}" tabindex="0" role="button" aria-label="Toggle fold" aria-expanded="{"false" if "folded" in fold_class else "true"}" onkeydown="handleFoldIconKeydown(event, this)" onclick="handleFoldIconClick(event, this)">▶</span>'
-                content_parts.append(f'<span class="fold-marker">{fold_marker}</span>')
-            else:
-                # 非可折叠行也插入空白fold-marker以保持对齐
-                content_parts.append('<span class="fold-marker"><span style="display:inline-block; width:20px; height:20px;"></span></span>')
 
             content_parts.append(f'<span class="line-content">{escaped_line}</span>')
 

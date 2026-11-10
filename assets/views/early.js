@@ -8,6 +8,10 @@ let currentTheme = localStorage.getItem('theme') ||
     (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
 document.documentElement.setAttribute('data-theme', currentTheme);
 (function () {
+    const guides = document.getElementById('fgTreeGuides');
+    if (guides && localStorage.getItem(_lsPrefix + 'foldGuides') === 'false') guides.sheet.disabled = true;
+})();
+(function () {
     const script = document.currentScript;
     if (!script.dataset.views) return;
     const views = (script.dataset.views || '').split(' ');

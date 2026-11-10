@@ -50,8 +50,25 @@ class InstalledPackageTest(unittest.TestCase):
         for asset in all_asset_paths():
             with self.subTest(asset=asset):
                 self.assertTrue(read_asset(asset))
+                self.assertEqual(read_asset(asset), (ROOT / 'assets' / asset).read_text(encoding='utf-8'))
         self.assertTrue(Path(PROJECT_DIR, 'fastfaddr2line.py').is_file())
         self.assertTrue(Path(PROJECT_DIR, 'fglib', 'native', 'raw.c').is_file())
+
+    def test_fold_guides_from_installed_package(self):
+        trace = Path(self.tmp.name, 'fold.txt')
+        trace.write_text('# tracer: function_graph\n'
+                         ' 0)               |  parent() { /* <-caller+0x1/0x20 */\n'
+                         ' 0)   0.001 us    |    leaf(); /* <-caller+0x1/0x20 */\n'
+                         ' 0)   0.010 us    |  } /* parent */\n', encoding='utf-8')
+        output = trace.with_suffix('.html')
+        self.run_command(self.executable('funcgraph'), '--no-config', '--enable-fold',
+                         '--output', str(output), str(trace))
+        report = output.read_text(encoding='utf-8')
+        self.assertIn('id="foldGuidesBtn"', report)
+        self.assertIn('id="fgTreeGuides"', report)
+        self.assertIn(read_asset('report/tree.css'), report)
+        self.assertIn('data-fold-end="L4"', report)
+        self.assertIn('data-fold-start="L2"', report)
 
     @unittest.skipUnless(WITH_RAW, 'optional raw dependencies not requested')
     def test_raw_report_from_installed_package(self):

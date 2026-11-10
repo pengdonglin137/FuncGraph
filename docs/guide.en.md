@@ -372,12 +372,15 @@ The format of return values depends on the kernel:
 
 ### 5.4 Folding
 
-With `--enable-fold` every `func() {` line has a ▶ icon:
+With `--enable-fold`, a small arrow sits immediately before each `func() {`, following its original indentation (▶ folded, ▾ open). Subtle grey guides help follow nested calls without adding a separate left-hand column or changing the trace's text/spacing.
 
 - Click ▶ to fold/unfold the block; Shift+click folds/unfolds recursively.
+- The opening `{` is another fold target, not a source toggle. The arrow remains reachable even when long arguments push the brace off-screen. Focus the arrow and press Enter/Space for native keyboard activation; clicking elsewhere on a source-enabled row still opens its source panel.
+- **Tree guides: on/off**, beside **Top** at the left of the Text toolbar, shows/hides the hierarchy lines, not the folding controls. The setting is saved per report and restored before trace rows are parsed. Hiding guides keeps the same column positions and row heights. Previously generated HTML files must be regenerated to contain the new control.
+- Hover an arrow, opening brace or closing corner to gently emphasize that call's guide column across its visible descendants and its entry/exit markers; keyboard focus on the arrow does the same. Other columns remain quiet. Guides follow recorded indentation and paired calls, not an inferred complete stack; interleaved tasks, filtered rows and open source panels can interrupt the lines. Use **Order: task** when cross-task interleaving makes the tree hard to follow.
 - Folding a parent hides every descendant call and its open source panel, without affecting other call trees or the parent's own source panel. Reopening the parent restores source panels only for visible calls and preserves each child's folded/unfolded state; this also works after reloading the report and in task-grouped order.
 - Keys `1`–`9`: show only calls up to depth N; `0`: unfold everything.
-- A folded entry line shows a summary: number of child calls, total time, return value.
+- A folded entry shows `{ … }` followed by a compact summary before any call-site annotation: all recorded descendant calls (including leaf calls, excluding exits and the entry itself), recorded inclusive time when available, and return value. Ordinary values stay grey; known errno returns retain error coloring. These are recorded-call counts, not all functions that ran on the CPU.
 - Folding state is kept in the browser's localStorage, per report.
 
 Background colors related to folding:
@@ -387,8 +390,10 @@ Background colors related to folding:
 | very light green | entry line `func() {` of a block |
 | very light blue | lines inside a block |
 | very light red | exit line `}` of a block |
-| stronger red | a folded entry line |
-| green vertical line on the left | extent of the block, from entry to exit |
+| very light neutral grey | a folded entry line |
+| thin low-contrast grey guides and corners | indentation levels and paired call boundaries; optional |
+
+![Text hierarchy guides, local hover emphasis and a folded call summary](img/text_folding.png)
 
 ### 5.5 Source blocks
 

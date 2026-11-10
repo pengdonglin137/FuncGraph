@@ -1,0 +1,33 @@
+.call-indent::before {
+    content: '';
+    position: absolute;
+    inset: -5px 2ch -5px 0;
+    background-image: linear-gradient(to right, transparent calc(1ch - 0.375px), var(--tree-guide) calc(1ch - 0.375px), var(--tree-guide) calc(1ch + 0.375px), transparent calc(1ch + 0.375px));
+    background-size: 2ch 100%;
+    pointer-events: none;
+}
+.fold-entry:not(.folded) .fold-marker::after {
+    content: '';
+    position: absolute;
+    left: calc(-1ch - 0.375px);
+    top: calc(50% + 7px);
+    height: 8px;
+    width: 0.75px;
+    background: var(--tree-guide);
+}
+.fold-close::before {
+    content: '';
+    position: absolute;
+    left: -1ch;
+    top: -5px;
+    width: 1ch;
+    height: calc(50% + 5px);
+    border-left: 1px solid var(--tree-guide);
+    border-bottom: 1px solid var(--tree-guide);
+}
+.fold-entry.fold-scope:not(.folded) .fold-marker::after {
+    background: var(--tree-guide-active);
+}
+.fold-scope .fold-close::before {
+    border-color: var(--tree-guide-active);
+}

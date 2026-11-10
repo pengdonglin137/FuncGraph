@@ -110,6 +110,19 @@ def text_view(b, rep):
     shot(pg, 'text_view', {'x': 0, 'y': 0, 'width': W, 'height': 620})
 
 
+def text_folding(b, rep):
+    pg = open_page(b, rep['sample'])
+    pg.fill('#filterInput', 'graph:udp_sendmsg')
+    pg.keyboard.press('Enter')
+    pg.wait_for_timeout(400)
+    pg.locator('.fold-entry[data-func="ip_route_output_key_hash_rcu"] .fold-icon').first.click()
+    pg.locator('.fold-entry[data-func="ipv4_mtu"] .fold-icon').first.click()
+    pg.evaluate('window.scrollTo(0, 0)')
+    pg.locator('.fold-entry[data-func="ip_route_output_flow"] .fold-icon').first.hover()
+    pg.wait_for_timeout(200)
+    shot(pg, 'text_folding')
+
+
 def tl_layout(b, rep):
     pg = open_page(b, rep['sample'], 'timeline', width=1600, notes=True)
     pg.evaluate(f"{PROBE}.select({find(pg, '__x64_sys_sendto')})")
@@ -350,7 +363,7 @@ def tl_loading(browser, reports):
 
 
 SHOTS = {
-    'text_view': text_view, 'tl_loading': tl_loading, 'tl_layout': tl_layout, 'tl_compact': tl_compact, 'tl_search': tl_search, 'tl_errors': tl_errors, 'tl_dense': tl_dense, 'tl_irqoff': tl_irqoff,
+    'text_view': text_view, 'text_folding': text_folding, 'tl_loading': tl_loading, 'tl_layout': tl_layout, 'tl_compact': tl_compact, 'tl_search': tl_search, 'tl_errors': tl_errors, 'tl_dense': tl_dense, 'tl_irqoff': tl_irqoff,
     'tl_offcpu': tl_offcpu, 'tl_untraced': tl_untraced, 'tl_detail': tl_detail, 'tl_inline': tl_inline,
     'an_range': an_range, 'an_dist': an_dist, 'an_slowfast': an_slowfast, 'an_sections': panel('an_sections', 'sample', 'sections'),
     'an_errors': panel('an_errors', 'sched', 'errors'), 'an_wait': an_wait, 'an_tasks': an_tasks,

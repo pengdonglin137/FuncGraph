@@ -74,6 +74,29 @@ class ReportTest(unittest.TestCase):
             for a in anc.split():
                 self.assertIn(a, entries)
 
+    def test_fold_scope_targets_resolve_to_matching_exits(self):
+        rows = {}
+        for markup in re.findall(r'<div class="line-container[^>]+>', self.html):
+            attributes = dict(re.findall(r'([\w-]+)="([^"]*)"', markup))
+            rows[attributes['id']] = attributes
+        targets = [attributes for attributes in rows.values() if 'data-fold-end' in attributes]
+        self.assertGreater(len(targets), 50)
+        for entry in targets:
+            exit_row = rows[entry['data-fold-end']]
+            self.assertEqual(entry['data-fold-type'], 'entry')
+            self.assertEqual(exit_row['data-fold-type'], 'exit')
+            self.assertEqual(entry['data-fold-id'], exit_row['data-fold-id'])
+            self.assertEqual(exit_row['data-fold-start'], entry['id'])
+
+    def test_fold_guides_only_appear_with_foldable_text(self):
+        self.assertIn('id="foldGuidesBtn"', self.html)
+        self.assertIn('id="fgTreeGuides"', self.html)
+        plain, _ = self.k.run(self.trace, out='plain.html')
+        timeline, _ = self.k.run(self.trace, '--timeline', '--no-text-view', '--enable-fold', out='no-text.html')
+        for report in [plain, timeline]:
+            self.assertNotIn('id="foldGuidesBtn"', report)
+            self.assertNotIn('id="fgTreeGuides"', report)
+
     def test_no_timeline_without_flag(self):
         for marker in ('id="tlData"', 'class="view-tabs"', '__tlBoot', 'Timeline:</div>', 'No Btf:'):
             self.assertFalse(marker in self.html, f'unexpected {marker!r}')
