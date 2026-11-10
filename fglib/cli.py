@@ -86,6 +86,14 @@ def build_timeline_data(parsed_lines, vmlinux_path, module_dirs, args):
     builder = tlmod.build_timeline(lines, rettypes=rettypes, errno_map=ERROR_CODE_MAP, verbose=args.verbose,
                                    overhead=parse_overhead(args.overhead))
     data = builder.to_data()
+    if args.tail_calls:
+        from . import tailcalls
+        data['tail_calls'] = tailcalls.analyze(data, vmlinux_path)
+        evidence = data['tail_calls']
+        supported = sum(pair['status'] == 'supported' for pair in evidence['pairs'].values())
+        print(f"Tail jumps: {supported}/{len(evidence['pairs'])} unique caller-mismatch relationships supported by supplied binary")
+        if evidence['status'] == 'unavailable':
+            print('Note: tail-jump analysis unavailable: ' + evidence['reason'], file=sys.stderr)
     st = data['stats']
     print(f"Timeline: {st['slices']} slices, {st['tasks']} tasks, mode={data['mode']}, "
           f"{sum(1 for c in data['chains'] if not c[6])} error chains (+{sum(c[6] for c in data['chains'])} minor), {st['offcpu']} off-CPU, {time.time() - t0:.2f}s")
@@ -180,6 +188,9 @@ def build_parser():
                              'without per-line Text DOM; adds normal source-resolution generation cost')
     parser.add_argument('--timeline', action='store_true',
                         help='Add a Timeline tab: per-task flame chart over time with context/error-path coloring')
+    parser.add_argument('--tail-calls', action='store_true',
+                        help='With --timeline and --vmlinux, inspect caller/parent mismatches for static tail-jump evidence '
+                             '(ELF64 x86-64/arm64; needs pyelftools and objdump; adds generation work)')
     parser.add_argument('--btf', nargs='*', default=None, metavar='FILE',
                         help='BTF sources for return-type checks (raw /sys/kernel/btf/* copies or ELF files). '
                              'Default: the .BTF section of --vmlinux and of resolved modules')
@@ -190,6 +201,9 @@ def build_parser():
 
 def validate_args(args):
     """Check paths/URLs; exits on fatal errors, warns otherwise."""
+    if args.tail_calls and not (args.timeline and args.vmlinux):
+        print('Error: --tail-calls needs --timeline and --vmlinux', file=sys.stderr)
+        sys.exit(1)
     if args.keep_source and not (args.timeline and args.no_text_view):
         print('Error: --keep-source needs --timeline and --no-text-view', file=sys.stderr)
         sys.exit(1)

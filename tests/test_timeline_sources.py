@@ -7,6 +7,18 @@ from fglib.report import HtmlGenerator
 
 
 class TimelineSourcesTest(unittest.TestCase):
+    def test_tail_jump_source_uses_exact_instruction_offset_not_return_address_minus_one(self):
+        generator = HtmlGenerator([], None, None, kernel_src='/tree', base_url='https://kernel.test/src',
+            timeline_json={'tail_calls': {'pairs': {'pair': {'sites': [{'symbol': 'parent+0x14/0x20'}]}}}})
+        generator.func_locations_map = {
+            'parent+0x13/0x20': 'parent at /tree/kernel/parent.c:10',
+            'parent+0x14/0x20': 'helper at /tree/include/helper.h:30\n (inlined by) parent at /tree/kernel/parent.c:20',
+        }
+        generator._attach_tail_sources()
+        site = generator.timeline_json['tail_calls']['pairs']['pair']['sites'][0]
+        self.assertEqual(site['source'], ['include/helper.h', 30, 'https://kernel.test/src/include/helper.h#L30'])
+        self.assertEqual(site['source_function'], 'helper')
+
     def generator(self):
         timeline = {'strings': ['parent', 'leaf', 'mod', 'parent+0x1/0x20', 'leaf+0x1/0x20 [mod]'],
                     'cols': {'name': [0, 1, 1], 'module': [-1, 2, 2], 'caller': [-1, 3, 4]}}

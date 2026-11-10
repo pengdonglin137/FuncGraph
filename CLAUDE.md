@@ -65,6 +65,7 @@ tests/run.sh --golden                # afterwards: byte-for-byte comparison on r
 
 - **Python 3.8+** (standard library only for the main program, including the BTF reader)
 - **pyelftools** — required by `fastfaddr2line.py` (`--fast`)
+- **objdump** + pyelftools — optional `--timeline --tail-calls --vmlinux`; linked ELF64 little-endian x86-64 / arm64 only, respecting `CROSS_COMPILE` / `LLVM`
 - **addr2line** (binutils, or `llvm-addr2line` with `LLVM=1`)
 - **pygments** — optional, `--highlight-code`
 
@@ -85,6 +86,7 @@ fglib/report.py       HtmlGenerator: content lines, info panel, embedded data
 fglib/output.py       ReportSpool: UTF-8 section ranges, exact bytes, atomic file publication
 fglib/assets.py       reads assets/ (report + timeline JS/CSS)
 fglib/timeline.py     TimelineBuilder: per-task slices, off-CPU, windows, error chains -> tlData
+fglib/tailcalls.py    opt-in batched static direct tail-jump evidence for caller/parent mismatches
 fglib/btf.py          BTF reader: function return-type classes
 fglib/prefilter.py    --pid/--comm/--cpu/--time-range/--graph/--notrace on raw lines (KEEP/DROP/PENDING stack)
 fglib/compare.py      --compare BASE: per-function stats and deltas (cmpData)
@@ -102,6 +104,8 @@ Data flow: `FtraceParser.parse()` → `AddressResolver.resolve_batch()` → (opt
 `inputs.read_lines()` keeps normalized raw decoder rows directly; do not route it through the string-returning `read_text()` API or reintroduce whole-trace join/split copies. Compressed/stdin/mixed merges share the representation-aware reader. This still retains the full line model, not constant-memory streaming or sidecar output.
 
 Timeline call-site sources use `fgSrcLines` (original trace line → source-pool ID), not Text DOM placeholders. Both views read `fgSrc` through `fgData`; source blocks cache by full function identity. Plain `--no-text-view` still skips resolution. Opt-in `--timeline --no-text-view --keep-source` resolves the complete parsed trace while omitting non-header Text rows, retains inline chains and shares the full source pool; it adds generation/size cost and is not lazy external source loading.
+
+Tail-jump analysis is opt-in, deduplicated by parent/child/module, and never changes recorded model columns or statistics. A caller mismatch alone is unresolved, not proof of a missing frame. Static direct jumps in a supplied binary are evidence, not captured branches or verified trace/binary identity. Keep modules, indirect jumps, depth gaps and unsupported evidence versions unresolved. Resolve static instruction sites at their exact offsets, never the return-address-minus-one rule used by ordinary call sites; preserve original source positions separately. CLI JSON export precedes HTML source enrichment. See both guides and docs/design.md for bounds and scope.
 
 ## Code Conventions
 

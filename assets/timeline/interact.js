@@ -169,7 +169,7 @@ function tipSlice(i) {
         else h += row('return', esc(r) + (f & FL.NULLRET ? ' (NULL)' : ''));
     }
     const c = callerOf(i);
-    if (c) h += row('caller', esc(c) + (f & FL.MISMATCH ? ' <span class="t-warn">(untraced frame between)</span>' : ''));
+    if (c) h += row('caller', esc(c) + (f & FL.MISMATCH ? '<div class="tl-tail-note">' + esc(callerRelationText(i)) + '</div>' : ''));
     const csp = c ? callSitePos(i) : null;
     if (csp) h += row('source', esc(csp.at));
     const il = inlineLine(i);

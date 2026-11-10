@@ -2,6 +2,13 @@
 function pill(cls, txt, title) { return '<span class="tl-pill ' + cls + '"' + (title ? ' title="' + esc(title) + '"' : '') + '>' + esc(txt) + '</span>'; }
 function kv(k, v, cls) { return '<span class="k">' + k + '</span><span class="v' + (cls ? ' ' + cls : '') + '">' + v + '</span>'; }
 function lineLink(n, label) { return '<a class="tl-link" data-line="' + n + '">' + (label || 'line ' + n) + '</a>'; }
+function safeSourceUrl(href) {
+    if (!href) return '';
+    try {
+        const url = new URL(href, document.baseURI);
+        return ['http:', 'https:', 'file:', 'vscode:', 'vscodium:'].includes(url.protocol) ? url.href : '';
+    } catch (error) { return ''; }
+}
 
 function callNavigationHtml(index) {
     const controls = [['back', '← Back', 'Previously selected call (selection history)', ''],
@@ -117,18 +124,13 @@ function detailRowsHtml(list, rows) {
         const title = row.name + (suffix ? ' — ' + suffix : '') + (row.kind === 'untraced' ? ' (not traced: skipped depth)' : '');
         const main = '<' + (traced ? 'button type="button"' : 'div') + ' class="tl-crumb tl-context-select' + (current ? ' cur' : '') + '"' + (traced ? ' data-slice="' + row.index + '"' : '') +
             ' title="' + esc(title) + '"><span class="tl-context-value">' + esc(label) + '</span><span class="tl-context-text">' + esc(row.name) +
+            (traced && tailJumpOf(row.index) ? ' <span class="tl-tail-tag" title="' + esc(callerRelationText(row.index)) + '">⇢ tail jump</span>' : '') +
             (suffix ? ' <span class="d">' + esc(suffix) + '</span>' : '') + '</span></' + (traced ? 'button' : 'div') + '>';
         let source = '';
         if (row.kind !== 'outside') {
             const at = row.file ? row.file + ':' + row.line : 'Source unavailable';
             const basis = row.file ? row.sourceKind === 'function_entry' ? 'Resolved function entry, not the calling line' : 'Call site inside this frame' : '';
-            let href = '';
-            if (row.href) {
-                try {
-                    const url = new URL(row.href, document.baseURI);
-                    if (['http:', 'https:', 'file:', 'vscode:', 'vscodium:'].includes(url.protocol)) href = url.href;
-                } catch (error) {}
-            }
+            const href = safeSourceUrl(row.href);
             source = '<div class="tl-context-source">' +
                 '<' + (href ? 'a href="' + esc(href) + '" target="_blank" rel="noopener noreferrer"' : 'span') +
                 ' title="' + esc(at + (basis ? ' — ' + basis : '') + (row.file && !href ? ' — no source URL configured' : '')) + '">' +
@@ -169,13 +171,14 @@ function exportDetailCsv(kind) {
         'trace_line', 'exit_trace_line', 'task_index', 'pid', 'comm', 'cpu', 'return', 'call_site', 'args', 'module', 'source_file', 'source_line',
         'outside_frame_count', 'duration_' + unit, 'self_' + unit, 'start_' + unit, 'end_' + unit, 'time_mode', 'duration_basis', 'position_basis',
         'selected_slice_index', 'chain_index', 'chain_origin_slice', 'chain_top_slice', 'chain_reported_frames', 'errno', 'fate', 'path_status',
-        'source_kind', 'source_url'];
+        'source_kind', 'source_url', 'relationship', 'relationship_basis', 'tail_jump_sites', 'trace_binary_version_verified'];
     function* rows() {
         let position = 0;
         for (const row of list.createRows()) {
             const traced = row.kind === 'traced', index = row.index, owner = row.owner, task = TRACKS[sTask[owner]];
             const chainIndex = kind === 'error' ? eChain[data.root] : -1;
             const chain = chainIndex >= 0 ? CHAINS[chainIndex] : null;
+            const evidence = traced ? tailJumpOf(index) : null;
             yield [kind, position++, row.kind, row.name, traced ? index : '', owner, row.depth === undefined ? '' : row.depth, row.level,
                 traced ? sLine[index] : '', traced && sEline ? sEline[index] || '' : '', sTask[owner], task.pid, task.comm,
                 traced && cpuOf(index) >= 0 ? cpuOf(index) : '', traced ? retOf(index) || '' : '', traced ? callerOf(index) || '' : '',
@@ -184,7 +187,11 @@ function exportDetailCsv(kind) {
                 traced ? MODE === 'count' ? 'call_order' : adjOn ? 'overhead_subtracted_estimate' : 'measured_duration' : '',
                 traced ? TIMED ? 'relative_timestamp_span' : MODE === 'count' ? 'call_order_geometry' : 'packed_geometry' : '',
                 data.root, chainIndex >= 0 ? chainIndex : '', chain ? chain[0] : '', chain ? chain[1] : '', chain ? chain[4] : '',
-                chain ? chain[2] : '', chain ? ERROR_FATES[chain[3]] : '', list.status, row.sourceKind || '', row.href || ''];
+                chain ? chain[2] : '', chain ? ERROR_FATES[chain[3]] : '', list.status, row.sourceKind || '', row.href || '',
+                evidence ? 'tail_jump_evidence' : traced && sFlags[index] & FL.MISMATCH ? 'caller_mismatch_unresolved' : '',
+                evidence ? 'supplied_binary_static' : '',
+                evidence ? evidence.sites.map(site => site.symbol || site.address).join('; ') : '',
+                evidence ? 'false' : ''];
         }
     }
     downloadTimelineCsv('funcgraph-context-' + kind + '-' + (MODE === 'count' ? 'count' : adjOn ? 'adjusted' : 'raw') + '.csv', columns, rows());
@@ -201,7 +208,7 @@ function showInlineDetail(i) {
     h += kv('defined in', esc(f.file));
     h += kv('traced calls', f.kids.length + ', together ' + fmtDur(f.covered));
     h += kv('between them', fmtDur(f.gap) + ' <span class="d">own inlined code, untraced callees, interrupts</span>');
-    if (f.mismatch) h += kv('note', 'containing function ' + esc(f.ch[0][0]) + ' ≠ parent slice ' + esc(nameOf(f.y.p)) + ' (untraced frame between)', 'err');
+    if (f.mismatch) h += kv('note', 'containing function ' + esc(f.ch[0][0]) + ' ≠ recorded parent ' + esc(nameOf(f.y.p)) + ' (tail call, inline or untraced code; cause unresolved)');
     h += '<span class="k">limits</span><span class="v d">Inlined code has no entry/exit events: only the traced calls inside it are visible, so the real start may be earlier and the real end later.</span>';
     h += '</div><div>' + detailListHtml('inline') + detailListHtml('children') + detailContextHint() + '</div></div>';
     openDetail(h);
@@ -264,7 +271,15 @@ function showDetail(i) {
         h += kv('return', rv, eRole[i] >= 0 ? 'err' : '');
     }
     const c = callerOf(i);
-    if (c) h += kv('call site', esc(c) + '<span class="tl-cs-at"></span>' + (f & FL.MISMATCH ? '<br><span class="tl-pill warn">caller differs from parent slice: untraced/inlined frame in between</span>' : ''));
+    if (c) h += kv('call site', esc(c) + '<span class="tl-cs-at"></span>' + (f & FL.MISMATCH ? '<div class="tl-context-note tl-tail-note">' + esc(callerRelationText(i)) + '</div>' : ''));
+    const tailJump = tailJumpOf(i);
+    if (tailJump) h += kv('tail jump', tailJump.sites.map(site => {
+        const source = site.source;
+        const url = source && safeSourceUrl(source[2]);
+        const position = source ? esc(source[0] + ':' + source[1]) : 'Source unavailable';
+        return '<div>' + esc(site.symbol || site.address) + ' · ' + esc(site.mnemonic) + ' → ' + esc(nameOf(i)) +
+            ' · ' + (url ? '<a class="tl-link" href="' + esc(url) + '" target="_blank" rel="noopener noreferrer">' + position + '</a>' : position) + '</div>';
+    }).join('') + '<div class="tl-context-note tl-tail-note">Static sites in supplied binary; actual branch site not captured.</div>');
     const a = argsOf(i);
     if (a) h += kv('args', esc(a));
     if (ATOMIC.has(i)) h += kv('context', 'called with ' + esc(atomicText(ATOMIC.get(i))) + ' (sleeping function in atomic context)', 'err');
@@ -785,7 +800,7 @@ elHelp.innerHTML = `
 <i style="background:#4b5563;height:2px"></i><span>under the track header: irqs-off periods</span>
 <i style="background:#f59e0b"></i><span>need-resched pending (header band / corner)</span>
 <i style="background:repeating-linear-gradient(135deg,#aaa 0 2px,#eee 2px 4px)"></i><span>off-CPU (amber tint: preempted)</span>
-<i style="background:#8e44ad"></i><span>caller ≠ parent (untraced frame)</span>
+<i style="background:#8e44ad"></i><span>caller ≠ recorded parent (cause unresolved); ⇢ = static tail-jump evidence</span>
 <i style="background:#0f9d8a;height:2px"></i><span>wakeup: waker → woken task (sched_waking/wakeup); bunched: small marker only</span>
 <i style="background:rgba(110,120,140,.13);outline:1px dashed #6b7280"></i><span>inline frame (Inline view)</span>
 <i style="background:#8fb3ef;border-bottom:2px solid #c62828"></i><span>red underline: sleeping function called in atomic context</span>

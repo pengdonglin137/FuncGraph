@@ -2558,6 +2558,73 @@ class BrowserSmokeTest(unittest.TestCase):
         self.page.press('.tl-ftext', 'Enter')
         self.assertEqual(self.page.locator('.header-calls').inner_text(), f'{count:,} recorded calls')
 
+    def open_tail_jump(self, evidence=None, depth=1):
+        extra = {'tail_calls': evidence} if evidence else None
+        self.open_range_data(['parent', 'child'], starts=[0, 100], durations=[1000, 600], parents=[-1, 0],
+                             callers=['root+0x1/0x20', 'root+0x1/0x20'], extra=extra,
+                             columns=dict(depth=[0, depth], flags=[0, 1 << 19]))
+        self.ev("fgView('timeline').probe().select(1)")
+
+    def test_caller_mismatch_does_not_assert_a_missing_frame_or_tail_call(self):
+        self.open_tail_jump()
+        detail = self.page.locator('.tl-detail')
+        self.assertIn('Cause unresolved', detail.inner_text())
+        self.assertIn('--tail-calls', detail.inner_text())
+        self.assertNotIn('untraced frame between', detail.inner_text())
+        self.assertEqual(detail.locator('.tl-tail-tag').count(), 0)
+
+    def test_static_tail_jump_markers_sources_csv_and_geometry_are_truthful(self):
+        evidence = dict(version=1, status='available', trace_build_id_verified=False, pairs={
+            '0:-1:1:-1': dict(status='supported', reason='direct_external_jump', sites=[
+                dict(symbol='parent+0x14/0x20', address='0x1014', mnemonic='jmp', target='0x2000',
+                     source=['kernel/tail.c', 7, 'https://example.org/tail.c#L7']),
+                dict(symbol='parent+0x18/0x20', address='0x1018', mnemonic='jmp', target='0x2000',
+                     source=['kernel/tail.c', 8, 'javascript:alert(1)']),
+            ])})
+        self.open_tail_jump(evidence)
+        original = self.ev("JSON.stringify(fgData.read('tlData'))")
+        for theme, width in product(['light', 'dark'], [390, 1500]):
+            with self.subTest(theme=theme, width=width):
+                self.page.set_viewport_size(dict(width=width, height=900))
+                self.ev("theme => document.documentElement.setAttribute('data-theme', theme)", theme)
+                tag = self.page.locator('[data-context-list=stack] .tl-tail-tag')
+                self.assertEqual(tag.count(), 1)
+                self.assertIn('Static evidence, not a captured branch', tag.get_attribute('title'))
+                self.assertIn('trace/binary version is not verified', tag.get_attribute('title'))
+                self.assertEqual(self.page.locator('a[href^="javascript:"]').count(), 0)
+                self.assertEqual(self.page.locator('a[href="https://example.org/tail.c#L7"]').count(), 1)
+                self.assertIn('actual branch site not captured', self.page.locator('.tl-detail').inner_text())
+                facts = self.ev("""() => {
+                    const model = fgView('timeline').probe();
+                    return {count:model.N, parent:Array.from(model.sParent).slice(0, model.N),
+                        start:Array.from(model.sStart).slice(0, model.N), end:Array.from(model.sEnd).slice(0, model.N)};
+                }""")
+                self.assertEqual(facts, dict(count=2, parent=[-1, 0], start=[0, 100], end=[1000, 700]))
+        exported = self.download_csv('[data-context-export=stack]')
+        self.assertEqual(exported[-1]['relationship'], 'tail_jump_evidence')
+        self.assertEqual(exported[-1]['relationship_basis'], 'supplied_binary_static')
+        self.assertEqual(exported[-1]['trace_binary_version_verified'], 'false')
+        self.assertIn('parent+0x18/0x20', exported[-1]['tail_jump_sites'])
+        self.page.context.route('https://example.org/**', lambda route: route.fulfill(body='tail source'))
+        with self.page.expect_popup() as pending:
+            self.page.locator('a[href="https://example.org/tail.c#L7"]').click()
+        pending.value.close()
+        self.assertEqual(self.ev("JSON.stringify(fgData.read('tlData'))"), original)
+        self.assertEqual(self.ev("fgView('timeline').probe().sel()"), 1)
+
+    def test_static_tail_evidence_does_not_bridge_missing_depths_or_unknown_versions(self):
+        evidence = dict(version=1, pairs={'0:-1:1:-1': dict(status='supported', reason='direct_external_jump',
+                        sites=[dict(symbol='parent+0x14/0x20', mnemonic='jmp', address='0x1014')])})
+        self.open_tail_jump(evidence, depth=2)
+        self.assertEqual(self.page.locator('.tl-tail-tag').count(), 0)
+        self.assertIn('recorded depth gap', self.page.locator('.tl-detail').inner_text())
+        self.ev('localStorage.clear()')
+        self.page.goto(self.url, wait_until='load')
+        evidence['version'] = 2
+        self.open_tail_jump(evidence)
+        self.assertEqual(self.page.locator('.tl-tail-tag').count(), 0)
+        self.assertIn('unsupported evidence version', self.page.locator('.tl-detail').inner_text())
+
     def test_call_stack_source_links_are_separate_native_links_without_text_dom(self):
         self.open_timeline()
         selected = self.ev('''() => {

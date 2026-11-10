@@ -35,7 +35,7 @@ FuncGraph converts `function_graph` ftrace output into an interactive, filterabl
 
 ## Sample
 
-[sample.html](sample.html) ([open online](https://pengdonglin137.github.io/FuncGraph/sample.html), 2.7 MB) is the report of [samples/sample_io.txt](samples/sample_io.txt): one process ([samples/demo_io.c](samples/demo_io.c)) reads 4 KB of a file, writes 4 KB to another file, sends a UDP datagram to itself over loopback and receives it, then calls `recvfrom` once more on the empty queue (`-EAGAIN`). Only these four system calls are traced, from their entry points (`__x64_sys_*`), with arguments, return values, call sites and scheduler events; the file and socket setup happens before them and is not traced, so the five calls follow each other within 110 us: 695 lines, 442 calls.
+[sample.html](sample.html) ([open online](https://pengdonglin137.github.io/FuncGraph/sample.html), 2.8 MiB) is the report of [samples/sample_io.txt](samples/sample_io.txt): one process ([samples/demo_io.c](samples/demo_io.c)) reads 4 KB of a file, writes 4 KB to another file, sends a UDP datagram to itself over loopback and receives it, then calls `recvfrom` once more on the empty queue (`-EAGAIN`). Only these four system calls are traced, from their entry points (`__x64_sys_*`), with arguments, return values, call sites and scheduler events; the file and socket setup happens before them and is not traced, so the five calls follow each other within 110 us: 695 lines, 442 calls.
 
 What to look at:
 - **Timeline**: `__x64_sys_sendto` (the screenshot above) runs `udp_sendmsg -> ip_output -> loopback_xmit`, and the receive side (`net_rx_action -> udp_rcv`) runs in the softirq at the end of the same call (green). *Where the time went*: 65% traced callees, 35% softirq.
@@ -55,7 +55,7 @@ fgcapture.sh --args --sched --calibrate \
     -o sample_io.txt -- /tmp/demo_io
 
 # on the host
-python3 funcgraph.py --timeline --enable-fold --filter --func-links --highlight-code --fast \
+python3 funcgraph.py --timeline --tail-calls --enable-fold --filter --func-links --highlight-code --fast \
     --vmlinux vmlinux --kernel-src linux --source-rev HEAD \
     --base-url https://elixir.bootlin.com/linux/latest/source \
     --output sample.html samples/sample_io.txt
@@ -70,7 +70,7 @@ python3 funcgraph.py --timeline --enable-fold --filter --func-links --highlight-
 ### Requirements
 - Python 3.8+
 - addr2line (from binutils)
-- pyelftools (for `--fast`)
+- pyelftools (for `--fast` or optional `--tail-calls`; the latter also needs matching-architecture `objdump`)
 - Optional: Pygments (for syntax highlighting)
 
 ### Install a release package
@@ -153,6 +153,7 @@ The following table documents each command-line option supported by `funcgraph.p
 | `--entry-offset` | int (default: `0`) | Offset to add to function entry addresses (useful for patched functions) | `--entry-offset 8` |
 | `--enable-fold` | flag | Enable function call folding UI (collapse/expand call blocks) | `--enable-fold` |
 | `--timeline` | flag | Add the Timeline tab (per-task flame chart over time, see below) | `--timeline` |
+| `--tail-calls` | flag | Opt-in static direct tail-jump evidence for caller/parent mismatches; requires `--timeline --vmlinux`, pyelftools and objdump; never changes measured nesting or durations | `--timeline --tail-calls --vmlinux vmlinux` |
 | `--btf` | paths... | BTF sources for return-type checks: raw `/sys/kernel/btf/*` copies or ELF files (default: `.BTF` of vmlinux/modules) | `--btf vmlinux.btf` |
 | `--no-btf` | flag | Do not use BTF for error-path detection | `--no-btf` |
 | `--compare` | path | Add a Compare tab: per-function calls / self / inclusive / max / error differences against this base trace | `--compare before.txt` |

@@ -397,12 +397,22 @@ class HtmlGenerator:
         if functions or callers:
             timeline['sources'] = {'functions': functions, 'callers': callers}
 
+    def _attach_tail_sources(self):
+        if self.timeline_json and self.timeline_json.get('tail_calls'):
+            for pair in self.timeline_json['tail_calls']['pairs'].values():
+                for site in pair['sites']:
+                    chain = parse_chain(self.func_locations_map.get(site.get('symbol', '')))
+                    if chain and chain[-1][1] != '??' and chain[-1][2] > 0:
+                        site['source'] = self._timeline_position(chain[-1][1], chain[-1][2])
+                        site['source_function'] = chain[-1][0]
+
     def _iter_view_parts(self):
         views = self._views()
         if not views:
             return
         self._attach_inline()
         self._attach_timeline_sources()
+        self._attach_tail_sources()
         for x in views:
             data = json.dumps(x[6], separators=(',', ':')).replace('<', '\\u003c')
             yield 'view_open:' + x[5], f'    <script type="application/json" id="{x[5]}">'
@@ -832,6 +842,12 @@ class HtmlGenerator:
                 else:
                     vmlinux_funcs.add(func_info)
 
+        tail_specs = set()
+        if self.timeline_json and not (getattr(self.script_args, 'no_text_view', False) and not getattr(self.script_args, 'keep_source', False)):
+            for pair in self.timeline_json.get('tail_calls', {}).get('pairs', {}).values():
+                for site in pair['sites']:
+                    if site.get('symbol'):
+                        tail_specs.add(site['symbol'])
         verbose_print(f"Found {len(vmlinux_funcs)} unique kernel functions", self.verbose)
         verbose_print(f"Found {len(module_funcs)} modules with functions", self.verbose)
         for module, funcs in module_funcs.items():
@@ -841,9 +857,9 @@ class HtmlGenerator:
         func_locations_map = {}
 
         # 1. 处理内核函数（去重后）
-        if vmlinux_funcs:
+        if vmlinux_funcs or tail_specs:
             # 为调用fastfaddr2line准备函数列表（只调整偏移量，保留编译器后缀）
-            vmlinux_funcs_for_call = set()
+            vmlinux_funcs_for_call = set(tail_specs)
             for func in vmlinux_funcs:
                 # 只调整偏移量，不移除编译器后缀
                 adjusted_func = self._adjust_func_info(func, remove_suffix=False)

@@ -137,6 +137,29 @@ yield 'Building untraced frames…';
 // "untraced" frames so the stack has no hole. The innermost one is named after the calls' return
 // address (their caller), outer ones are unknown ("?"). Extent: first to last call inside.
 function callerFn(i) { const c = callerOf(i); return c ? c.split('+')[0] : '?'; }
+function tailJumpOf(index) {
+    if (D.tail_calls?.version !== 1 || !D.tail_calls.pairs) return null;
+    const parent = sParent[index];
+    if (index >= N || parent < 0 || !(sFlags[index] & FL.MISMATCH) || sDepth[index] !== sDepth[parent] + 1) return null;
+    const key = [sName[parent], sMod ? sMod[parent] : -1, sName[index], sMod ? sMod[index] : -1].join(':');
+    const evidence = D.tail_calls.pairs[key];
+    return evidence?.status === 'supported' && evidence.sites?.length ? evidence : null;
+}
+function callerRelationText(index) {
+    const evidence = tailJumpOf(index);
+    if (evidence) return 'Supplied binary has a direct tail jump from ' + nameOf(sParent[index]) + ' to ' + nameOf(index) +
+        '. Static evidence, not a captured branch; trace/binary version is not verified. Recorded nesting and durations are unchanged.';
+    let text = 'Caller differs from recorded parent; tail calls, inlining or untraced code may explain the difference. Cause unresolved.';
+    if (!D.tail_calls) text += ' Use --tail-calls with the matching --vmlinux for static evidence.';
+    else {
+        const parent = sParent[index];
+        const key = [sName[parent], sMod ? sMod[parent] : -1, sName[index], sMod ? sMod[index] : -1].join(':');
+        const reason = D.tail_calls.version !== 1 ? 'unsupported_evidence_version' : gapOf(index) > 0 ? 'recorded_depth_gap' :
+            D.tail_calls.pairs?.[key]?.reason || D.tail_calls.reason || 'analysis_unavailable';
+        text += ' Analysis: ' + reason.replace(/_/g, ' ') + '.';
+    }
+    return text;
+}
 function gapOf(i) { const p = i < N ? sParent[i] : -1; return p >= 0 ? sDepth[i] - sDepth[p] - 1 : 0; }
 (function buildGhosts() {
     const runs = new Map();   // parent -> open runs per missing level

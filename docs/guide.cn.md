@@ -545,7 +545,8 @@ irqs:d AND duration:>50                       关中断状态下耗时超过 50 
 | **Preempt depth**（默认关闭） | 切片底部的灰色条，越深表示 preempt 深度越大 | |
 | **Markers** | 切片右边缘的**点线** | 只看到了进入，没看到返回（采集窗口在这里结束，或者事件丢失） |
 | | 切片左边缘的**点线** | 只看到了返回，没看到进入（调用在采集开始之前就已经开始） |
-| | 切片左上角的**紫色小方块** | 调用点所在的函数和父切片不是同一个函数，说明中间有没被跟踪的帧（notrace、汇编入口、尾调用）或者内联函数 |
+| | 切片左上角的**紫色小方块** | 调用点所在的函数与记录中的父切片不同；可能是尾调用、内联或未跟踪代码，原因尚未确定，不等于漏采了一层函数 |
+| | 切片左上角的**灰色小箭头** | `--tail-calls` 在提供的二进制中找到通向该函数的直接尾跳转；是静态证据，不是本次执行的分支记录 |
 | | 切片底部的**红色下划线** | 在原子上下文中调用了可能睡眠的函数（见 7.4 节） |
 
 ![tl_errors](img/tl_errors.png)
@@ -583,6 +584,26 @@ irqs:d AND duration:>50                       关中断状态下耗时超过 50 
 
 内联/未跟踪帧只要任一真实孩子同时满足搜索与统一过滤器的**交集**，就保持明亮。重复悬停复用当前合成帧的原始范围/覆盖事实，Overhead 不改变这份几何。行匹配前缀与合成匹配结果按搜索/过滤身份缓存，重绘、主题、窗口调整和 Overhead 不会反复扫描全部分组成员；改变任一过滤后首次重绘才准备新的匹配事实，不再仅抽样第一个帧。
 
+#### 可选：尾调用的静态证据
+
+```bash
+python3 funcgraph.py --timeline --tail-calls --fast --func-links \
+    --vmlinux /path/to/vmlinux --kernel-src /path/to/linux \
+    --output report.html trace.txt
+```
+
+尾调用可能用 `jmp` / `b` 替代普通调用，保留更外层的返回地址。因此“返回地址所在函数 ≠ 记录中的父函数”不能直接解释成漏采。默认报告只提示原因未确定；加上 `--tail-calls` 后，才会检查提供的二进制是否含有父函数通向子函数入口的直接尾跳转。没有该选项，不读取 ELF 做尾调用分析，也不启动反汇编工具。
+
+![tl_tail](img/tl_tail.png)
+
+*示例中的 `__x64_sys_read → ksys_read`：调用栈右侧有低调的 `⇢ tail jump` 标记，详情单独列出跳转指令及可点击源码位置，不把静态位置替换成原始调用点。*
+
+- **显示方式**：Markers 开启时，足够宽的切片用灰色小箭头替代未确定原因的紫色方块；调用栈保留原有对齐，不新增缩进或高饱和颜色。详情列出全部匹配的静态跳转点；已有 DWARF 解析结果时显示源码链接，否则明确显示 `Source unavailable`。
+- **证据边界**：只说明提供的二进制里存在直接跳转，不证明本次执行走过该指令，也不自动证明 trace 与二进制版本一致。函数可能还有普通调用路径。记录中的父子关系、层级、切片宽度、耗时、自身耗时、调用数和导航保持不变；不补造返回事件或栈帧。
+- **依赖与覆盖**：需要 pyelftools（`pip install 'funcgraph[fast]'` 或 `[all]`）及对应架构的 GNU/LLVM objdump，沿用 `CROSS_COMPILE` / `LLVM`。当前仅支持带符号表的 ELF64 小端 x86-64 / arm64 已链接二进制。模块、间接跳转、符号缺失/歧义、深度缺口、预算超限或工具不可用都保留为未确定，不能据此断言“没有尾调用”。`funcgraph-tail` 只是出口行函数名选项，与这项分析无关。
+- **raw 输入**：与文本共用同一分析流程，但必须有可解析的返回地址，形成 caller/parent 不匹配关系。没有这类数据时不会仅凭嵌套形状猜测尾调用；裸 `trace_pipe_raw` 仍不支持。
+- **开销与导出**：按不同的父/子函数与模块组合去重，只读取候选父函数代码，一批调用 objdump，不逐次调用反汇编。开启会增加生成阶段成本，浏览器不会运行反汇编。`--export result.json` 增加独立的 `tail_calls` 证据；命令行导出发生在 HTML 源码补充之前，因此不保证包含静态点的源码位置。上下文 CSV 追加 `relationship`、`relationship_basis`、`tail_jump_sites`、`trace_binary_version_verified`，其中静态证据的版本核验值为 `false`；普通函数统计 CSV 不变。`--no-text-view` 仍默认跳过源码解析，需 `--keep-source` 才保留这些位置。
+
 ### 6.5 悬停提示和详情面板
 
 ![tl_detail](img/tl_detail.png)
@@ -599,7 +620,7 @@ irqs:d AND duration:>50                       关中断状态下耗时超过 50 
 | task | 任务和 CPU |
 | context | 上下文，后面附上 flags 的解读：irqs off、BH off、need-resched 类型、preempt N、migrate-off N。`(inferred)` 表示是推断的 |
 | return | 返回值。是错误时后面附上 errno 名字、角色（error origin 错误源头 / propagated 传播）和去向（returned to user space 返回到用户态 / handled by caller 被调用者处理 / propagates beyond trace 传出了采集范围）。`unverified: no BTF type` 表示没有类型信息，只是根据数值判断的 |
-| caller | 调用点。`(untraced frame between)` 的含义同紫色标记 |
+| caller | 记录的返回地址。与父切片不符时说明可能原因；有尾跳转静态证据时显示证据及版本未核验提示，不再一律称为漏采帧 |
 | source | 调用点的源码位置 `文件:行号`，即发起这次调用的那一行（需要文本视图和 `--vmlinux`） |
 | inlined in | 调用点所在的内联函数链 |
 | args | 函数参数（采集时开了 `funcgraph-args` 才有） |

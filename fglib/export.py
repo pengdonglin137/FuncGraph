@@ -87,12 +87,18 @@ def build(d, errno_map=None, trace_name=''):
         off.append({'task': comm, 'pid': pid, 'start': r[1], 'duration': (r[2] - r[1]) if r[2] is not None else None,
                     'waiting_in': S[r[4]] if r[4] >= 0 else None, 'state': S[r[5]] if r[5] >= 0 else None,
                     'preempted': bool(r[8]), 'woken_by': ('%s %d' % task(r[9])) if r[9] >= 0 else None})
-    return {
+    result = {
         'meta': {'trace': trace_name, 'mode': d['mode'], 'caps': {k: v for k, v in d['caps'].items() if v},
                  'overhead': d.get('overhead'), 'calls': n},
         'functions': functions, 'errors': errors, 'sections': sections, 'sched_latency': lat,
         'atomic_sleep': atomic, 'off_cpu': off,
     }
+    if 'tail_calls' in d:
+        evidence = d['tail_calls']
+        result['tail_calls'] = dict(evidence, pairs=[dict(pair, parent=S[pair['parent']], child=S[pair['child']],
+            parent_module=S[pair['parent_module']] if pair['parent_module'] >= 0 else None,
+            child_module=S[pair['child_module']] if pair['child_module'] >= 0 else None) for pair in evidence['pairs'].values()])
+    return result
 
 
 def write(path, d, errno_map=None, trace_name=''):

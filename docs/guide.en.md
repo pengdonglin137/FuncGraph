@@ -545,7 +545,8 @@ Each overlay can be switched off; buttons of overlays without data are hidden.
 | **Preempt depth** (off by default) | grey bar at the bottom of a slice, darker for deeper | |
 | **Markers** | **dotted right edge** | entry seen, return not (the capture ended, or events were lost) |
 | | **dotted left edge** | return seen, entry not (the call started before the capture) |
-| | **small purple square** top left | the call site's function is not the parent slice: an untraced frame (notrace, assembly entry, tail call) or inlined code in between |
+| | **small purple square** top left | caller differs from the recorded parent: tail calls, inlining or untraced code may explain it; the cause is unresolved, not necessarily a missing frame |
+| | **small grey arrow** top left | `--tail-calls` found a direct tail jump to this function in the supplied binary; static evidence, not a captured branch |
 | | **red underline** | a sleeping function called in atomic context (7.4) |
 
 ![tl_errors](img/tl_errors.png)
@@ -583,6 +584,26 @@ Other visuals:
 
 Inline/untraced frames stay bright if any recorded child matches the **intersection** of search and shared filtering. Repeated hover reuses the current synthetic frame's raw extent/coverage facts; Overhead never changes that geometry. Matching prefixes and synthetic results are cached by search/filter identity, so repainting, theme changes, resizing and Overhead do not repeatedly scan all grouped members. The first repaint after changing either filter prepares new match facts; the scope remains complete rather than sampling only the first frame.
 
+#### Optional static tail-call evidence
+
+```bash
+python3 funcgraph.py --timeline --tail-calls --fast --func-links \
+    --vmlinux /path/to/vmlinux --kernel-src /path/to/linux \
+    --output report.html trace.txt
+```
+
+A tail call can use `jmp` / `b` instead of a regular call and retain an outer return address. A caller/parent mismatch therefore does not necessarily mean that a frame was missed. Default reports explain the unresolved causes. Only `--tail-calls` inspects the supplied binary for a direct jump from the recorded parent to the child's entry. Without it, no tail-call ELF analysis or disassembler runs.
+
+![tl_tail](img/tl_tail.png)
+
+*The sample's `__x64_sys_read → ksys_read`: a restrained `⇢ tail jump` stack tag and a separate static instruction/source field, without replacing the recorded call site.*
+
+- **Presentation**: with Markers enabled, sufficiently wide slices use a small grey arrow instead of the unresolved purple square. Stack rows stay aligned, without new indentation or saturated colors. Detail lists every matching static site with a clickable source position when DWARF resolution is available, otherwise `Source unavailable`.
+- **Evidence limits**: a direct jump exists in the supplied binary; this does not prove the captured invocation executed it or automatically verify the trace/binary version. The function may also have ordinary call paths. Recorded parents, depths, slice widths, durations, self time, counts and navigation remain unchanged. No return events or measured frames are invented.
+- **Requirements and coverage**: pyelftools (`pip install 'funcgraph[fast]'` or `[all]`) and matching-architecture GNU/LLVM objdump, honoring `CROSS_COMPILE` / `LLVM`. Currently supports linked little-endian ELF64 x86-64 / arm64 binaries with symbol tables. Modules, indirect jumps, missing/ambiguous symbols, depth gaps, exhausted budgets and unavailable tools remain unresolved, never proof of no tail calls. The ftrace `funcgraph-tail` option only adds names to closing lines; it is unrelated to this analysis.
+- **Raw input**: shares the text analysis pipeline, but needs resolved return addresses that produce caller/parent mismatches. Nesting alone cannot identify a tail call. Bare `trace_pipe_raw` remains unsupported.
+- **Cost and export**: deduplicates parent/child/module combinations, reads only candidate parent code and batches objdump rather than disassembling each invocation. This adds opt-in generation work, not browser-side disassembly. `--export result.json` includes separate `tail_calls` evidence; CLI export precedes HTML source enrichment, so static source positions are not guaranteed there. Context CSV appends `relationship`, `relationship_basis`, `tail_jump_sites`, `trace_binary_version_verified` (static evidence uses `false`); the ordinary function-statistics CSV is unchanged. Plain `--no-text-view` still skips source resolution; add `--keep-source` to retain these positions.
+
 ### 6.5 Tooltip and detail panel
 
 ![tl_detail](img/tl_detail.png)
@@ -599,7 +620,7 @@ Inline/untraced frames stay bright if any recorded child matches the **intersect
 | task | task and CPU |
 | context | context plus the decoded flags: irqs off, BH off, need-resched kind, preempt N, migrate-off N; `(inferred)` if inferred |
 | return | return value; for errors the errno name, the role (error origin / propagated) and the fate (returned to user space / handled by caller / propagates beyond trace). `unverified: no BTF type` means it was judged by value only |
-| caller | call site; `(untraced frame between)` as for the purple marker |
+| caller | recorded return address; a mismatch explains possible causes or static tail-jump evidence and the unverified trace/binary version, rather than always claiming a missing frame |
 | source | source position `file:line` of the call site, i.e. the line that made this call (needs the text view and `--vmlinux`) |
 | inlined in | inline chain around the call site |
 | args | arguments (only with `funcgraph-args`) |

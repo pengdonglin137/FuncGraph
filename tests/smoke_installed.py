@@ -2,6 +2,7 @@
 import json
 import os
 from pathlib import Path
+import platform
 import re
 import runpy
 import shutil
@@ -69,6 +70,38 @@ class InstalledPackageTest(unittest.TestCase):
         self.assertIn(read_asset('report/tree.css'), report)
         self.assertIn('data-fold-end="L4"', report)
         self.assertIn('data-fold-start="L2"', report)
+
+    @unittest.skipUnless(WITH_EXTRAS and platform.machine() in ('x86_64', 'aarch64'), 'tail-jump ELF dependencies / architecture unavailable')
+    def test_tail_jump_from_installed_package(self):
+        from fglib import tailcalls
+
+        self.assertTrue(tailcalls.objdump_command())
+        source = Path(self.tmp.name, 'tail.c')
+        binary = source.with_suffix('')
+        source.write_text('__attribute__((noinline)) int packaged_child(int value) { return value + 1; }\n'
+                          '__attribute__((noinline)) int packaged_parent(int value) { return packaged_child(value); }\n'
+                          'int main(int argc, char **argv) { return packaged_parent(argc); }\n')
+        self.run_command('cc', '-g', '-O2', '-o', str(binary), str(source))
+        trace = Path(self.tmp.name, 'tail.txt')
+        trace.write_text('# tracer: function_graph\n'
+                         ' 0)               |  packaged_parent() { /* <-main+0x1/0x20 */\n'
+                         ' 0)   0.001 us    |    packaged_child(); /* <-main+0x1/0x20 */\n'
+                         ' 0)   0.010 us    |  } /* packaged_parent */\n')
+        output = trace.with_suffix('.html')
+        exported = trace.with_suffix('.json')
+        self.run_command(self.executable('funcgraph'), '--no-config', '--timeline', '--no-text-view',
+                         '--tail-calls', '--fast', '--no-btf', '--vmlinux', str(binary), '--export', str(exported),
+                         '--output', str(output), str(trace))
+        report = output.read_text()
+        model = json.loads(re.search(r'<script[^>]+id="tlData"[^>]*>(.*?)</script>', report, re.S).group(1))
+        pair = next(iter(model['tail_calls']['pairs'].values()))
+        self.assertEqual(model['n'], 2)
+        self.assertEqual(pair['status'], 'supported')
+        self.assertTrue(pair['sites'])
+        self.assertFalse(model['tail_calls']['trace_build_id_verified'])
+        self.assertNotIn('source', pair['sites'][0])
+        self.assertEqual(json.loads(exported.read_text())['tail_calls']['pairs'][0]['child'], 'packaged_child')
+        self.assertIn('Static sites in supplied binary; actual branch site not captured.', report)
 
     @unittest.skipUnless(WITH_RAW, 'optional raw dependencies not requested')
     def test_raw_report_from_installed_package(self):

@@ -231,8 +231,28 @@ lost[]    [cpu, count, line]
 | 15 | 有 latency 列 |
 | 16 / 17 | TRUNCATED（没有出口）/ ORPHAN（没有入口） |
 | 18 | 耗时是估算的 |
-| 19 | 调用点与父切片不一致（中间有未跟踪的帧） |
+| 19 | 调用点与记录父切片不一致（尾调用、内联或未跟踪代码等，原因未确定） |
 | 20 / 21 / 22 | 返回 NULL / 叶子 / 上下文是推断的 |
+
+### 6.8 可选的尾跳转静态证据（`fglib/tailcalls.py`）
+
+`--timeline --tail-calls --vmlinux` 在 `TimelineBuilder.to_data()` 之后附加版本为 1 的 `tail_calls`，不修改 `cols`、统计、合成帧或原始 trace。默认不执行这一步；ftrace 的 `caps.tail` / `funcgraph-tail` 只是出口行是否有函数名，不是尾调用能力。
+
+- 从 `F_CALLER_MISMATCH` 去重 `(parent name, parent module, child name, child module)`；每对保存 `supported/unresolved`、原因与全部直接跳转点。`supported` 仅表示二进制静态证据，不是分支执行证明。`basis=supplied_binary`、`trace_build_id_verified=false`；保存二进制名称、架构和可用 build ID，但不声称它与 trace 已匹配。`code_sha256` 只覆盖被选中父函数的名称、链接地址、长度和代码，不是整个二进制或全部符号映射的哈希。
+- 惰性导入已有 `[fast]/[all]` 的 pyelftools。只接受有 `.symtab` 的 ELF64 小端 `ET_EXEC/ET_DYN`、x86-64 / arm64，精确匹配唯一 `STT_FUNC` 与可执行 PROGBITS 内的有效大小。模块符号不能套用同名 vmlinux 结果；子函数只需地址，不复制其代码。
+- 只读取候选父函数字节，以原始链接地址写入临时小 ELF，一次调用 GNU/LLVM objdump。每函数最多 256 KiB，总代码最多 4 MiB、4096 个函数，子进程超时 30 秒；输出写临时文件，完成后超过 64 MiB 就拒绝，不是实时磁盘上限。工具及 ELF 错误降级为明确的未知原因。对代码读取前后做文件身份、大小和 mtime 校验；不运行目标二进制。
+- 仅接受外跳的无条件直接 `jmp/jmpq` 或 `b`，目标必须是子函数入口；排除普通调用、条件分支、寄存器间接跳转和函数内循环。只证明字节中有这样的静态指令，不证明其可达性或本次执行路径。无匹配仍为 unresolved，不是“无尾调用”。
+- 前端仅在相邻记录深度且版本为 1 时应用证据，缺失深度仍保持未知。Markers 使用中性灰小箭头，调用栈追加低调标签；详情列出全部静态点。静态点源码与普通调用点共用 resolver batch，但用指令的**精确 offset**，不做返回地址减 1；最深有效内联位置单独附在 site 上，不替换原始栈位置。纯 `--no-text-view` 不增加源码解析，`--keep-source` 才保留。
+- 文本与 raw 共用数据流程；raw 需要可解析 retaddr，不能从形状猜尾调用。JSON CLI 导出包含可读符号的独立证据，但早于 HTML 源码补充；上下文 CSV 追加证据口径，统计 CSV 不变。浏览器不重新反汇编，不把静态点变成带实测值的假帧。
+
+2026-11-10 本机实测：模型已构建，单独计时 `tailcalls.analyze()`，同一进程顺序执行三次取中位数，不与测试/构建并发；包含 ELF 符号读取与 objdump，不含 DWARF/源码解析和 HTML 生成，不代表冷磁盘端到端耗时。
+
+| 输入 | 记录调用 / 不同关系 | 有静态证据的关系 | 选中父函数 / 代码字节 | 分析中位数 | 紧凑证据 JSON |
+|---|---:|---:|---:|---:|---:|
+| x86-64 `samples/sample_io.txt`，695 行 | 442 / 52 | 33 | 44 / 19,321 B | 2.920 s | 12,164 B |
+| arm64 `/tmp/pi4/traceB.txt`，72,176 行 | 55,186 / 485 | 1 | 167 / 127,996 B | 3.040 s | 70,825 B |
+
+这些数量是不同符号关系，不是执行过尾调用的次数；arm64 的其余关系仍未确定，不据此评价尾调用发生率。示例 `__x64_sys_read+0x14/0x19` 的 `jmp ksys_read` 可映射到 `fs/read_write.c:725`，但仍不自动核验 trace/build ID。未启用选项的七份真实内核 golden 只有预期的前端资源变化；仅逐个换回原资源后，整份标准化 HTML（包含 Text、源码池、全部 JSON）逐字节一致，没有扩大 golden 的动态字段掩码。
 
 ## 7. 附加视图与时间轴前端
 
@@ -453,6 +473,7 @@ python3 tests/golden.py --update   # 修改代码前先记录基线
 | `test_prefilter.py` | 各过滤条件、保留完整调用树、时间窗口语义、过滤后的实测数据仍满足不变量 |
 | `test_compare.py` | 按函数统计与差值、错误计数、修正行需要两份都有估计值 |
 | `test_inline.py` | 内联链解析（有无 --list、多候选、无输出）与调用点映射 |
+| `test_tailcalls.py` | x86/arm64 真实小 ELF + objdump、去重与原始数据不变、循环/间接/普通调用排除、工具/依赖/预算/符号歧义降级、raw retaddr 流程、精确指令源码位置与 no-text 源码策略；浏览器测试补充主题/窄屏、全部静态点、安全链接、CSV、未知版本与深度缺口 |
 | `test_sources.py` | git 正确/错误版本、URL 获取与缓存、缺失文件、路径归一化 |
 | `test_flex.py` | 无 vmlinux、stdin/gzip 与普通文件结果一致、多文件按时间合并、配置文件与预设、导出 JSON/CSV |
 | `test_fgcapture.py` | 脚本语法、帮助、非 root 拒绝运行、`--args` 探测前清空 `set_graph_function`（实际采集在树莓派 4 和 QEMU 上手工验证） |
