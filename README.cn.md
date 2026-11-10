@@ -38,17 +38,17 @@ FuncGraph 将 `function_graph` 的 ftrace 输出转换为交互式、可过滤�
 
 ## 示例
 
-[sample.html](sample.html)（[在线打开](https://pengdonglin137.github.io/FuncGraph/sample.html)，2.7 MB）是 [samples/sample_io.txt](samples/sample_io.txt) 的报告。采集的是一个进程（[samples/demo_io.c](samples/demo_io.c)）：读一个文件的 4 KB，写 4 KB 到另一个文件，通过 loopback 给自己发一个 UDP 包再收回来，最后在空队列上再调一次 `recvfrom`（返回 `-EAGAIN`）。只跟踪这四个系统调用，从入口函数（`__x64_sys_*`）开始，带参数、返回值、调用点和调度事件；打开文件、创建 socket 都在它们之前完成，不跟踪，所以这五次调用在 110 us 内首尾相接：共 695 行，442 次调用。
+[sample.html](sample.html)（[在线打开](https://pengdonglin137.github.io/FuncGraph/sample.html)，3.0 MiB）是 [samples/sample_io.txt](samples/sample_io.txt) 的报告。采集的是一个进程（[samples/demo_io.c](samples/demo_io.c)）：读一个文件的 4 KB，写 4 KB 到另一个文件，通过 loopback 给自己发一个 UDP 包再收回来，最后在空队列上再调一次 `recvfrom`（返回 `-EAGAIN`）。只跟踪这四个系统调用，从入口函数（`__x64_sys_*`）开始，带参数、返回值、调用点和调度事件；打开文件、创建 socket 都在它们之前完成，不跟踪。这五次调用跨度为 132 us：共 739 行，485 次记录调用，无丢事件或截断调用。
 
 可以看的地方：
-- **时间轴**：`__x64_sys_sendto`（上面的截图）依次经过 `udp_sendmsg -> ip_output -> loopback_xmit`，接收端（`net_rx_action -> udp_rcv`）在同一次调用末尾的软中断里执行（绿色）。*Where the time went*：被跟踪的子调用占 65%，软中断占 35%。
+- **时间轴**：`__x64_sys_sendto` 依次经过 `udp_sendmsg -> ip_output -> loopback_xmit`，接收端（`net_rx_action -> process_backlog -> udp_rcv`）在同一次调用末尾的软中断里执行（绿色）。总览截图选中 `sendto`（73.43 us）内部的 `process_backlog`（24.21 us）。
 - **错误**：一条错误链，`udp_recvmsg -11 EAGAIN`，由 `__x64_sys_recvfrom` 返回到用户态。
 - **文本视图**：每行带参数；展开一行可以看到调用点的源码和内联链（[samples/sample_text.png](samples/sample_text.png)）。
 
 生成方法：
 
 ```bash
-# 在目标机上（QEMU x86_64，内核 7.2），root 权限
+# 在目标机上（QEMU x86_64，内核 7.4.0-rc2），root 权限
 gcc -O2 -static -o /tmp/demo_io samples/demo_io.c
 dd if=/dev/urandom of=/tmp/demo_in.bin bs=4096 count=1
 dd if=/dev/zero of=/tmp/demo_out.bin bs=4096 count=1
@@ -58,13 +58,18 @@ fgcapture.sh --args --sched --calibrate \
     -o sample_io.txt -- /tmp/demo_io
 
 # 在主机上
-python3 funcgraph.py --timeline --enable-fold --filter --func-links --highlight-code --fast \
-    --vmlinux vmlinux --kernel-src linux --source-rev 1abad474a03f3346fdc485ab4ba9432ad22573c3 \
-    --base-url https://elixir.bootlin.com/linux/v7.2/source \
+python3 funcgraph.py --timeline --tail-calls --enable-fold --filter --func-links --highlight-code --fast \
+    --vmlinux /vol_1t/Qemu/linux/x86_64/vmlinux --kernel-src /vol_1t/Qemu/linux \
+    --source-rev 7475ea8b58616b33c04afb976cf0fbaad9dd63fb \
+    --source-browser github --source-browser-rev v7.4-rc2 \
     --output sample.html samples/sample_io.txt
+
+# 更新总览、Text 示例和指南截图（需要 Playwright + Chromium）
+FG_CONFIG=/dev/null python3 samples/make_shots.py
+FG_CONFIG=/dev/null python3 docs/img/make_shots.py
 ```
 
-示例 trace 标记为 `7.2.0+`，QEMU 运行内核与宿主构建信息均为 `#15`（2026 年 10 月 21 日）。示例使用宿主 `trim_retval` 源码的上述固定提交解析。外部 Elixir 链接固定为上游 `v7.2` 基线，不再使用会变化的 `latest`；定制补丁可能造成行号差异。内嵌源码来自本地版本，是阅读该定制内核的参考，不代表与上游完全一致。
+示例于 2026 年 11 月 10 日重新采集。trace、QEMU 运行内核与宿主构建信息均为 `7.4.0-rc2`、`#3`（`Tue Nov 10 21:07:54 CST 2026`）。宿主源码 `/vol_1t/Qemu/linux` 没有已跟踪文件的修改，其上述提交与 GitHub 上独立核实的上游 `v7.4-rc2` 标签指向一致。内嵌源码读取该固定本地提交，外部 GitHub 链接固定到该标签，而非会变化的 `master`。本次标定为每个被跟踪子调用 143 ns、每次调用自身 77 ns。旧 `sample_io_slow.txt` 保留为 7.2.0+ 历史采集，用于 Compare 演示，不作为受控的跨版本性能基准。
 
 ---
 
@@ -468,7 +473,7 @@ tests/                # 自测（tests/run.sh）和树莓派 4 采集的样例
 docs/design.md        # 设计文档
 site/index.html       # GitHub Pages 首页（由 .github/workflows/ci.yml 连同示例一起发布）
 .github/workflows/    # CI：在 Python 3.8 / 3.12 上跑测试，然后发布 Pages
-samples/              # 示例 trace（sample_io.txt，以及用于对比的较慢一次 sample_io_slow.txt）、采集用的程序（demo_io.c）、截图
+samples/              # 当前 7.4-rc2 示例、历史 7.2.0+ 对比 trace、demo_io.c、截图及 make_shots.py
 docs/img/             # 使用指南的截图（make_shots.py 重新生成）
 sample.html           # samples/sample_io.txt 的报告（见“示例”一节）
 sample.png            # sample.html 的截图

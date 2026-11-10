@@ -582,7 +582,7 @@ CI（`.github/workflows/ci.yml`）：每次推送到 master 和每个 PR 在 Pyt
 
 `sample.html` 是 `samples/sample_io.txt` 的报告，用 `samples/demo_io.c` 在 QEMU 7.2 上采集，命令见 README 的"示例"一节。程序先打开文件、建好 socket，再连续执行被跟踪的 read/write/sendto/recvfrom，所以时间轴上没有空白。改了报告的输出后要重新生成 `sample.html` 并重拍 `sample.png`（选中 `__x64_sys_sendto`）和 `samples/sample_text.png`（`graph:udp_sendmsg`，展开第一行）；推送后由 CI 发布到 Pages。
 
-使用指南的截图在 `docs/img/`，由 `python3 docs/img/make_shots.py [名字...]` 生成：输入是 `sample.html`、`tests/data/pi4_sched.txt`（调度事件）、`tests/data/pi4_nodur.txt`（深度跳级）和 `samples/sample_io_slow.txt`（对比用，`sendto` 的软中断顺带释放了 55 个 skb 的那次采集）。脚本通过 `probe()` 选中切片、缩放、打开面板。界面变了就重新运行，和改动一起提交。
+使用指南的截图在 `docs/img/`，由 `python3 docs/img/make_shots.py [名字...]` 生成：输入是 `sample.html`（当前 7.4-rc2 的 `demo_io` 采集）、`tests/data/pi4_sched.txt`（调度事件）、`tests/data/pi4_nodur.txt`（深度跳级）和 `samples/sample_io_slow.txt`（7.2.0+ 历史对比采集，不是受控的跨版本性能基准）。`python3 samples/make_shots.py` 生成根目录总览和 Text 示例，保留 1841×951 的总览尺寸并选中 `process_backlog`。截图只缩放到实际系统调用范围，不删除启动时的调度记录。脚本通过 `probe()` 选中切片、缩放、打开面板。界面或示例变了就重新运行，和改动一起提交。
 
 ## 11. 已知限制
 

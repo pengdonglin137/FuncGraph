@@ -55,6 +55,7 @@ tests/run.sh --golden                # afterwards: byte-for-byte comparison on r
 - Timeline JSON >= 1 MiB uses cancellable main-thread preparation (`__tlSteps`). `await fgSwitchView('timeline')` waits for the complete API (null on cancellation/failure); small/cached views return an API directly. `fgView('timeline')` deliberately drains any pending iterator synchronously for existing probes, so do not use it to wait in responsiveness benchmarks. `tests/benchmark_startup.py` measures feedback separately from full-ready double-rAF and long tasks; 8 ms is a cooperative budget, not a bound on parsing/layout/GC.
 - Guide screenshots (`docs/img/*.png`) come from `python3 docs/img/make_shots.py [names]` (uses sample.html and repo fixtures); rerun after UI changes.
 - After output-affecting changes regenerate `sample.html` from `samples/sample_io.txt` (command in README "Sample") and retake `sample.png` / `samples/sample_text.png`.
+- The current sample is QEMU x86_64 `7.4.0-rc2 #3`, captured November 10, 2026, using `/vol_1t/Qemu/linux/x86_64/vmlinux` and source commit `7475ea8b58616b33c04afb976cf0fbaad9dd63fb` (upstream `v7.4-rc2`). Pin both source and web revisions. `python3 samples/make_shots.py` regenerates the overview/Text images; keep the older `sample_io_slow.txt` explicitly labeled as a historical 7.2.0+ Compare input.
 
 ## Releasing
 

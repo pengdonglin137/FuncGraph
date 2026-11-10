@@ -961,7 +961,7 @@ trace 结束时仍未闭合的等待，在时长前显示 **≥**，表示下界
 
 ![compare](img/compare.png)
 
-*对比 samples/sample_io_slow.txt 和 samples/sample_io.txt：慢的那次 `sendto` 在软中断里多释放了 55 个 skb（`napi_consume_skb` 等为 new），traced time 多了 134%。*
+*对比历史 samples/sample_io_slow.txt（7.2.0+）和当前 samples/sample_io.txt（7.4.0-rc2）。此图演示不同采集之间的函数级差异，不是受控的性能回归基准：内核版本、跟踪开销和实际执行的工作量均不同。*
 
 ```bash
 python3 funcgraph.py --compare before.txt --output cmp.html after.txt

@@ -35,17 +35,17 @@ FuncGraph converts `function_graph` ftrace output into an interactive, filterabl
 
 ## Sample
 
-[sample.html](sample.html) ([open online](https://pengdonglin137.github.io/FuncGraph/sample.html), 2.8 MiB) is the report of [samples/sample_io.txt](samples/sample_io.txt): one process ([samples/demo_io.c](samples/demo_io.c)) reads 4 KB of a file, writes 4 KB to another file, sends a UDP datagram to itself over loopback and receives it, then calls `recvfrom` once more on the empty queue (`-EAGAIN`). Only these four system calls are traced, from their entry points (`__x64_sys_*`), with arguments, return values, call sites and scheduler events; the file and socket setup happens before them and is not traced, so the five calls follow each other within 110 us: 695 lines, 442 calls.
+[sample.html](sample.html) ([open online](https://pengdonglin137.github.io/FuncGraph/sample.html), 3.0 MiB) is the report of [samples/sample_io.txt](samples/sample_io.txt): one process ([samples/demo_io.c](samples/demo_io.c)) reads 4 KB of a file, writes 4 KB to another file, sends a UDP datagram to itself over loopback and receives it, then calls `recvfrom` once more on the empty queue (`-EAGAIN`). Only these four system calls are traced, from their entry points (`__x64_sys_*`), with arguments, return values, call sites and scheduler events; the file and socket setup happens before them and is not traced. The five calls span 132 us: 739 lines, 485 recorded calls, no lost events or truncated calls.
 
 What to look at:
-- **Timeline**: `__x64_sys_sendto` (the screenshot above) runs `udp_sendmsg -> ip_output -> loopback_xmit`, and the receive side (`net_rx_action -> udp_rcv`) runs in the softirq at the end of the same call (green). *Where the time went*: 65% traced callees, 35% softirq.
+- **Timeline**: `__x64_sys_sendto` runs `udp_sendmsg -> ip_output -> loopback_xmit`, and the receive side (`net_rx_action -> process_backlog -> udp_rcv`) runs in the softirq at the end of the same call (green). The overview selects `process_backlog` (24.21 us) inside `sendto` (73.43 us).
 - **Errors**: one chain, `udp_recvmsg -11 EAGAIN` returned to user space by `__x64_sys_recvfrom`.
 - **Text view**: arguments on every line; expanding a line shows the call site's source with its inline chain ([samples/sample_text.png](samples/sample_text.png)).
 
 How it was made:
 
 ```bash
-# on the target (QEMU x86_64, kernel 7.2.0+), as root
+# on the target (QEMU x86_64, kernel 7.4.0-rc2), as root
 gcc -O2 -static -o /tmp/demo_io samples/demo_io.c
 dd if=/dev/urandom of=/tmp/demo_in.bin bs=4096 count=1
 dd if=/dev/zero of=/tmp/demo_out.bin bs=4096 count=1
@@ -56,12 +56,17 @@ fgcapture.sh --args --sched --calibrate \
 
 # on the host
 python3 funcgraph.py --timeline --tail-calls --enable-fold --filter --func-links --highlight-code --fast \
-    --vmlinux vmlinux --kernel-src linux --source-rev 1abad474a03f3346fdc485ab4ba9432ad22573c3 \
-    --base-url https://elixir.bootlin.com/linux/v7.2/source \
+    --vmlinux /vol_1t/Qemu/linux/x86_64/vmlinux --kernel-src /vol_1t/Qemu/linux \
+    --source-rev 7475ea8b58616b33c04afb976cf0fbaad9dd63fb \
+    --source-browser github --source-browser-rev v7.4-rc2 \
     --output sample.html samples/sample_io.txt
+
+# refresh the overview, Text example and guide screenshots (Playwright + Chromium)
+FG_CONFIG=/dev/null python3 samples/make_shots.py
+FG_CONFIG=/dev/null python3 docs/img/make_shots.py
 ```
 
-The sample trace reports `7.2.0+`; its QEMU runtime and host build both identify build `#15` (October 21, 2026). The example resolves against the host `trim_retval` source at the fixed commit above. External Elixir links are pinned to the upstream `v7.2` baseline, not moving `latest`; local patches may change line numbers. Embedded source comes from the local revision and is the reference for this custom kernel, not proof of an exact upstream match.
+The sample was recaptured on November 10, 2026. The trace, QEMU runtime and host build identify `7.4.0-rc2`, build `#3` (`Tue Nov 10 21:07:54 CST 2026`). The host source at `/vol_1t/Qemu/linux` has no tracked modifications; its commit above matches the peeled upstream `v7.4-rc2` tag, independently checked on GitHub. Embedded source uses that exact local commit, and external GitHub links are pinned to that tag, not moving `master`. Calibration recorded 143 ns per traced child and 77 ns per call. The older `sample_io_slow.txt` remains a historical 7.2.0+ capture for Compare examples, not a controlled cross-version performance baseline.
 
 ---
 
@@ -469,7 +474,7 @@ tests/                # Self-tests (tests/run.sh) and fixtures from a Raspberry 
 docs/design.md        # Design document
 site/index.html       # GitHub Pages home page (published with the sample by .github/workflows/ci.yml)
 .github/workflows/    # CI: tests on Python 3.8 / 3.12, then Pages
-samples/              # Sample trace (sample_io.txt, a slower run sample_io_slow.txt for Compare), its workload (demo_io.c), screenshots
+samples/              # Current 7.4-rc2 sample, historical 7.2.0+ Compare trace, demo_io.c, screenshots and make_shots.py
 docs/img/             # Guide screenshots (make_shots.py regenerates them)
 sample.html           # Report of samples/sample_io.txt (see Sample)
 sample.png            # Screenshot of sample.html

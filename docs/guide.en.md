@@ -961,7 +961,7 @@ Needs `latency-format` and timestamps.
 
 ![compare](img/compare.png)
 
-*Comparing samples/sample_io_slow.txt with samples/sample_io.txt: in the slow run the softirq of `sendto` freed 55 more skbs (`napi_consume_skb` etc. are new), traced time +134%.*
+*Comparing the historical samples/sample_io_slow.txt (7.2.0+) with the current samples/sample_io.txt (7.4.0-rc2). This illustrates per-function differences between captures, not a controlled performance regression benchmark: kernel versions, tracing overhead and the work performed differ.*
 
 ```bash
 python3 funcgraph.py --compare before.txt --output cmp.html after.txt

@@ -60,10 +60,10 @@
 
 <main class="wrap">
   <a href="sample.html"><img class="shot" src="sample.png" alt="FuncGraph timeline of the sample trace"></a>
-  <p class="cap" lang="en">The sample: one process reads and writes 4 KB and sends a UDP datagram to itself (QEMU x86_64, Linux 7.2).
-    Selected: <code>__x64_sys_sendto</code>, 65% traced callees and 35% softirq (the loopback receive path).</p>
-  <p class="cap" lang="zh">示例：一个进程读写 4 KB 文件，再通过 loopback 给自己发一个 UDP 包（QEMU x86_64，Linux 7.2）。
-    选中的是 <code>__x64_sys_sendto</code>：被跟踪的子调用占 65%，软中断（loopback 接收路径）占 35%。</p>
+  <p class="cap" lang="en">The sample: one process reads and writes 4 KB and sends a UDP datagram to itself (QEMU x86_64, Linux 7.4-rc2; 485 recorded calls).
+    Selected: <code>process_backlog</code>, 24.21 us in the loopback softirq receive path; source links are pinned to the matching upstream tag.</p>
+  <p class="cap" lang="zh">示例：一个进程读写 4 KB 文件，再通过 loopback 给自己发一个 UDP 包（QEMU x86_64，Linux 7.4-rc2；485 次记录调用）。
+    选中的是 loopback 软中断接收路径中的 <code>process_backlog</code>，耗时 24.21 us；源码链接固定到匹配的上游标签。</p>
 
   <h2 lang="en">What it shows</h2>
   <h2 lang="zh">能看到什么</h2>

@@ -45,6 +45,20 @@ def open_page(b, path, view=None, height=H, width=W, notes=False):
     if view:
         pg.evaluate(f"fgSwitchView('{view}')")
         pg.wait_for_timeout(500)
+        if view == 'timeline' and os.path.abspath(path) == os.path.join(ROOT, 'sample.html'):
+            pg.evaluate("""() => {
+                const model = fgView('timeline').probe();
+                let start = Infinity, end = -Infinity;
+                for (let index = 0; index < model.N; index++) {
+                    if (!model.nameOf(index).startsWith('__x64_sys_')) continue;
+                    start = Math.min(start, model.sStart[index]);
+                    end = Math.max(end, model.sEnd[index]);
+                }
+                if (end > start) {
+                    const pad = (end - start) * 0.025;
+                    model.zoomTo(start - pad, end + pad, -1);
+                }
+            }""")
         if view == 'timeline' and not notes and pg.locator('[data-act=notes].on').count():
             pg.click('[data-act=notes]')      # more room for the tracks
             pg.wait_for_timeout(200)
