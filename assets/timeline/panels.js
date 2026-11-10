@@ -40,7 +40,8 @@ function detailParents(start, stop) {
     return { ids: ids.reverse(), status };
 }
 function detailSourceChain(index) {
-    return D.sources && D.sources.callers && D.sources.callers[sCaller && sCaller[index]] || inlChain(index);
+    const chain = D.sources && D.sources.callers && D.sources.callers[sCaller && sCaller[index]] || inlChain(index);
+    return chain && chain.length ? chain : null;
 }
 function detailSourceFields(position, basis) {
     return position ? { file: position[0], line: position[1], href: position[2] || '', sourceKind: basis } : {};
@@ -295,9 +296,20 @@ function callSiteBlock(i) {
     if (typeof fgSourceForLine !== 'function' || isSyn(i)) return null;
     return fgSourceForLine(sLine[i]);
 }
-// {func, at: 'file:line', href, inl} of the call itself (innermost frame of the block), cached per block
 const csPosCache = new Map();
 function callSitePos(i) {
+    if (isSyn(i)) return null;
+    const chain = D.sources?.callers?.[sCaller?.[i]];
+    if (Array.isArray(chain)) {
+        if (!chain.length) return null;
+        const frame = chain[chain.length - 1];
+        if (Array.isArray(frame) && typeof frame[0] === 'string' && frame[0] &&
+            typeof frame[1] === 'string' && frame[1] && Number.isSafeInteger(frame[2]) && frame[2] > 0) {
+            if (!csPosCache.has(chain)) csPosCache.set(chain, {func:frame[0], at:frame[1] + ':' + frame[2],
+                href:safeSourceUrl(frame[3]) || null, inl:chain.length > 1});
+            return csPosCache.get(chain);
+        }
+    }
     const k = callSiteBlock(i);
     if (k === null) return null;
     if (csPosCache.has(k)) return csPosCache.get(k);

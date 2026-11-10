@@ -402,7 +402,11 @@ class HtmlGenerator:
             if caller < 0:
                 continue
             address = strings[caller]
-            chain = parse_chain(self.func_locations_map.get(self._adjust_func_info(address, remove_suffix=False)))
+            locations = self.func_locations_map.get(self._adjust_func_info(address, remove_suffix=False))
+            if not locations:
+                callers[str(caller)] = []
+                continue
+            chain = parse_chain(locations)
             module_match = re.search(r'\[([^]]+)\]', address)
             module = module_match.group(1) if module_match else None
             if chain and all(frame[2] > 0 and frame[1] != '??' for frame in chain):

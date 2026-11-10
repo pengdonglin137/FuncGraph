@@ -455,6 +455,25 @@ class SidecarBrowserTest(unittest.TestCase):
         self.assertEqual(self.page.locator('#content .line-container').count(), 0)
         self.assertFalse(any(url.endswith(('text.html', 'compare.json')) for url in self.requests))
 
+    def test_timeline_hover_reads_compact_positions_without_source_or_text_resources(self):
+        target = self.page.evaluate('''() => {
+            const data = fgData.read('tlData'), probe = fgView('timeline').probe();
+            const index = data.cols.caller.findIndex(caller => data.sources.callers[caller]?.length);
+            const frame = data.sources.callers[data.cols.caller[index]].slice(-1)[0];
+            const read = fgData.read;
+            fgData.read = name => {
+                if (name === 'fgSrc' || name === 'fgSrcLines') throw new Error('Hover read source HTML');
+                return read(name);
+            };
+            probe.zoomTo(probe.sStart[index], probe.sEnd[index], index);
+            return {point:probe.xyOf(index), source:frame[1] + ':' + frame[2]};
+        }''')
+        self.page.mouse.move(*target['point'])
+        self.page.locator('.tl-tip').wait_for(state='visible')
+        self.assertIn(target['source'], self.page.locator('.tl-tip').inner_text())
+        self.assertEqual(self.page.locator('#content .line-container').count(), 0)
+        self.assertFalse(any(url.endswith(('text.html', 'text-index.json', 'compare.json')) for url in self.requests))
+
     def test_auto_small_report_remains_offline_and_keeps_full_text(self):
         self.requests.clear()
         self.page.goto((Path(self.kernel.dir) / 'offline' / 'index.html').as_uri(), wait_until='load')

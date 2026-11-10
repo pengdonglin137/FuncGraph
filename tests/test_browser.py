@@ -3341,6 +3341,67 @@ class BrowserSmokeTest(unittest.TestCase):
         self.assertRegex(self.page.locator('.tl-cs-at .tl-link').inner_text(), r'\.[ch]:\d+$')
         self.assertTrue(self.page.locator('.tl-cs-at a').get_attribute('href').startswith('https://example.org/src/'))
 
+    def test_timeline_hover_uses_compact_positions_without_reading_source_html(self):
+        self.ev('''() => {
+            const read = fgData.read;
+            fgData.read = name => {
+                if (name === 'fgSrc' || name === 'fgSrcLines') throw new Error('Tooltip read full source data');
+                return read(name);
+            };
+        }''')
+        self.open_timeline()
+        target = self.ev('''() => {
+            const data = fgData.read('tlData'), probe = fgView('timeline').probe();
+            const index = data.cols.caller.findIndex(caller => data.sources.callers[caller]?.length);
+            const chain = data.sources.callers[data.cols.caller[index]];
+            const frame = chain[chain.length - 1];
+            probe.zoomTo(probe.sStart[index], probe.sEnd[index], index);
+            return {point:probe.xyOf(index), source:frame[1] + ':' + frame[2]};
+        }''')
+        self.page.mouse.move(*target['point'])
+        self.page.locator('.tl-tip').wait_for(state='visible')
+        self.assertEqual(self.page.locator('.tl-tip .t-row').filter(has=self.page.locator('.t-k', has_text='source')).locator('.t-v').inner_text(), target['source'])
+
+    def test_empty_source_chain_does_not_guess_a_callsite_or_break_depth_gaps(self):
+        self.open_range_data(['root', 'leaf'], starts=[0, 100], durations=[10000, 1000], parents=[-1, 0],
+                             callers=[None, 'root+0x1/0x20'], columns={'depth': [0, 3]},
+                             extra={'sources': {'functions': {'0:-1': ['root.c', 10, 'https://example.org/root#L10']},
+                                                'callers': {'2': []}}})
+        point = self.ev('''() => {
+            window.originalSourceForLine = fgSourceForLine;
+            fgSourceForLine = () => { throw new Error('Known unavailable source used legacy fallback'); };
+            const probe = fgView('timeline').probe();
+            probe.zoomTo(probe.sStart[1], probe.sEnd[1], 1);
+            return probe.xyOf(1);
+        }''')
+        self.page.mouse.move(*point)
+        self.page.locator('.tl-tip').wait_for(state='visible')
+        self.assertEqual(self.page.locator('.tl-tip .t-k', has_text='source').count(), 0)
+        self.assertNotIn('root.c:10', self.page.locator('.tl-tip').inner_text())
+        self.ev('fgSourceForLine = originalSourceForLine; fgView("timeline").probe().select(1)')
+        self.assertEqual(self.page.locator('[data-context-list=stack] [data-context-kind=untraced]').count(), 2)
+        self.assertEqual(self.page.locator('[data-context-list=stack] .tl-context-source').first.text_content(), 'root.c:10')
+
+    def test_legacy_hover_keeps_source_positions_and_caches_html_parsing(self):
+        target = self.ev('''() => {
+            const data = fgData.read('tlData');
+            const index = data.cols.caller.findIndex(caller => data.sources.callers[caller]?.length);
+            const frame = data.sources.callers[data.cols.caller[index]].slice(-1)[0];
+            delete data.sources;
+            const read = fgData.read;
+            window.legacySourceReads = 0;
+            fgData.read = name => { if (name === 'fgSrc') legacySourceReads++; return read(name); };
+            return {index, source:frame[1] + ':' + frame[2]};
+        }''')
+        self.open_timeline()
+        point = self.ev('index => { const probe = fgView("timeline").probe(); probe.zoomTo(probe.sStart[index], probe.sEnd[index], index); return probe.xyOf(index); }', target['index'])
+        for _ in range(2):
+            self.page.mouse.move(0, 0)
+            self.page.mouse.move(*point)
+            self.page.locator('.tl-tip').wait_for(state='visible')
+            self.assertIn(target['source'], self.page.locator('.tl-tip').inner_text())
+        self.assertEqual(self.ev('legacySourceReads'), 1)
+
     def test_timeline_only_retains_source_code_inline_frames_and_source_controls(self):
         kernel = helpers.FakeKernel(inline_source=True)
         try:

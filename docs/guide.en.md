@@ -647,9 +647,11 @@ A tail call can use `jmp` / `b` instead of a regular call and retain an outer re
 | context | context plus the decoded flags: irqs off, BH off, need-resched kind, preempt N, migrate-off N; `(inferred)` if inferred |
 | return | return value; for errors the errno name, the role (error origin / propagated) and the fate (returned to user space / handled by caller / propagates beyond trace). `unverified: no BTF type` means it was judged by value only |
 | caller | recorded return address; a mismatch explains possible causes or static tail-jump evidence and the unverified trace/binary version, rather than always claiming a missing frame |
-| source | source position `file:line` of the call site, i.e. the line that made this call (needs the text view and `--vmlinux`) |
+| source | resolved source position `file:line` of the call site, i.e. the line that made this call (needs address resolution, usually `--vmlinux`, but not a mounted Text view) |
 | inlined in | inline chain around the call site |
 | args | arguments (only with `funcgraph-args`) |
+
+New reports use the compact call-site position index for this tooltip, including the innermost position of an inline chain. Hovering a known resolved or unavailable call site does not parse the full source-code pool or Text source-line map. Unavailable call sites do not borrow a function-entry line. Legacy or unsupported position metadata retains the existing source-HTML fallback; opening source-code details still loads/parses the embedded code pool on demand. This does not introduce external source chunks or virtualize Text.
 
 **Hovering an off-CPU segment**: wait time, function it waited in, state at switch-out, CPU it left and CPU it resumed on, waker.
 

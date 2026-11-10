@@ -647,9 +647,11 @@ python3 funcgraph.py --timeline --tail-calls --fast --func-links \
 | context | 上下文，后面附上 flags 的解读：irqs off、BH off、need-resched 类型、preempt N、migrate-off N。`(inferred)` 表示是推断的 |
 | return | 返回值。是错误时后面附上 errno 名字、角色（error origin 错误源头 / propagated 传播）和去向（returned to user space 返回到用户态 / handled by caller 被调用者处理 / propagates beyond trace 传出了采集范围）。`unverified: no BTF type` 表示没有类型信息，只是根据数值判断的 |
 | caller | 记录的返回地址。与父切片不符时说明可能原因；有尾跳转静态证据时显示证据及版本未核验提示，不再一律称为漏采帧 |
-| source | 调用点的源码位置 `文件:行号`，即发起这次调用的那一行（需要文本视图和 `--vmlinux`） |
+| source | 已解析的调用点源码位置 `文件:行号`，即发起这次调用的那一行（需要地址解析，通常提供 `--vmlinux`，但不要求挂载 Text 视图） |
 | inlined in | 调用点所在的内联函数链 |
 | args | 函数参数（采集时开了 `funcgraph-args` 才有） |
+
+新报告使用紧凑调用点位置索引生成这部分悬停提示，内联链选择最内层的实际调用位置。悬停已解析或明确没有可用位置的调用点，不再解析整份源码池和 Text 源码行映射；不可用的调用点不会借用函数入口行号。旧格式或尚未支持的位置表示仍保留原有源码 HTML 回退；打开源码详情时仍按需解析内嵌的代码池。本次不引入外部源码分块，也不是 Text 虚拟化。
 
 **悬停在 off-CPU 段上**：等待时长、在哪个函数里等待、换出时的状态、从哪个 CPU 换出又在哪个 CPU 上恢复、唤醒者。
 

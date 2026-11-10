@@ -53,7 +53,24 @@ class TimelineSourcesTest(unittest.TestCase):
         generator.func_name_results = {}
         generator.func_locations_map = {}
         generator._attach_timeline_sources()
-        self.assertNotIn('sources', generator.timeline_json)
+        self.assertEqual(generator.timeline_json['sources'], {'functions': {}, 'callers': {'3': [], '4': []}})
+        snapshot = generator.timeline_json['sources']
         generator.func_locations_map[generator._adjust_func_info('parent+0x1/0x20')] = 'parent at /tree/kernel/parent.c:20'
         generator._attach_timeline_sources()
+        self.assertIs(generator.timeline_json['sources'], snapshot)
+        self.assertEqual(snapshot['callers']['3'], [])
+        generator = self.generator()
+        generator.base_url = None
+        generator._attach_timeline_sources()
         self.assertEqual(generator.timeline_json['sources']['callers']['3'][0], ['parent', 'kernel/parent.c', 20, ''])
+
+    def test_missing_resolver_output_is_explicit_but_unparsed_output_stays_unknown(self):
+        generator = self.generator()
+        missing = generator._adjust_func_info('parent+0x1/0x20')
+        unsupported = generator._adjust_func_info('leaf+0x1/0x20 [mod]')
+        generator.func_locations_map = {missing: '', unsupported: 'unparsed provider output'}
+        with patch('fglib.report.call_faddr2line_batch', side_effect=AssertionError('new lookup')):
+            generator._attach_timeline_sources()
+        callers = generator.timeline_json['sources']['callers']
+        self.assertEqual(callers, {'3': []})
+        self.assertNotIn('4', callers)
