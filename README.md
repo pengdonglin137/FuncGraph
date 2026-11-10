@@ -300,6 +300,8 @@ fgcapture.sh --args -g vfs_read,vfs_write -d 1       # arguments (no retaddr; re
 - **Flexible usage**: `--vmlinux` is optional; `--config`/`--preset` read defaults from an INI file; input can be `-` (stdin), `.gz/.xz/.bz2` or several files merged by timestamp; `--source-url`/`--source-rev` fetch sources from a URL or a git revision and check that they match; `--export` writes the analyses as JSON/CSV.
 - **Large traces**: above ~150k lines the text view becomes too heavy for browsers; use a pre-filter or `--timeline --no-text-view` (362k lines: 15.7 MB, opens in about a second). Reopening a report saved on Timeline/Compare suppresses Text rendering before trace lines are parsed, instead of painting the entire text page first. With at least 1 MiB of Timeline JSON, first opening Timeline shows preparation stages; **Back to Text**, **Escape**, or another tab cancels between work chunks. Completed models are cached. Text/source content stays intact, and line anchors still open Text. This is main-thread cooperative preparation, not text virtualization or background parsing; large individual phases and GC can still block. See the [startup measurements and readiness trade-off](docs/design.md#8-性能数据).
 
+CLI report generation streams UTF-8 sections to a temporary file and atomically publishes the complete report; failures preserve an existing report. Output must be a regular file, not a device such as `/dev/null`. The exact complete HTML byte count prepares for size-based sidecar selection, but **automatic sidecar and text virtualization are not implemented yet**. This generation change does not alter browser loading; see the [separate generation measurements](docs/design.md#83-分段写出的生成阶段内存2026-11-10).
+
 ## Capturing Trace
 
 ### Recommended Settings

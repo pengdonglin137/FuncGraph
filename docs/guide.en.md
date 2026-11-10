@@ -989,6 +989,8 @@ The screenshot pauses the real sample's first preparation stage; it does not dep
 
 Preparation stays on the **main thread**, yielding between model phases and batches of 8,192 inline calls. The cooperative 8 ms work budget is not a hard limit: JSON parsing, sorting, individual phases, style/layout and garbage collection can still block. Painting the status and allowing cancellation do **not** mean the canvas is ready, nor guarantee a shorter total startup time. The full Text DOM is still present. For a large report without saved state, pre-filtering or `--no-text-view` remains recommended. See the [design measurements](design.md#8-性能数据) for separate feedback, full-readiness and long-task timings.
 
+Report generation now streams UTF-8 sections instead of assembling one complete HTML string. It publishes the file atomically after a successful render; a failure preserves the previous report. The output must be a regular file (not `/dev/null`, a FIFO or a directory), and the destination directory must be writable. Existing file permissions and output symlinks are preserved. The legacy Python `generate_html()` string API remains available. This is groundwork for selecting sidecar only when the **complete single-file HTML byte count strictly exceeds a configurable threshold**; automatic selection, a default threshold and text virtualization are not available yet. It does not change browser loading. See the [generation measurements](design.md#83-分段写出的生成阶段内存2026-11-10), including the near-unchanged peak RSS with kernel symbols.
+
 **The timeline has no gaps and says compressed time**
 
 The trace was captured without `funcgraph-abstime`.

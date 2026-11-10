@@ -301,6 +301,8 @@ fgcapture.sh --args -g vfs_read,vfs_write -d 1       # 采参数（不开 retadd
 - **更灵活的用法**：`--vmlinux` 可选；`--config`/`--preset` 从 INI 文件读取默认参数；输入支持 `-`（stdin）、`.gz/.xz/.bz2` 和多个文件按时间戳合并；`--source-url`/`--source-rev` 从 URL 或 git 指定版本获取源码并检查版本是否一致；`--export` 把分析结果导出为 JSON/CSV。
 - **大 trace**：超过约 15 万行时文本视图对浏览器负担太重，请用预过滤或 `--timeline --no-text-view`（36 万行：15.7 MB，约 1 秒打开）。重开停留在 Timeline/Compare 的报告时，会在解析文本行之前抑制 Text 渲染，避免先绘制整个文本页再切换。Timeline JSON 达到 1 MiB 时，首次打开时间轴显示准备阶段；**Back to Text**、**Escape** 或切换标签页可在工作块之间取消，完成的模型会缓存。文本和源码仍完整保留，行号锚点仍优先打开 Text。这是主线程协作式准备，不是文本虚拟化或后台解析，较大的单阶段和 GC 仍可能阻塞；实测效果与完整就绪耗时的取舍见 [性能数据](docs/design.md#8-性能数据)。
 
+CLI 生成报告时分段写入 UTF-8 临时文件，完整生成后原子发布；失败会保留已有报告。输出目标必须是普通文件，不支持 `/dev/null` 等设备。完整 HTML 的精确字节计数为后续按大小分流提供基础，但**自动 sidecar 和文本虚拟化尚未实现**；本次生成改动不改变浏览器加载路径，实测见 [生成阶段性能](docs/design.md#83-分段写出的生成阶段内存2026-11-10)。
+
 ## 抓取 Trace
 
 ### 推荐设置

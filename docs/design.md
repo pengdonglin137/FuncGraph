@@ -28,6 +28,7 @@ fglib/
   parser.py               FtraceParser：文本 → FtraceLine 列表，配对折叠块
   resolver.py             AddressResolver：func+off/len → 源码位置（调用 faddr2line）
   report.py               HtmlGenerator：拼装 HTML（内容行、信息面板、内嵌数据）
+  output.py               ReportSpool：UTF-8 分段写出、精确字节计数、原子发布
   assets.py               读取 assets/ 下的前端文件
   timeline.py             TimelineBuilder：按任务重建调用切片、错误链、唤醒、开销修正
   btf.py                  BTF 解析：函数返回类型分类
@@ -50,6 +51,7 @@ docs/design.md            本文
 constants ← util ← highlight ← resolver ← report ← cli
           ← model ← parser ───────────────────↗
           ← assets ← report
+          ← output ← report
             btf, timeline（只被 cli 使用，彼此独立）
 ```
 
@@ -70,15 +72,23 @@ list[FtraceLine]
   │      ├─ btf.build_return_db()      vmlinux / .ko / --btf 的返回类型
   │      └─ TimelineBuilder.build()    → 按列存储的 dict（tlData）
   ▼
-HtmlGenerator.generate()
+write_html() → HtmlGenerator.iter_sections()
   ├─ _prepare_data()                   函数名链接、过滤器字段、模块 URL
-  ├─ _generate_content_lines()         每行一个 div；源码块去重放进池中
+  ├─ _iter_content_lines()             每行 yield 一个 div；源码块去重放进池中
   ├─ CSS / JS（assets）                文本视图；有 tlData 时追加时间轴
+  ├─ ReportSpool                       编码写入同目录临时文件，记录区段字节范围
+  └─ publish()                         完成后 flush/fsync/os.replace
   ▼
 output.html
 ```
 
 `cli.main()` 分为几个阶段：`build_parser()` → `validate_args()` → `collect_module_dirs()` → `find_faddr2line()` → 解析 → （时间轴）→ 生成 → 写文件。
+
+CLI 不再拼装完整 HTML 字符串；`generate_html()` / `HtmlGenerator.generate()` 仍返回原来的 `(html_str, vmlinux_time, module_time)`，供旧调用者使用。命名区段区分文本、源码池、Timeline/Compare 数据和界面脚本；相邻同名区段合并，索引不会为每行保存一个对象。`ReportSpool.copy_sections()` 按原顺序提取区段，每次最多读取 1 MiB，并恢复文件位置，为后续 sidecar 输出提供边界。
+
+只有完整渲染后才能比较大小：`byte_count` 是最终 HTML 的未压缩 UTF-8 字节数，`exceeds_threshold()` 使用严格 `>`（等于阈值不触发）；不是 trace、JSON 或 DOM 大小。当前只实现计数/提取基础，**尚未接入自动 sidecar 或新的输出模式参数**。源码池和各视图 JSON 仍各自完整序列化，解析结果和模型仍常驻内存，不是全流水线常量内存。
+
+临时文件与目标位于同一目录，仅在完整写入且 flush/fsync 成功后原子替换；生成、写入或替换失败会清理临时文件并保留原报告。新文件遵循 umask，已有普通文件保留权限，输出符号链接保留且更新其实际目标。输出目标必须是普通文件（或尚不存在的路径）；目录、设备和 FIFO 会报错，不能再用 `--output /dev/null`。原子替换需要目标目录可写；这不承诺断电后的目录项持久性。
 
 faddr2line 的查找顺序：`<kernel-src>/scripts/faddr2line`，然后 PATH，最后是自带的 `fastfaddr2line.py`。只要指定了 `--fast`，即使找到了原生工具，vmlinux 的解析也改用 `fastfaddr2line.py`。`CROSS_COMPILE` 和 `LLVM` 环境变量决定使用哪个 `addr2line`。
 
@@ -353,6 +363,17 @@ python3 tests/benchmark_startup.py /tmp/before-no-text.html /tmp/after-no-text.h
 
 文本视图的体积主要来自每行的 `data-*` 属性和高亮 span。超过约 15 万行时 CLI 会提示改用预过滤或 `--no-text-view`。文本视图的虚拟列表（按需生成 DOM）还没做，见第 11 节。
 
+### 8.3 分段写出的生成阶段内存（2026-11-10）
+
+对照 `19b144c53fcc` 与分段写出版本，使用同一真实 traceB（SHA-256 同 §8.1），独立 Python 进程，三轮交替次序，`/usr/bin/time` 记录 wall time 和峰值 RSS；不清文件缓存、无并行重负载。不是浏览器测量，也不是只计写文件函数的微基准。
+
+| 配置 | wall time 中位数，修改前 → 后 | 峰值 RSS 中位数，修改前 → 后 |
+|---|---|---|
+| 带真实内核符号：`--timeline --enable-fold --filter --func-links --fast --vmlinux /vol_1t/raspi/linux/vmlinux --kernel-src /vol_1t/raspi/linux`，`CROSS_COMPILE=aarch64-linux-gnu-`，HTML 约 114.75 MB | 18.56 → 18.25s | 739256 → 739096 KiB，基本不变 |
+| 无符号解析控制组：仅 `--timeline --enable-fold --filter`，不传内核或符号路径，HTML 约 94.68 MB | 6.17 → 6.08s | 564544 → 141624 KiB，约减少 75% |
+
+两组均设置 `FG_CONFIG=/dev/null`。新旧完整 HTML 经现有 golden 规范化（仅耗时、生成时间及环境/输出元数据）逐字一致，包含全部 Text、源码池和模型。流式写出避免了完整报告字符串的重复拼接，但带符号流水线的整体峰值没有明显改善；不能把控制组比例推广到所有生成场景，也未据此证明具体哪个阶段主导内存。输出内容和浏览器加载路径不变，**不表示大型 Timeline 打开已因此加快，也不表示 sidecar/按需加载已经实现**。
+
 ## 9. 自测
 
 ```bash
@@ -367,6 +388,7 @@ python3 tests/golden.py --update   # 修改代码前先记录基线
 | `test_btf.py` | 用代码构造 BTF 数据和最小 ELF，测试类型分类、`.BTF` 段读取、split BTF、原始数据作为基础、错误的 magic；设置 `FG_VMLINUX` 时再测真实 vmlinux |
 | `test_timeline.py` | 构造的边界格式（完整选项、无 proc、孤儿行、无 duration、上下文切换、BTF 过滤）；pi4 上 6 种选项组合实测数据的模式和能力识别；所有切片的不变量；`FG_TRACES` 可以指定额外的 trace |
 | `test_report.py` | 用假的 vmlinux 和 faddr2line 跑完整命令行：功能标记、行数、懒加载池、折叠引用、有无时间轴时文本部分一致、HTML 和 `<script>` 注入、`node --check` 检查所有内联脚本、每种实测数据都能生成时间轴 |
+| `test_output.py` | UTF-8 精确大小与严格阈值、单次增量迭代、区段合并/有界提取、旧字符串 API 字节一致、权限/符号链接/普通文件约束、生成及写入/发布失败不破坏旧报告 |
 | `test_fastfaddr2line.py` | 符号匹配：精确长度、别名、编译器后缀、同名符号按长度区分、entry offset、最后一个符号；设置 `FG_VMLINUX` 时与内核的 `scripts/faddr2line` 对比结果 |
 | `test_browser.py` | Playwright：展开源码块、折叠、错误导航和跳到文本、过滤联动、范围汇总、主题和配色切换，同时检查页面没有 JS 错误 |
 | `test_prefilter.py` | 各过滤条件、保留完整调用树、时间窗口语义、过滤后的实测数据仍满足不变量 |

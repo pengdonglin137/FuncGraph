@@ -13,7 +13,7 @@ import lzma
 
 from . import config, inputs, prefilter
 from .parser import parse_ftrace_file
-from .report import generate_html
+from .report import write_html
 from .util import check_gawk_available, find_module_path, verbose_print
 
 
@@ -517,32 +517,38 @@ def main():
         except ValueError as e:
             print(f"Error: {e}", file=sys.stderr)
             sys.exit(1)
-    html_content, vmlinux_time, module_time = generate_html(
-        text_lines,
-        vmlinux_path,
-        faddr2line_path,
-        module_dirs=module_dirs,  # 传递原始模块目录列表（用于auto-search）
-        base_url=args.base_url,
-        module_url=args.module_url,  # 传递模块URL
-        kernel_src=kernel_src_abs,  # 传递单个绝对路径
-        use_list=use_list,
-        verbose=args.verbose,
-        fast_mode=args.fast,  # 传递fast_mode参数
-        highlight_code=args.highlight_code,  # 传递highlight_code参数
-        path_prefix=path_prefix,  # 传递原始路径列表
-        module_src=module_srcs_abs,  # 传递处理后的绝对路径列表（用于路径清理）
-        module_srcs=module_srcs_abs,  # 传递处理后的绝对路径列表（用于fastfaddr2line查找源码）
-        script_args=args,  # 传递命令行参数用于显示
-        enable_filter=args.filter,  # 传递过滤器开关
-        parse_time=parse_time,  # 传递解析时间
-        total_time=0,  # 占位符，稍后计算
-        func_links=args.func_links,  # 传递函数名超链接开关
-        entry_offset=args.entry_offset,  # 传递函数入口地址偏移量
-        enable_fold=args.enable_fold,  # 传递折叠功能开关
-        timeline_json=timeline_json,
-        compare_json=compare_json,
-        source_provider=source_provider
-    )
+    try:
+        report_output, vmlinux_time, module_time = write_html(
+            args.output,
+            text_lines,
+            vmlinux_path,
+            faddr2line_path,
+            module_dirs=module_dirs,  # 传递原始模块目录列表（用于auto-search）
+            base_url=args.base_url,
+            module_url=args.module_url,  # 传递模块URL
+            kernel_src=kernel_src_abs,  # 传递单个绝对路径
+            use_list=use_list,
+            verbose=args.verbose,
+            fast_mode=args.fast,  # 传递fast_mode参数
+            highlight_code=args.highlight_code,  # 传递highlight_code参数
+            path_prefix=path_prefix,  # 传递原始路径列表
+            module_src=module_srcs_abs,  # 传递处理后的绝对路径列表（用于路径清理）
+            module_srcs=module_srcs_abs,  # 传递处理后的绝对路径列表（用于fastfaddr2line查找源码）
+            script_args=args,  # 传递命令行参数用于显示
+            enable_filter=args.filter,  # 传递过滤器开关
+            parse_time=parse_time,  # 传递解析时间
+            total_time=0,  # 占位符，稍后计算
+            func_links=args.func_links,  # 传递函数名超链接开关
+            entry_offset=args.entry_offset,  # 传递函数入口地址偏移量
+            enable_fold=args.enable_fold,  # 传递折叠功能开关
+            timeline_json=timeline_json,
+            compare_json=compare_json,
+            source_provider=source_provider
+        )
+        verbose_print(f"Output written to: {args.output} ({report_output.byte_count} bytes)", args.verbose)
+    except Exception as error:
+        print(f"Error writing output file: {str(error)}", file=sys.stderr)
+        sys.exit(1)
 
     # 计算总时间
 
@@ -557,15 +563,6 @@ def main():
     print(f"Total lines: {len(parsed_lines)}")
     print(f"Expandable entries: {sum(1 for l in parsed_lines if l['expandable'])}")
     print("=============================\n")
-    
-    # 写入输出文件
-    try:
-        with open(args.output, 'w') as f:
-            f.write(html_content)
-        verbose_print(f"Output written to: {args.output}", args.verbose)
-    except Exception as e:
-        print(f"Error writing output file: {str(e)}", file=sys.stderr)
-        sys.exit(1)
     
     print(f"Generated interactive visualization: {args.output}")
     print(f"Processed {len(parsed_lines)} lines, with {expandable_count} expandable entries")

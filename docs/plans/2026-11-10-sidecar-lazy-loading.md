@@ -1,6 +1,6 @@
 # 大报告 sidecar 与按需加载方案
 
-状态：设计提案，尚未实现。用户确认边界：**仅预计 HTML 超过可配置大小阈值时，才自动使用 sidecar 按需加载；小报告保持单文件。** 现有 `--no-text-view` 和单文件 HTML 行为不变。
+状态：输出基础已落地，sidecar 与前端按需加载尚未实现。用户确认边界：**仅完整 HTML 超过可配置大小阈值时，才自动使用 sidecar 按需加载；小报告保持单文件。** 现有 `--no-text-view` 和单文件 HTML 行为不变。
 
 ## 问题与目标
 
@@ -8,7 +8,7 @@
 
 真实 traceB 有 72176 行、55186 个真实调用，完整报告约 114.7 MB、103.5 万 DOM 元素。首次 Text → Timeline 的诊断中，JSON.parse 约 5ms，样式更新约 115ms，GC 的 DOM embedder tracing 约 174ms。诊断 profile 有额外开销，不能替代无干扰基准，但说明只外置 Timeline JSON 并不能消除巨大 Text DOM 的负担。
 
-当前生成器在 `HtmlGenerator.generate()` 直接拼入所有文本行，再附加源码池和 Timeline/Compare JSON。源码块已经按展开懒填充，但源码池仍内嵌在报告中；Timeline 使用 DOM 文本节点读取 JSON。过滤、折叠、键盘导航、Timeline 跳转 Text 和调用点源码还依赖逐行 DOM。
+CLI 生成器已改用 `HtmlGenerator.iter_sections()` / `ReportSpool`：逐行写入临时文件、准确统计完整 UTF-8 字节数，并记录可提取的命名区段，最后原子发布。旧的 `generate_html()` 字符串 API 保留。当前没有 size/sidecar 命令行参数，也没有自动分流；阈值比较函数仅为后续实现提供基础。源码池与 Timeline/Compare JSON 仍各自完整序列化并内嵌；Timeline 使用 DOM 文本节点读取 JSON。过滤、折叠、键盘导航、Timeline 跳转 Text 和调用点源码还依赖逐行 DOM。
 
 目标不是把一个大文件换成几个同时加载的大文件，而是：首屏不传输、不解析、不创建未使用的内容；已访问内容复用缓存；不牺牲完整 trace 语义。
 
@@ -59,6 +59,8 @@ report/
 Worker 是独立的第二步：仅 fetch JSON 不会把 JSON 解析和模型准备自动移出主线程。可在消除巨大常驻 Text DOM 后重新 profile，决定哪些纯模型阶段值得迁移；不把大量结构化对象往返复制当成免费操作。
 
 ## 分阶段落地与验收
+
+前置输出基础已完成：精确 UTF-8 计数、严格阈值比较、连续区段合并、有界区段提取、失败时保留旧文件。七组单文件 golden 不放宽白名单；真实 traceB 的符号/无符号两组生成性能分别记录在 [设计文档 §8.3](../design.md#83-分段写出的生成阶段内存2026-11-10)。这只移除了完整 HTML 字符串的构造，不是 sidecar 功能完成；以下三阶段仍待实现，默认阈值也未确定。
 
 1. **资源提供者 + 显式 sidecar**：轻量外壳按标签读取 Timeline/Compare，首先避免 Timeline 首屏加载逐行文本；单文件 golden 保持原行为。资源错误、取消、重入及静态 HTTP 打开均测试。
 2. **Text 按块 + 虚拟化 + 源码按需**：接入完整元数据索引，验证过滤/折叠/键盘/锚点/源码/导出和跨块调用树，不接受“只能分析当前可见行”。

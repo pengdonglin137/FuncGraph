@@ -80,6 +80,7 @@ fglib/highlight.py    ftrace line + C source highlighting
 fglib/parser.py       FtraceParser: text -> list[FtraceLine], fold pairing
 fglib/resolver.py     AddressResolver: func+off/len -> source via (fast)faddr2line
 fglib/report.py       HtmlGenerator: content lines, info panel, embedded data
+fglib/output.py       ReportSpool: UTF-8 section ranges, exact bytes, atomic file publication
 fglib/assets.py       reads assets/ (report + timeline JS/CSS)
 fglib/timeline.py     TimelineBuilder: per-task slices, off-CPU, windows, error chains -> tlData
 fglib/btf.py          BTF reader: function return-type classes
@@ -113,6 +114,7 @@ Data flow: `FtraceParser.parse()` → `AddressResolver.resolve_batch()` → (opt
 - Source blocks are de-duplicated: each `.expanded-content` div is empty with `data-src="N"`, the HTML lives in `<script id="fgSrc">` (JSON array) and `fgFill(el)` fills it before any `content.style.display = 'block'`. Any new code that shows an expanded block must call `fgFill` first.
 - Fold ids are `f<base36 entry line index>`; `data-fold-ancestors` is a space-separated list of them.
 - Only `#content` uses `width: fit-content; min-width: 100%` so long trace lines retain native horizontal scrolling without widening the page header. Keep the outer container viewport-sized.
+- CLI output uses `report.write_html()` → `HtmlGenerator.iter_sections()` → `ReportSpool`, not the legacy `generate_html()` string API. Named section ranges coalesce; `byte_count` measures the complete uncompressed UTF-8 HTML and threshold comparison is strictly `>`. Publication is atomic after flush/fsync, preserves ordinary-file modes and output symlinks, and rejects devices/FIFOs/directories. Source/view JSON serialization is still whole-payload. This is output groundwork only: automatic sidecar, a default size threshold and text virtualization are not yet implemented; see `docs/plans/2026-11-10-sidecar-lazy-loading.md` and design §8.3 for separate symbol/no-symbol generation measurements.
 - Timeline height is viewport-bounded; flex layout reserves at least 160 px for the stage and 60 px for an open detail panel. Toolbar and notes shrink into independently scrollable areas in compact windows; do not restore unbounded control groups or size the stage from its old top offset.
 - Timeline `flags` bit layout is shared by `fglib/timeline.py` (`F_*`) and `assets/timeline/model.js` (`FL`); change both together.
 - Timeline JS files `model/render/interact/analysis/panels.js` are concatenated into the shared generator closure `__tlSteps()` (order in `fglib/assets.py`); `__tlBoot()` drains it synchronously. Extra tabs register in `window.fgViews` and are wired by the global `assets/views/boot.js`; add a view in `HtmlGenerator._views()`.

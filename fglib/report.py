@@ -13,6 +13,7 @@ from collections import defaultdict
 from .assets import COMPARE_CSS, COMPARE_JS, REPORT_CSS, REPORT_JS, TIMELINE_CSS, VIEWS_BOOT_JS, VIEWS_CSS, VIEWS_EARLY_JS, read_asset, timeline_script
 from .constants import APP_AUTHOR, APP_TITLE, APP_VERSION, ERROR_CODE_MAP, PROJECT_DIR
 from .inline import timeline_inline_map
+from .output import ReportSpool
 from .sources import rewrite as rewrite_sources
 from .highlight import highlight_ftrace_line
 from .resolver import call_faddr2line_batch, call_faddr2line_for_func_names, create_source_link, parse_list_output, parse_module_url
@@ -94,6 +95,11 @@ class HtmlGenerator:
 
     def generate(self):
         """Generate the complete HTML string. Returns (html_str, vmlinux_time, module_time)."""
+        html_str = ''.join(fragment for name, fragment in self.iter_sections())
+        return html_str, self.vmlinux_time, self.module_time
+
+    def iter_sections(self):
+        """Yield named HTML sections without assembling the complete report in memory."""
         # 1. Pre-process data
         self._prepare_data()
 
@@ -214,10 +220,19 @@ class HtmlGenerator:
         <div id="content">
 """
 
-        # 3. Generate content lines
-        html_str += self._generate_content_lines()
+        def section(name, fragment):
+            fragment = fragment.replace('{INFO_CONTENT_PLACEHOLDER}', info_content_html)
+            if self.filter_html:
+                fragment = fragment.replace('<div id="filterPlaceholder"></div>', self.filter_html)
+            return name, fragment
 
-        html_str += """
+        yield section('chrome', html_str)
+
+        # 3. Generate content lines
+        for fragment in self._iter_content_lines():
+            yield section('text', fragment)
+
+        yield section('chrome', """
         </div>""" + self._view_containers() + """
     </div>
 
@@ -240,29 +255,27 @@ class HtmlGenerator:
             <li>Folded blocks are saved in browser storage</li>
         </ul>
     </div>
-"""
-        html_str += self._source_pool_script()
-        html_str += self._generate_javascript()
-        html_str += self._timeline_scripts()
-        html_str += """</body>
+""")
+        for name, fragment in self._iter_source_parts():
+            yield section(name, fragment)
+        yield section('report_script', self._generate_javascript())
+        for name, fragment in self._iter_view_parts():
+            yield section(name, fragment)
+        yield section('end', """</body>
 </html>
-"""
+""")
 
         elapsed = time.time() - start_time
         verbose_print(f"HTML generation completed in {elapsed:.2f} seconds", self.verbose)
 
-        # 替换信息面板占位符
-        html_str = html_str.replace('{INFO_CONTENT_PLACEHOLDER}', info_content_html)
-
-        # 将过滤窗口插入到 filterPlaceholder 位置
-        if self.filter_html:
-            html_str = html_str.replace('<div id="filterPlaceholder"></div>', self.filter_html)
-
-        return html_str, self.vmlinux_time, self.module_time
-
     def _source_pool_script(self):
+        return ''.join(fragment for name, fragment in self._iter_source_parts())
+
+    def _iter_source_parts(self):
+        yield 'source_open', '    <script type="application/json" id="fgSrc">'
         data = json.dumps(self._src_pool, ensure_ascii=False, separators=(',', ':')).replace('<', '\\u003c')
-        return '    <script type="application/json" id="fgSrc">' + data + '</script>\n'
+        yield 'source_data', data
+        yield 'source_close', '</script>\n'
 
     # ---- Optional views (Timeline, Compare): tabs, containers, CSS, data, scripts ----
     def _early_view_script(self):
@@ -325,16 +338,20 @@ class HtmlGenerator:
                     f[1] = rel(f[1])
 
     def _timeline_scripts(self):
+        return ''.join(fragment for name, fragment in self._iter_view_parts())
+
+    def _iter_view_parts(self):
         views = self._views()
         if not views:
-            return ''
+            return
         self._attach_inline()
-        out = ''
         for x in views:
             data = json.dumps(x[6], separators=(',', ':')).replace('<', '\\u003c')
-            out += f'    <script type="application/json" id="{x[5]}">' + data + '</script>\n'
+            yield 'view_open:' + x[5], f'    <script type="application/json" id="{x[5]}">'
+            yield 'view_data:' + x[5], data
+            yield 'view_close:' + x[5], '</script>\n'
         # view code first (function declarations / registrations), then the boot code that wires tabs
-        return out + '    <script>\n' + ''.join(x[7] for x in views) + read_asset(VIEWS_BOOT_JS) + '    </script>\n'
+        yield 'view_script', '    <script>\n' + ''.join(x[7] for x in views) + read_asset(VIEWS_BOOT_JS) + '    </script>\n'
 
     def _prepare_data(self):
         """Pre-process data: resolve func names, collect filter data, parse module URLs.
@@ -993,10 +1010,14 @@ class HtmlGenerator:
 
         Returns a string of all line-container divs.
         """
-        content_parts = []
+        return ''.join(self._iter_content_lines())
+
+    def _iter_content_lines(self):
+        """Yield each trace row with its source placeholder, retaining stable source IDs."""
 
         # 添加行号并输出原始ftrace日志
         for idx, line_data in enumerate(self.parsed_lines):
+            content_parts = []
             line_number = idx + 1  # 行号从1开始
             line_anchor_id = f"L{line_number}"  # 使用L{行号}格式作为锚点
             line_id = f"line_{idx}"  # 保留用于JavaScript引用
@@ -1337,7 +1358,7 @@ class HtmlGenerator:
                     self._src_index[block_html] = src_idx
                 content_parts.append(f'<div class="expanded-content" id="{line_id}_content" data-src="{src_idx}" style="display: none;"></div>')
 
-        return ''.join(content_parts)
+            yield ''.join(content_parts)
 
     def _generate_javascript(self):
         """Main report JavaScript (assets/report/report.js)."""
@@ -1363,3 +1384,12 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
         source_provider=source_provider
     )
     return generator.generate()
+
+
+def write_html(path, parsed_lines, vmlinux_path, faddr2line_path, **options):
+    """Stream a complete report atomically and return output metadata and resolver times."""
+    generator = HtmlGenerator(parsed_lines, vmlinux_path, faddr2line_path, **options)
+    with ReportSpool(path) as spool:
+        spool.write_sections(generator.iter_sections())
+        written = spool.publish()
+    return written, generator.vmlinux_time, generator.module_time
