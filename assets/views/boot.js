@@ -163,7 +163,7 @@
         const tabs = one('.view-tabs');
         chrome = {
             hide: [one('.controls'), document.getElementById('content'), document.getElementById('progressBar'),
-                   document.getElementById('floatingToggle'), document.getElementById('keyboardHint')].filter(Boolean),
+                   document.getElementById('floatingToggle')].filter(Boolean),
             wide: [one('.container')].filter(Boolean),
             top: [one('.page-header'), tabs].filter(Boolean),
             tabs: tabs ? Array.from(tabs.querySelectorAll('.view-tab')) : [],
@@ -180,6 +180,7 @@
             return api;
         }
         if (current === 'text') textScroll = window.scrollY;
+        if (typeof closeKeyboardHint === 'function') closeKeyboardHint();
         cancel(current);
         for (const [name, v] of Object.entries(views)) {
             const el = document.getElementById(v.el);

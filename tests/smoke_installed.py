@@ -66,6 +66,8 @@ class InstalledPackageTest(unittest.TestCase):
                          '--output', str(output), str(trace))
         report = output.read_text(encoding='utf-8')
         self.assertIn('id="foldGuidesBtn"', report)
+        self.assertIn('id="viewHelpBtn"', report)
+        self.assertIn('data-help-view="compare" hidden', report)
         self.assertIn('id="fgTreeGuides"', report)
         self.assertIn(read_asset('report/tree.css'), report)
         self.assertIn('data-fold-end="L4"', report)

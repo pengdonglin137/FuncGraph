@@ -475,7 +475,16 @@
         
         // 显示键盘提示
         function showKeyboardHint() {
+            const view = typeof fgCurrentView === 'function' ? fgCurrentView() : 'text';
+            if (view === 'timeline') {
+                Promise.resolve(fgSwitchView(view)).then(api => {
+                    if (fgCurrentView() === view && api && api.showHelp) api.showHelp();
+                });
+                return;
+            }
             const hint = document.getElementById('keyboardHint');
+            hint.querySelectorAll('[data-help-view]').forEach(section => { section.hidden = section.dataset.helpView !== view; });
+            hint.setAttribute('aria-label', view === 'compare' ? 'Compare help' : 'Text view help');
             hint.style.display = 'block';
             
             // 8秒后自动隐藏
@@ -2030,9 +2039,15 @@
 
         // 添加键盘快捷键支持
         document.addEventListener('keydown', function(event) {
+            if (event.key === 'Escape' && !event.target.matches('input, textarea, select') &&
+                document.getElementById('keyboardHint').style.display === 'block') {
+                event.preventDefault();
+                closeKeyboardHint();
+                return;
+            }
             if (typeof fgCurrentView === 'function' && fgCurrentView() !== 'text') return;
             if ((event.key === 'Enter' || event.key === ' ') &&
-                event.target.closest('.fold-icon, .fold-brace, #foldGuidesBtn')) return;
+                event.target.closest('.fold-icon, .fold-brace, #foldGuidesBtn, #viewHelpBtn, .keyboard-hint-close')) return;
             
             // 检查是否在输入框中
             if (event.target.matches('input, textarea, select')) {

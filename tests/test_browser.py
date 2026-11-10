@@ -121,6 +121,9 @@ class BrowserSmokeTest(unittest.TestCase):
         self.assertEqual(self.ev('fgCurrentView()'), 'timeline')
         self.assertGreater(self.ev("fgView('timeline').probe().N"), 100)
 
+        self.page.locator('#viewHelpBtn').click()
+        self.page.wait_for_selector('.tl-help.show')
+
     def test_plain_report_has_early_theme_and_text_keyboard_focus(self):
         self.k.run(helpers.fixture('pi4_default'), out='plain.html')
         self.load_startup_report(saved='timeline', theme='dark', filename='plain.html')
@@ -131,6 +134,8 @@ class BrowserSmokeTest(unittest.TestCase):
         self.assertTrue(self.ev("typeof fgInitialView === 'undefined'"))
         self.ev('toggleTheme()')
         self.assertEqual(self.ev("document.documentElement.getAttribute('data-theme')"), 'light')
+        self.page.locator('#viewHelpBtn').click()
+        self.assertTrue(self.page.locator('#keyboardHint').is_visible())
 
     def stage_timeline(self, slow=False):
         self.ev('''slow => {
@@ -331,6 +336,97 @@ class BrowserSmokeTest(unittest.TestCase):
         self.page.click('.filter-btn')
         self.page.wait_for_timeout(300)
         self.assertIn('Filtered:', self.ev("document.querySelector('.header-stats').innerText"))
+
+    def test_header_help_opens_the_active_views_help(self):
+        for view, expected in [('text', 'Keyboard Shortcuts'), ('timeline', 'Navigate'), ('compare', 'Compare Help')]:
+            with self.subTest(view=view):
+                self.ev('view => fgSwitchView(view)', view)
+                self.page.locator('.header-actions button').filter(has_text='?').click()
+                panel = self.page.locator('.tl-help' if view == 'timeline' else '#keyboardHint')
+                self.assertTrue(panel.is_visible())
+                self.assertIn(expected, panel.inner_text())
+                self.assertEqual(self.ev('fgCurrentView()'), view)
+                self.page.keyboard.press('Escape')
+                self.assertFalse(panel.is_visible())
+
+    def test_header_help_native_buttons_and_compact_themes(self):
+        for view, theme, width in product(['text', 'timeline', 'compare'], ['light', 'dark'], [390, 1500]):
+            with self.subTest(view=view, theme=theme, width=width):
+                self.page.set_viewport_size(dict(width=width, height=700))
+                self.ev('theme => document.documentElement.dataset.theme = theme', theme)
+                self.ev('view => fgSwitchView(view)', view)
+                button = self.page.locator('#viewHelpBtn')
+                button.focus()
+                button.press('Enter')
+                panel = self.page.locator('.tl-help' if view == 'timeline' else '#keyboardHint')
+                self.page.wait_for_function('selector => getComputedStyle(document.querySelector(selector)).display !== "none"',
+                                            arg='.tl-help' if view == 'timeline' else '#keyboardHint')
+                self.assertTrue(panel.is_visible())
+                self.assertTrue(panel.evaluate('element => { const box = element.getBoundingClientRect(); return box.left >= 0 && box.right <= innerWidth && box.top >= 0 && box.bottom <= innerHeight; }'))
+                close = panel.get_by_role('button', name='Close help', exact=True)
+                close.focus()
+                close.press('Space')
+                self.assertFalse(panel.is_visible())
+                self.assertEqual(self.ev('fgCurrentView()'), view)
+
+    def test_timeline_help_has_one_visible_entry_in_normal_and_maximized_layouts(self):
+        self.ev("fgSwitchView('timeline')")
+        header = self.page.locator('#viewHelpBtn')
+        fallback = self.page.locator('.tl-toolbar [data-act=help]')
+        for width in [390, 1500]:
+            with self.subTest(width=width):
+                self.page.set_viewport_size(dict(width=width, height=700))
+                self.assertTrue(header.is_visible())
+                self.assertFalse(fallback.is_visible())
+                self.page.locator('[data-act=max]').click()
+                self.assertFalse(header.is_visible())
+                self.assertTrue(fallback.is_visible())
+                fallback.focus()
+                fallback.press('Enter')
+                panel = self.page.locator('.tl-help')
+                self.assertTrue(panel.is_visible())
+                self.assertIn('Search and filter', panel.inner_text())
+                self.page.keyboard.press('Escape')
+                self.assertFalse(panel.is_visible())
+                self.ev("fgSwitchView('text')")
+                self.assertTrue(header.is_visible())
+                self.ev("fgSwitchView('timeline')")
+                self.assertFalse(header.is_visible())
+                self.assertTrue(fallback.is_visible())
+                self.page.locator('[data-act=max]').click()
+                self.assertTrue(header.is_visible())
+                self.assertFalse(fallback.is_visible())
+
+    def test_header_help_waits_for_preparation_and_closes_shared_popup_on_switch(self):
+        self.stage_timeline(slow=True)
+        facts = self.ev('''() => {
+            window.helpStage = fgSwitchView('timeline');
+            document.getElementById('viewHelpBtn').click();
+            return {canvas:!!document.querySelector('.tl-canvas'), busy:document.getElementById('timelineView').getAttribute('aria-busy')};
+        }''')
+        self.assertEqual(facts, dict(canvas=False, busy='true'))
+        self.page.wait_for_selector('.tl-help.show')
+        self.assertTrue(self.ev('async () => !!(await helpStage)'))
+        self.assertEqual(self.ev('stageFactories'), 1)
+        self.ev("fgSwitchView('text')")
+        self.ev("fgSwitchView('compare')")
+        self.page.locator('#viewHelpBtn').click()
+        self.assertTrue(self.page.locator('#keyboardHint').is_visible())
+        self.ev("fgSwitchView('text')")
+        self.assertFalse(self.page.locator('#keyboardHint').is_visible())
+
+    def test_header_help_cancelled_preparation_does_not_open_stale_help(self):
+        self.stage_timeline(slow=True)
+        self.ev('''() => {
+            window.cancelledHelp = fgSwitchView('timeline');
+            document.getElementById('viewHelpBtn').click();
+            fgSwitchView('compare');
+        }''')
+        self.assertTrue(self.ev('async () => await cancelledHelp === null'))
+        self.page.wait_for_timeout(100)
+        self.assertEqual(self.ev('fgCurrentView()'), 'compare')
+        self.assertEqual(self.page.locator('.tl-help.show').count(), 0)
+        self.assertFalse(self.page.locator('#keyboardHint').is_visible())
 
     def test_page_header_stays_in_viewport_with_wide_trace(self):
         for width, height in [(1500, 900), (800, 600), (390, 844), (320, 700)]:

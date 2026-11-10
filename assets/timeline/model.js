@@ -493,7 +493,7 @@ tlRoot.innerHTML = `
     <button class="tl-btn" data-act="an-lat" title="Scheduling latency: need-resched windows and what delayed them">Sched latency</button>
     <button class="tl-btn" data-act="notes" title="Show / hide the notes about this trace">Notes</button>
     <button class="tl-btn" data-act="max" title="Maximize: hide the page header and tabs (M)">Max</button>
-    <button class="tl-btn" data-act="help" title="Help (?)">?</button>
+    <button class="tl-btn" data-act="help" title="Timeline help (?)" aria-label="Timeline help" hidden>?</button>
   </span>
   <span class="tl-group tl-filterbar"><span class="tl-label">Filter</span>
   <input class="tl-ftext" placeholder="same syntax as the text view, e.g. pid:1234 AND graph:vfs_read" spellcheck="false">
@@ -505,7 +505,7 @@ tlRoot.innerHTML = `
 <div class="tl-stage">
   <canvas class="tl-head-canvas"></canvas>
   <div class="tl-scroll"><canvas class="tl-canvas" tabindex="0" aria-label="Interactive function timeline. Press question mark for keyboard shortcuts."></canvas><div class="tl-spacer"></div></div>
-  <div class="tl-help"></div>
+  <div class="tl-help" role="dialog" aria-label="Timeline help"></div>
 </div>
 <div class="tl-resizer" title="Drag to resize the panel, double-click to reset"></div>
 <div class="tl-detail"></div>

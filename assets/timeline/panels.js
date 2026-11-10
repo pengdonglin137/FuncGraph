@@ -423,6 +423,7 @@ function setMax(on) {
     document.body.classList.toggle('tl-max', on);
     window.fgPageChrome().top.forEach(e => e.classList.toggle('fg-off', on));
     tlRoot.querySelector('[data-act=max]').classList.toggle('on', on);
+    tlRoot.querySelector('[data-act=help]').hidden = !on;
     resize();
 }
 elDetail.addEventListener('click', ev => {
@@ -771,12 +772,18 @@ function refreshPanel() {
 })();
 
 elHelp.innerHTML = `
+<button class="tl-btn tl-help-close" type="button" aria-label="Close help">×</button>
+<h4>Timeline Help</h4>
 <h4>Navigate</h4><ul>
 <li><kbd>W</kbd>/<kbd>S</kbd> or <kbd>Ctrl</kbd>+wheel: zoom at cursor</li>
 <li><kbd>A</kbd>/<kbd>D</kbd>, drag, or <kbd>Shift</kbd>+wheel: pan</li>
 <li>Wheel: scroll tracks · click track header: collapse</li>
 <li><kbd>0</kbd> fit all · <kbd>F</kbd> zoom to selection · double-click: zoom to slice</li>
 <li><kbd>Shift</kbd>+drag: summarize a range in this track (<kbd>Shift</kbd>+<kbd>Alt</kbd>: all tracks)</li></ul>
+<h4>Search and filter</h4><ul>
+<li><b>Search</b>: function-name regex; highlights matches and navigates between calls with Enter / Shift+Enter.</li>
+<li><b>Filter</b>: conditions such as <code>pid:1234 AND graph:vfs_read</code>, applied with Enter and shared with Text. Analysis panels use this filter, not the search expression.</li>
+<li>Search navigation stays within the filtered calls. <b>Hide unmatched</b> hides tracks without filter matches.</li></ul>
 <h4>Select</h4><ul>
 <li>Call details have native navigation buttons: <kbd>↑</kbd> recorded parent · <kbd>↓</kbd> first recorded child · <kbd>[</kbd>/<kbd>]</kbd> recorded siblings (task roots stay within the task); synthetic frames are skipped</li>
 <li><kbd>E</kbd>/<kbd>Shift+E</kbd> next/prev error · <kbd>/</kbd> search, <kbd>N</kbd>/<kbd>Shift+N</kbd> next/prev match</li>
@@ -807,6 +814,10 @@ elHelp.innerHTML = `
 <i style="background:#8fb3ef;border-right:2px dotted #6b7280"></i><span>dotted right / left edge: exit / entry not captured</span>
 <i style="background:#d32f2f;clip-path:polygon(50% 0,100% 100%,0 100%)"></i><span>error origin too narrow to label (triangle)</span>
 <i style="background:#f0a35a;height:3px"></i><span>CPU track strip: hardirq (orange) / softirq (green) / NMI (purple)</span></div>`;
+elHelp.querySelector('.tl-help-close').addEventListener('click', () => {
+    elHelp.classList.remove('show');
+    elCv.focus({ preventScroll: true });
+});
 
 // ---- init ----
 palette();
@@ -860,4 +871,4 @@ const probe = () => ({ N, NA, SYN, S, sName, sStart, sEnd, sDepth, sParent, sTas
     range: (s, e, track) => { range = { s: s, e: e, track: track === undefined ? null : track }; select(-1); showRangeSummary(); draw(); },
     errors: showErrors, latency: showLatency, sections: showSections, dist: showDist, wait: showWaitChain,
     inline: (on) => { if (!!on !== inlineView) toggleInlineView(); } });
-return { resize: resize, revealLine: revealLine, draw: draw, probe: probe };
+return { resize: resize, revealLine: revealLine, draw: draw, probe: probe, showHelp: () => elHelp.classList.add('show') };

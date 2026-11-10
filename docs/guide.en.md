@@ -450,6 +450,10 @@ The filter is shared with the timeline (6.6).
 
 ### 5.8 Keyboard and mouse
 
+The top-right header **?** is the shared help entry, with content specific to the active view: Text keyboard/folding shortcuts, Timeline zoom/navigation/Search-versus-Filter/legend, or Compare filtering/sorting/export guidance. Timeline no longer duplicates the button in its normal toolbar; a toolbar fallback appears only when maximization hides the header. Buttons support native Enter/Space; use the close button or Escape to dismiss. Switching views closes the shared Text/Compare hint. Timeline help waits for preparation without forcing synchronous initialization; canceled or superseded requests cannot open stale help.
+
+![tl_help](img/tl_help.png)
+
 | Action | Effect |
 |---|---|
 | `j` / `k` or ↓ / ↑ | next / previous expandable line |
@@ -474,7 +478,7 @@ The filter is shared with the timeline (6.6).
 From top to bottom:
 
 1. **Toolbar, first row**: Color (color mode), Overlay (layer switches), function search, error navigation.
-2. **Toolbar, second row**: Fit (show all), Tracks (expand / collapse all tracks), Tasks (task navigator, 7.7), Overhead (measured / subtracted), Inline (inline frames), Errors, Sections, Sched latency (the analysis panels), Notes (collapse / expand the notes), Max (hide the page header and tabs, `M`), ? (help and legend), then **Filter**: the filter expression shared with the text view, see 6.6. Narrow windows wrap the toolbar into more rows.
+2. **Toolbar, second row**: Fit (show all), Tracks (expand / collapse all tracks), Tasks (task navigator, 7.7), Overhead (measured / subtracted), Inline (inline frames), Errors, Sections, Sched latency (the analysis panels), Notes (collapse / expand the notes), Max (hide the page header and tabs, `M`), then **Filter**: the filter expression shared with the text view, see 6.6. Use the shared header **?** for help; only maximized layouts show a toolbar fallback. Narrow windows wrap the toolbar into more rows.
 3. **Notes**: what this trace lacks and what that means ("No timestamps…", "Arguments are not printed…"). Blue notes are information, yellow ones need attention.
 4. **Overview strip**: the whole trace in miniature. Blue bars show how busy each moment is, red lines are error origins (tall: reached user space, short orange: handled by a caller), the blue frame is the visible range. Click or drag to jump, use the wheel to zoom.
 5. **Time axis**: the right side shows the visible span (`span`) and the absolute start time (`start`), plus `selected` for a range selection; the time under the cursor is shown next to it.

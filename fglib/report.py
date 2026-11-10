@@ -205,7 +205,7 @@ class HtmlGenerator:
             </span>
             <span class="header-actions">
                 <button class="header-btn" onclick="toggleTheme()">Theme</button>
-                <button class="header-btn" onclick="showKeyboardHint()" title="Keyboard shortcuts">?</button>
+                <button class="header-btn" id="viewHelpBtn" onclick="showKeyboardHint()" title="Help for current view" aria-label="Help for current view">?</button>
                 <button class="header-btn" onclick="toggleInfoPanel()">ⓘ</button>
             </span>
         </div>
@@ -256,8 +256,9 @@ class HtmlGenerator:
         </div>""" + self._view_containers() + """
     </div>
 
-    <div class="keyboard-hint" id="keyboardHint">
-        <button class="keyboard-hint-close" onclick="closeKeyboardHint()">×</button>
+    <div class="keyboard-hint" id="keyboardHint" role="dialog" aria-label="Text view help">
+        <button class="keyboard-hint-close" type="button" onclick="closeKeyboardHint()" aria-label="Close help">×</button>
+        <div data-help-view="text">
         <h3>Keyboard Shortcuts</h3>
         <ul>
             <li><kbd>j</kbd>/<kbd>k</kbd> or <kbd>↓</kbd>/<kbd>↑</kbd>: Move to next/prev expandable line</li>
@@ -274,6 +275,17 @@ class HtmlGenerator:
             <li>Folded blocks show summary: call count, total time, return value</li>
             <li>Folded blocks are saved in browser storage</li>
         </ul>
+        </div>
+        <div data-help-view="compare" hidden>
+            <h3>Compare Help</h3>
+            <ul>
+                <li>Filter function names with a case-insensitive regular expression.</li>
+                <li>Click a metric heading to sort; choose |Δ|, Δ, Δ%, current or base.</li>
+                <li>Turn off Changed only to include unchanged functions.</li>
+                <li>Load more appends rows; Export CSV includes all matching rows.</li>
+                <li>Measured durations include tracing overhead; subtraction is an estimate.</li>
+            </ul>
+        </div>
     </div>
 """)
         for name, fragment in self._iter_source_parts():
