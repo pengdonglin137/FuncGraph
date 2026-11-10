@@ -1,0 +1,160 @@
+From dbb2f69206c37c24361a09ce2ff31b51314e0826 Mon Sep 17 00:00:00 2001
+From: pengdonglin <pengdonglin@xiaomi.com>
+Date: Wed, 11 Nov 2026 05:23:35 +0800
+Subject: [PATCH 2/4] kernel: decode return-address entries and retain raw
+ record context
+
+Register fgraph_retaddr_entry as a function entry and save its event format. Retain full-width function addresses, native depth, common PID/flags/preempt count and optional retval, return address, call/return timestamps and arguments for immediate raw export. Decode fixed, flexible, data_loc and relative argument arrays through recorded field definitions with length/alignment bounds and endian-aware reads. Reset every record before dispatch so unsupported events cannot duplicate the previous function. Preserve common_pid separately from replay task reassignment for scheduler events. Context is immediate-parser evidence only; buffered replay does not claim to retain it.
+---
+ utils/kernel-parser.c | 66 ++++++++++++++++++++++++++++++++++++++++++-
+ utils/kernel-parser.h | 10 +++++++
+ utils/kernel.c        |  3 ++
+ 3 files changed, 78 insertions(+), 1 deletion(-)
+
+diff --git a/utils/kernel-parser.c b/utils/kernel-parser.c
+index eacc1f45e91a..bcd96675abe1 100644
+--- a/utils/kernel-parser.c
++++ b/utils/kernel-parser.c
+@@ -223,7 +223,7 @@ static int generic_event_handler(struct trace_seq *s, struct tep_record *record,
+ void kparser_register_handler(struct uftrace_kernel_parser *kp, const char *sys, const char *event)
+ {
+ 	if (!strcmp(sys, "ftrace")) {
+-		if (!strcmp(event, "funcgraph_entry"))
++		if (!strcmp(event, "funcgraph_entry") || !strcmp(event, "fgraph_retaddr_entry"))
+ 			tep_register_event_handler(kp->tep, -1, sys, event, funcgraph_entry_handler,
+ 						   kp);
+ 		else if (!strcmp(event, "funcgraph_exit"))
+@@ -234,6 +234,64 @@ void kparser_register_handler(struct uftrace_kernel_parser *kp, const char *sys,
+ 		tep_register_event_handler(kp->tep, -1, sys, event, generic_event_handler, kp);
+ }
+ 
++static bool read_context_number(struct tep_event *event, struct tep_record *record,
++				const char *name, uint64_t *value)
++{
++	unsigned long long number;
++	struct tep_format_field *field = tep_find_any_field(event, name);
++
++	if (!field || field->offset < 0 || field->size <= 0 || field->size > 8 ||
++	    field->offset > record->size - field->size)
++		return false;
++	if (tep_read_number_field(field, record->data, &number))
++		return false;
++	*value = number;
++	return true;
++}
++
++static void read_kernel_context(struct uftrace_kernel_parser *kp, struct tep_event *event,
++				struct tep_record *record)
++{
++	struct uftrace_kernel_context *ctx = &kp->context;
++	struct tep_format_field *field;
++	uint64_t location;
++	int width, offset, length, index;
++
++	memset(ctx, 0, sizeof(*ctx));
++	ctx->nr_args = -1;
++	ctx->common_pid = tep_data_pid(kp->tep, record);
++	ctx->has_flags = read_context_number(event, record, "common_flags", &ctx->flags);
++	ctx->has_preempt = read_context_number(event, record, "common_preempt_count", &ctx->preempt_count);
++	if (strcmp(event->system, "ftrace"))
++		return;
++	read_context_number(event, record, "func", &ctx->func);
++	read_context_number(event, record, "depth", &ctx->depth);
++	ctx->has_retaddr = read_context_number(event, record, "retaddr", &ctx->retaddr);
++	ctx->has_retval = read_context_number(event, record, "retval", &ctx->retval);
++	ctx->has_calltime = read_context_number(event, record, "calltime", &ctx->calltime);
++	ctx->has_rettime = read_context_number(event, record, "rettime", &ctx->rettime);
++	field = tep_find_field(event, "args");
++	if (!field)
++		return;
++	width = tep_get_long_size(kp->tep);
++	offset = field->offset;
++	length = field->size ? field->size : record->size - offset;
++	if (field->flags & TEP_FIELD_IS_DYNAMIC) {
++		if (!read_context_number(event, record, "args", &location))
++			return;
++		offset = location & 0xffff;
++		length = location >> 16;
++		if (field->flags & TEP_FIELD_IS_RELATIVE)
++			offset += field->offset + field->size;
++	}
++	if ((width != 4 && width != 8) || offset < 0 || length < 0 ||
++	    offset > record->size - length || length % width || length / width > 64)
++		return;
++	ctx->nr_args = length / width;
++	for (index = 0; index < ctx->nr_args; index++)
++		ctx->args[index] = tep_read_number(kp->tep, (char *)record->data + offset + index * width, width);
++}
++
+ static int kparser_next_page(struct uftrace_kernel_parser *kp, int cpu)
+ {
+ 	munmap(kp->mmaps[cpu], kp->pagesize);
+@@ -288,6 +346,12 @@ int kparser_read_data(struct uftrace_kernel_parser *kp, struct uftrace_data *han
+ 	}
+ 
+ 	trace_seq_reset(&kp->seqbuf);
++	memset(&kp->rec, 0, sizeof(kp->rec));
++	kp->rec.type = UFTRACE_EVENT;
++	kp->rec.time = record.ts;
++	kp->rec.addr = event->id;
++	kp->rec.more = 1;
++	read_kernel_context(kp, event, &record);
+ 	/* this will call event handlers */
+ 	tep_print_event(kp->tep, &kp->seqbuf, &record, "%s", TEP_PRINT_INFO);
+ 
+diff --git a/utils/kernel-parser.h b/utils/kernel-parser.h
+index a444f05cf4fd..b3b26476d286 100644
+--- a/utils/kernel-parser.h
++++ b/utils/kernel-parser.h
+@@ -6,6 +6,14 @@
+ 
+ #include "uftrace.h"
+ 
++struct uftrace_kernel_context {
++	uint64_t func, depth, flags, preempt_count, retaddr, retval, calltime, rettime;
++	uint64_t args[64];
++	int nr_args;
++	int common_pid;
++	bool has_flags, has_preempt, has_retaddr, has_retval, has_calltime, has_rettime;
++};
++
+ #ifdef HAVE_LIBTRACEEVENT
+ #include <event-parse.h>
+ #include <kbuffer.h>
+@@ -18,6 +26,7 @@ struct uftrace_kernel_parser {
+ 	struct tep_handle *tep;
+ 	struct trace_seq seqbuf;
+ 	struct uftrace_record rec;
++	struct uftrace_kernel_context context;
+ 	size_t pagesize;
+ 	/* per-cpu data */
+ 	struct kbuffer **kbufs;
+@@ -68,6 +77,7 @@ int __kparser_event_size(struct uftrace_kernel_parser *kp, int cpu);
+ 
+ struct uftrace_kernel_parser {
+ 	struct uftrace_record rec;
++	struct uftrace_kernel_context context;
+ };
+ 
+ static inline int kparser_init(struct uftrace_kernel_parser *kp)
+diff --git a/utils/kernel.c b/utils/kernel.c
+index 7b2bddf63729..7bd429ca2eaf 100644
+--- a/utils/kernel.c
++++ b/utils/kernel.c
+@@ -928,6 +928,8 @@ static int save_kernel_files(struct uftrace_kernel_writer *kernel)
+ 	if (save_kernel_file(fp, "events/ftrace/funcgraph_exit/format") < 0)
+ 		goto out;
+ 
++	save_kernel_file(fp, "events/ftrace/fgraph_retaddr_entry/format");
++
+ 	if (save_event_files(kernel, fp) < 0)
+ 		goto out;
+ 
+@@ -1133,6 +1135,7 @@ int setup_kernel_data(struct uftrace_kernel_reader *kernel)
+ 	}
+ 
+ 	kparser_register_handler(&kernel->parser, "ftrace", "funcgraph_entry");
++	kparser_register_handler(&kernel->parser, "ftrace", "fgraph_retaddr_entry");
+ 	kparser_register_handler(&kernel->parser, "ftrace", "funcgraph_exit");
+ 	return 0;
+ 

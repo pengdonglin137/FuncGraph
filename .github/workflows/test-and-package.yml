@@ -75,8 +75,33 @@ jobs:
             "$virtualenv/bin/python" -I "$workspace/tests/smoke_installed.py" --with-raw
           done
 
+  uftrace:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Initialize the pinned uftrace release
+        run: git submodule update --init --depth 1 third_party/uftrace
+      - name: Install optional native tracing build prerequisites
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q build-essential pkg-config libtraceevent-dev libelf-dev libdw-dev
+      - name: Check and build the maintained patch series
+        run: |
+          scripts/uftrace.sh check
+          JOBS=2 scripts/uftrace.sh build
+          build/uftrace-x86_64/bin/uftrace --version | grep 'uftrace v0.20 '
+          test -z "$(git -C third_party/uftrace status --porcelain)"
+      - name: Verify export fields without root or tracefs
+        env:
+          FG_UFTRACE_REQUIRED: "1"
+          PYTHONPATH: tests
+        run: python -m unittest test_uftrace_build test_uftrace_export -v
+
   package:
-    needs: [test, raw]
+    needs: [test, raw, uftrace]
     runs-on: ubuntu-22.04
     strategy:
       fail-fast: false

@@ -1,0 +1,568 @@
+From a8dea10b162e35df5a39923a732e0bb9e02e306a Mon Sep 17 00:00:00 2001
+From: pengdonglin <pengdonglin@xiaomi.com>
+Date: Wed, 11 Nov 2026 05:25:49 +0800
+Subject: [PATCH 3/4] dump: add explicit FuncGraph JSONL export of original
+ stream records
+
+Expose dump --fgraph / --format=fgraph with a versioned ns-integer schema. Export each user task and kernel CPU stream without replay lookahead or synthetic entry/exit completion; declare stream ordering and native address-space depth so consumers merge records explicitly. Keep user CPU unknown, preserve full kernel addresses, optional raw context, scheduler event common PID, event payloads, loss records and available user DWARF locations. Escape strings without fixed-size symbol buffers. Export actual recorded kernel settings rather than inspecting the exporter host. This is JSONL, not ftrace text; chronological merging and continuous mixed depth are importer responsibilities.
+---
+ cmds/dump.c           | 274 +++++++++++++++++++++++++++++++++++++++++-
+ cmds/record.c         |  10 ++
+ uftrace.c             |  16 ++-
+ utils/kernel-parser.c |  24 ++--
+ utils/kernel-parser.h |   4 +-
+ utils/kernel.c        |   3 +
+ utils/kernel.h        |   1 +
+ utils/utils.h         |   1 +
+ 8 files changed, 317 insertions(+), 16 deletions(-)
+
+diff --git a/cmds/dump.c b/cmds/dump.c
+index c00863e74499..2f6509cc563a 100644
+--- a/cmds/dump.c
++++ b/cmds/dump.c
+@@ -1445,6 +1445,253 @@ static void dump_mermaid_footer(struct uftrace_dump_ops *ops, struct uftrace_dat
+ 	pr_out("</html>\n");
+ }
+ 
++static void fgraph_string_n(const char *text, size_t length)
++{
++	size_t index;
++	unsigned char value;
++
++	pr_out("\"");
++	for (index = 0; index < length; index++) {
++		value = text[index];
++		if (value == '"' || value == '\\')
++			pr_out("\\%c", value);
++		else if (value < 32)
++			pr_out("\\u%04x", value);
++		else
++			pr_out("%c", value);
++	}
++	pr_out("\"");
++}
++
++static void fgraph_string(const char *text)
++{
++	fgraph_string_n(text, strlen(text));
++}
++
++static const char *fgraph_type(struct uftrace_record *record)
++{
++	switch (record->type) {
++	case UFTRACE_ENTRY: return "entry";
++	case UFTRACE_EXIT: return "exit";
++	case UFTRACE_LOST: return "lost";
++	default: return "event";
++	}
++}
++
++static void dump_fgraph_header(struct uftrace_dump_ops *ops, struct uftrace_data *handle,
++				struct uftrace_opts *opts)
++{
++	char *path, *line = NULL, *value;
++	size_t length = 0;
++	FILE *fp;
++	bool comma = false;
++
++	pr_out("{\"type\":\"metadata\",\"schema\":\"funcgraph.uftrace.v1\","
++	       "\"order\":\"streams\",\"timestamp_unit\":\"ns\",\"depth_basis\":\"address-space\","
++	       "\"kernel_settings\":{");
++	xasprintf(&path, "%s/kernel-funcgraph.info", opts->dirname);
++	fp = fopen(path, "r");
++	free(path);
++	if (fp) {
++		while (getline(&line, &length, fp) >= 0) {
++			value = strchr(line, '=');
++			if (!value)
++				continue;
++			*value++ = '\0';
++			value[strcspn(value, "\n")] = '\0';
++			if (comma)
++				pr_out(",");
++			comma = true;
++			fgraph_string(line);
++			pr_out(":");
++			fgraph_string(value);
++		}
++		free(line);
++		fclose(fp);
++	}
++	pr_out("},\"clock\":");
++	xasprintf(&path, "%s/funcgraph-clock", opts->dirname);
++	fp = fopen(path, "r");
++	free(path);
++	line = NULL;
++	length = 0;
++	if (fp && getline(&line, &length, fp) >= 0) {
++		line[strcspn(line, "\n")] = '\0';
++		fgraph_string(line);
++	}
++	else
++		pr_out("null");
++	free(line);
++	if (fp)
++		fclose(fp);
++	pr_out("}\n");
++}
++
++static void dump_fgraph_task(struct uftrace_dump_ops *ops, struct uftrace_task_reader *task,
++			     char *name)
++{
++	struct uftrace_record *record = task->rstack;
++	struct uftrace_dbg_loc *loc;
++	unsigned index;
++
++	pr_out("{\"type\":\"%s\",\"space\":\"user\",\"time_ns\":%" PRIu64
++	       ",\"tid\":%d,\"pid\":%d,\"cpu\":null,\"depth\":%u,\"address\":\"0x%" PRIx64 "\",\"name\":",
++	       fgraph_type(record), record->time, task->tid, task->t->pid, record->depth, record->addr);
++	fgraph_string(name);
++	pr_out(",\"comm\":");
++	fgraph_string(task->t->comm);
++	if (record->type == UFTRACE_LOST)
++		pr_out(",\"count\":%" PRIu64, record->addr);
++	if (record->more && task->args.data) {
++		pr_out(",\"payload_hex\":\"");
++		for (index = 0; index < task->args.len; index++)
++			pr_out("%02x", ((unsigned char *)task->args.data)[index]);
++		pr_out("\"");
++	}
++	loc = task_find_loc_addr(&task->h->sessions, task, record->time, record->addr);
++	if (loc && loc->file && loc->line) {
++		pr_out(",\"source\":{\"file\":");
++		fgraph_string(loc->file->name);
++		pr_out(",\"line\":%d}", loc->line);
++	}
++	pr_out("}\n");
++}
++
++static void dump_fgraph_task_event(struct uftrace_dump_ops *ops, struct uftrace_task_reader *task)
++{
++	char *name = event_get_name(task->h, task->rstack->addr);
++	dump_fgraph_task(ops, task, name);
++	free(name);
++}
++
++static void dump_fgraph_footer(struct uftrace_dump_ops *ops, struct uftrace_data *handle,
++				struct uftrace_opts *opts)
++{
++	pr_out("{\"type\":\"end\",\"complete\":%s}\n", uftrace_done ? "false" : "true");
++}
++
++static void fgraph_context(struct uftrace_kernel_context *ctx)
++{
++	int index;
++
++	if (ctx->has_flags)
++		pr_out(",\"common_flags\":%" PRIu64, ctx->flags);
++	if (ctx->has_preempt)
++		pr_out(",\"common_preempt_count\":%" PRIu64, ctx->preempt_count);
++	if (ctx->has_retaddr)
++		pr_out(",\"retaddr\":\"0x%" PRIx64 "\"", ctx->retaddr);
++	if (ctx->has_retval)
++		pr_out(",\"retval\":\"0x%" PRIx64 "\"", ctx->retval);
++	if (ctx->has_calltime)
++		pr_out(",\"calltime_ns\":%" PRIu64, ctx->calltime);
++	if (ctx->has_rettime)
++		pr_out(",\"rettime_ns\":%" PRIu64, ctx->rettime);
++	if (ctx->has_overrun)
++		pr_out(",\"overrun\":%" PRIu64, ctx->overrun);
++	if (ctx->nr_args == -2)
++		pr_err("cannot decode recorded kernel arguments for FuncGraph export");
++	if (ctx->nr_args >= 0) {
++		pr_out(",\"args\":[");
++		for (index = 0; index < ctx->nr_args; index++)
++			pr_out("%s\"0x%" PRIx64 "\"", index ? "," : "", ctx->args[index]);
++		pr_out("]");
++	}
++}
++
++static void dump_fgraph_kernel(struct uftrace_dump_ops *ops,
++			       struct uftrace_kernel_reader *kernel, int cpu,
++			       struct uftrace_record *record, char *name)
++{
++	struct uftrace_kernel_context *ctx = &kernel->parser.context;
++
++	pr_out("{\"type\":\"%s\",\"space\":\"kernel\",\"time_ns\":%" PRIu64
++	       ",\"tid\":%d,\"cpu\":%d,\"depth\":%" PRIu64 ",\"address\":\"0x%" PRIx64 "\",\"name\":",
++	       fgraph_type(record), record->time, ctx->common_pid, kernel->cpu_ids[cpu], ctx->depth, ctx->func);
++	fgraph_string(name);
++	fgraph_context(ctx);
++	pr_out("}\n");
++}
++
++static void dump_fgraph_event(struct uftrace_dump_ops *ops,
++			      struct uftrace_kernel_reader *kernel, int cpu,
++			      struct uftrace_record *record)
++{
++	struct uftrace_kernel_context *ctx = &kernel->parser.context;
++	void *event = kparser_find_event(&kernel->parser, record->addr);
++	char name[512];
++	int size;
++	char *data;
++
++	if (!event)
++		return;
++	kparser_event_name(&kernel->parser, event, name, sizeof(name));
++	data = read_kernel_event(kernel, cpu, &size);
++	pr_out("{\"type\":\"event\",\"space\":\"kernel\",\"time_ns\":%" PRIu64
++	       ",\"tid\":%d,\"cpu\":%d,\"name\":", record->time, ctx->common_pid, kernel->cpu_ids[cpu]);
++	fgraph_string(name);
++	pr_out(",\"text\":");
++	fgraph_string_n(data, size);
++	fgraph_context(ctx);
++	pr_out("}\n");
++}
++
++struct uftrace_fgraph_dump {
++	struct uftrace_dump_ops ops;
++	int cpu;
++};
++
++static void dump_fgraph_cpu(struct uftrace_dump_ops *ops,
++			    struct uftrace_kernel_reader *kernel, int cpu)
++{
++	struct uftrace_fgraph_dump *dump = container_of(ops, typeof(*dump), ops);
++	dump->cpu = kernel->cpu_ids[cpu];
++}
++
++static void dump_fgraph_perf_start(struct uftrace_dump_ops *ops,
++				  struct uftrace_perf_reader *perf, int stream)
++{
++	struct uftrace_fgraph_dump *dump = container_of(ops, typeof(*dump), ops);
++	dump->cpu = stream;
++}
++
++static void dump_fgraph_perf(struct uftrace_dump_ops *ops, struct uftrace_perf_reader *perf,
++			     struct uftrace_record *record)
++{
++	struct uftrace_fgraph_dump *dump = container_of(ops, typeof(*dump), ops);
++	char *name = event_get_name(NULL, record->addr);
++	pr_out("{\"type\":\"event\",\"origin\":\"perf\",\"space\":null,\"time_ns\":%" PRIu64
++	       ",\"tid\":%d,\"cpu\":null,\"stream\":%d,\"event_id\":%" PRIu64 ",\"name\":",
++	       record->time, perf->tid, dump->cpu, record->addr);
++	fgraph_string(name);
++	free(name);
++	switch (record->addr) {
++	case EVENT_ID_PERF_SCHED_IN:
++	case EVENT_ID_PERF_SCHED_OUT:
++		pr_out(",\"out\":%s,\"preempt\":%s", perf->u.ctxsw.out ? "true" : "false",
++		       perf->u.ctxsw.preempt ? "true" : "false");
++		break;
++	case EVENT_ID_PERF_TASK:
++	case EVENT_ID_PERF_EXIT:
++		pr_out(",\"pid\":%d,\"ppid\":%d", perf->u.task.pid, perf->u.task.ppid);
++		break;
++	case EVENT_ID_PERF_COMM:
++		pr_out(",\"pid\":%d,\"exec\":%s,\"comm\":", perf->u.comm.pid,
++		       perf->u.comm.exec ? "true" : "false");
++		fgraph_string_n(perf->u.comm.comm, strnlen(perf->u.comm.comm, sizeof(perf->u.comm.comm)));
++		break;
++	default:
++		break;
++	}
++	pr_out("}\n");
++}
++
++static void dump_fgraph_lost(struct uftrace_dump_ops *ops, uint64_t time, int tid, int losts)
++{
++	struct uftrace_fgraph_dump *dump = container_of(ops, typeof(*dump), ops);
++	pr_out("{\"type\":\"lost\",\"space\":\"kernel\",\"time_ns\":%" PRIu64
++	       ",\"tid\":null,\"cpu\":%d,\"count\":%d}\n", time, dump->cpu, losts);
++}
++
+ static void do_dump_file(struct uftrace_dump_ops *ops, struct uftrace_opts *opts,
+ 			 struct uftrace_data *handle)
+ {
+@@ -1456,7 +1703,7 @@ static void do_dump_file(struct uftrace_dump_ops *ops, struct uftrace_opts *opts
+ 	call_if_nonull(ops->header, ops, handle, opts);
+ 
+ 	for (i = 0; i < handle->info.nr_tid; i++) {
+-		if (opts->kernel && opts->kernel_only)
++		if (opts->kernel_only)
+ 			continue;
+ 
+ 		task = &handle->tasks[i];
+@@ -1525,7 +1772,8 @@ static void do_dump_file(struct uftrace_dump_ops *ops, struct uftrace_opts *opts
+ 
+ 		call_if_nonull(ops->cpu_start, ops, kernel, i);
+ 
+-		while (!read_kernel_cpu_data(kernel, i) && !uftrace_done) {
++		int read_status;
++		while ((read_status = read_kernel_cpu_data(kernel, i)) == 0 && !uftrace_done) {
+ 			int tid = kernel->tids[i];
+ 			int losts = kparser_missed_events(&kernel->parser, i);
+ 			struct uftrace_symbol *sym = NULL;
+@@ -1554,6 +1802,8 @@ static void do_dump_file(struct uftrace_dump_ops *ops, struct uftrace_opts *opts
+ 
+ 			symbol_putname(sym, name);
+ 		}
++		if (format_mode == FORMAT_FGRAPH && read_status < 0)
++			pr_err("cannot decode kernel CPU %d for FuncGraph export", i);
+ 	}
+ 
+ perf:
+@@ -1855,7 +2105,25 @@ int command_dump(int argc, char *argv[], struct uftrace_opts *opts)
+ 	if (opts->show_args)
+ 		show_args = true;
+ 
+-	if (format_mode == FORMAT_CHROME) {
++	if (format_mode == FORMAT_FGRAPH) {
++		struct uftrace_fgraph_dump dump = {
++			.ops = {
++				.header = dump_fgraph_header,
++				.task_rstack = dump_fgraph_task,
++				.task_event = dump_fgraph_task_event,
++				.cpu_start = dump_fgraph_cpu,
++				.kernel_func = dump_fgraph_kernel,
++				.kernel_event = dump_fgraph_event,
++				.lost = dump_fgraph_lost,
++				.perf_start = dump_fgraph_perf_start,
++				.perf_event = dump_fgraph_perf,
++				.footer = dump_fgraph_footer,
++			},
++		};
++
++		do_dump_file(&dump.ops, opts, &handle);
++	}
++	else if (format_mode == FORMAT_CHROME) {
+ 		struct uftrace_chrome_dump dump = {
+ 			.ops = {
+ 				.header         = dump_chrome_header,
+diff --git a/cmds/record.c b/cmds/record.c
+index 4158f877e085..b782bff403ab 100644
+--- a/cmds/record.c
++++ b/cmds/record.c
+@@ -1972,6 +1972,8 @@ static void finish_writers(struct writer_data *wd, struct uftrace_opts *opts)
+ {
+ 	int i;
+ 	char *elapsed_time = get_child_time(&wd->ts1, &wd->ts2);
++	char *clock_path;
++	FILE *clock_file;
+ 
+ 	if (opts->time) {
+ 		print_child_time(elapsed_time);
+@@ -1985,6 +1987,14 @@ static void finish_writers(struct writer_data *wd, struct uftrace_opts *opts)
+ 
+ 	if (fill_file_header(opts, wd->status, &wd->usage, elapsed_time) < 0)
+ 		pr_err("cannot generate data file");
++	xasprintf(&clock_path, "%s/funcgraph-clock", opts->dirname);
++	clock_file = fopen(clock_path, "w");
++	free(clock_path);
++	if (!clock_file)
++		pr_err("cannot write recorded FuncGraph clock");
++	fprintf(clock_file, "%s\n", opts->clock ? opts->clock : "mono");
++	if (fclose(clock_file))
++		pr_err("cannot finish recorded FuncGraph clock");
+ 
+ 	free(elapsed_time);
+ 
+diff --git a/uftrace.c b/uftrace.c
+index fcd22d969fdf..5444af149e82 100644
+--- a/uftrace.c
++++ b/uftrace.c
+@@ -70,6 +70,7 @@ enum uftrace_short_options {
+ 	OPT_bind_not,
+ 	OPT_task_newline,
+ 	OPT_chrome_trace,
++	OPT_fgraph,
+ 	OPT_flame_graph,
+ 	OPT_graphviz,
+ 	OPT_sample_time,
+@@ -458,6 +459,7 @@ static const struct option uftrace_options[] = {
+ 	NO_ARG(kernel-skip-out, OPT_kernel_skip_out),
+ 	NO_ARG(kernel-full, OPT_kernel_full),
+ 	NO_ARG(kernel-full-info, OPT_kernel_full_info),
++	NO_ARG(fgraph, OPT_fgraph),
+ 	NO_ARG(kernel-only, OPT_kernel_only),
+ 	REQ_ARG(output-fields, 'f'),
+ 	REQ_ARG(time-range, 'r'),
+@@ -1075,6 +1077,10 @@ static int parse_option(struct uftrace_opts *opts, int key, char *arg)
+ 		format_mode = FORMAT_CHROME;
+ 		break;
+ 
++	case OPT_fgraph:
++		format_mode = FORMAT_FGRAPH;
++		break;
++
+ 	case OPT_flame_graph:
+ 		pr_warn("--flame-graph is deprecated, use --format=flame-graph instead\n");
+ 		opts->flame_graph = true;
+@@ -1113,9 +1119,11 @@ static int parse_option(struct uftrace_opts *opts, int key, char *arg)
+ 			format_mode = FORMAT_GRAPHVIZ;
+ 		else if (!strcmp(arg, "mermaid"))
+ 			format_mode = FORMAT_MERMAID;
++		else if (!strcmp(arg, "fgraph"))
++			format_mode = FORMAT_FGRAPH;
+ 		else {
+ 			pr_use("invalid format argument: %s "
+-			       "(valid: normal, html, csv, chrome, flame-graph, graphviz, mermaid)\n",
++			       "(valid: normal, html, csv, chrome, flame-graph, graphviz, mermaid, fgraph)\n",
+ 			       arg);
+ 			return -1;
+ 		}
+@@ -1521,6 +1529,8 @@ static const char *format_mode_name(enum format_mode mode)
+ 		return "graphviz";
+ 	case FORMAT_MERMAID:
+ 		return "mermaid";
++	case FORMAT_FGRAPH:
++		return "fgraph";
+ 	default:
+ 		return "unknown";
+ 	}
+@@ -1540,7 +1550,7 @@ static bool is_valid_format(int mode, enum format_mode fmt)
+ 		return fmt == FORMAT_HTML || fmt == FORMAT_CSV;
+ 	case UFTRACE_MODE_DUMP:
+ 		return fmt == FORMAT_CHROME || fmt == FORMAT_FLAME_GRAPH ||
+-		       fmt == FORMAT_GRAPHVIZ || fmt == FORMAT_MERMAID;
++		       fmt == FORMAT_GRAPHVIZ || fmt == FORMAT_MERMAID || fmt == FORMAT_FGRAPH;
+ 	default:
+ 		return false;
+ 	}
+@@ -1556,7 +1566,7 @@ static const char *supported_formats_for(int mode)
+ 	case UFTRACE_MODE_REPORT:
+ 		return "normal, html, csv";
+ 	case UFTRACE_MODE_DUMP:
+-		return "normal, chrome, flame-graph, graphviz, mermaid";
++		return "normal, chrome, flame-graph, graphviz, mermaid, fgraph";
+ 	default:
+ 		return "normal";
+ 	}
+diff --git a/utils/kernel-parser.c b/utils/kernel-parser.c
+index bcd96675abe1..484cf661a6f5 100644
+--- a/utils/kernel-parser.c
++++ b/utils/kernel-parser.c
+@@ -249,7 +249,7 @@ static bool read_context_number(struct tep_event *event, struct tep_record *reco
+ 	return true;
+ }
+ 
+-static void read_kernel_context(struct uftrace_kernel_parser *kp, struct tep_event *event,
++static int read_kernel_context(struct uftrace_kernel_parser *kp, struct tep_event *event,
+ 				struct tep_record *record)
+ {
+ 	struct uftrace_kernel_context *ctx = &kp->context;
+@@ -263,22 +263,28 @@ static void read_kernel_context(struct uftrace_kernel_parser *kp, struct tep_eve
+ 	ctx->has_flags = read_context_number(event, record, "common_flags", &ctx->flags);
+ 	ctx->has_preempt = read_context_number(event, record, "common_preempt_count", &ctx->preempt_count);
+ 	if (strcmp(event->system, "ftrace"))
+-		return;
+-	read_context_number(event, record, "func", &ctx->func);
+-	read_context_number(event, record, "depth", &ctx->depth);
++		return 0;
++	if (!strcmp(event->name, "funcgraph_entry") || !strcmp(event->name, "fgraph_retaddr_entry") ||
++	    !strcmp(event->name, "funcgraph_exit")) {
++		if (!read_context_number(event, record, "func", &ctx->func) ||
++		    !read_context_number(event, record, "depth", &ctx->depth) || ctx->depth > 4096)
++			return -1;
++	}
+ 	ctx->has_retaddr = read_context_number(event, record, "retaddr", &ctx->retaddr);
+ 	ctx->has_retval = read_context_number(event, record, "retval", &ctx->retval);
+ 	ctx->has_calltime = read_context_number(event, record, "calltime", &ctx->calltime);
+ 	ctx->has_rettime = read_context_number(event, record, "rettime", &ctx->rettime);
++	ctx->has_overrun = read_context_number(event, record, "overrun", &ctx->overrun);
+ 	field = tep_find_field(event, "args");
+ 	if (!field)
+-		return;
++		return 0;
++	ctx->nr_args = -2;
+ 	width = tep_get_long_size(kp->tep);
+ 	offset = field->offset;
+ 	length = field->size ? field->size : record->size - offset;
+ 	if (field->flags & TEP_FIELD_IS_DYNAMIC) {
+ 		if (!read_context_number(event, record, "args", &location))
+-			return;
++			return -1;
+ 		offset = location & 0xffff;
+ 		length = location >> 16;
+ 		if (field->flags & TEP_FIELD_IS_RELATIVE)
+@@ -286,10 +292,11 @@ static void read_kernel_context(struct uftrace_kernel_parser *kp, struct tep_eve
+ 	}
+ 	if ((width != 4 && width != 8) || offset < 0 || length < 0 ||
+ 	    offset > record->size - length || length % width || length / width > 64)
+-		return;
++		return -1;
+ 	ctx->nr_args = length / width;
+ 	for (index = 0; index < ctx->nr_args; index++)
+ 		ctx->args[index] = tep_read_number(kp->tep, (char *)record->data + offset + index * width, width);
++	return 0;
+ }
+ 
+ static int kparser_next_page(struct uftrace_kernel_parser *kp, int cpu)
+@@ -351,7 +358,8 @@ int kparser_read_data(struct uftrace_kernel_parser *kp, struct uftrace_data *han
+ 	kp->rec.time = record.ts;
+ 	kp->rec.addr = event->id;
+ 	kp->rec.more = 1;
+-	read_kernel_context(kp, event, &record);
++	if (read_kernel_context(kp, event, &record) < 0)
++		return -1;
+ 	/* this will call event handlers */
+ 	tep_print_event(kp->tep, &kp->seqbuf, &record, "%s", TEP_PRINT_INFO);
+ 
+diff --git a/utils/kernel-parser.h b/utils/kernel-parser.h
+index b3b26476d286..e19987b08bd9 100644
+--- a/utils/kernel-parser.h
++++ b/utils/kernel-parser.h
+@@ -7,11 +7,11 @@
+ #include "uftrace.h"
+ 
+ struct uftrace_kernel_context {
+-	uint64_t func, depth, flags, preempt_count, retaddr, retval, calltime, rettime;
++	uint64_t func, depth, flags, preempt_count, retaddr, retval, calltime, rettime, overrun;
+ 	uint64_t args[64];
+ 	int nr_args;
+ 	int common_pid;
+-	bool has_flags, has_preempt, has_retaddr, has_retval, has_calltime, has_rettime;
++	bool has_flags, has_preempt, has_retaddr, has_retval, has_calltime, has_rettime, has_overrun;
+ };
+ 
+ #ifdef HAVE_LIBTRACEEVENT
+diff --git a/utils/kernel.c b/utils/kernel.c
+index 7bd429ca2eaf..db836375b0d1 100644
+--- a/utils/kernel.c
++++ b/utils/kernel.c
+@@ -1115,11 +1115,13 @@ int setup_kernel_data(struct uftrace_kernel_reader *kernel)
+ 	kernel->rstack_valid = xcalloc(kernel->nr_cpus, sizeof(*kernel->rstack_valid));
+ 	kernel->rstack_done = xcalloc(kernel->nr_cpus, sizeof(*kernel->rstack_done));
+ 	kernel->tids = xcalloc(kernel->nr_cpus, sizeof(*kernel->tids));
++	kernel->cpu_ids = xcalloc(kernel->nr_cpus, sizeof(*kernel->cpu_ids));
+ 
+ 	kparser_prepare_buffers(&kernel->parser, kernel->nr_cpus);
+ 
+ 	for (i = 0; i < kernel->nr_cpus; i++) {
+ 		snprintf(buf, sizeof(buf), "%s/%s", kernel->dirname, list[i]->d_name);
++		kernel->cpu_ids[i] = strtol(list[i]->d_name + 10, NULL, 10);
+ 		free(list[i]);
+ 
+ 		if (kparser_prepare_cpu(&kernel->parser, buf, i) < 0)
+@@ -1168,6 +1170,7 @@ int finish_kernel_data(struct uftrace_kernel_reader *kernel)
+ 	free(kernel->rstack_valid);
+ 	free(kernel->rstack_done);
+ 	free(kernel->tids);
++	free(kernel->cpu_ids);
+ 
+ 	kparser_release_buffers(&kernel->parser, kernel->nr_cpus);
+ 	kparser_exit(&kernel->parser);
+diff --git a/utils/kernel.h b/utils/kernel.h
+index b2c47c049968..fc058e654049 100644
+--- a/utils/kernel.h
++++ b/utils/kernel.h
+@@ -29,6 +29,7 @@ struct uftrace_kernel_writer {
+ 
+ struct uftrace_kernel_reader {
+ 	int nr_cpus;
++	int *cpu_ids;
+ 	int last_read_cpu;
+ 	bool skip_out;
+ 	char *dirname;
+diff --git a/utils/utils.h b/utils/utils.h
+index bacb53a7bd5c..22c561e1d20e 100644
+--- a/utils/utils.h
++++ b/utils/utils.h
+@@ -101,6 +101,7 @@ enum format_mode {
+ 	FORMAT_FLAME_GRAPH,
+ 	FORMAT_GRAPHVIZ,
+ 	FORMAT_MERMAID,
++	FORMAT_FGRAPH,
+ };
+ 
+ #define COLOR_CODE_NORMAL '.'

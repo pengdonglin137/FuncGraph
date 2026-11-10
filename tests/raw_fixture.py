@@ -4,7 +4,8 @@ import struct
 
 def container(endian='<', width=8, clock='mono', lost=0, retaddr=False,
               symbols=True, bad_depth=False, args=True, module=False,
-              sched=False, retval=True, dynamic_args=False):
+              sched=False, retval=True, dynamic_args=False, relative_args=False, fixed_args=False,
+              address_base=0):
     def packed(layout, *values):
         return struct.pack(endian + layout, *values)
 
@@ -29,8 +30,10 @@ def container(endian='<', width=8, clock='mono', lost=0, retaddr=False,
                     ('unsigned long', 'depth', 8 + width, width)]
     if retaddr:
         entry_fields.append(('unsigned long', 'retaddr', 8 + 2 * width, width))
-    entry_fields.append(('__data_loc unsigned long' if dynamic_args else 'unsigned long',
-                         'args[]', 8 + width * (3 if retaddr else 2), 4 if dynamic_args else 0))
+    argument_type = ('__rel_loc unsigned long' if relative_args else
+                     '__data_loc unsigned long' if dynamic_args else 'unsigned long')
+    entry_fields.append((argument_type, 'args[]', 8 + width * (3 if retaddr else 2),
+                         4 if dynamic_args or relative_args else width * 2 if fixed_args else 0))
     entry = event_format(entry_name, 11, entry_fields, '"entry"')
     exit_fields = [('unsigned long', 'func', 8, width),
                    ('unsigned int', 'depth', 8 + width, 4),
@@ -61,8 +64,9 @@ def container(endian='<', width=8, clock='mono', lost=0, retaddr=False,
               f'field:local_t commit; offset:8; size:{width}; signed:1;\n'
               f'field:int overwrite; offset:8; size:1; signed:1;\n'
               f'field:char data; offset:{header_size}; size:{4096 - header_size}; signed:1;\n').encode()
-    kallsyms = (b'0000000000001000 T root\n0000000000001100 T child\n'
-                b'0000000000001200 T boundary\n') if symbols else b''
+    kallsyms = (f'{address_base + 0x1000:016x} T root\n'
+                f'{address_base + 0x1100:016x} T child\n'
+                f'{address_base + 0x1200:016x} T boundary\n').encode() if symbols else b''
     if module:
         kallsyms = kallsyms.replace(b'child\n', b'child\t[demo_mod]\n')
     clock_text = ('[' + clock + ']').encode()
@@ -74,17 +78,17 @@ def container(endian='<', width=8, clock='mono', lost=0, retaddr=False,
                 b'flyrecord\0')
     base = 1000000000
     def entry_data(address, depth):
-        values = packed(word * 2, address, 5000 if bad_depth else depth)
+        values = packed(word * 2, address_base + address, 5000 if bad_depth else depth)
         if retaddr:
-            values += packed(word, 0x1008)
+            values += packed(word, address_base + 0x1008)
         arguments = packed(word * 2, 0x123, 0x456) if args else b''
-        if dynamic_args:
-            values += packed('I', len(arguments) << 16 | (8 + len(values) + 4))
+        if dynamic_args or relative_args:
+            values += packed('I', len(arguments) << 16 | (0 if relative_args else 8 + len(values) + 4))
         values += arguments
         return packed('HBBi', 11, 0, 1, 42) + values
 
     def exit_data(address, depth, start, end, returned):
-        return (packed('HBBi', 12, 0, 1, 42) + packed(word, address) +
+        return (packed('HBBi', 12, 0, 1, 42) + packed(word, address_base + address) +
                 packed('IIQQ', depth, 0, base + start, base + end) +
                 (packed(word, returned) if retval else b''))
 

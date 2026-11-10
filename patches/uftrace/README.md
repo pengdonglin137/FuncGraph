@@ -1,0 +1,21 @@
+# Maintained uftrace patches
+
+Base: upstream **v0.20**, `842ed731248a` (full pin in the Git submodule).
+`third_party/uftrace` stays pristine. `series` is authoritative; the patches
+are generated from committed changes in `build/uftrace-dev`, never hand-edited.
+
+| Patch | Purpose | Upstream status / removal condition |
+| --- | --- | --- |
+| 0001 | Probe optional function-graph args/retval/retaddr and scheduling events; save effective kernel options/version/clock. | Not submitted. Remove after equivalent capability/readback support lands upstream. |
+| 0002 | Decode `fgraph_retaddr_entry`; retain format-driven raw context without replay PID reassignment. | Not submitted. Remove after the complete raw export context is available upstream. |
+| 0003 | Versioned `dump --fgraph` JSONL export of original streams, recorded clock, sparse CPU identity, perf events and explicit completion. | Not submitted. Remove after an upstream export preserves this contract (or migrate the importer explicitly). |
+| 0004 | Fix sorted kernel symbol ranges on Pi; final native validation fixes declaration diagnostics and rejects malformed/trailing user records instead of reporting completion. | Not submitted. Remove after equivalent upstream fixes land and the regression tests pass. |
+
+The native executable is optional and is **not** linked into FuncGraph or
+included in Python distributions. uftrace is GPL-2.0; anyone distributing its
+binaries must also meet its corresponding-source/license obligations, including
+the applicable patches. This integration does not select a project-wide license.
+
+See [the integration guide](../../docs/uftrace.md),
+[中文说明](../../docs/uftrace.cn.md), and the
+[implementation plan](../../docs/plans/2026-11-09-user-kernel-tracing-plan.md).

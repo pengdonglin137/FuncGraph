@@ -7,3 +7,6 @@
 [submodule "third_party/trace-cmd"]
 	path = third_party/trace-cmd
 	url = https://git.kernel.org/pub/scm/utils/trace-cmd/trace-cmd.git
+[submodule "third_party/uftrace"]
+	path = third_party/uftrace
+	url = https://github.com/namhyung/uftrace.git

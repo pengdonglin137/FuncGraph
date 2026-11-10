@@ -1,0 +1,126 @@
+From a708c66b999a55b7a5f4191a214fd9b9425dbb41 Mon Sep 17 00:00:00 2001
+From: pengdonglin <pengdonglin@xiaomi.com>
+Date: Wed, 11 Nov 2026 05:49:12 +0800
+Subject: [PATCH 4/4] symbol: derive kernel function ranges after sorting
+ kallsyms addresses
+
+A real Pi 4 mixed capture resolved __arm64_sys_read and many other kernel functions as vc4_cec_irq_handler_rx_bare. Module addresses can precede core text and arrive later in kallsyms, so deriving sizes in input order underflows unsigned ranges and corrupts bsearch matches after sorting. Recompute kernel-only ranges from the next distinct sorted address, sharing alias extents and leaving terminal or unrepresentable gaps unknown. Do not change explicitly sized userspace symbol-file loading. This fixes symbol identity before mixed user/kernel visualization; exported raw addresses remain the authoritative evidence.
+
+Clean up the signed event-loop comparison and declaration ordering exposed by pristine release builds, without disabling compiler diagnostics. Guard FuncGraph user-stream export against malformed records and partial trailing records/payloads which the upstream reader otherwise treats as ordinary EOF; such errors must not emit a successful completion marker.
+---
+ cmds/dump.c    | 12 +++++++++++-
+ utils/kernel.c |  7 ++++---
+ utils/symbol.c | 15 ++++++++++++++-
+ 3 files changed, 29 insertions(+), 5 deletions(-)
+
+diff --git a/cmds/dump.c b/cmds/dump.c
+index 2f6509cc563a..8f808a68f0f6 100644
+--- a/cmds/dump.c
++++ b/cmds/dump.c
+@@ -1703,6 +1703,8 @@ static void do_dump_file(struct uftrace_dump_ops *ops, struct uftrace_opts *opts
+ 	call_if_nonull(ops->header, ops, handle, opts);
+ 
+ 	for (i = 0; i < handle->info.nr_tid; i++) {
++		off_t last_good_offset;
++
+ 		if (opts->kernel_only)
+ 			continue;
+ 
+@@ -1712,12 +1714,17 @@ static void do_dump_file(struct uftrace_dump_ops *ops, struct uftrace_opts *opts
+ 		prev_time = 0;
+ 
+ 		call_if_nonull(ops->task_start, ops, task);
++		last_good_offset = task->fp ? ftello(task->fp) : 0;
+ 
+ 		while (!read_task_ustack(handle, task) && !uftrace_done) {
+ 			struct uftrace_record *frs = &task->ustack;
+ 			struct uftrace_symbol *sym;
+ 			char *name;
+ 
++			if (format_mode == FORMAT_FGRAPH && task->fp && (feof(task->fp) || ferror(task->fp)))
++				pr_err("cannot decode user payload for FuncGraph export (tid %d)", task->tid);
++			last_good_offset = task->fp ? ftello(task->fp) : 0;
++
+ 			if (frs->more) {
+ 				add_to_rstack_list(&task->rstack_list, frs, &task->args);
+ 			}
+@@ -1755,6 +1762,9 @@ static void do_dump_file(struct uftrace_dump_ops *ops, struct uftrace_opts *opts
+ 
+ 			fstack_check_filter_done(task);
+ 		}
++		if (format_mode == FORMAT_FGRAPH && task->fp &&
++		    (ferror(task->fp) || ftello(task->fp) != last_good_offset))
++			pr_err("cannot decode user record for FuncGraph export (tid %d)", task->tid);
+ 	}
+ 
+ 	if (!has_kernel_data(handle->kernel) || uftrace_done)
+@@ -1766,13 +1776,13 @@ static void do_dump_file(struct uftrace_dump_ops *ops, struct uftrace_opts *opts
+ 		struct uftrace_kernel_reader *kernel = handle->kernel;
+ 		struct uftrace_record *frs = &kernel->rstacks[i];
+ 		struct uftrace_session *fsess = handle->sessions.first;
++		int read_status;
+ 
+ 		if (kparser_data_size(&kernel->parser, i) == 0)
+ 			continue;
+ 
+ 		call_if_nonull(ops->cpu_start, ops, kernel, i);
+ 
+-		int read_status;
+ 		while ((read_status = read_kernel_cpu_data(kernel, i)) == 0 && !uftrace_done) {
+ 			int tid = kernel->tids[i];
+ 			int losts = kparser_missed_events(&kernel->parser, i);
+diff --git a/utils/kernel.c b/utils/kernel.c
+index db836375b0d1..92ffd6ffcab0 100644
+--- a/utils/kernel.c
++++ b/utils/kernel.c
+@@ -514,12 +514,13 @@ int setup_kernel_tracing(struct uftrace_kernel_writer *kernel, struct uftrace_op
+ 	if (kernel->full_info) {
+ 		const char *events[] = { "sched_switch", "sched_waking", "sched_wakeup" };
+ 		char path[128], event[128], value[32];
++		size_t index;
+ 
+-		for (i = 0; i < ARRAY_SIZE(events); i++) {
+-			snprintf(path, sizeof(path), "events/sched/%s/enable", events[i]);
++		for (index = 0; index < ARRAY_SIZE(events); index++) {
++			snprintf(path, sizeof(path), "events/sched/%s/enable", events[index]);
+ 			if (read_tracing_file(path, value, sizeof(value)) < 0)
+ 				continue;
+-			snprintf(event, sizeof(event), "sched:%s", events[i]);
++			snprintf(event, sizeof(event), "sched:%s", events[index]);
+ 			add_single_event(&kernel->events, event);
+ 		}
+ 	}
+diff --git a/utils/symbol.c b/utils/symbol.c
+index 48909d550b31..f6bd14951b96 100644
+--- a/utils/symbol.c
++++ b/utils/symbol.c
+@@ -1467,6 +1467,7 @@ int save_kernel_symbol(char *dirname)
+ int load_kernel_symbol(char *dirname)
+ {
+ 	unsigned i;
++	unsigned next = 0;
+ 	char *symfile = NULL;
+ 
+ 	/* abuse it for checking symbol loading */
+@@ -1479,8 +1480,20 @@ int load_kernel_symbol(char *dirname)
+ 		return -1;
+ 	}
+ 
+-	for (i = 0; i < kernel.symtab.nr_sym; i++)
++	for (i = 0; i < kernel.symtab.nr_sym; i++) {
++		struct uftrace_symbol *sym = &kernel.symtab.sym[i];
++		uint64_t size = 0;
++
++		if (next <= i) {
++			next = i + 1;
++			while (next < kernel.symtab.nr_sym && kernel.symtab.sym[next].addr == sym->addr)
++				next++;
++		}
++		if (next < kernel.symtab.nr_sym)
++			size = kernel.symtab.sym[next].addr - sym->addr;
++		sym->size = size <= UINT32_MAX ? size : 0;
+ 		kernel.symtab.sym[i].type = ST_KERNEL_FUNC;
++	}
+ 
+ 	kernel.node.rb_parent_color = 1;
+ 	free(symfile);

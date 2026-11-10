@@ -1,5 +1,7 @@
 # FuncGraph - Specialized Linux ftrace Visualization Tool
 
+User/kernel tracing integration: the optional pinned uftrace capture/export foundation is available; FuncGraph import and mixed visualization are still in progress. See [status, build and format contract](docs/uftrace.md).
+
 Ordinary CLI output remains an offline single HTML file. For large reports, opt into `funcgraph TRACE --timeline --report-mode sidecar --output REPORT_DIRECTORY`, then run `fgview REPORT_DIRECTORY`. Timeline opens without downloading or creating Text rows; Compare loads separately. Text loads **in full** on first use or a line jump/hash anchor, with cancellable batch preparation and progress; final layout can still block and the complete DOM is retained. Timeline filtering loads an index without Text DOM. Sidecar source bodies load only when needed, in verified chunks of up to 64 records with cancellation, retry and shared caching; single-file sources stay embedded. For automatic selection, use `--report-mode auto --sidecar-threshold BYTES`: only complete HTML above that explicit byte threshold becomes sidecar; smaller/equal reports retain offline `index.html` in the same dedicated directory. No default threshold, Text virtualization or source-cache bound; see the [viewer guide](docs/viewer.md).
 
 [![ci](https://github.com/pengdonglin137/FuncGraph/actions/workflows/ci.yml/badge.svg)](https://github.com/pengdonglin137/FuncGraph/actions/workflows/ci.yml)
