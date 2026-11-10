@@ -4031,6 +4031,152 @@ class BrowserSmokeTest(unittest.TestCase):
         self.assertEqual(self.ev("document.getElementById('srcModeBtn').textContent"), 'Source: flat')
         self.assertEqual(self.ev(f"document.querySelectorAll('#{lid} details').length"), 0)
 
+    def test_source_modes_visit_only_filled_panels_without_document_selector_scans(self):
+        facts = self.ev('''() => {
+            const panels = Array.from(document.querySelectorAll('.expanded-content[data-src]')).slice(0, 2);
+            const originalSource = fgSourceHtml;
+            fgSourceHtml = () => '<a class="location-link">inner at inner.c:2</a><div class="source-line">inner();</div>' +
+                '<a class="location-link">outer at outer.c:4</a><div class="source-line">outer();</div>';
+            panels.forEach(panel => fgFill(panel));
+            const unopened = document.createElement('div');
+            unopened.hidden = true;
+            for (let index = 0; index < 1200; index++) {
+                const panel = document.createElement('div');
+                panel.className = 'expanded-content'; panel.dataset.src = panels[0].dataset.src;
+                unopened.appendChild(panel);
+            }
+            document.body.appendChild(unopened);
+            const control = document.createElement('button');
+            control.dataset.fgSourceMode = '';
+            document.body.appendChild(control);
+            fgTrackSource(control);
+            const query = document.querySelectorAll;
+            const collection = document.getElementsByClassName;
+            const fill = fgFill;
+            const visited = [];
+            let result;
+            document.querySelectorAll = selector => { throw new Error('Unexpected document scan: ' + selector); };
+            document.getElementsByClassName = name => { throw new Error('Unexpected document collection: ' + name); };
+            fgFill = (panel, force) => { visited.push(panel.id); fill(panel, force); };
+            try {
+                fgToggleSrcMode();
+                const flat = panels.map(panel => panel.querySelectorAll('.src-frame').length);
+                fgToggleSrcMode();
+                result = {visited, flat, chain:panels.map(panel => panel.querySelectorAll('.src-frame').length),
+                    controls:[document.getElementById('srcModeBtn').textContent, control.textContent],
+                    untouched:Array.from(unopened.children).every(panel => !panel.firstChild && panel.className === 'expanded-content'),
+                    expected:panels.map(panel => panel.id)};
+            } finally {
+                document.querySelectorAll = query; document.getElementsByClassName = collection;
+                fgFill = fill; fgSourceHtml = originalSource;
+            }
+            return result;
+        }''')
+        self.assertEqual(facts['visited'], facts['expected'] * 2)
+        self.assertEqual(facts['flat'], [0, 0])
+        self.assertEqual(facts['chain'], [2, 2])
+        self.assertEqual(facts['controls'], ['Source: chain', 'Source: chain'])
+        self.assertTrue(facts['untouched'])
+
+    def test_source_mode_membership_follows_reordering_and_dynamic_panel_removal(self):
+        facts = self.ev('''() => {
+            const panel = document.querySelector('#content .expanded-content[data-src]');
+            fgFill(panel);
+            fgSetTextOrder('task');
+            const dynamic = document.createElement('div');
+            dynamic.dataset.src = panel.dataset.src;
+            dynamic.className = 'expanded-content';
+            document.body.appendChild(dynamic);
+            fgFill(dynamic);
+            const detached = document.createElement('div');
+            detached.dataset.src = panel.dataset.src;
+            detached.className = 'expanded-content';
+            fgFill(detached);
+            const fill = fgFill;
+            const visited = [];
+            fgFill = (source, force) => { visited.push(source); fill(source, force); };
+            try {
+                fgToggleSrcMode();
+                const withDynamic = visited.length;
+                dynamic.remove(); visited.length = 0;
+                fgSetTextOrder('time');
+                fgToggleSrcMode();
+                const result = {withDynamic, remaining:visited.length, same:visited[0] === panel,
+                    connected:visited.every(source => source.isConnected),
+                    mode:fgSourceMode(), textMode:document.getElementById('srcModeBtn').textContent};
+                visited.length = 0;
+                document.body.appendChild(detached);
+                fgToggleSrcMode();
+                result.reattached = visited.length === 2 && visited.includes(detached);
+                return result;
+            } finally { fgFill = fill; }
+        }''')
+        self.assertEqual(facts, dict(withDynamic=2, remaining=1, same=True, connected=True, reattached=True,
+                                     mode='chain', textMode='Source: chain'))
+
+    def test_source_mode_tracking_does_not_retain_removed_panels(self):
+        self.ev('''() => {
+            const source = document.createElement('div');
+            source.dataset.src = document.querySelector('.expanded-content[data-src]').dataset.src;
+            source.className = 'expanded-content';
+            document.body.appendChild(source);
+            fgFill(source);
+            window.removedSource = new WeakRef(source);
+            source.remove();
+        }''')
+        session = self.page.context.new_cdp_session(self.page)
+        try:
+            session.send('HeapProfiler.collectGarbage')
+            self.assertTrue(self.ev('removedSource.deref() === undefined'))
+            self.ev('fgToggleSrcMode()')
+            self.assertEqual(self.ev('fgSourceNodes.size'), 0)
+        finally:
+            session.detach()
+
+    def test_source_mode_without_filled_panels_keeps_the_source_pool_unparsed(self):
+        self.page.add_init_script('''
+            const parse = JSON.parse;
+            window.sourcePoolParses = 0;
+            JSON.parse = (value, ...options) => {
+                const pool = document.getElementById('fgSrc');
+                if (pool && value === pool.textContent) window.sourcePoolParses++;
+                return parse(value, ...options);
+            };
+        ''')
+        self.page.reload(wait_until='load')
+        self.assertEqual(self.ev('sourcePoolParses'), 0)
+        facts = self.ev('''() => {
+            const query = document.querySelectorAll;
+            const read = fgData.read;
+            document.querySelectorAll = selector => { throw new Error('Unexpected document scan: ' + selector); };
+            fgData.read = name => { throw new Error('Unexpected data read: ' + name); };
+            try {
+                fgToggleSrcMode(); fgToggleSrcMode();
+                return {parses:sourcePoolParses, tracked:fgSourceNodes.size,
+                    label:document.getElementById('srcModeBtn').textContent};
+            } finally { document.querySelectorAll = query; fgData.read = read; }
+        }''')
+        self.assertEqual(facts, dict(parses=0, tracked=0, label='Source: chain'))
+
+    def test_source_modes_keep_working_without_weak_reference_support(self):
+        self.page.add_init_script('window.WeakRef = undefined; window.FinalizationRegistry = undefined;')
+        self.page.reload(wait_until='load')
+        self.assertIsNone(self.ev('fgSourceNodes'))
+        panel = self.page.locator('.expanded-content[data-src]').first
+        panel.evaluate('element => fgFill(element)')
+        self.ev('''() => {
+            const control = document.createElement('button');
+            control.id = 'legacySourceMode'; control.dataset.fgSourceMode = '';
+            document.body.appendChild(control); fgTrackSource(control);
+        }''')
+        self.page.locator('#srcModeBtn').click()
+        self.assertEqual(self.page.locator('#srcModeBtn').inner_text(), 'Source: flat')
+        self.assertEqual(self.page.locator('#legacySourceMode').inner_text(), 'Source: flat')
+        self.assertTrue(panel.evaluate('element => !!element.firstChild'))
+        self.page.locator('#srcModeBtn').click()
+        self.assertEqual(self.page.locator('#srcModeBtn').inner_text(), 'Source: chain')
+        self.assertEqual(self.page.locator('#legacySourceMode').inner_text(), 'Source: chain')
+
     def test_inline_toggle_hidden_without_data(self):
         self.open_timeline()      # fake faddr2line has no inline chains
         self.assertEqual(self.ev("getComputedStyle(document.querySelector('[data-act=inl]')).display"), 'none')

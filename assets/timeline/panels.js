@@ -354,6 +354,7 @@ function fillCallSite(i) {
         fgToggleSrcMode();
     });
     box.querySelector('summary').append(' ', mode);
+    fgTrackSource(mode);
     if (prefGet('csOpen') === '0') box.open = false;
     box.addEventListener('toggle', () => prefSet('csOpen', box.open ? '1' : '0'));
 }

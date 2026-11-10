@@ -20,11 +20,22 @@
         //   chain: inline frames outer -> inner, each collapsible, innermost (the call) open
         //   flat : faddr2line order (innermost first), everything expanded
         let fgSrcMode = lsGet('srcMode') || 'chain';
+        const fgSourceNodes = typeof WeakRef === 'function' && typeof FinalizationRegistry === 'function' ? new Set() : null;
+        const fgSourceSeen = new WeakSet();
+        const fgSourceCleanup = fgSourceNodes && new FinalizationRegistry(reference => fgSourceNodes.delete(reference));
+        function fgTrackSource(element) {
+            if (!fgSourceNodes || fgSourceSeen.has(element)) return;
+            const reference = new WeakRef(element);
+            fgSourceSeen.add(element);
+            fgSourceNodes.add(reference);
+            fgSourceCleanup.register(element, reference);
+        }
         function fgSourceMode() { return fgSrcMode; }
         function fgFill(el, force) {
             if (!el || el.dataset.src === undefined || (el.firstChild && !force)) return;
             el.innerHTML = fgSourceHtml(+el.dataset.src);
             if (fgSrcMode === 'chain') fgChainView(el);
+            fgTrackSource(el);
         }
         function fgChainView(el) {
             // split into frames: a location line starts a frame, source lines belong to it
@@ -195,12 +206,17 @@
             lsSet('srcMode', fgSrcMode);
             const b = document.getElementById('srcModeBtn');
             if (b) b.textContent = 'Source: ' + fgSrcMode;
-            document.querySelectorAll('[data-fg-source-mode]').forEach(button => {
-                button.textContent = 'Source: ' + fgSrcMode;
-            });
-            document.querySelectorAll('.expanded-content[data-src]').forEach(el => {
-                if (el.firstChild) { el.classList.remove('src-chain'); fgFill(el, true); }
-            });
+            const update = element => {
+                if (element.hasAttribute('data-fg-source-mode')) element.textContent = 'Source: ' + fgSrcMode;
+                else if (element.firstChild) { element.classList.remove('src-chain'); fgFill(element, true); }
+            };
+            if (fgSourceNodes) {
+                for (const reference of fgSourceNodes) {
+                    const element = reference.deref();
+                    if (!element) fgSourceNodes.delete(reference);
+                    else if (element.isConnected) update(element);
+                }
+            } else document.querySelectorAll('[data-fg-source-mode], .expanded-content[data-src]').forEach(update);
         }
         document.addEventListener('DOMContentLoaded', () => {
             const b = document.getElementById('srcModeBtn');

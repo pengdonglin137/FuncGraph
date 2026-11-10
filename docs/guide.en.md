@@ -408,6 +408,8 @@ When the call site is inside inlined code, faddr2line returns an inline chain. T
 - **chain** (default): outer to inner. `traced` is the function ftrace saw; below it each inlined `inline` function, indented one level, collapsible, with "→ inlines X here". Only the innermost one ("← the traced call happens here", the line that makes this call) is open. ↗ on each level is an online source link.
 - **flat**: exactly like faddr2line's output, innermost first, everything open.
 
+The Text toolbar and Timeline call-site Source buttons stay synchronized. In browsers with weak-reference support, switching only rebuilds populated source panels, without scanning empty placeholders across the trace or parsing an unused source pool. Unopened blocks use the current mode on first expansion; replaced detail panels are not kept alive by the registry. Older browsers retain a compatible scanning path. Source content is unchanged; this is not sidecar output or on-demand network loading.
+
 ### 5.6 Grouping by task
 
 ftrace prints the events of all CPUs ordered by time. With several busy tasks and frequent switches a task's calls are scattered: measured 25–58% of adjacent lines belong to different CPUs.

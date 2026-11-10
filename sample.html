@@ -1836,11 +1836,11 @@ document.documentElement.setAttribute('data-theme', currentTheme);
                 <div class="info-item"><div class="info-label">OS:</div><div class="info-value">Linux 6.8.0-138-generic</div></div>
                 <div class="info-item"><div class="info-label">Hostname:</div><div class="info-value">pengdl-pc</div></div>
                 <div class="info-item"><div class="info-label">Processor:</div><div class="info-value">x86_64</div></div>
-                <div class="info-item"><div class="info-label">Generated At:</div><div class="info-value">2026-11-10 15:48:40</div></div>
+                <div class="info-item"><div class="info-label">Generated At:</div><div class="info-value">2026-11-10 16:15:33</div></div>
                 <div class="info-section-divider"></div>
                 <div class="info-section-title">Processing Stats</div>
-                <div class="info-item"><div class="info-label">Parse Time:</div><div class="info-value">0.05s</div></div>
-                <div class="info-item"><div class="info-label">Vmlinux Time:</div><div class="info-value">7.17s</div></div>
+                <div class="info-item"><div class="info-label">Parse Time:</div><div class="info-value">0.03s</div></div>
+                <div class="info-item"><div class="info-label">Vmlinux Time:</div><div class="info-value">6.18s</div></div>
                 <div class="info-item"><div class="info-label">Modules Time:</div><div class="info-value">0.00s</div></div>
                 <div class="info-item"><div class="info-label">Total Lines:</div><div class="info-value">695</div></div>
                 <div class="info-item"><div class="info-label">Expandable:</div><div class="info-value">442</div></div>
@@ -2191,11 +2191,22 @@ document.documentElement.setAttribute('data-theme', currentTheme);
         //   chain: inline frames outer -> inner, each collapsible, innermost (the call) open
         //   flat : faddr2line order (innermost first), everything expanded
         let fgSrcMode = lsGet('srcMode') || 'chain';
+        const fgSourceNodes = typeof WeakRef === 'function' && typeof FinalizationRegistry === 'function' ? new Set() : null;
+        const fgSourceSeen = new WeakSet();
+        const fgSourceCleanup = fgSourceNodes && new FinalizationRegistry(reference => fgSourceNodes.delete(reference));
+        function fgTrackSource(element) {
+            if (!fgSourceNodes || fgSourceSeen.has(element)) return;
+            const reference = new WeakRef(element);
+            fgSourceSeen.add(element);
+            fgSourceNodes.add(reference);
+            fgSourceCleanup.register(element, reference);
+        }
         function fgSourceMode() { return fgSrcMode; }
         function fgFill(el, force) {
             if (!el || el.dataset.src === undefined || (el.firstChild && !force)) return;
             el.innerHTML = fgSourceHtml(+el.dataset.src);
             if (fgSrcMode === 'chain') fgChainView(el);
+            fgTrackSource(el);
         }
         function fgChainView(el) {
             // split into frames: a location line starts a frame, source lines belong to it
@@ -2366,12 +2377,17 @@ document.documentElement.setAttribute('data-theme', currentTheme);
             lsSet('srcMode', fgSrcMode);
             const b = document.getElementById('srcModeBtn');
             if (b) b.textContent = 'Source: ' + fgSrcMode;
-            document.querySelectorAll('[data-fg-source-mode]').forEach(button => {
-                button.textContent = 'Source: ' + fgSrcMode;
-            });
-            document.querySelectorAll('.expanded-content[data-src]').forEach(el => {
-                if (el.firstChild) { el.classList.remove('src-chain'); fgFill(el, true); }
-            });
+            const update = element => {
+                if (element.hasAttribute('data-fg-source-mode')) element.textContent = 'Source: ' + fgSrcMode;
+                else if (element.firstChild) { element.classList.remove('src-chain'); fgFill(element, true); }
+            };
+            if (fgSourceNodes) {
+                for (const reference of fgSourceNodes) {
+                    const element = reference.deref();
+                    if (!element) fgSourceNodes.delete(reference);
+                    else if (element.isConnected) update(element);
+                }
+            } else document.querySelectorAll('[data-fg-source-mode], .expanded-content[data-src]').forEach(update);
         }
         document.addEventListener('DOMContentLoaded', () => {
             const b = document.getElementById('srcModeBtn');
@@ -8761,6 +8777,7 @@ function fillCallSite(i) {
         fgToggleSrcMode();
     });
     box.querySelector('summary').append(' ', mode);
+    fgTrackSource(mode);
     if (prefGet('csOpen') === '0') box.open = false;
     box.addEventListener('toggle', () => prefSet('csOpen', box.open ? '1' : '0'));
 }

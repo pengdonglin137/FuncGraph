@@ -104,6 +104,8 @@ trace 的每一行（包括注释行）对应一个 `div.line-container#L<行号
 
 可展开的行（带返回地址的行）后面跟一个空的 `div.expanded-content`，带 `data-src="N"` 属性。源码块的 HTML 去重后放在 `<script type="application/json" id="fgSrc">` 中，是一个 JSON 数组。`fgFill(el)` 在第一次显示时把内容填进去。任何要显示展开块的代码，都必须先调用 `fgFill`。
 
+`fgFill` 用弱引用登记已填充的面板，Timeline 源码模式按钮也登记到同一集合；`WeakSet` 去重，`FinalizationRegistry` 清理已回收目标的登记项。模式切换只遍历这些目标，不使用整页 CSS/class 选择器，也不保存被替换详情节点的强引用；临时脱离文档的目标跳过但不注销，因此重排/重新挂载后仍可同步。没有弱引用能力时保留扫描兼容路径。未展开块不预填充，源码池读取时机不变。
+
 效果：traceB_small（1.7 万行）中 13024 个展开块去重后只剩几百种，HTML 从 100.7MB 降到 33.4MB，浏览器加载从 6.0s 降到 2.6s。
 
 ### 4.3 折叠
@@ -483,6 +485,30 @@ python3 tests/benchmark_startup.py /tmp/before.html /tmp/after.html \
 ```
 
 保真检查只精确去掉新增的 `text-chunk` 开闭包装，然后比较**完整原始 Text HTML**；七组真实内核 golden、完整 traceB 和仓库样例的行/源码 markup 均相同，全部 JSON 载荷仅沿用已有 `stats.build_time` 屏蔽。没有扩大 golden normalization 来消除呈现差异。浏览器回归覆盖跨块父子折叠/悬停、390/1500px 与 light/dark、长行横向溢出、选区、源码相邻关系、反复任务/时间/排序消费重排后的行唯一性及块上限；针对块首行实际截图确认 `overflow-clip-margin:0` 会裁焦点，而生产 6px 保留轮廓。这里的静态绘制块与未来按最终 HTML 字节大小触发的 sidecar/按需加载没有关系，后者尚未实现。
+
+### 8.6 源码布局切换不再扫描整页（2026-11-10）
+
+Source chain/flat 切换原先先查询全页模式按钮，再枚举每个 `.expanded-content[data-src]` 占位块，即使只展开了三个源码面板也扫描百万元素。仅把选择器改为 `getElementsByClassName` 并没有实测收益，因此未采用；最终使用 §4.2 的已填充目标弱引用登记表。Text 排序/分组、已折叠但填充过的块、Timeline 详情替换及源码按钮同步仍保持原有行为，不给未使用块填充内容。
+
+本机实测：同一个 traceB 报告，72,176 行、55,186 个源码占位块、约 127.7 MiB，展开三个源码面板后有 1,051,693 个元素。仅替换两份前端脚本构造前后对照，使用 Chromium 145.0.7632.6、各三个独立新浏览器、交错顺序；每轮七次程序触发原生 Source 按钮 click，首个切换单列，其余十八次汇总为 warm。两份报告的 Text/源码/Timeline 数据不变。
+
+| 指标（中位数，ms） | 原扫描路径 | 弱引用登记 |
+|---|---:|---:|
+| 首次 click 处理函数 | 58.3 | 22.2 |
+| warm click 处理函数 | 57.8 | 21.7 |
+| 首次切换到两次 rAF | 155.8 | 119.8 |
+| warm 切换到两次 rAF | 179.4 | 148.0 |
+
+处理函数仍包含已打开面板的源码 DOM 重建；消除的是与未使用 trace 占位块数量相关的扫描，不是所有重绘成本。两次 rAF 只是反馈代理，不是物理呈现时间；程序触发 click 不包括真实指针输入/命中测试。没有宣称常量内存、首开变快、Text 虚拟化或 sidecar 已实现。缺少弱引用能力的浏览器仍走功能兼容路径，不适用这些性能结果。
+
+可复测命令（需要 Playwright/Chromium；前后报告均保留完整 Text 和源码）：
+
+```bash
+python3 tests/benchmark_sources.py BEFORE.html AFTER.html \
+    --opened 3 --rounds 3 --samples 7 --output /tmp/source-layout.json
+```
+
+回归测试禁止现代路径上的整页选择器与 class collection 查询，验证 1,200 个未填充块不被访问、初次使用前不解析源码池、断开/重挂载及重排仍同步、缺少弱引用时的兼容行为。另通过浏览器强制 GC 验证移除的源码面板可回收，防止登记表因保存节点强引用而造成详情页内存泄漏。
 
 ## 9. 自测
 
