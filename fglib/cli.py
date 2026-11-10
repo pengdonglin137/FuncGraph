@@ -608,7 +608,7 @@ def main():
     print(f"Generated interactive visualization: {args.output}")
     if args.report_mode == 'sidecar':
         print(f"Open with: fgview {shlex.quote(os.path.abspath(args.output))}")
-        print('HTTP directory report: Text loads in full on first use or unified filtering; no automatic size threshold.')
+        print('HTTP directory report: Timeline filtering loads an index; Text loads in full on first use; no automatic size threshold.')
     print(f"Processed {len(parsed_lines)} lines, with {expandable_count} expandable entries")
     print(f"Resolved {module_count} module functions, {kernel_count} kernel functions")
     

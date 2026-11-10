@@ -195,6 +195,7 @@ class JsSyntaxTest(unittest.TestCase):
 
     def test_assets(self):
         self.node_check(assets.read_asset(assets.REPORT_JS), 'report.js')
+        self.node_check(assets.read_asset(assets.REPORT_FILTER_INDEX_JS), 'filter-index.js')
         self.node_check(assets.read_asset(assets.VIEWS_EARLY_JS), 'early.js')
         self.node_check(assets.timeline_script(), 'timeline')
 

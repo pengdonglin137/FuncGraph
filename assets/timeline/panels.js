@@ -617,11 +617,32 @@ function revealLine(n) {
 }
 
 // ---- text-view filter integration ----
+let filteredCallCount = null;
+let filterRetryButton = null;
+function renderFilterProgress() {
+    const status = window.fgFilterProgress;
+    elFcount.setAttribute('role', status?.error ? 'alert' : 'status');
+    elFcount.setAttribute('aria-live', status?.error ? 'assertive' : 'polite');
+    elFcount.setAttribute('aria-busy', String(!!status && !status.error));
+    elFcount.textContent = status ? status.message : filteredCallCount === null ? '' : filteredCallCount + ' of ' + N + ' calls';
+    elFcount.title = status ? status.message : '';
+    if (filterRetryButton) { filterRetryButton.remove(); filterRetryButton = null; }
+    if (status?.error) {
+        filterRetryButton = document.createElement('button');
+        filterRetryButton.type = 'button';
+        filterRetryButton.className = 'tl-btn';
+        filterRetryButton.dataset.act = 'fretry';
+        filterRetryButton.textContent = 'Retry filter';
+        elFbar.appendChild(filterRetryButton);
+    }
+}
+window.fgOnFilterProgress = renderFilterProgress;
 function applyTextFilter() {
     const st = window.fgFilterState || { text: '', lines: null };
     if (document.activeElement !== elFtext) elFtext.value = st.text || '';
     if (!st.lines) {
         textHits = null;
+        filteredCallCount = null;
         for (const t of ORDER) { t.hits = 0; t.hidden = false; }
         elFcount.textContent = '';
         elFbar.classList.remove('on');
@@ -635,6 +656,7 @@ function applyTextFilter() {
             }
         }
         for (const t of ORDER) t.hidden = hideUnmatched && t.kind !== 9 && t.hits === 0;
+        filteredCallCount = cnt;
         elFcount.textContent = cnt + ' of ' + N + ' calls';
         elFbar.classList.add('on');
     }
@@ -648,6 +670,7 @@ function applyTextFilter() {
     layout();
     draw();
     refreshPanel();
+    renderFilterProgress();
 }
 window.fgOnFilter = applyTextFilter;
 elFtext.addEventListener('keydown', ev => {
@@ -657,18 +680,31 @@ elFtext.addEventListener('keydown', ev => {
         fi.value = elFtext.value;
         elFtext.blur();
         if (elFtext.value.trim()) {
+            const indexed = fgTextDeferred() && document.getElementById('content').hasAttribute('data-fg-text-index');
             const pending = applyFilter();
-            if (pending && typeof pending.then === 'function') {
+            if (!indexed && pending && typeof pending.then === 'function') {
                 elFcount.textContent = 'Loading Text for full-trace filtering…';
                 pending.then(applied => { if (applied === false) toast('Text filter not applied. Open Text to retry loading its data.'); });
             }
         } else clearFilter();
-    } else if (ev.key === 'Escape') { elFtext.value = (window.fgFilterState || {}).text || ''; elFtext.blur(); }
+    } else if (ev.key === 'Escape') {
+        if (window.fgFilterProgress) fgCancelPendingFilter();
+        elFtext.value = (window.fgFilterState || {}).text || '';
+        elFtext.blur();
+    }
 });
 elFbar.addEventListener('click', ev => {
     const b = ev.target.closest('[data-act]');
     if (!b) return;
     if (b.dataset.act === 'fclear') { elFtext.value = ''; clearFilter(); }
+    else if (b.dataset.act === 'fretry') {
+        const status = window.fgFilterProgress;
+        if (status) {
+            document.getElementById('filterInput').value = elFtext.value = status.text;
+            elFtext.focus({ preventScroll: true });
+            applyFilter();
+        }
+    }
     else if (b.dataset.act === 'fhide') { hideUnmatched = !hideUnmatched; applyTextFilter(); }
 });
 if (!document.getElementById('filterInput')) elFbar.style.display = 'none';

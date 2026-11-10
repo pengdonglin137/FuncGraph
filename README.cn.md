@@ -59,10 +59,12 @@ fgcapture.sh --args --sched --calibrate \
 
 # 在主机上
 python3 funcgraph.py --timeline --enable-fold --filter --func-links --highlight-code --fast \
-    --vmlinux vmlinux --kernel-src linux --source-rev HEAD \
-    --base-url https://elixir.bootlin.com/linux/latest/source \
+    --vmlinux vmlinux --kernel-src linux --source-rev 1abad474a03f3346fdc485ab4ba9432ad22573c3 \
+    --base-url https://elixir.bootlin.com/linux/v7.2/source \
     --output sample.html samples/sample_io.txt
 ```
+
+示例 trace 标记为 `7.2.0+`，QEMU 运行内核与宿主构建信息均为 `#15`（2026 年 10 月 21 日）。示例使用宿主 `trim_retval` 源码的上述固定提交解析。外部 Elixir 链接固定为上游 `v7.2` 基线，不再使用会变化的 `latest`；定制补丁可能造成行号差异。内嵌源码来自本地版本，是阅读该定制内核的参考，不代表与上游完全一致。
 
 ---
 

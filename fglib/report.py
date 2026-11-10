@@ -10,7 +10,7 @@ import time
 import json
 from collections import defaultdict
 
-from .assets import COMPARE_CSS, COMPARE_JS, REPORT_CSS, REPORT_DATA_JS, REPORT_JS, REPORT_TREE_CSS, TIMELINE_CSS, VIEWS_BOOT_JS, VIEWS_CSS, VIEWS_EARLY_JS, read_asset, timeline_script
+from .assets import COMPARE_CSS, COMPARE_JS, REPORT_CSS, REPORT_DATA_JS, REPORT_FILTER_INDEX_JS, REPORT_JS, REPORT_TREE_CSS, TIMELINE_CSS, VIEWS_BOOT_JS, VIEWS_CSS, VIEWS_EARLY_JS, read_asset, timeline_script
 from .constants import APP_AUTHOR, APP_TITLE, APP_VERSION, ERROR_CODE_MAP, PROJECT_DIR
 from .inline import parse_chain, timeline_inline_map
 from .output import ReportSpool
@@ -61,6 +61,7 @@ class HtmlGenerator:
         self.compare_json = compare_json
         self.source_provider = source_provider
         self.omit_text = omit_text
+        self.text_index = None
         self.source_note = None
         self._src_pool = []
         self._src_index = {}
@@ -1315,96 +1316,11 @@ class HtmlGenerator:
                 escaped_line = self._fold_line_html(escaped_line, fold_type,
                                                    line_data.get('display_func_name'))
 
-            # 获取CPU、PID、进程名信息，用于过滤
-            cpu = line_data.get('cpu')
-            pid = line_data.get('pid')
-            comm = line_data.get('comm')
-            ret_value = line_data.get('ret_value')
-            params = line_data.get('params')
-            duration = line_data.get('duration')  # 耗时（微秒）- 用于过滤（原始显示值）
-            sort_duration = line_data.get('sort_duration')  # 排序用的实际值
             duration_raw = line_data.get('duration_raw')  # 原始耗时字符串
-
-            # 构建数据属性用于过滤
-            data_attrs = f' data-cpu="{cpu if cpu is not None else ""}" data-pid="{pid if pid is not None else ""}" data-comm="{comm if comm else ""}"'
-
-            # 添加折叠属性
-            if is_foldable:
-                # fold_ancestors 作为空格分隔的 token 列表，便于在 JS 中使用 ~= 选择器匹配
-                ancestors_attr = ''
-                if line_data.get('fold_ancestors'):
-                    ancestors_attr = line_data.get('fold_ancestors')
-                data_attrs += f' data-fold-id="{fold_id}" data-fold-type="{fold_type}"'
-                if fold_type == 'entry' and fold_id in fold_ends:
-                    data_attrs += f' data-fold-end="L{fold_ends[fold_id]}"'
-                if fold_type == 'exit' and fold_id in fold_starts:
-                    data_attrs += f' data-fold-start="L{fold_starts[fold_id]}"'
-                if fold_type == 'exit' and ret_value is not None:
-                    recorded_ret = re.search(r'\bret\s*=\s*([^\s*]+)', raw_line)
-                    fold_ret = recorded_ret.group(1) if recorded_ret else str(ret_value)
-                    data_attrs += f' data-fold-ret="{html.escape(fold_ret, quote=True)}"'
-                if call_depth is not None:
-                    data_attrs += f' data-call-depth="{call_depth}"'
-                if ancestors_attr:
-                    data_attrs += f' data-fold-ancestors="{ancestors_attr}"'
-
-            # 添加函数名属性（用于 func/graph/notrace 过滤）
-            display_func = line_data.get('display_func_name')
-            if display_func:
-                escaped_func = display_func.replace('"', '&quot;').replace('<', '&lt;').replace('>', '&gt;')
-                data_attrs += f' data-func="{escaped_func}"'
-
-            # 添加参数属性（用于参数过滤）
-            if params:
-                # 转义特殊字符，避免HTML属性问题
-                # 使用html.escape，但只转义引号、尖括号
-                escaped_params = params.replace('"', '&quot;').replace('<', '&lt;').replace('>', '&gt;')
-                data_attrs += f' data-params="{escaped_params}"'
-
-            # 添加耗时属性（用于耗时过滤和排序）
-            if duration is not None:
-                data_attrs += f' data-duration="{duration}"'
-                if sort_duration is not None and sort_duration != duration:
-                    data_attrs += f' data-sort-duration="{sort_duration}"'
-                if duration_raw:
-                    escaped_duration = duration_raw.replace('"', '&quot;').replace('<', '&lt;').replace('>', '&gt;')
-                    data_attrs += f' data-duration-raw="{escaped_duration}"'
-                    # Heatmap level based on ftrace duration prefix character
-                    prefix_char = duration_raw.lstrip()[0] if duration_raw.lstrip() and duration_raw.lstrip()[0] in '$@*#!+' else ' '
-                    heat_map = {'$': '7', '@': '6', '*': '5', '#': '4', '!': '3', '+': '2', ' ': '1'}
-                    data_attrs += f' data-heat="{heat_map.get(prefix_char, "1")}"'
-
-            # 添加返回值属性（用于错误码过滤）
-            if ret_value:
-                try:
-                    ret_lower = ret_value.lower()
-                    if ret_lower == 'true' or ret_lower == 'false':
-                        # B6: Store boolean return values as data-ret-bool
-                        data_attrs += f' data-ret-bool="{ret_lower}"'
-                    elif ret_value.startswith('0x') or ret_value.startswith('0X'):
-                        ret_int = int(ret_value, 16)
-                        if ret_int >= 0x8000000000000000:
-                            converted = ret_int - 0x10000000000000000
-                            if converted < 0:
-                                ret_int = converted
-                        if ret_int in ERROR_CODE_MAP:
-                            data_attrs += f' data-ret="{ret_int}"'
-                    else:
-                        ret_int = int(ret_value)
-                        if ret_int in ERROR_CODE_MAP:
-                            data_attrs += f' data-ret="{ret_int}"'
-                except ValueError:
-                    pass
-
-            # 添加 latency 字段属性（irqs-off, need-resched, hardirq/softirq, preempt-depth）
-            if line_data.get('irqs_off') is not None:
-                data_attrs += f' data-irqs="{line_data.irqs_off}"'
-            if line_data.get('need_resched') is not None:
-                data_attrs += f' data-resched="{line_data.need_resched}"'
-            if line_data.get('hardirq_softirq') is not None:
-                data_attrs += f' data-hirq="{line_data.hardirq_softirq}"'
-            if line_data.get('preempt_depth') is not None:
-                data_attrs += f' data-preempt="{line_data.preempt_depth}"'
+            attributes = self._text_attributes(line_data, raw_line, fold_ends, fold_starts)
+            data_attrs = ''.join(f' data-{name}="{html.escape(value, quote=True)}"' for name, value in attributes.items())
+            if self.text_index is not None:
+                self.text_index.append(line_number, attributes, escaped_line)
 
             # 添加耗时 tooltip
             title_attr = ''
@@ -1438,9 +1354,58 @@ class HtmlGenerator:
 
             yield ''.join(content_parts)
 
+    def _text_attributes(self, line, raw_line, fold_ends, fold_starts):
+        attributes = {name: str(line.get(name)) if line.get(name) is not None else '' for name in ('cpu', 'pid', 'comm')}
+        fold_id, fold_type = line.get('fold_id'), line.get('fold_type')
+        ret_value = line.get('ret_value')
+        if self.enable_fold and fold_id is not None and fold_type in ('entry', 'exit', 'inner'):
+            attributes.update({'fold-id': fold_id, 'fold-type': fold_type})
+            if fold_type == 'entry' and fold_id in fold_ends:
+                attributes['fold-end'] = 'L' + str(fold_ends[fold_id])
+            if fold_type == 'exit' and fold_id in fold_starts:
+                attributes['fold-start'] = 'L' + str(fold_starts[fold_id])
+            if fold_type == 'exit' and ret_value is not None:
+                recorded_ret = re.search(r'\bret\s*=\s*([^\s*]+)', raw_line)
+                attributes['fold-ret'] = recorded_ret.group(1) if recorded_ret else str(ret_value)
+            if line.get('call_depth') is not None:
+                attributes['call-depth'] = str(line.get('call_depth'))
+            if line.get('fold_ancestors'):
+                attributes['fold-ancestors'] = line.get('fold_ancestors')
+        for field, attribute in [('display_func_name', 'func'), ('params', 'params')]:
+            if line.get(field):
+                attributes[attribute] = line.get(field)
+        duration = line.get('duration')
+        duration_raw = line.get('duration_raw')
+        if duration is not None:
+            attributes['duration'] = str(duration)
+            if line.get('sort_duration') is not None and line.get('sort_duration') != duration:
+                attributes['sort-duration'] = str(line.get('sort_duration'))
+            if duration_raw:
+                attributes['duration-raw'] = duration_raw
+                prefix = duration_raw.lstrip()[:1]
+                attributes['heat'] = {'$': '7', '@': '6', '*': '5', '#': '4', '!': '3', '+': '2'}.get(prefix, '1')
+        if ret_value:
+            try:
+                if ret_value.lower() in ('true', 'false'):
+                    attributes['ret-bool'] = ret_value.lower()
+                else:
+                    hexadecimal = ret_value.lower().startswith('0x')
+                    number = int(ret_value, 16 if hexadecimal else 10)
+                    if hexadecimal and number >= 0x8000000000000000:
+                        number -= 0x10000000000000000
+                    if number in ERROR_CODE_MAP:
+                        attributes['ret'] = str(number)
+            except ValueError:
+                pass
+        for field, attribute in [('irqs_off', 'irqs'), ('need_resched', 'resched'),
+                                 ('hardirq_softirq', 'hirq'), ('preempt_depth', 'preempt')]:
+            if line.get(field) is not None:
+                attributes[attribute] = str(line.get(field))
+        return attributes
+
     def _generate_javascript(self):
         """Main report JavaScript (assets/report/report.js)."""
-        return '\n    <script>\n' + read_asset(REPORT_DATA_JS) + read_asset(REPORT_JS) + '    </script>\n'
+        return '\n    <script>\n' + read_asset(REPORT_DATA_JS) + read_asset(REPORT_FILTER_INDEX_JS) + read_asset(REPORT_JS) + '    </script>\n'
 
     def _generate_css(self):
         """Main report CSS (assets/report/report.css)."""

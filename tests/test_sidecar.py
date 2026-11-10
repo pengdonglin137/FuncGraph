@@ -297,7 +297,7 @@ class SidecarBrowserTest(unittest.TestCase):
 
     def test_initial_timeline_does_not_fetch_text_or_compare_or_create_text_rows(self):
         self.assertEqual(self.page.locator('#content .line-container').count(), 0)
-        self.assertFalse(any(url.endswith(('text.html', 'compare.json')) for url in self.requests))
+        self.assertFalse(any(url.endswith(('text.html', 'compare.json', 'text-index.json')) for url in self.requests))
         self.assertGreater(self.page.evaluate('fgView("timeline").probe().N'), 0)
         self.assertTrue(self.page.evaluate('fgTextDeferred()'))
         self.page.evaluate('''() => {
@@ -311,7 +311,7 @@ class SidecarBrowserTest(unittest.TestCase):
 
     def test_text_initializes_once_and_preserves_sources_folds_filters_and_reentry(self):
         self.page.locator('[data-view=text]').click()
-        self.page.locator('#content .fold-icon').first.wait_for()
+        self.page.locator('#content .fold-icon').first.wait_for(state='attached')
         count = self.page.locator('#content .line-container').count()
         self.assertGreater(count, 100)
         self.assertFalse(self.page.evaluate('fgData.ready("fgText")'))
@@ -330,14 +330,16 @@ class SidecarBrowserTest(unittest.TestCase):
         self.assertEqual(self.page.locator('#content .line-container').count(), count)
         self.assertEqual(sum(url.endswith('text.html') for url in self.requests), 1)
 
-    def test_timeline_unified_filter_loads_the_complete_text_without_switching_views(self):
+    def test_timeline_unified_filter_uses_all_rows_without_loading_text_or_switching_views(self):
         self.page.locator('.tl-ftext').fill('duration:>1')
         self.page.locator('.tl-ftext').press('Enter')
         self.page.locator('.tl-fcount').filter(has_text='of').wait_for()
         self.assertEqual(self.page.evaluate('fgCurrentView()'), 'timeline')
-        self.assertGreater(self.page.locator('#content .line-container').count(), 100)
+        self.assertEqual(self.page.locator('#content .line-container').count(), 0)
         self.assertIn('of', self.page.locator('.tl-fcount').inner_text())
-        self.assertEqual(sum(url.endswith('text.html') for url in self.requests), 1)
+        self.assertEqual(sum(url.endswith('text.html') for url in self.requests), 0)
+        self.assertEqual(sum(url.endswith('text-index.json') for url in self.requests), 1)
+        self.assertGreater(self.page.evaluate('fgFilterState.lines.size'), 0)
 
     def test_hash_navigation_loads_text_before_locating_a_real_line(self):
         self.page.goto(self.server.url + '#L25', wait_until='load')
@@ -376,16 +378,143 @@ class SidecarBrowserTest(unittest.TestCase):
 
     def test_clearing_a_pending_filter_does_not_apply_or_report_a_cancelled_filter(self):
         routes = []
-        self.page.route('**/text.html', lambda route: routes.append(route))
+        self.page.route('**/text-index.json', lambda route: routes.append(route))
         self.page.locator('.tl-ftext').fill('duration:>1')
-        with self.page.expect_request('**/text.html'):
+        with self.page.expect_request('**/text-index.json'):
             self.page.locator('.tl-ftext').press('Enter')
         self.page.locator('[data-act=fclear]').click()
-        payload = (self.manifest.parent / self.resources['fgText']['file']).read_bytes()
+        payload = (self.manifest.parent / self.resources['fgTextIndex']['file']).read_bytes()
         routes[0].fulfill(status=200, body=payload)
-        self.page.locator('#content .line-container').first.wait_for(state='attached')
+        self.page.evaluate('async () => { await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))); }')
+        self.assertEqual(self.page.locator('#content .line-container').count(), 0)
         self.assertEqual(self.page.evaluate('fgFilterState.text'), '')
         self.assertNotIn('not applied', self.page.locator('body').inner_text())
+
+    def apply_query(self, query):
+        return self.page.evaluate('''async query => {
+            document.getElementById('filterInput').value = query;
+            await applyFilter();
+            return fgFilterState.lines === null ? null : Array.from(fgFilterState.lines).sort((left, right) => left - right);
+        }''', query)
+
+    def test_index_matches_native_text_attributes_content_and_all_filter_fields(self):
+        index = self.page.evaluate('async () => await fgData.load("fgTextIndex")')
+        queries = ['', 'cpu:0', 'pid:131108', 'comm:sh', 'func:mutex', 'duration:>1',
+                   'duration:<=0.5', 'ret:all', 'ret:-2', 'params:0x', 'irqs:d', 'resched:N',
+                   'hirq:h', 'preempt:>1', 'preempt:1', 'graph:do_sys_openat2',
+                   'notrace:getname_flags', 'graph:missing', 'notrace:missing', 'func:[',
+                   '(comm:sh OR cpu:1) AND NOT duration:>10', 'graph:do_sys_openat2 AND ret:all',
+                   'NOT graph:getname_flags OR duration:>10', 'unknown:value', 'NOT unknown:value',
+                   'duration:>1 sort:desc']
+        indexed = {}
+        for query in queries:
+            with self.subTest(query=query):
+                indexed[query] = self.apply_query(query)
+                self.assertEqual(self.page.locator('#content .line-container').count(), 0)
+        saved = indexed[queries[-1]]
+        self.page.locator('[data-view=text]').click()
+        self.page.locator('#content .fold-icon').first.wait_for(state='attached')
+        self.assertEqual(self.page.evaluate('Array.from(fgFilterState.lines).sort((left, right) => left - right)'), saved)
+        self.assertFalse(self.page.evaluate('fgData.ready("fgTextIndex")'))
+        actual = self.page.evaluate('''fields => Array.from(document.querySelectorAll('#content .line-container'), line => [
+            +line.getAttribute('data-line-number'), line.querySelector('.line-content').textContent,
+            ...fields.map(field => line.getAttribute('data-' + field))])''', index['fields'])
+        self.assertEqual(index['rows'], actual)
+        for query in queries:
+            with self.subTest(native_query=query):
+                self.assertEqual(self.apply_query(query), indexed[query])
+
+    def test_filter_index_failure_retains_previous_result_and_retries_without_text(self):
+        previous = self.apply_query('duration:>1')
+        self.page.evaluate('fgData.release("fgTextIndex")')
+        self.page.route('**/text-index.json', lambda route: route.fulfill(status=404, body='missing'))
+        self.page.locator('.tl-ftext').fill('graph:do_sys_openat2')
+        self.page.locator('.tl-ftext').press('Enter')
+        status = self.page.locator('.tl-fcount[role=alert]')
+        status.wait_for()
+        self.assertIn('HTTP 404', status.inner_text())
+        self.assertIn('Previous result retained', status.inner_text())
+        self.assertEqual(self.page.evaluate('Array.from(fgFilterState.lines).sort((left, right) => left - right)'), previous)
+        self.page.unroute('**/text-index.json')
+        self.page.locator('[data-act=fretry]').press('Enter')
+        self.page.locator('.tl-fcount[role=status]').filter(has_text='of').wait_for()
+        self.assertTrue(self.page.locator('.tl-ftext').evaluate('element => element === document.activeElement'))
+        self.assertEqual(self.page.evaluate('fgFilterState.text'), 'graph:do_sys_openat2')
+        self.assertEqual(self.page.locator('#content .line-container').count(), 0)
+        self.assertEqual(sum(url.endswith('text.html') for url in self.requests), 0)
+
+    def test_escape_cancels_a_pending_index_filter_without_clearing_the_previous_result(self):
+        previous = self.apply_query('duration:>1')
+        self.page.evaluate('fgData.release("fgTextIndex")')
+        routes = []
+        self.page.route('**/text-index.json', lambda route: routes.append(route))
+        self.page.locator('.tl-ftext').fill('graph:do_sys_openat2')
+        with self.page.expect_request('**/text-index.json'):
+            self.page.locator('.tl-ftext').press('Enter')
+        self.page.locator('.tl-ftext').press('Escape')
+        payload = (self.manifest.parent / self.resources['fgTextIndex']['file']).read_bytes()
+        routes[0].fulfill(status=200, body=payload)
+        self.page.evaluate('async () => { await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))); }')
+        self.assertEqual(self.page.evaluate('Array.from(fgFilterState.lines).sort((left, right) => left - right)'), previous)
+        self.assertEqual(self.page.locator('.tl-ftext').input_value(), 'duration:>1')
+        self.assertIsNone(self.page.evaluate('fgFilterProgress'))
+        self.assertEqual(self.page.locator('#content .line-container').count(), 0)
+
+    def test_superseded_index_filter_cannot_replace_the_newer_result(self):
+        expected = self.apply_query('duration:>1')
+        self.page.evaluate('fgData.release("fgTextIndex"); clearFilter()')
+        routes = []
+        self.page.route('**/text-index.json', lambda route: routes.append(route))
+        for query in ['graph:do_sys_openat2', 'duration:>1']:
+            self.page.locator('.tl-ftext').fill(query)
+            with self.page.expect_request('**/text-index.json'):
+                self.page.locator('.tl-ftext').press('Enter')
+        payload = (self.manifest.parent / self.resources['fgTextIndex']['file']).read_bytes()
+        routes[1].fulfill(status=200, body=payload)
+        self.page.wait_for_function('() => fgFilterState.text === "duration:>1" && fgFilterProgress === null')
+        routes[0].fulfill(status=200, body=payload)
+        self.page.evaluate('async () => { await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))); }')
+        self.assertEqual(self.page.evaluate('Array.from(fgFilterState.lines).sort((left, right) => left - right)'), expected)
+        self.assertEqual(self.page.locator('#content .line-container').count(), 0)
+
+    def test_mounting_text_cancels_pending_index_and_reapplies_the_query_natively(self):
+        expected = self.apply_query('duration:>1')
+        self.page.evaluate('fgData.release("fgTextIndex"); clearFilter()')
+        routes = []
+        self.page.route('**/text-index.json', lambda route: routes.append(route))
+        self.page.locator('.tl-ftext').fill('duration:>1')
+        with self.page.expect_request('**/text-index.json'):
+            self.page.locator('.tl-ftext').press('Enter')
+        self.page.locator('[data-view=text]').click()
+        self.page.wait_for_function('() => !fgTextDeferred() && fgFilterState.text === "duration:>1"')
+        payload = (self.manifest.parent / self.resources['fgTextIndex']['file']).read_bytes()
+        routes[0].fulfill(status=200, body=payload)
+        self.page.evaluate('async () => { await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))); }')
+        self.assertEqual(self.page.evaluate('Array.from(fgFilterState.lines).sort((left, right) => left - right)'), expected)
+        self.assertFalse(self.page.evaluate('fgData.ready("fgTextIndex")'))
+        self.assertGreater(self.page.locator('#content .line-container').count(), 0)
+
+    def test_index_schema_validation_rejects_invalid_records(self):
+        errors = self.page.evaluate('''async () => {
+            const original = await fgData.load('fgTextIndex');
+            const mutations = [data => { data.version = 2; }, data => { data.fields.reverse(); },
+                data => { data.rows[0][0] = -1; }, data => { data.rows[1][0] = data.rows[0][0]; },
+                data => { data.rows[0][2] = {}; }, data => { data.rows[0].pop(); }];
+            const results = [];
+            for (const mutate of mutations) {
+                const data = JSON.parse(JSON.stringify(original));
+                mutate(data);
+                try {
+                    await fgIndexedFilter(data, 'func:mutex', new AbortController().signal, () => {});
+                    results.push(null);
+                } catch (error) { results.push(error.message); }
+            }
+            return results;
+        }''')
+        self.assertEqual(len(errors), 6)
+        for error in errors:
+            self.assertRegex(error, r'(Unsupported|Invalid) Text filter index')
+        self.assertEqual(self.page.locator('#content .line-container').count(), 0)
 
     def test_cancelled_text_fetch_cannot_mount_after_returning_to_timeline(self):
         routes = []

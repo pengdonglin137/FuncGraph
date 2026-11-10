@@ -16,6 +16,7 @@ REPORT_CSS = 'report/report.css'
 REPORT_TREE_CSS = 'report/tree.css'
 REPORT_JS = 'report/report.js'
 REPORT_DATA_JS = 'report/data.js'
+REPORT_FILTER_INDEX_JS = 'report/filter-index.js'
 VIEWS_CSS = 'views/views.css'
 VIEWS_EARLY_JS = 'views/early.js'
 VIEWS_BOOT_JS = 'views/boot.js'
@@ -45,4 +46,4 @@ def timeline_script():
 
 
 def all_asset_paths():
-    return (REPORT_CSS, REPORT_TREE_CSS, REPORT_JS, REPORT_DATA_JS, VIEWS_CSS, VIEWS_EARLY_JS, VIEWS_BOOT_JS, TIMELINE_CSS, COMPARE_CSS, COMPARE_JS) + TIMELINE_JS_PARTS
+    return (REPORT_CSS, REPORT_TREE_CSS, REPORT_JS, REPORT_DATA_JS, REPORT_FILTER_INDEX_JS, VIEWS_CSS, VIEWS_EARLY_JS, VIEWS_BOOT_JS, TIMELINE_CSS, COMPARE_CSS, COMPARE_JS) + TIMELINE_JS_PARTS

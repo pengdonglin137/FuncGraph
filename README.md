@@ -45,7 +45,7 @@ What to look at:
 How it was made:
 
 ```bash
-# on the target (QEMU x86_64, kernel 7.2), as root
+# on the target (QEMU x86_64, kernel 7.2.0+), as root
 gcc -O2 -static -o /tmp/demo_io samples/demo_io.c
 dd if=/dev/urandom of=/tmp/demo_in.bin bs=4096 count=1
 dd if=/dev/zero of=/tmp/demo_out.bin bs=4096 count=1
@@ -56,10 +56,12 @@ fgcapture.sh --args --sched --calibrate \
 
 # on the host
 python3 funcgraph.py --timeline --tail-calls --enable-fold --filter --func-links --highlight-code --fast \
-    --vmlinux vmlinux --kernel-src linux --source-rev HEAD \
-    --base-url https://elixir.bootlin.com/linux/latest/source \
+    --vmlinux vmlinux --kernel-src linux --source-rev 1abad474a03f3346fdc485ab4ba9432ad22573c3 \
+    --base-url https://elixir.bootlin.com/linux/v7.2/source \
     --output sample.html samples/sample_io.txt
 ```
+
+The sample trace reports `7.2.0+`; its QEMU runtime and host build both identify build `#15` (October 21, 2026). The example resolves against the host `trim_retval` source at the fixed commit above. External Elixir links are pinned to the upstream `v7.2` baseline, not moving `latest`; local patches may change line numbers. Embedded source comes from the local revision and is the reference for this custom kernel, not proof of an exact upstream match.
 
 ---
 

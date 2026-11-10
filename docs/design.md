@@ -602,7 +602,13 @@ CI（`.github/workflows/ci.yml`）：每次推送到 master 和每个 PR 在 Pyt
 
 `assets/report/data.js` 提供 `fgData.read/load/ready/external/length/release`；Timeline/Compare 不再直接解析 DOM JSON。普通输出保持内嵌数据、离线打开；显式 `--timeline --report-mode sidecar` 由 `fglib/sidecar.py` 导出目录，通过 `fgview DIRECTORY` 打开。Text/源码按块传输、缓存淘汰和自动阈值仍未实现；静态 `text-chunk` 绘制包装不是外部数据块。
 
-Sidecar 第一阶段使用 deferred-full Text：默认 Timeline 首屏只读取外壳/manifest/Timeline，不获取 Text/Compare，也不创建逐调用 Text DOM；源码池及索引仍内嵌。进入 Text、行号/锚点跳转或统一过滤时完整获取 `text.html` 并一次挂载，过滤仍处理完整 trace，且不切走 Timeline。挂载后释放 HTML 字符串缓存，保留完整 DOM，回访不重复初始化/请求；这不限制首次 Text 的成本或后续内存。Text 工具栏在挂载前 inert；保存的 Text 偏好/行号锚点优先。网络错误允许 Retry，Text 初始化失败则要求 Reload report，防止复用半初始化状态；取消后迟到数据不会挂载或激活视图。
+Sidecar 使用 deferred-full Text：默认 Timeline 首屏只读取外壳/manifest/Timeline，不获取 Text/Compare/过滤索引，也不创建逐调用 Text DOM；源码池及索引仍内嵌。进入 Text 或行号/锚点跳转时完整获取 `text.html` 并一次挂载，重新应用当前过滤，释放索引和 HTML 字符串缓存，保留完整 DOM，回访不重复初始化/请求；这不限制首次 Text 的成本或后续内存。Text 工具栏在挂载前 inert；保存的 Text 偏好/行号锚点优先。网络错误允许 Retry，Text 初始化失败则要求 Reload report，防止复用半初始化状态；取消后迟到数据不会挂载或激活视图。
+
+统一过滤改为按需读取完整 `text-index.json`（`fgTextIndex`，schema 1），包含原始行号、实际行文本及 14 个共享结构属性。`_text_attributes` 为 HTML 与索引提供同一属性值，HTML 边界统一转义；`TextIndexWriter` 逐行写 JSON 并累计 UTF-8 字节数/SHA-256，不在 Python 中保留整份索引。实际行文本由 HTMLParser 提取，保留 `/* <-caller */` 等不是 HTML 标签的内容，按浏览器规则规范 CR/NUL。索引不重复源码，`--no-text-view` 不导出索引。
+
+浏览器复用原表达式/graph/notrace 求值逻辑，以轻量行适配器扫描所有记录，不创建逐行 DOM。schema 校验与过滤生成器按批次协作让出，目标 8ms；下载、JSON.parse、正则、图目标匹配和 GC 仍可超过预算，未迁移 Worker。进度回调只更新状态，不反复重建 Timeline 模型；Escape/Clear/更新查询可取消，代数校验防止迟到结果覆盖新状态。错误保留上次结果并提供原生 Retry，键盘焦点回到输入框；Text 挂载中会取消索引工作并按原生路径重算。没有索引标记的旧报告保持完整 Text 回退，默认单文件行为不变。`tests/benchmark_sidecar.py --filter QUERY` 核对与完整 Text 的全部命中行摘要，并分别记录耗时、请求、DOM 和采样 RSS；索引完整驻留至 Text 挂载，并非块缓存、虚拟列表或有界内存。
+
+真实 Pi 4 `traceB`（72,176 行 / 55,186 调用）在一轮独立 Chromium 单文件/sidecar 对比中，查询 `duration:>10 AND NOT graph:finish_task_switch` 均命中 4,804 行，全部行号 SHA-256 一致。已挂载完整 DOM 的原生过滤为 283.2ms；首次含索引下载/解析/校验的 sidecar 过滤为 458.4ms，不能据此宣称单次过滤更快。关键区别是 sidecar 过滤后仍为 0 行 Text DOM，只请求一次 34,285,238 字节索引、不请求 `text.html`；过滤后采样 renderer RSS 为 240.4MiB，对照为 811.0MiB。该轮完整 Timeline 就绪为 352.4ms / 1802.8ms，是单次观察而非稳定中位数；双 rAF 只代表反馈代理，RSS 非峰值。首次完整 Text 的高成本并未被本次优化消除。
 
 产物为 `index.html`、隐藏归属标记、唯一 `data-<report-id>/`（manifest、Timeline、可选 Compare/Text），资源大小/SHA-256/UTF-8 和报告身份逐一校验。`ReportSpool` 的完整单文件计数保留；以不超过 1 MiB 的读取提取资源和改写外壳，不重新拼完整 HTML。新/空目录完整暂存后发布；更新先发布不可变资源、最后原子替换 index.html，失败保留旧入口，入口替换后即使中断也不能删除已提交资源。旧版本为已打开页面保留，增加磁盘占用；拒绝未托管非空目录、文件和输出符号链接。全 trace 解析/符号解析未减少，也不自动判断大小/行数阈值。使用/清理见双语查看器指南。
 

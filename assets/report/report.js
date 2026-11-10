@@ -5,6 +5,7 @@
         // Source blocks are de-duplicated in #fgSrc and filled in on first expand
         // Filter state shared with the Timeline tab (line numbers that pass the filter)
         window.fgFilterState = { text: '', lines: null };
+        window.fgFilterProgress = null;
         function fgNotifyFilter(text, lines) {
             window.fgFilterState = { text: text, lines: lines };
             if (typeof window.fgOnFilter === 'function') window.fgOnFilter();
@@ -249,6 +250,7 @@
         let allLines = [];
         let fgTextInitialized = false;
         let fgFilterGeneration = 0;
+        let fgFilterController = null;
         function fgTextDeferred() { return document.getElementById('content').hasAttribute('data-fg-text'); }
         let textGuideRevision = 0;
         let expandableLines = [];
@@ -759,7 +761,7 @@
         }
 
         // Evaluate a single condition against a line element
-        function evalCondition(line, cond) {
+        function evalCondition(line, cond, graphSets = _graphFoldIds) {
             if (!cond || cond.type !== 'COND') return true;
             const { field, op, value } = cond;
 
@@ -783,7 +785,7 @@
             // graph: show function's complete call tree
             if (field === 'graph') {
                 const key = 'graph:' + value;
-                const targetIds = _graphFoldIds[key];
+                const targetIds = graphSets[key];
                 if (!targetIds || targetIds.size === 0) return false;
 
                 const foldId = line.getAttribute('data-fold-id');
@@ -803,7 +805,7 @@
             // notrace: hide function's complete call tree
             if (field === 'notrace') {
                 const key = 'notrace:' + value;
-                const targetIds = _graphFoldIds[key];
+                const targetIds = graphSets[key];
                 if (!targetIds || targetIds.size === 0) return true; // no match = show all
 
                 const foldId = line.getAttribute('data-fold-id');
@@ -904,13 +906,13 @@
         }
 
         // Evaluate AST against a line element
-        function evalExpr(line, ast) {
+        function evalExpr(line, ast, graphSets = _graphFoldIds) {
             if (!ast) return true;
             switch (ast.type) {
-                case 'AND': return evalExpr(line, ast.left) && evalExpr(line, ast.right);
-                case 'OR': return evalExpr(line, ast.left) || evalExpr(line, ast.right);
-                case 'NOT': return !evalExpr(line, ast.operand);
-                case 'COND': return evalCondition(line, ast);
+                case 'AND': return evalExpr(line, ast.left, graphSets) && evalExpr(line, ast.right, graphSets);
+                case 'OR': return evalExpr(line, ast.left, graphSets) || evalExpr(line, ast.right, graphSets);
+                case 'NOT': return !evalExpr(line, ast.operand, graphSets);
+                case 'COND': return evalCondition(line, ast, graphSets);
                 default: return true;
             }
         }
@@ -1030,13 +1032,20 @@
 
         // Build funcName→[foldId] map and resolve graph/notrace targets
         function precomputeGraphSets(graphConds, allLines) {
+            const steps = fgGraphSetsSteps(graphConds, allLines);
+            let result;
+            do { result = steps.next(); } while (!result.done);
+            return result.value;
+        }
+
+        function* fgGraphSetsSteps(graphConds, allLines) {
             const result = {};
             if (graphConds.length === 0) return result;
 
             // Build entry map: funcName → [foldId, ...]
             const entryMap = new Map();
-            for (let i = 0; i < allLines.length; i++) {
-                const line = allLines[i];
+            let scanned = 0;
+            for (const line of allLines) {
                 if (line.getAttribute('data-fold-type') === 'entry') {
                     const func = line.getAttribute('data-func');
                     const foldId = line.getAttribute('data-fold-id');
@@ -1046,6 +1055,7 @@
                         arr.push(foldId);
                     }
                 }
+                if (++scanned % 2048 === 0) yield 'Preparing full-trace call-tree filter…';
             }
 
             // For each condition, find matching fold-ids
@@ -1067,16 +1077,76 @@
 
         // ====== Main Filter Functions ======
 
+        function fgSetFilterProgress(status) {
+            window.fgFilterProgress = status;
+            if (typeof window.fgOnFilterProgress === 'function') window.fgOnFilterProgress();
+        }
+
+        function fgCancelPendingFilter(notify = true) {
+            fgFilterGeneration++;
+            if (fgFilterController) fgFilterController.abort();
+            fgFilterController = null;
+            if (window.fgFilterProgress) {
+                window.fgFilterProgress = null;
+                if (notify && typeof window.fgOnFilterProgress === 'function') window.fgOnFilterProgress();
+            }
+        }
+
+        function fgShowFilterCount(visible, total) {
+            const container = document.getElementById('visibleLinesContainer');
+            const count = document.getElementById('summaryVisibleLines');
+            if (container && count) {
+                container.style.display = visible < total ? 'inline' : 'none';
+                count.textContent = visible;
+            }
+        }
+
+        async function fgApplyIndexedFilter(text, generation) {
+            if (!parseFilterExpr(text).ast) {
+                fgNotifyFilter('', null);
+                fgShowFilterCount(total_lines, total_lines);
+                return true;
+            }
+            const controller = fgFilterController = new AbortController();
+            const progress = message => {
+                if (generation === fgFilterGeneration) fgSetFilterProgress({ text, message, error: false });
+            };
+            progress('Loading full-trace filter index…');
+            try {
+                const data = await fgData.load('fgTextIndex', { signal: controller.signal });
+                const result = await fgIndexedFilter(data, text, controller.signal, progress);
+                if (generation !== fgFilterGeneration) return null;
+                total_lines = result.total;
+                window.fgFilterProgress = null;
+                fgNotifyFilter(result.text, result.lines);
+                fgShowFilterCount(result.visible, result.total);
+                return true;
+            } catch (error) {
+                if (error.name === 'AbortError' || generation !== fgFilterGeneration) return null;
+                fgData.release('fgTextIndex');
+                fgSetFilterProgress({ text, error: true,
+                    message: 'Filter not applied: ' + error.message + '. Previous result retained.' });
+                return false;
+            } finally {
+                if (fgFilterController === controller) fgFilterController = null;
+            }
+        }
+
         function applyFilter() {
-            const generation = ++fgFilterGeneration;
+            fgCancelPendingFilter(false);
+            const generation = fgFilterGeneration;
+            const filterInput = document.getElementById('filterInput');
+            const text = filterInput ? filterInput.value.trim() : '';
+            if (fgTextDeferred() && document.getElementById('content').hasAttribute('data-fg-text-index')) {
+                updateFilterTags(text);
+                return fgApplyIndexedFilter(text, generation);
+            }
             if (fgTextDeferred()) return Promise.resolve(fgEnsureText()).then(api => {
                 if (generation !== fgFilterGeneration) return null;
                 if (!api) return false;
                 applyFilter();
                 return true;
             });
-            const filterInput = document.getElementById('filterInput');
-            const text = filterInput ? filterInput.value.trim() : '';
 
             // Update tags display
             updateFilterTags(text);
@@ -1154,21 +1224,12 @@
             fgNotifyFilter(hasFilter ? text : '', passLines);
 
             // Update visible lines count
-            const visibleLinesContainer = document.getElementById('visibleLinesContainer');
-            const summaryVisibleLines = document.getElementById('summaryVisibleLines');
-            if (visibleLinesContainer && summaryVisibleLines) {
-                if (visibleCount < total_lines) {
-                    visibleLinesContainer.style.display = 'inline';
-                    summaryVisibleLines.textContent = visibleCount;
-                } else {
-                    visibleLinesContainer.style.display = 'none';
-                }
-            }
+            fgShowFilterCount(visibleCount, total_lines);
         }
 
         // Clear filter
         function clearFilter() {
-            fgFilterGeneration++;
+            fgCancelPendingFilter(false);
             const filterInput = document.getElementById('filterInput');
             if (filterInput) filterInput.value = '';
 
@@ -2913,6 +2974,15 @@
 
             // 恢复展开状态
             restoreExpandedState();
+
+            if (mounted) {
+                const filterText = window.fgFilterProgress?.text ?? window.fgFilterState.text;
+                if (filterText) {
+                    const input = document.getElementById('filterInput');
+                    if (input) input.value = filterText;
+                    applyFilter();
+                }
+            }
 
             // 移除自动滚动，保持当前视图位置
             // restoreViewState(); // 注释掉，避免自动滚动

@@ -2,7 +2,7 @@
 
 **raw 采集文件**：自动识别 trace-cmd 二进制容器：`funcgraph trace.dat --timeline --output trace.html`。原生依赖、固定子模块、buffer 选择及边界见 [raw 输入文档](raw-input.cn.md)；不支持独立 trace_pipe_raw 裸页。
 
-报告加载：普通报告仍为离线单文件。大报告可显式运行 `funcgraph TRACE --timeline --report-mode sidecar --output REPORT_DIRECTORY`，再用 `fgview REPORT_DIRECTORY` 打开。默认 Timeline 不加载 Text 行，Compare 按需读取；首次进入 Text、跳转 trace 行号/锚点或统一过滤时**完整加载 Text**，不会只过滤已加载部分。保存的 Text 偏好和行号锚点优先于初始 Timeline。源码仍内嵌；尚无 Text 虚拟化、源码分块或自动阈值。共享、更新和错误恢复见[查看器指南](viewer.cn.md)。
+报告加载：普通报告仍为离线单文件。大报告可显式运行 `funcgraph TRACE --timeline --report-mode sidecar --output REPORT_DIRECTORY`，再用 `fgview REPORT_DIRECTORY` 打开。默认 Timeline 不加载 Text 行，Compare 按需读取；统一过滤按需加载完整 Text 过滤索引，不挂载 Text DOM，提供进度、取消及失败保留旧结果后的重试。首次进入 Text 或跳转 trace 行号/锚点时才**完整加载 Text**，并重新应用当前过滤。保存的 Text 偏好和行号锚点优先于初始 Timeline。源码仍内嵌；尚无 Text 虚拟化、源码分块或自动阈值。共享、更新和错误恢复见[查看器指南](viewer.cn.md)。
 
 本文介绍从采集 trace 到阅读报告的完整流程，并逐一说明报告中每个视图的字段和配色。命令行参数的完整列表见 `python3 funcgraph.py --help`，实现细节见 [design.md](design.md)。English: [guide.en.md](guide.en.md).
 

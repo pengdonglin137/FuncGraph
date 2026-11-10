@@ -38,7 +38,8 @@ fgview trace-report --open
 文本和二进制 raw 输入共用此输出模式；raw 仍需要原生依赖。默认 `--report-mode single`，不会按文件大小或行数自动切换。Sidecar 必须配合 `--timeline`，输出为独立目录而非文件，并通过 HTTP 打开。
 
 - 首次 Timeline 读取完整模型，不获取 Text/Compare，不创建逐行 Text DOM。源码池及索引仍内嵌，使用时同步解析。
-- 首次进入 Text、跳转 trace 行号、访问 `#L<number>` 或应用 Timeline 统一过滤时，**一次完整加载 Text**。过滤等待全部行挂载，保留当前 Timeline；不会只分析已加载部分。挂载后保留完整 DOM 并复用，不是虚拟列表或有界内存，首次 Text 挂载仍可能很慢。保存的 Text 偏好和行号锚点会直接打开 Text。
+- Timeline 统一过滤首次读取 `text-index.json`，按 Text 表达式和调用树语义扫描全部 trace 行，不创建 Text DOM。进度可用 Escape / Clear 取消，新查询替代旧查询；失败保留上次结果并提供 **Retry filter**。完整索引缓存至 Text 挂载；下载、解析和调用树准备仍占用主线程及内存。
+- 首次进入 Text、跳转 trace 行号或访问 `#L<number>` 时，**一次完整加载 Text**，先重新应用当前过滤，再释放索引及 HTML 字符串缓存。完整 Text DOM 随后常驻，不是虚拟列表，也没有 DOM 上限；首次挂载仍可能很慢。保存的 Text 偏好和行号锚点直接打开 Text。没有索引的旧 sidecar 报告仍以完整 Text 进行过滤。
 - 资源请求/校验失败可 Retry；Escape/返回可取消当前视图的等待，迟到响应不会激活旧视图。若 Text 初始化中途失败，提供 **Reload report**，不复用半初始化的监听器/状态。
 - `--no-text-view` 继续省略 Text，也不生成 Text 资源；`--keep-source` 的源码解析语义不变。
 

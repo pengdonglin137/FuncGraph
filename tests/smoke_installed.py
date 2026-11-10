@@ -202,7 +202,7 @@ class InstalledPackageTest(unittest.TestCase):
         manifest_path = output / descriptor['manifest']['file']
         manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
         self.assertEqual(manifest['report_id'], descriptor['report_id'])
-        self.assertEqual(set(manifest['resources']), {'tlData', 'cmpData', 'fgText'})
+        self.assertEqual(set(manifest['resources']), {'tlData', 'cmpData', 'fgText', 'fgTextIndex'})
         for resource in manifest['resources'].values():
             payload = (manifest_path.parent / resource['file']).read_bytes()
             self.assertEqual(len(payload), resource['bytes'])

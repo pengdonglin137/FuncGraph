@@ -1,6 +1,7 @@
 """Publish immutable report resources and an atomically replaced HTML entry."""
 
 from dataclasses import dataclass
+from contextlib import nullcontext
 import hashlib
 import json
 import os
@@ -11,6 +12,7 @@ import tempfile
 import uuid
 
 from .output import ReportSpool
+from .textindex import TextIndexWriter
 
 
 MARKER = b'FuncGraph sidecar report v1\n'
@@ -132,16 +134,27 @@ def write_sidecar(path, generator):
         resources_directory = temporary / version
         resources_directory.mkdir()
         with ReportSpool(temporary / '.single.html') as spool:
-            spool.write_sections(generator.iter_sections())
-            spool.file.flush()
             resources = {}
+            index_path = resources_directory / 'text-index.json'
+            with index_path.open('xb') if deferred else nullcontext() as index_stream:
+                index = TextIndexWriter(index_stream) if deferred else None
+                generator.text_index = index
+                try:
+                    spool.write_sections(generator.iter_sections())
+                finally:
+                    generator.text_index = None
+                if index is not None:
+                    resources['fgTextIndex'] = index.finish(index_path.name)
+                    _sync(index_stream)
+            spool.file.flush()
             for name, filename in [('tlData', 'timeline.json'), ('cmpData', 'compare.json')]:
                 if any(section.name == 'view_data:' + name for section in spool.sections):
                     resources[name] = _resource(spool, 'view_data:' + name, resources_directory / filename, 'json')
             if deferred:
                 resources['fgText'] = _resource(spool, 'text', resources_directory / 'text.html', 'text')
             manifest = _json(dict(version=1, report_id=report_id, resources=resources,
-                                  capabilities=dict(text='deferred-full' if deferred else 'omitted', sources='embedded')))
+                                  capabilities=dict(text='deferred-full' if deferred else 'omitted', sources='embedded',
+                                                    text_filter='index-v1' if deferred else 'omitted')))
             with (resources_directory / 'manifest.json').open('xb') as stream:
                 stream.write(manifest)
                 _sync(stream)
@@ -158,7 +171,7 @@ def write_sidecar(path, generator):
                         stream.write(b'    <script type="application/json" id="fgDataManifest">' + descriptor + b'</script>\n')
                     if deferred and section.name == 'chrome':
                         _copy(spool, section, stream, (
-                            (b'<div id="content">', b'<div id="content" data-fg-text="true">'),
+                            (b'<div id="content">', b'<div id="content" data-fg-text="true" data-fg-text-index="true">'),
                             (b'data-default-view="text"', b'data-default-view="timeline" data-deferred-text="true"'),
                         ))
                     else:

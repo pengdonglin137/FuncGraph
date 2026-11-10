@@ -1,0 +1,58 @@
+"""Write complete Text filter records incrementally, without retaining their JSON."""
+
+import hashlib
+import json
+from html.parser import HTMLParser
+
+
+FIELDS = ('cpu', 'pid', 'comm', 'ret', 'params', 'duration', 'func',
+          'fold-id', 'fold-type', 'fold-ancestors', 'irqs', 'resched', 'hirq', 'preempt')
+
+
+def _dom_text(value):
+    return value.replace('\r\n', '\n').replace('\r', '\n').replace('\0', '\ufffd')
+
+
+class _LineText(HTMLParser):
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.parts = []
+
+    def handle_data(self, data):
+        self.parts.append(data)
+
+    def read(self, markup):
+        self.reset()
+        self.parts.clear()
+        self.feed(_dom_text(markup))
+        self.close()
+        text = ''.join(self.parts)
+        self.parts.clear()
+        return text
+
+
+class TextIndexWriter:
+    def __init__(self, stream):
+        self.stream = stream
+        self.digest = hashlib.sha256()
+        self.byte_count = 0
+        self.rows = 0
+        self.parser = _LineText()
+        self._write('{"version":1,"fields":' + json.dumps(FIELDS, separators=(',', ':')) + ',"rows":[')
+
+    def _write(self, value):
+        payload = value.encode('utf-8')
+        if self.stream.write(payload) != len(payload):
+            raise OSError('short write while exporting Text filter index')
+        self.digest.update(payload)
+        self.byte_count += len(payload)
+
+    def append(self, line_number, attributes, markup):
+        text = self.parser.read(markup)
+        row = [line_number, text] + [_dom_text(attributes[field]) if field in attributes else None for field in FIELDS]
+        self._write((',' if self.rows else '') + json.dumps(row, ensure_ascii=False, separators=(',', ':')))
+        self.rows += 1
+
+    def finish(self, filename):
+        self._write(']}')
+        return dict(file=filename, bytes=self.byte_count, sha256=self.digest.hexdigest(), format='json')

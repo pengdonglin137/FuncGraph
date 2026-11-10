@@ -27,6 +27,7 @@
                 throw error;
             }
             window.fgData.release('fgText');
+            window.fgData.release('fgTextIndex');
             document.querySelector('.controls').inert = false;
             return {};
         } };

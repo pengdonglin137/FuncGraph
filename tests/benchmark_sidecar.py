@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Compare complete Timeline startup over fgview HTTP in fresh Chromium processes."""
 import argparse
+import hashlib
 import json
 from pathlib import Path
 import statistics
@@ -14,7 +15,7 @@ from benchmark_startup import report_info
 from benchmark_text import renderer_memory, settle
 
 
-def measure(browser, report, timeout, mount_text):
+def measure(browser, report, timeout, mount_text, filter_query=None):
     server = create_server(Path(report['root']))
     thread = threading.Thread(target=server.serve_forever, kwargs={'poll_interval': 0.02}, daemon=True)
     thread.start()
@@ -59,6 +60,27 @@ def measure(browser, report, timeout, mount_text):
         }''', ready)
         facts.update(renderer_rss_bytes=sum(process['rss_bytes'] for process in renderer_memory(browser)),
                      transferred_bytes=sum(transferred), requests=list(requests))
+        if filter_query:
+            filtered = page.evaluate('''async query => {
+                const start = performance.now();
+                document.getElementById('filterInput').value = query;
+                await applyFilter();
+                await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+                if (window.fgFilterProgress?.error) throw new Error(window.fgFilterProgress.message);
+                return {duration_ms:performance.now() - start,
+                    rows:document.querySelectorAll('#content .line-container').length,
+                    hits:Array.from(fgFilterState.lines || []).sort((left, right) => left - right),
+                    tasks:startupTasks.filter(task => task.start >= start)};
+            }''', filter_query)
+            hits = filtered.pop('hits')
+            filtered.update(query=filter_query, hits=len(hits),
+                            hit_sha256=hashlib.sha256(','.join(map(str, hits)).encode('ascii')).hexdigest(),
+                            renderer_rss_bytes=sum(process['rss_bytes'] for process in renderer_memory(browser)),
+                            index_requests=sum(url.endswith('text-index.json') for url in requests),
+                            text_requests=sum(url.endswith('text.html') for url in requests))
+            if report['mode'] == 'sidecar' and (filtered['rows'] or filtered['text_requests'] or filtered['index_requests'] != 1):
+                raise RuntimeError('Indexed filtering mounted Text or failed to use exactly one index request')
+            facts['filter'] = filtered
         if report['mode'] == 'sidecar':
             if facts['text_rows'] or any(url.endswith(('text.html', 'compare.json')) for url in requests):
                 raise RuntimeError('Sidecar initial Timeline unexpectedly materialized Text or fetched Compare')
@@ -96,6 +118,7 @@ def main():
     parser.add_argument('--rounds', type=int, default=3)
     parser.add_argument('--timeout', type=int, default=180000)
     parser.add_argument('--text', action='store_true', help='also mount complete Text on the last sidecar round')
+    parser.add_argument('--filter', help='apply a full-trace filter before mounting Text and compare exact hit digests')
     parser.add_argument('--output', type=Path, required=True)
     args = parser.parse_args()
     if min(args.rounds, args.timeout) < 1:
@@ -113,12 +136,15 @@ def main():
             for report in reports if iteration % 2 == 0 else reversed(reports):
                 browser = playwright.chromium.launch(ignore_default_args=['--hide-scrollbars'])
                 try:
-                    facts = measure(browser, report, args.timeout, args.text and iteration == args.rounds - 1)
+                    facts = measure(browser, report, args.timeout, args.text and iteration == args.rounds - 1, args.filter)
                     facts.update(mode=report['mode'], iteration=iteration + 1, browser=browser.version)
                     output['runs'].append(facts)
                     identities = {(run['calls'], run['frames'], run['tracks']) for run in output['runs']}
                     if len(identities) > 1:
                         raise RuntimeError('Reports have different model counts; use the same trace/options')
+                    filters = {(run['filter']['hits'], run['filter']['hit_sha256']) for run in output['runs'] if 'filter' in run}
+                    if len(filters) > 1:
+                        raise RuntimeError('Indexed and native full-trace filters returned different line hits')
                     text = facts.get('first_text')
                     if text and text['rows'] != next(run['text_rows'] for run in output['runs'] if run['mode'] == 'single'):
                         raise RuntimeError('Mounted sidecar Text row count differs from the single report')
