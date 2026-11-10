@@ -650,7 +650,7 @@ class BrowserSmokeTest(unittest.TestCase):
                 with self.subTest(width=width, theme=theme, row=row_id):
                     self.page.set_viewport_size({'width': width, 'height': 900})
                     self.ev("theme => document.documentElement.setAttribute('data-theme', theme)", theme)
-                    baseline = self.page.add_style_tag(content='.text-chunk {contain:none; overflow-clip-margin:0px}')
+                    baseline = self.page.add_style_tag(content='.text-chunk {contain:none; overflow-clip-margin:0px; will-change:auto}')
                     icon = self.page.locator('#' + row_id + ' .fold-icon')
                     self.assertEqual(icon.evaluate("control => getComputedStyle(control.closest('.text-chunk')).contain"), 'none')
                     icon.evaluate("control => control.scrollIntoView({block:'center', inline:'center'})")
@@ -714,6 +714,7 @@ class BrowserSmokeTest(unittest.TestCase):
                         self.assertGreater(outlines[3]['top'], outlines[2]['top'] + 1, outlines)
                     self.assertEqual(self.ev(hit_targets, bounds), before_hits)
                     self.assertEqual(icon.evaluate("control => getComputedStyle(control.closest('.text-chunk')).contain"), 'paint')
+                    self.assertEqual(icon.evaluate("control => getComputedStyle(control.closest('.text-chunk')).willChange"), 'transform')
                     self.assertEqual(icon.evaluate("control => getComputedStyle(control.closest('.line-container')).contain"), 'none')
                     self.assertGreater(before_geometry['pageWidth'], width)
                     self.ev('document.activeElement.blur()')
@@ -759,6 +760,61 @@ class BrowserSmokeTest(unittest.TestCase):
         for entry in [parent, grandchild]:
             self.assertIn(self.page.locator('#' + entry['row']).get_attribute('data-func'), after)
         self.assertGreater(source.locator('.location-link').count(), 0)
+
+    def test_text_chunk_compositing_preserves_pointer_selection_across_boundaries(self):
+        if not self.ev("CSS.supports('overflow-clip-margin', '6px')"):
+            self.skipTest('paint clip margins are not supported')
+        trace = '# tracer: function_graph\n' + '# padding\n' * 509
+        trace += ('# selection_start\n'
+                  ' 0)               |  parent() { /* <-caller+0x1/0x20 */\n'
+                  ' 0)               |    child() { /* <-caller+0x1/0x20 */\n'
+                  ' 0)   0.001 us    |      leaf(); /* <-caller+0x1/0x20 */\n'
+                  ' 0)   0.002 us    |    } /* child */\n'
+                  ' 0)   0.003 us    |  } /* parent */\n'
+                  '# selection_end\n')
+        trace_path = os.path.join(self.k.dir, 'chunk-selection.txt')
+        with open(trace_path, 'w') as stream:
+            stream.write(trace)
+        self.k.run(trace_path, '--enable-fold', '--func-links', out='chunk-selection.html')
+        self.page.goto('file://' + self.k.dir + '/chunk-selection.html', wait_until='load')
+        self.assertEqual(self.page.locator('.text-chunk').count(), 2)
+        self.assertEqual(self.ev("getComputedStyle(document.querySelector('.text-chunk')).willChange"), 'transform')
+        geometry = """() => Array.from(document.querySelectorAll('#content .line-container'), row => {
+            const bounds = row.getBoundingClientRect();
+            return [row.id, bounds.x, bounds.y, bounds.width, bounds.height];
+        })"""
+
+        def drag_selection():
+            self.ev('getSelection().removeAllRanges()')
+            points = self.ev("""() => ['L511', 'L517'].map((rowId, index) => {
+                const content = document.getElementById(rowId).querySelector('.line-content');
+                const walker = document.createTreeWalker(content, NodeFilter.SHOW_TEXT);
+                const nodes = []; while (walker.nextNode()) nodes.push(walker.currentNode);
+                const node = index ? nodes[nodes.length - 1] : nodes[0];
+                const range = document.createRange();
+                range.setStart(node, index ? node.textContent.length : 0); range.collapse(true);
+                const bounds = range.getBoundingClientRect();
+                return [bounds.x, bounds.y + bounds.height / 2];
+            })""")
+            self.page.mouse.move(*points[0])
+            self.page.mouse.down()
+            self.page.mouse.move(*points[1], steps=12)
+            self.page.mouse.up()
+            return self.ev('getSelection().toString()')
+
+        for theme, width in product(['light', 'dark'], [390, 1500]):
+            with self.subTest(theme=theme, width=width):
+                self.page.set_viewport_size(dict(width=width, height=900))
+                self.ev('theme => document.documentElement.dataset.theme = theme', theme)
+                self.page.locator('#L512').evaluate("row => row.scrollIntoView({block:'center', inline:'start'})")
+                baseline = self.page.add_style_tag(content='.text-chunk {will-change:auto}')
+                before_geometry = self.ev(geometry)
+                before = drag_selection()
+                baseline.evaluate('style => style.remove()')
+                self.assertEqual(self.ev(geometry), before_geometry)
+                self.assertEqual(drag_selection(), before)
+                for text in ['selection_start', 'parent()', 'child()', 'leaf()', 'selection_end']:
+                    self.assertIn(text, before)
 
     def test_fold_guides_restore_before_text_is_parsed(self):
         self.page.locator('#foldGuidesBtn').click()

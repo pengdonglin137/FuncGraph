@@ -156,6 +156,7 @@
             .text-chunk {
                 contain: paint;
                 overflow-clip-margin: 6px;
+                will-change: transform;
             }
         }
         .line-container.expandable {

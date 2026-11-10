@@ -57,7 +57,8 @@ def measure(browser, report, samples, timeout):
             return {point:[bounds.left + bounds.width / 2, bounds.top + bounds.height / 2],
                 row:benchmarkFold.closest('.line-container').id, rows:content.querySelectorAll('.line-container').length,
                 elements:document.getElementsByTagName('*').length, chunks:content.querySelectorAll('.text-chunk').length,
-                containment:getComputedStyle(benchmarkFold.closest('.text-chunk') || benchmarkFold.closest('.line-container')).contain};
+                containment:getComputedStyle(benchmarkFold.closest('.text-chunk') || benchmarkFold.closest('.line-container')).contain,
+                compositingHint:getComputedStyle(benchmarkFold.closest('.text-chunk') || benchmarkFold.closest('.line-container')).willChange};
         }''')
         pointer = []
         for sample in range(samples):

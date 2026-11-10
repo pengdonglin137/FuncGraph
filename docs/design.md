@@ -98,7 +98,7 @@ faddr2line 的查找顺序：`<kernel-src>/scripts/faddr2line`，然后 PATH，�
 
 trace 的每一行（包括注释行）对应一个 `div.line-container#L<行号>`。行上的 `data-*` 属性用来过滤：`cpu`、`pid`、`comm`、`func`、`params`、`duration`、`heat`、`irqs`、`resched`、`hirq`、`preempt`、`fold-id`、`fold-type`、`fold-ancestors`、`call-depth`。
 
-输出按 `TEXT_CHUNK_ROWS = 512` 条完整片段流式增加 `div.text-chunk[data-chunk-size]` 包装；片段中的原始行与相邻源码占位不拆开，不缓冲整块或整份 Text。所有行和源码仍保留，块不是请求或模型边界。支持 `overflow-clip-margin:6px` 才给块开启 `contain:paint`；不隔离每一行，也不启用 `content-visibility` 跳过块，以免改变选区、滚动和源码展开。`#content` 仍保留 fit-content 横向尺寸。
+输出按 `TEXT_CHUNK_ROWS = 512` 条完整片段流式增加 `div.text-chunk[data-chunk-size]` 包装；片段中的原始行与相邻源码占位不拆开，不缓冲整块或整份 Text。所有行和源码仍保留，块不是请求或模型边界。支持 `overflow-clip-margin:6px` 才给块开启 `contain:paint` 和 `will-change:transform` 合成提示；后者不施加实际 transform，也不隔离每一行。浏览器自行决定哪些块实际合成，不承诺固定层数或内存上限。不启用 `content-visibility` 跳过块，以免改变选区、滚动和源码展开。`#content` 仍保留 fit-content 横向尺寸。
 
 ### 4.2 源码块懒加载
 
@@ -128,6 +128,21 @@ trace 的每一行（包括注释行）对应一个 `div.line-container#L<行号
 | renderer 采样 RSS | 3180.8 MiB | 3142.6 MiB |
 
 这次修复首先保证所有深度、缩放和悬停的笔画一致，并减少首次强调时的全量行查询；不能据此宣称总体加载变快。热 pointer 有 169.8–318.5 ms 的波动，首开中位数略增，完整 DOM 的样式、布局、绘制及内存成本仍然存在，后续应继续用独立冷启动样本定位。
+
+同日继续定位时，CDP timeline/CPU 采样显示，真实进入/离开、四次滚轮动作的主要成本是浏览器原生 Paint/HitTest，而不是层级线 JS。单次诊断中，统一画布基线累计 HitTest 为 1182.8 ms、Paint 为 1366.1 ms，FunctionCall 为 9.5 ms；只提升画布层仍有 1141.1 ms HitTest，给现有绘制块提供 `will-change:transform` 后 HitTest 降至 12.3 ms，但 Paint 仍为 1435.8 ms。这些是有 profiler 开销、场景内求和的诊断量，不是逐帧预算或跨机器保证；不能把优化解释为减少 trace 解析、布局、绘制或内存。
+
+随后用生成器当前完整 `report.css` 替换基线 HTML 中的对应样式，其余 trace/源码/数据不变。使用同一 72,176 行报告和全新 Chromium 145.0.7632.6，交错顺序各跑三轮无 profiler 的 `python3 tests/benchmark_text.py --rounds 3 --samples 3 --output RESULT.json BEFORE.html AFTER.html`，不以加载后注入样式代替首开测量：
+
+| 指标中位数 | 统一画布 / 原 paint chunk | 增加块级合成提示 |
+|---|---:|---:|
+| 首次 pointer 进入 | 163.1 ms | 84.7 ms |
+| 后续 pointer 进入 | 253.3 ms | 100.0 ms |
+| pointer 离开 | 180.9 ms | 100.0 ms |
+| focus 进入 | 92.4 ms | 90.8 ms |
+| 页面 load + 两次 rAF | 13.322 s | 12.019 s |
+| renderer 采样 RSS | 3152.5 MiB | 3124.6 MiB |
+
+同样只将两次 rAF 当反馈代理、RSS 当采样而非峰值；focus 变化很小，首开差异不足以保证普遍加速。基线热 pointer 的 181.8–335.8 ms 波动仍需披露。独立 layer-tree 检查中，初始返回的层记录为 9/10、滚动后为 10/12，并非为 141 个块全部永久建层；GPU 进程滚动后采样 RSS 为 141.5/142.9 MiB，不是显存用量。这些层数/内存仅描述该浏览器当次决定。全部 72,176 行的矩形、内容宽高、滚动尺寸摘要一致，跨第 512 行的原生 Range 选区文本一致；浏览器回归另用真实拖选验证跨块选择，和禁用提示的参考逐字比较，并保留明暗主题、窄窗、焦点轮廓、源码、折叠、排序及层级线像素检查。没有新增 DOM、每行层、Worker、虚拟列表或 sidecar；大报告完整 DOM 的约 3 GiB renderer 成本仍在。
 
 ### 4.4 统一过滤器
 
