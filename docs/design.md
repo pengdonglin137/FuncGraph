@@ -256,6 +256,8 @@ lost[]    [cpu, count, line]
 
 ## 7. 附加视图与时间轴前端
 
+详情上下文列表采用三列共享 Grid；行与原生选中按钮通过 `subgrid` 复用耗时/类型、符号、源码列。`minmax(66px,max-content)` 按已显示内容统一容纳较长耗时或 `untraced`，避免独立 flex item 的自动最小宽度把某一行的符号推远。分页追加和 Overhead 刷新由布局自然重算，不增加 trace 扫描或标签测量缓存。1.3 倍行高兼顾双行长符号和下划线/下伸笔画。浏览器回归覆盖全部帧类型、11.5/14/18px、390/1500px、明暗主题；另将文本截图与取消裁切的参考逐字节比较，验证普通/加粗/斜体中的下划线与 descender。
+
 顶栏帮助按当前视图路由：Text/Compare 共用有视图专属内容的 `keyboardHint`；它不再属于 `pageChrome.hide`，切换时主动关闭并取消原来的隐藏计时器，避免按钮把 `display:block` 写到仍带 `fg-off !important` 的不可见弹层。Timeline 经可等待的 `fgSwitchView()` API 打开现有导航/图例，不能用会同步排空准备迭代器的 `fgView()`；完成后核对当前视图，取消或离开时不弹出陈旧帮助。普通布局只显示页头帮助入口，`setMax()` 仅在隐藏页头时显示工具栏替代按钮，不添加祖先状态选择器。Timeline 帮助也区分函数名正则 Search 与共享条件 Filter。帮助按钮保留原生 Enter/Space，所有视图都有关闭按钮与 Escape；弹层在窄屏/低窗口中限制高度并可滚动。五项浏览器回归覆盖实际点击、明暗主题/390 和 1500 px、键盘、等待、取消、切换与最大化。
 
 - `assets/views/early.js` 在 head 内、任何 trace 行之前运行：沿用原有标题哈希存储命名空间，预先恢复主题，按生成器声明的可用视图/默认视图读取初始标签页。只有恢复 Timeline/Compare（或 `--no-text-view` 默认 Timeline）时才临时添加局部 `#content { content-visibility:hidden }` 规则；普通文本首开、未知保存值和行号锚点不隐藏 Text。`boot.js` 在 DOMContentLoaded 发起切换，并在 finally 移除临时规则；`--no-text-view` 默认优先于保存状态和锚点，不再为识别它提前复制整块 Timeline JSON。文本键盘初始化仍准备索引/选中行，但仅在 Text 当前可见时调用 focus，避免强制渲染跳过的子树；主题不在报告尾部和 load 再次重设。文本、源码、原始 JSON 和 Timeline 分析语义不变，未实现文本虚拟化。

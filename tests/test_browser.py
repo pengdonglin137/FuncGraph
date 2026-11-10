@@ -2791,6 +2791,60 @@ class BrowserSmokeTest(unittest.TestCase):
                     self.assertEqual(self.page.locator('[data-context-list=stack] .tl-source-line').all_text_contents(),
                                      [':100', ':101', ':102'])
 
+    def test_call_stack_mixed_frame_types_share_columns_for_long_values_and_larger_fonts(self):
+        names = ['__root', '__child', 'default_wake_function']
+        self.open_range_data(names, starts=[0, 100, 200],
+                             durations=[12345678900000, 123456789000, 3000], parents=[-1, 0, 1],
+                             callers=[None, '__root+0x1/0x20', '__child+0x1/0x20'],
+                             columns={'depth': [3, 6, 7]},
+                             extra={'inline': {'3': [['__root', 'a.c', 10], ['__inline_jgp', 'b.h', 20]]}})
+        self.ev("fgView('timeline').probe().select(2)")
+        section = self.page.locator('[data-context-list=stack]')
+        self.assertEqual(section.locator('.tl-context-row').count(), 7)
+        for theme, width, size in product(['light', 'dark'], [390, 1500], [11.5, 14, 18]):
+            with self.subTest(theme=theme, width=width, size=size):
+                self.page.set_viewport_size(dict(width=width, height=900))
+                self.ev('theme => document.documentElement.dataset.theme = theme', theme)
+                self.ev('size => document.querySelector("[data-context-list=stack] .tl-crumbs").style.fontSize = size + "px"', size)
+                facts = section.evaluate('''section => Array.from(section.querySelectorAll('.tl-context-row'), row => {
+                    const name = row.querySelector('.tl-context-text'), value = row.querySelector('.tl-context-value');
+                    return {left:name.getBoundingClientRect().left, valueRight:value.getBoundingClientRect().right,
+                        clipped:value.scrollWidth > value.clientWidth, name:name.textContent};
+                })''')
+                for row in facts:
+                    self.assertAlmostEqual(row['left'], facts[0]['left'], delta=0.1)
+                    self.assertAlmostEqual(row['valueRight'], facts[0]['valueRight'], delta=0.1)
+                    self.assertFalse(row['clipped'])
+                self.assertIn('__inline_jgp', [row['name'] for row in facts])
+                self.assertEqual(facts[-1]['name'], 'default_wake_function')
+
+    def test_call_stack_text_does_not_clip_underscores_or_descenders(self):
+        self.open_range_data(['__jgp_y', '__jgp_y'], starts=[0, 100], durations=[10000, 1000], parents=[-1, 0],
+                             callers=[None, '__jgp_y+0x1/0x20'], columns={'depth': [0, 1]},
+                             extra={'inline': {'1': [['__jgp_y', 'a.c', 10], ['__jgp_y', 'b.h', 20]]}})
+        self.ev("fgView('timeline').probe().select(1)")
+        self.page.mouse.move(0, 0)
+        for size, family in product([11.5, 14, 18], ['monospace', 'Liberation Mono', 'DejaVu Sans Mono']):
+            with self.subTest(size=size, family=family):
+                self.ev('''({size, family}) => {
+                    const list = document.querySelector('[data-context-list=stack] .tl-crumbs');
+                    list.style.fontSize = size + 'px'; list.style.fontFamily = family;
+                }''', dict(size=size, family=family))
+                section = self.page.locator('[data-context-list=stack]')
+                clips = section.locator('.tl-context-text').evaluate_all('''nodes => nodes.map(node => {
+                    const rect = node.getBoundingClientRect();
+                    return {x:Math.floor(rect.left - 3), y:Math.floor(rect.top - 3),
+                        width:Math.ceil(rect.width + 6), height:Math.ceil(rect.height + 6)};
+                })''')
+                before = [self.page.screenshot(clip=clip) for clip in clips]
+                reference = self.page.add_style_tag(content='''
+                    .tl-context-select, .tl-context-text {overflow:visible}
+                    .tl-context-text {-webkit-line-clamp:unset}
+                ''')
+                after = [self.page.screenshot(clip=clip) for clip in clips]
+                reference.evaluate('node => node.remove()')
+                self.assertEqual(before, after)
+
     def test_call_stack_unresolved_sources_are_explicit_and_unsafe_urls_stay_text(self):
         self.open_range_data(['root', 'leaf'], starts=[0, 1], durations=[10000, 1000], parents=[-1, 0],
                              columns={'depth': [0, 1]},
