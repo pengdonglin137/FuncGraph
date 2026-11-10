@@ -425,6 +425,8 @@ CI（`.github/workflows/ci.yml`）：每次推送到 master 和每个 PR 在 Pyt
 
 `inputs.read_text/read_lines` 在解压后检测 trace-cmd 魔数；普通文本不构建任何原生代码。raw 路径由 `fglib/raw.py` 在私有临时目录构建 `fglib/native/raw.c`，经 libtracecmd 处理容器/压缩/CPU 时序，经 libtraceevent 按元数据字段读取，避免手写 reader 或 ctypes ABI 假设。所有 native 输出只在退出成功后交给现有 parser；失败不发布部分 HTML。实例按 `--raw-instance` 显式选择，顶层为默认，不混合不同 buffer。
 
+内部 reader 按调用者所需表示读取：`read_lines` 直接接收 raw decoder 的行列表，避免整串 join/split 的额外字符串与逐行副本；`read_text` 保留字符串 API，普通文本的换行/解码规则不变。压缩容器、stdin 和混合多输入共用此路径，多文件合并仍保留纳秒排序、同时间输入顺序和跟随注释。局部实测：100,000 页合成容器（409,604,096 字节，400,003 条归一化行）的加载阶段 Python 分配峰值由 90.45 MiB 降到 54.42 MiB（tracemalloc，约减少 40%）；gzip 为 90.47 → 54.45 MiB。未开启 tracemalloc 的三次独立进程测量中，raw 的中位进程 RSS 峰值为 108.26 → 72.56 MiB，文本对照为 108.88 → 108.83 MiB；所有完整行序列 SHA-256 相同。这些仅为输入加载阶段指标，不代表完整报告或浏览器内存，也不是常量内存 reader 或 sidecar。
+
 桥接器禁用插件，保留符号、模块归属、原始参数/返回位模式及 retaddr，生成纳秒入口/出口行；调度注释及同时间 switch-in 行复用现有 off-CPU/唤醒分析。模块归属通过公共 `tep_print_funcs` 导出到子进程私有临时文件，建立仅模块符号的有序查找表，不访问 libtraceevent 私有结构体。时钟检查使用固定 libtracecmd 的导出 accessor，限制纳秒时钟；cycle/counter 时钟明确失败。丢事件数量未知时保留 null，不伪造数量。多输入排序和 Timeline 支持 6–9 位小数，预过滤时间范围用十进制定点换算，避免浮点丢失纳秒。
 
 第三方源码固定为官方 submodule，普通 wheel/sdist 只分发桥接 C 源码；`third_party/build.sh` 为可选依赖构建入口。构建脚本需要较新已导出的 UAPI 头文件，检查后在用户 prefix 安装，禁用上游系统 ldconfig 修改。原生 CI 在 Ubuntu 24.04 构建全部固定库，再检查离线合成容器、安装态 wheel/sdist。支持范围和限制见 [中文](raw-input.cn.md) / [English](raw-input.md)。这不是 sidecar 或实时裸页 reader。

@@ -15,7 +15,7 @@ RE_TS = re.compile(r'^\s*(\d+)\.(\d{6,9}) \|')
 OPENERS = {'.gz': gzip.open, '.xz': lzma.open, '.lzma': lzma.open, '.bz2': bz2.open}
 
 
-def _read_stream(stream, path, input_format, raw_instance):
+def _read_stream(stream, path, input_format, raw_instance, as_lines):
     prefix = stream.read(4096)
     stream.seek(0)
     binary = prefix.startswith(raw.MAGIC)
@@ -33,32 +33,38 @@ def _read_stream(stream, path, input_format, raw_instance):
                 with open(temporary, 'wb') as output:
                     shutil.copyfileobj(stream, output, length=1024 * 1024)
                 lines = raw.read_lines(temporary, instance=raw_instance)
-        return '\n'.join(lines) + '\n'
+        return lines if as_lines else '\n'.join(lines) + '\n'
     if b'\0' in prefix:
         raise raw.RawInputError('unrecognized binary trace: use a trace-cmd trace.dat container, '
                                 'not bare trace_pipe_raw/perf/Perfetto data')
     with io.TextIOWrapper(stream, errors='replace') as text:
-        return text.read()
+        content = text.read()
+    return split_lines(content) if as_lines else content
 
 
-def read_text(path, input_format='auto', raw_instance=None):
+def _read_input(path, input_format, raw_instance, as_lines):
     if input_format not in ('auto', 'text', 'raw'):
         raise ValueError('unknown input format: ' + input_format)
     if path == '-':
         if not hasattr(sys.stdin, 'buffer'):
             if input_format == 'raw':
                 raise raw.RawInputError('raw stdin needs a binary input stream')
-            return sys.stdin.read()
+            content = sys.stdin.read()
+            return split_lines(content) if as_lines else content
         with tempfile.TemporaryFile() as stream:
             shutil.copyfileobj(sys.stdin.buffer, stream, length=1024 * 1024)
             stream.seek(0)
-            return _read_stream(stream, None, input_format, raw_instance)
+            return _read_stream(stream, None, input_format, raw_instance, as_lines)
     for ext, op in OPENERS.items():
         if path.endswith(ext):
             with op(path, 'rb') as stream:
-                return _read_stream(stream, None, input_format, raw_instance)
+                return _read_stream(stream, None, input_format, raw_instance, as_lines)
     with open(path, 'rb') as stream:
-        return _read_stream(stream, path, input_format, raw_instance)
+        return _read_stream(stream, path, input_format, raw_instance, as_lines)
+
+
+def read_text(path, input_format='auto', raw_instance=None):
+    return _read_input(path, input_format, raw_instance, as_lines=False)
 
 
 def split_lines(text):
@@ -96,8 +102,8 @@ def _chunks(lines):
 def read_lines(paths, input_format='auto', raw_instance=None):
     """Return (lines, note). Several files are merged by absolute timestamp when all have one."""
     if len(paths) == 1:
-        return split_lines(read_text(paths[0], input_format, raw_instance)), None
-    parts = [_chunks(split_lines(read_text(path, input_format, raw_instance))) for path in paths]
+        return _read_input(paths[0], input_format, raw_instance, as_lines=True), None
+    parts = [_chunks(_read_input(path, input_format, raw_instance, as_lines=True)) for path in paths]
     head = max((p[0] for p in parts), key=len)     # per-CPU files repeat the header: keep one
     if not all(p[2] for p in parts):
         out = list(head)

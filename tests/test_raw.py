@@ -27,8 +27,17 @@ class RawInputTest(unittest.TestCase):
         self.path.write_bytes(raw.MAGIC + b'\0payload')
         expected = ['# tracer: function_graph', '1.000000001 |  0) task-42 |  f();']
         with mock.patch.object(raw, 'read_lines', return_value=expected) as decoder:
-            self.assertEqual(inputs.read_lines([str(self.path)])[0], expected)
+            self.assertIs(inputs.read_lines([str(self.path)])[0], expected)
             decoder.assert_called_once_with(str(self.path), instance=None)
+
+    def test_raw_read_text_retains_string_api_and_empty_rows(self):
+        self.path.write_bytes(raw.MAGIC + b'\0payload')
+        expected = ['# tracer: function_graph', '', '# 函数调用', '1.000000001 |  0) task-42 |  f();', '']
+        original = expected[:]
+        with mock.patch.object(raw, 'read_lines', return_value=expected):
+            self.assertEqual(inputs.read_text(str(self.path)), '\n'.join(expected) + '\n')
+            self.assertIs(inputs.read_lines([str(self.path)])[0], expected)
+        self.assertEqual(expected, original)
 
     def test_text_named_dat_needs_no_optional_libraries(self):
         self.path.write_text('# tracer: function_graph\n 0) task-42 |  root();\n')
@@ -55,20 +64,59 @@ class RawInputTest(unittest.TestCase):
 
     def test_compressed_and_stdin_raw_spool_to_real_file(self):
         data = raw.MAGIC + b'\0payload'
+        expected = ['# decoded']
+        temporary_paths = []
         def decode(path, instance=None):
             self.assertEqual(Path(path).read_bytes(), data)
             self.assertEqual(instance, 'named')
-            return ['# decoded']
+            temporary_paths.append(path)
+            return expected
         with mock.patch.object(raw, 'read_lines', side_effect=decode):
-            for suffix, compress in [('.gz', gzip.compress), ('.xz', lzma.compress),
+            for suffix, compress in [('.gz', gzip.compress), ('.xz', lzma.compress), ('.lzma', lzma.compress),
                                      ('.bz2', bz2.compress)]:
                 path = str(self.path) + suffix
                 Path(path).write_bytes(compress(data))
                 self.assertEqual(inputs.read_text(path, raw_instance='named'), '# decoded\n')
-            stream = io.TextIOWrapper(io.BytesIO(data))
-            with mock.patch.object(sys, 'stdin', stream):
-                self.assertEqual(inputs.read_text('-', raw_instance='named'), '# decoded\n')
-            self.assertFalse(stream.closed)
+                self.assertIs(inputs.read_lines([path], raw_instance='named')[0], expected)
+            for reader, result in [(inputs.read_text, '# decoded\n'),
+                                   (lambda path, **options: inputs.read_lines([path], **options)[0], expected)]:
+                with io.TextIOWrapper(io.BytesIO(data)) as stream:
+                    with mock.patch.object(sys, 'stdin', stream):
+                        actual = reader('-', raw_instance='named')
+                    self.assertEqual(actual, result)
+                    if isinstance(actual, list):
+                        self.assertIs(actual, expected)
+                    self.assertFalse(stream.closed)
+        self.assertTrue(all(not Path(path).exists() for path in temporary_paths))
+
+    def test_raw_text_merge_reuses_rows_and_preserves_ties_and_notes(self):
+        self.path.write_bytes(raw.MAGIC + b'\0payload')
+        expected = ['# tracer: function_graph', '1.000000101 |  0) raw-42 |  first();',
+                    '# recorded note', '1.000000301 |  0) raw-42 |  tie();']
+        original = expected[:]
+        text = self.path.with_name('trace.txt')
+        text_rows = ['1.000000200 |  1) text-43 |  between();',
+                     '1.000000301 |  1) text-43 |  tie();']
+        text.write_text('\n'.join(text_rows) + '\n')
+        with mock.patch.object(raw, 'read_lines', return_value=expected), mock.patch.object(
+                inputs, 'split_lines', wraps=inputs.split_lines) as splitter:
+            lines, note = inputs.read_lines([str(self.path), str(text)])
+        self.assertEqual(lines, expected[:3] + text_rows[:1] + expected[3:] + text_rows[1:])
+        self.assertEqual(note, 'merged 2 inputs by timestamp')
+        splitter.assert_called_once()
+        self.assertEqual(expected, original)
+
+    def test_text_representation_preserves_newlines_and_text_only_stdin(self):
+        for data in [b'', b'\n', b'row', b'row\n\n', b'row\r\n\r\n', b'row\rnext\r', b'bad\xff\n']:
+            with self.subTest(data=data), io.TextIOWrapper(io.BytesIO(data), errors='replace') as source:
+                expected = source.read()
+                self.path.write_bytes(data)
+                self.assertEqual(inputs.read_text(str(self.path)), expected)
+                self.assertEqual(inputs.read_lines([str(self.path)])[0], inputs.split_lines(expected))
+                with mock.patch.object(sys, 'stdin', io.StringIO(expected)):
+                    self.assertEqual(inputs.read_text('-'), expected)
+                with mock.patch.object(sys, 'stdin', io.StringIO(expected)):
+                    self.assertEqual(inputs.read_lines(['-'])[0], inputs.split_lines(expected))
 
     def test_missing_dependencies_actionable(self):
         with mock.patch.object(raw, '_executable', None), mock.patch.object(

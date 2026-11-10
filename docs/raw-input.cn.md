@@ -83,6 +83,8 @@ export LD_LIBRARY_PATH="$HOME/.local/funcgraph-raw/lib${LD_LIBRARY_PATH:+:$LD_LI
 - 当前支持 local/global/mono/mono_raw/boot/tai/uptime/perf 纳秒时钟；没有保存时钟的旧容器按 reader 的 local 约定处理。counter/cycle 时钟（含 x86-tsc）暂不支持，建议采集时用 `-C mono`。local 时钟原有的跨 CPU 同步限制仍存在。
 - 其它事件保留为可读注释，不代表都有专门分析能力。这是**完整文件解码/归一化**，不是实时读取 trace_pipe_raw、常量内存处理、Text 虚拟化或 sidecar。Text 行号指生成的事件行，不是二进制文件偏移。
 
+CLI 使用的 `inputs.read_lines()` 直接保留原生解码器生成的归一化行列表，压缩输入、stdin 以及混合多输入中的每个 raw 文件均走此路径，不再把整份列表拼成完整 trace 字符串再重新拆行。公开的 `inputs.read_text()` API 在调用者明确需要字符串时，仍为 raw 输入返回以换行符结尾的文本。这只消除加载时的冗余复制；完整归一化 trace 和分析模型仍保存在内存中。
+
 ## 验证
 
 `PYTHONPATH=tests FG_RAW_REQUIRED=1 python3 -m unittest test_raw -v` 强制要求原生依赖存在，不允许跳过。离线合成容器覆盖大小端/字长、亚微秒 duration、参数、返回值、retaddr、模块归属、调度、丢事件、非法时钟/字段和截断；CLI 覆盖比较/导出。安装态 smoke 测试支持 `--with-raw`。CI 在 Ubuntu 24.04 构建固定版本库，测试 wheel/sdist 后才允许后续打包/Release。

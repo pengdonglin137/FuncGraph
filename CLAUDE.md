@@ -99,6 +99,8 @@ fglib/cli.py          build_parser / validate_args / collect_module_dirs / find_
 
 Data flow: `FtraceParser.parse()` → `AddressResolver.resolve_batch()` → (optional `build_timeline_data()`) → `HtmlGenerator.generate()` → HTML.
 
+`inputs.read_lines()` keeps normalized raw decoder rows directly; do not route it through the string-returning `read_text()` API or reintroduce whole-trace join/split copies. Compressed/stdin/mixed merges share the representation-aware reader. This still retains the full line model, not constant-memory streaming or sidecar output.
+
 ## Code Conventions
 
 - Front-end code lives in `assets/` (`report/` for the text view, `timeline/` for the Timeline tab) and is inlined by `fglib/assets.py` (read with `newline=''` so output stays byte-stable). `HtmlGenerator` only emits markup and data.
