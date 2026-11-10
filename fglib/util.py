@@ -363,6 +363,8 @@ def format_args_info(args):
             continue
         if key == 'report_mode' and value == 'single':
             continue
+        if key == 'sidecar_threshold' and value is None:
+            continue
         if key in ('source_browser', 'source_browser_rev') and not value:
             continue
         # Timeline options are only listed when used (keeps output identical otherwise)

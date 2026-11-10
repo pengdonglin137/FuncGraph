@@ -1,6 +1,6 @@
 # FuncGraph - Specialized Linux ftrace Visualization Tool
 
-Ordinary CLI output remains an offline single HTML file. For large reports, opt into `funcgraph TRACE --timeline --report-mode sidecar --output REPORT_DIRECTORY`, then run `fgview REPORT_DIRECTORY`. Timeline opens without downloading or creating Text rows; Compare loads separately. Text loads **in full** on first use, a line jump/hash anchor, or unified filtering. Sources remain embedded. This is deferred delivery, not Text virtualization or automatic threshold selection; see the [viewer guide](docs/viewer.md).
+Ordinary CLI output remains an offline single HTML file. For large reports, opt into `funcgraph TRACE --timeline --report-mode sidecar --output REPORT_DIRECTORY`, then run `fgview REPORT_DIRECTORY`. Timeline opens without downloading or creating Text rows; Compare loads separately. Text loads **in full** on first use or a line jump/hash anchor; Timeline filtering loads an index without Text DOM. Sources remain embedded. For automatic selection, use `--report-mode auto --sidecar-threshold BYTES`: only complete HTML above that explicit byte threshold becomes sidecar; smaller/equal reports retain offline `index.html` in the same dedicated directory. No default threshold or Text virtualization; see the [viewer guide](docs/viewer.md).
 
 [![ci](https://github.com/pengdonglin137/FuncGraph/actions/workflows/ci.yml/badge.svg)](https://github.com/pengdonglin137/FuncGraph/actions/workflows/ci.yml)
 
@@ -113,9 +113,10 @@ verification commands, and troubleshooting.
 ./fgreport -c before.txt after.txt   # with a Compare tab
 ./fgreport trace.txt -- --pid 1234   # anything after -- is passed to funcgraph.py
 ./fgreport presets                   # list presets (* = default)
+./fgreport --report-mode auto --sidecar-threshold 67108864 --open trace.txt  # example: 64 MiB; -> trace.report
 ```
 
-It picks `--fast` / `--highlight-code` when pyelftools / Pygments are installed, switches to `--timeline --no-text-view` above 150k lines (`--text` keeps the text view), and prints the full `funcgraph.py` command it runs (`-n` only prints it).
+It picks `--fast` / `--highlight-code` when pyelftools / Pygments are installed, switches to `--timeline --no-text-view` above 150k lines in single mode (`--text` keeps the text view), and prints the full `funcgraph.py` command it runs (`-n` only prints it). Directory modes preserve Text; `--open` serves the report through `fgview` until Ctrl+C.
 
 ### Basic Usage
 
@@ -152,8 +153,9 @@ The following table documents each command-line option supported by `funcgraph.p
 | `--source-browser-rev` | revision | Online revision; default `master` on GitHub, `latest` on Elixir. Independent of embedded source | `--source-browser-rev v7.4-rc2` |
 | `--base-url` | URL | Custom source-link root, overriding the built-in browser | `--base-url https://elixir.bootlin.com/linux/v6.18/source` |
 | `--module-url` | url:mods (appendable) | Map specific modules to a source URL; format: `url:mod1,mod2`. Can be specified multiple times. | `--module-url https://url1.com:modA,modB` |
-| `--output` | path (default: `ftrace_viz.html`) | HTML file path, or a dedicated directory in sidecar mode | `--output result.html` |
-| `--report-mode` | `single` (default) / `sidecar` | Offline HTML or an HTTP report directory; sidecar requires Timeline and loads Text in full on first use | `--timeline --report-mode sidecar --output report-dir` |
+| `--output` | path (default: `ftrace_viz.html`) | HTML file path, or a dedicated directory in sidecar/auto mode | `--output result.html` |
+| `--report-mode` | `single` (default) / `sidecar` / `auto` | Offline HTML, explicit sidecar or byte-threshold selection; sidecar/auto require Timeline and a directory | `--timeline --report-mode auto --sidecar-threshold 67108864 --output report-dir` |
+| `--sidecar-threshold` | nonnegative bytes (no default) | Required for auto; only complete uncompressed UTF-8 HTML strictly above this size uses sidecar | `--sidecar-threshold 67108864` |
 | `--auto-search` | flag | Auto-search common module directories (adds common `/lib/modules` paths) | `--auto-search` |
 | `--verbose` | flag | Enable verbose logging for debugging and diagnostics | `--verbose` |
 | `--fast` | flag | Use bundled `fastfaddr2line.py` for faster vmlinux processing | `--fast` |
@@ -336,7 +338,7 @@ fgcapture.sh --args -g vfs_read,vfs_write -d 1       # arguments (no retaddr; re
 - **Flexible usage**: `--vmlinux` is optional; `--config`/`--preset` read defaults from an INI file; input can be `-` (stdin), `.gz/.xz/.bz2` or several files merged by timestamp; `--source-url`/`--source-rev` fetch sources from a URL or a git revision and check that they match; `--export` writes the analyses as JSON/CSV.
 - **Large traces**: above ~150k lines the text view becomes too heavy for browsers; use a pre-filter or `--timeline --no-text-view` (362k lines: 15.7 MB, opens in about a second). Reopening a report saved on Timeline/Compare suppresses Text rendering before trace lines are parsed, instead of painting the entire text page first. With at least 1 MiB of Timeline JSON, first opening Timeline shows preparation stages; **Back to Text**, **Escape**, or another tab cancels between work chunks. Completed models are cached. Text/source content stays intact, and line anchors still open Text. This is main-thread cooperative preparation, not text virtualization or background parsing; large individual phases and GC can still block. See the [startup measurements and readiness trade-off](docs/design.md#8-性能数据).
 
-Default single-file generation streams UTF-8 sections and atomically publishes the completed file; failures preserve an existing report. Its output must be a regular file, not a device such as `/dev/null`. Explicit `--report-mode sidecar` instead publishes a dedicated report directory and defers complete Text delivery; see the [viewer guide](docs/viewer.md). **Automatic selection and Text virtualization are not implemented**. Complete-trace symbol resolution still runs; see the [separate generation measurements](docs/design.md#83-分段写出的生成阶段内存2026-11-10).
+Default single-file generation streams UTF-8 sections and atomically publishes the completed file; failures preserve an existing report. Its output must be a regular file, not a device such as `/dev/null`. Explicit `--report-mode sidecar` publishes a dedicated directory and defers complete Text delivery. Optional `--report-mode auto --sidecar-threshold BYTES` selects sidecar only above the exact full HTML byte threshold, otherwise publishes offline `index.html` in that directory; see the [viewer guide](docs/viewer.md). **There is no default threshold or Text virtualization**. Complete-trace symbol resolution still runs; see the [separate generation measurements](docs/design.md#83-分段写出的生成阶段内存2026-11-10).
 
 ## Capturing Trace
 

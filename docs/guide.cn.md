@@ -1049,7 +1049,7 @@ EOF
 
 准备仍在**主线程**执行，在模型阶段及每 8192 个内联调用之间让出控制权。8ms 是协作式工作预算而非硬上限：JSON 解析、排序、单个阶段、样式/布局和 GC 仍可能阻塞。状态已显示、能取消，**不等于画布已经就绪**，也不保证总启动时间更短。逐行文本 DOM 仍然存在；首次打开没有保存状态的大型文本报告，仍建议预过滤或 `--no-text-view`。反馈、完整就绪及长任务分别测量，见 [设计文档性能数据](design.md#8-性能数据)。
 
-默认单文件逐段写出 UTF-8，成功后原子发布，失败保留旧文件。其目标必须为普通文件（非 `/dev/null`、FIFO 或目录），上级目录必须可写；保留已有权限和输出符号链接，旧 `generate_html()` 字符串 API 不变。显式 `--report-mode sidecar` 则发布独立目录，延迟完整 Text 的传输，见[查看器指南](viewer.cn.md)。尚无自动大小/行数阈值或 Text 虚拟化。生成阶段仍解析完整 trace，见[生成实测](design.md#83-分段写出的生成阶段内存2026-11-10)，带内核符号流水线的峰值 RSS 几乎不变。
+默认单文件逐段写出 UTF-8，成功后原子发布，失败保留旧文件。其目标必须为普通文件（非 `/dev/null`、FIFO 或目录），上级目录必须可写；保留已有权限和输出符号链接，旧 `generate_html()` 字符串 API 不变。显式 `--report-mode sidecar` 发布独立目录，延迟完整 Text 的传输。可选 `--timeline --report-mode auto --sidecar-threshold BYTES --output DIRECTORY` 仅在完整 HTML 未压缩 UTF-8 字节数严格超过显式阈值时切换，否则在该目录保留离线 `index.html`。没有默认阈值、行数触发或 Text 虚拟化。CLI 会输出判断结果，两种结果均可用 `fgview DIRECTORY` 打开，目录模式的 `fgreport --open` 前台服务至 Ctrl+C。配置、安全更新及临时磁盘要求见[查看器指南](viewer.cn.md)。生成阶段仍解析完整 trace，见[生成实测](design.md#83-分段写出的生成阶段内存2026-11-10)，带内核符号流水线的峰值 RSS 几乎不变。
 
 **时间轴上没有空隙，横轴写着 compressed time**
 

@@ -2,7 +2,7 @@
 
 **raw 输入**：`funcgraph trace.dat --timeline --output trace.html` 支持带元数据的 trace-cmd 二进制容器，需要可选原生库和本机 C 编译器。支持压缩/stdin、纳秒时间戳和 `--raw-instance NAME`；不支持独立 `trace_pipe_raw` 裸页。文本模式不新增依赖。详见 [raw 使用与构建文档](docs/raw-input.cn.md)。
 
-普通 CLI 输出仍是可离线打开的单文件。大报告可显式运行 `funcgraph TRACE --timeline --report-mode sidecar --output REPORT_DIRECTORY`，再用 `fgview REPORT_DIRECTORY` 打开：默认进入 Timeline，不下载或创建逐行 Text；Compare 独立加载。首次进入 Text、跳转行号/锚点或使用统一过滤时，才**完整加载 Text**；源码仍内嵌。这是延迟传输，不是 Text 虚拟化，也没有自动阈值切换，详见[查看器指南](docs/viewer.cn.md)。
+普通 CLI 输出仍是可离线打开的单文件。大报告可显式运行 `funcgraph TRACE --timeline --report-mode sidecar --output REPORT_DIRECTORY`，再用 `fgview REPORT_DIRECTORY` 打开：默认进入 Timeline，不下载或创建逐行 Text；Compare 独立加载。首次进入 Text 或跳转行号/锚点时才**完整加载 Text**；Timeline 统一过滤只加载索引，不创建 Text DOM，源码仍内嵌。可用 `--report-mode auto --sidecar-threshold BYTES` 自动分流：只有完整 HTML 超过显式字节阈值才进入 sidecar，更小或相等时在同一独立目录内保留离线 `index.html`。没有默认阈值，不是 Text 虚拟化，详见[查看器指南](docs/viewer.cn.md)。
 
 [![ci](https://github.com/pengdonglin137/FuncGraph/actions/workflows/ci.yml/badge.svg)](https://github.com/pengdonglin137/FuncGraph/actions/workflows/ci.yml)
 
@@ -116,9 +116,10 @@ fgreport -P trace.txt
 ./fgreport -c before.txt after.txt   # 带 Compare 标签页
 ./fgreport trace.txt -- --pid 1234   # -- 之后的参数原样传给 funcgraph.py
 ./fgreport presets                   # 列出预设（* 表示默认）
+./fgreport --report-mode auto --sidecar-threshold 67108864 --open trace.txt  # 示例 64 MiB；输出 trace.report
 ```
 
-装了 pyelftools / Pygments 时自动加 `--fast` / `--highlight-code`；超过 15 万行时自动改用 `--timeline --no-text-view`（`--text` 保留文本视图）；运行前会打印实际执行的 `funcgraph.py` 命令（`-n` 只打印不执行）。
+装了 pyelftools / Pygments 时自动加 `--fast` / `--highlight-code`；single 模式超过 15 万行时自动改用 `--timeline --no-text-view`（`--text` 保留文本视图），目录模式则保留 Text。运行前会打印实际执行的 `funcgraph.py` 命令（`-n` 只打印不执行）；目录模式的 `--open` 通过 `fgview` 提供本机只读服务，按 Ctrl+C 结束。
 
 ### 基本用法
 
@@ -151,8 +152,9 @@ python3 funcgraph.py trace.txt \
 | `--source-browser-rev` | 版本 | 网页端版本；GitHub 默认 `master`，Elixir 默认 `latest`，独立于内嵌源码 | `--source-browser-rev v7.4-rc2` |
 | `--base-url` | URL | 自定义源码链接根地址，覆盖内置浏览器设置 | `--base-url https://elixir.bootlin.com/linux/v6.18/source` |
 | `--module-url` | url:mods（可追加） | 将特定模块映射到源码 URL；格式：`url:mod1,mod2`。可指定多次。 | `--module-url https://url1.com:modA,modB` |
-| `--output` | 路径（默认：`ftrace_viz.html`） | HTML 文件路径，sidecar 模式下为独立目录 | `--output result.html` |
-| `--report-mode` | `single`（默认）/ `sidecar` | 离线 HTML 或 HTTP 报告目录；sidecar 需 Timeline，首次使用时完整加载 Text | `--timeline --report-mode sidecar --output report-dir` |
+| `--output` | 路径（默认：`ftrace_viz.html`） | HTML 文件路径，sidecar/auto 模式下为独立目录 | `--output result.html` |
+| `--report-mode` | `single`（默认）/ `sidecar` / `auto` | 离线 HTML、显式 sidecar 或字节阈值自动分流；sidecar/auto 需 Timeline 和独立目录 | `--timeline --report-mode auto --sidecar-threshold 67108864 --output report-dir` |
+| `--sidecar-threshold` | 非负字节数（无默认值） | auto 必填；仅完整 HTML 未压缩 UTF-8 字节数严格超过阈值时进入 sidecar | `--sidecar-threshold 67108864` |
 | `--auto-search` | 标志 | 自动搜索常见模块目录（添加常见的 `/lib/modules` 路径） | `--auto-search` |
 | `--verbose` | 标志 | 启用详细日志用于调试和诊断 | `--verbose` |
 | `--fast` | 标志 | 使用捆绑的 `fastfaddr2line.py` 更快处理 vmlinux | `--fast` |
@@ -334,7 +336,7 @@ fgcapture.sh --args -g vfs_read,vfs_write -d 1       # 采参数（不开 retadd
 - **更灵活的用法**：`--vmlinux` 可选；`--config`/`--preset` 从 INI 文件读取默认参数；输入支持 `-`（stdin）、`.gz/.xz/.bz2` 和多个文件按时间戳合并；`--source-url`/`--source-rev` 从 URL 或 git 指定版本获取源码并检查版本是否一致；`--export` 把分析结果导出为 JSON/CSV。
 - **大 trace**：超过约 15 万行时文本视图对浏览器负担太重，请用预过滤或 `--timeline --no-text-view`（36 万行：15.7 MB，约 1 秒打开）。重开停留在 Timeline/Compare 的报告时，会在解析文本行之前抑制 Text 渲染，避免先绘制整个文本页再切换。Timeline JSON 达到 1 MiB 时，首次打开时间轴显示准备阶段；**Back to Text**、**Escape** 或切换标签页可在工作块之间取消，完成的模型会缓存。文本和源码仍完整保留，行号锚点仍优先打开 Text。这是主线程协作式准备，不是文本虚拟化或后台解析，较大的单阶段和 GC 仍可能阻塞；实测效果与完整就绪耗时的取舍见 [性能数据](docs/design.md#8-性能数据)。
 
-默认单文件生成分段写出 UTF-8，完整生成后原子发布；失败保留已有报告，目标必须为普通文件而非 `/dev/null` 等设备。显式 `--report-mode sidecar` 改为发布独立报告目录，延迟完整 Text 的传输，见[查看器指南](docs/viewer.cn.md)。**自动切换和 Text 虚拟化尚未实现**，完整 trace 的符号解析仍执行，见[生成阶段性能](docs/design.md#83-分段写出的生成阶段内存2026-11-10)。
+默认单文件生成分段写出 UTF-8，完整生成后原子发布；失败保留已有报告，目标必须为普通文件而非 `/dev/null` 等设备。显式 `--report-mode sidecar` 发布独立目录，延迟完整 Text 的传输；可选 `--report-mode auto --sidecar-threshold BYTES` 只在完整 HTML 精确字节数超限时切换，否则在该目录发布离线 `index.html`，见[查看器指南](docs/viewer.cn.md)。**没有默认阈值，Text 虚拟化仍未实现**；完整 trace 的符号解析仍执行，见[生成阶段性能](docs/design.md#83-分段写出的生成阶段内存2026-11-10)。
 
 ## 抓取 Trace
 

@@ -1,3 +1,4 @@
+import gzip
 import hashlib
 import io
 import json
@@ -100,6 +101,85 @@ class SidecarTest(unittest.TestCase):
         write_sidecar(self.output, Render())
         self.assertIn('fgText', self.resources())
 
+    def test_auto_threshold_uses_strict_complete_utf8_bytes_and_renders_once(self):
+        class CountedRender(Render):
+            def iter_sections(self):
+                self.iterations = getattr(self, 'iterations', 0) + 1
+                yield from super().iter_sections()
+
+        full = ''.join(fragment for name, fragment in Render().iter_sections()).encode('utf-8')
+        self.assertGreater(len(full), len(full.decode('utf-8')))
+        for threshold, mode in [(len(full) + 1, 'single'), (len(full), 'single'),
+                                (len(full) - 1, 'sidecar'), (0, 'sidecar')]:
+            with self.subTest(threshold=threshold):
+                render = CountedRender()
+                destination = self.root / str(threshold)
+                written = write_sidecar(destination, render, byte_limit=threshold)
+                self.assertEqual(render.iterations, 1)
+                self.assertEqual(written.mode, mode)
+                self.assertEqual(written.single_file_bytes, len(full))
+                self.assertEqual(written.byte_count, sum(path.stat().st_size for path in destination.rglob('*') if path.is_file()))
+                html = (destination / 'index.html').read_bytes()
+                if mode == 'single':
+                    self.assertEqual(html, full)
+                    self.assertEqual(written.resource_bytes, 0)
+                    self.assertEqual({path.name for path in destination.iterdir()}, {'index.html', '.funcgraph-sidecar'})
+                else:
+                    self.assertIn(b'id="fgDataManifest"', html)
+                    self.assertGreater(written.resource_bytes, 0)
+        self.assertEqual(list(self.root.glob('.funcgraph-*')), [])
+
+    def test_auto_switches_in_both_directions_without_removing_open_page_resources(self):
+        write_sidecar(self.output, Render('old'), byte_limit=0)
+        old = (self.output / 'index.html').read_text(encoding='utf-8')
+        (self.output / 'index.html').chmod(0o600)
+        write_sidecar(self.output, Render('offline'), byte_limit=10**9)
+        offline = (self.output / 'index.html').read_text(encoding='utf-8')
+        self.assertNotIn('fgDataManifest', offline)
+        self.assertIn(b'old', self.resources(old)['fgText'])
+        self.assertEqual(stat.S_IMODE((self.output / 'index.html').stat().st_mode), 0o600)
+        write_sidecar(self.output, Render('new'), byte_limit=0)
+        self.assertIn(b'new', self.resources()['fgText'])
+        self.assertIn(b'old', self.resources(old)['fgText'])
+        self.assertEqual(stat.S_IMODE((self.output / 'index.html').stat().st_mode), 0o600)
+
+    def test_auto_entry_failure_preserves_either_previous_mode(self):
+        replace = os.replace
+
+        def fail_entry(source, destination):
+            if Path(destination) == self.output / 'index.html':
+                raise OSError('entry failed')
+            replace(source, destination)
+
+        for previous_limit, next_limit in [(0, 10**9), (10**9, 0), (10**9, 10**9)]:
+            with self.subTest(previous_limit=previous_limit, next_limit=next_limit):
+                write_sidecar(self.output, Render('previous'), byte_limit=previous_limit)
+                previous = (self.output / 'index.html').read_bytes()
+                entries = set(self.output.iterdir())
+                with mock.patch('fglib.sidecar.os.replace', side_effect=fail_entry):
+                    with self.assertRaisesRegex(OSError, 'entry failed'):
+                        write_sidecar(self.output, Render('failed'), byte_limit=next_limit)
+                self.assertEqual((self.output / 'index.html').read_bytes(), previous)
+                self.assertEqual(set(self.output.iterdir()), entries)
+                self.assertEqual(list(self.root.glob('.funcgraph-*')), [])
+
+    def test_auto_no_text_does_not_restore_omitted_rows_or_filter_index(self):
+        for threshold in [0, 10**9]:
+            with self.subTest(threshold=threshold):
+                written = write_sidecar(self.output, Render(no_text=True), byte_limit=threshold)
+                if written.mode == 'sidecar':
+                    self.assertEqual(set(self.resources()), {'tlData', 'cmpData'})
+                else:
+                    html = (self.output / 'index.html').read_text(encoding='utf-8')
+                    self.assertIsNotNone(helpers.json_script(html, 'tlData'))
+                    self.assertNotIn('data-fg-text=', html)
+
+    def test_invalid_auto_thresholds_do_not_create_a_destination(self):
+        for threshold in [-1, True, 1.5, '100']:
+            with self.subTest(threshold=threshold), self.assertRaisesRegex(ValueError, 'threshold'):
+                write_sidecar(self.output, Render(), byte_limit=threshold)
+        self.assertEqual(list(self.root.iterdir()), [])
+
     def test_update_keeps_old_resources_available_and_preserves_entry_mode(self):
         write_sidecar(self.output, Render('old'))
         old = (self.output / 'index.html').read_text(encoding='utf-8')
@@ -129,11 +209,13 @@ class SidecarTest(unittest.TestCase):
                 yield 'chrome', 'partial'
                 raise ValueError('render failed')
 
-        with self.assertRaisesRegex(ValueError, 'render failed'):
-            write_sidecar(self.output, Broken())
-        with mock.patch('fglib.sidecar.os.fsync', side_effect=OSError('sync failed')):
-            with self.assertRaisesRegex(OSError, 'sync failed'):
-                write_sidecar(self.output, Render())
+        for threshold in [None, 0, 10**9]:
+            with self.subTest(threshold=threshold):
+                with self.assertRaisesRegex(ValueError, 'render failed'):
+                    write_sidecar(self.output, Broken(), byte_limit=threshold)
+                with mock.patch('fglib.sidecar.os.fsync', side_effect=OSError('sync failed')):
+                    with self.assertRaisesRegex(OSError, 'sync failed'):
+                        write_sidecar(self.output, Render(), byte_limit=threshold)
         self.assertEqual(list(self.root.iterdir()), [])
 
     def test_failed_entry_publication_preserves_the_previous_complete_bundle(self):
@@ -207,6 +289,67 @@ class SidecarTest(unittest.TestCase):
         self.assertIn('unmanaged', result.stderr)
         self.assertEqual((protected / 'private.txt').read_text(), 'private')
 
+    def test_cli_auto_requires_an_explicit_threshold_and_timeline(self):
+        self.output.write_text('previous report')
+        config = self.root / 'negative.ini'
+        config.write_text('[default]\nreport-mode = auto\ntimeline = true\nsidecar-threshold = -1\n')
+        for options in [('--no-config', '--timeline', '--report-mode', 'auto'),
+                        ('--no-config', '--report-mode', 'auto', '--sidecar-threshold', '0'),
+                        ('--no-config', '--timeline', '--report-mode', 'auto', '--sidecar-threshold', '-1'),
+                        ('--config', str(config))]:
+            with self.subTest(options=options):
+                result = subprocess.run([sys.executable, str(Path(helpers.ROOT) / 'funcgraph.py'),
+                                         *options, '--output', str(self.output), helpers.fixture('pi4_sched')],
+                                        capture_output=True, text=True)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertNotIn('Traceback', result.stderr)
+                self.assertEqual(self.output.read_text(), 'previous report')
+                self.assertFalse(list(self.root.glob('.funcgraph-*')))
+
+    def test_cli_auto_accepts_compressed_and_standard_input_without_line_counting(self):
+        trace = Path(helpers.fixture('pi4_sched')).read_text(encoding='utf-8')
+        compressed = self.root / 'trace.txt.gz'
+        with gzip.open(compressed, 'wt', encoding='utf-8') as stream:
+            stream.write(trace)
+        for source in ['-', str(compressed)]:
+            for threshold, mode in [(0, 'sidecar'), (10**9, 'single')]:
+                with self.subTest(source=source, threshold=threshold):
+                    output = self.root / ('stdin' if source == '-' else 'gzip') / mode
+                    output.parent.mkdir(exist_ok=True)
+                    result = subprocess.run([sys.executable, str(Path(helpers.ROOT) / 'funcgraph.py'),
+                                             '--no-config', '--timeline', '--report-mode', 'auto',
+                                             '--sidecar-threshold', str(threshold), '--output', str(output), source],
+                                            input=trace if source == '-' else None, capture_output=True, text=True)
+                    self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                    self.assertIn('Automatic report mode: ' + mode, result.stdout)
+                    html = (output / 'index.html').read_text(encoding='utf-8')
+                    self.assertEqual('id="fgDataManifest"' in html, mode == 'sidecar')
+                    self.assertEqual('id="tlData"' in html, mode == 'single')
+
+    def test_cli_auto_reports_actual_mode_and_obeys_explicit_single_override(self):
+        kernel = helpers.FakeKernel()
+        self.addCleanup(kernel.close)
+        config = self.root / 'auto.ini'
+        config.write_text('[default]\nreport-mode = auto\ntimeline = true\nsidecar-threshold = 0\n')
+        for options, mode in [(('--config', str(config)), 'sidecar'),
+                              (('--config', str(config), '--sidecar-threshold', str(10**9)), 'single')]:
+            with self.subTest(mode=mode):
+                html, result = kernel.run(helpers.fixture('pi4_sched'), *options, out='auto-' + mode)
+                self.assertIn('Automatic report mode: ' + mode, result.stdout)
+                self.assertIn('switches only above threshold', result.stdout)
+                self.assertEqual('id="fgDataManifest"' in html, mode == 'sidecar')
+                self.assertEqual('Open with: fgview ' in result.stdout, mode == 'sidecar')
+                self.assertTrue((Path(kernel.dir) / ('auto-' + mode) / 'index.html').is_file())
+        html, result = kernel.run(helpers.fixture('pi4_sched'), '--config', str(config),
+                                  '--report-mode', 'single', out='single.html')
+        self.assertNotIn('id="fgDataManifest"', html)
+        self.assertNotIn('Automatic report mode:', result.stdout)
+        self.assertTrue((Path(kernel.dir) / 'single.html').is_file())
+        html, result = kernel.run(helpers.fixture('pi4_sched'), '--no-config', '--timeline', out='default.html')
+        self.assertNotIn('Sidecar Threshold:', html)
+        self.assertNotIn('Report Mode:', html)
+        self.assertTrue((Path(kernel.dir) / 'default.html').is_file())
+
     def test_streaming_replacements_match_bytes_replace_at_every_boundary(self):
         for payload in [b'ababa', b'content <div id="content"> suffix', b'aaaaabaaaa', b'', b'ab']:
             for before, after in [(b'aba', b'long replacement'), (b'a', b''), (b'<div id="content">', b'<div id="content" data-fg-text="true">')]:
@@ -250,7 +393,10 @@ class SidecarBrowserTest(unittest.TestCase):
     def setUpClass(cls):
         cls.kernel = helpers.FakeKernel()
         cls.kernel.run(helpers.fixture('pi4_sched'), '--timeline', '--enable-fold', '--filter', '--func-links',
-                       '--compare', helpers.fixture('pi4_default'), '--report-mode', 'sidecar', out='report')
+                       '--compare', helpers.fixture('pi4_default'), '--report-mode', 'auto',
+                       '--sidecar-threshold', '0', out='report')
+        cls.kernel.run(helpers.fixture('pi4_sched'), '--timeline', '--enable-fold', '--filter', '--func-links',
+                       '--report-mode', 'auto', '--sidecar-threshold', str(10**9), out='offline')
         cls.directory = Path(cls.kernel.dir) / 'report'
         cls.server = create_server(cls.directory)
         cls.thread = threading.Thread(target=cls.server.serve_forever, kwargs={'poll_interval': 0.02}, daemon=True)
@@ -308,6 +454,18 @@ class SidecarBrowserTest(unittest.TestCase):
         self.assertIn('kernel/fake.c:2', ''.join(locations))
         self.assertEqual(self.page.locator('#content .line-container').count(), 0)
         self.assertFalse(any(url.endswith(('text.html', 'compare.json')) for url in self.requests))
+
+    def test_auto_small_report_remains_offline_and_keeps_full_text(self):
+        self.requests.clear()
+        self.page.goto((Path(self.kernel.dir) / 'offline' / 'index.html').as_uri(), wait_until='load')
+        self.page.locator('#content .fold-icon').first.wait_for(state='attached')
+        self.assertGreater(self.page.locator('#content .line-container').count(), 100)
+        self.assertFalse(self.page.evaluate('fgTextDeferred()'))
+        self.page.locator('[data-view=timeline]').click()
+        self.page.locator('#timelineView .tl-canvas').wait_for(state='attached')
+        self.assertGreater(self.page.evaluate('fgView("timeline").probe().N'), 0)
+        self.assertFalse(any(url.endswith(('.json', 'text.html')) for url in self.requests))
+        self.assertEqual(self.page.locator('#fgDataManifest').count(), 0)
 
     def test_text_initializes_once_and_preserves_sources_folds_filters_and_reentry(self):
         self.page.locator('[data-view=text]').click()

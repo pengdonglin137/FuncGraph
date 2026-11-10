@@ -216,6 +216,20 @@ class InstalledPackageTest(unittest.TestCase):
                          str(ROOT / 'tests' / 'data' / 'pi4_sched.txt'))
         self.assertIn('id="tlData"', output.read_text(encoding='utf-8'))
 
+    def test_auto_directory_modes_from_installed_commands(self):
+        trace = str(ROOT / 'tests' / 'data' / 'pi4_sched.txt')
+        for command in ['funcgraph', 'fgreport']:
+            for threshold, external in [('0', True), ('1000000000', False)]:
+                with self.subTest(command=command, threshold=threshold):
+                    output = Path(self.tmp.name, command + '-' + threshold)
+                    options = ['--no-config', '--timeline'] if command == 'funcgraph' else ['-P']
+                    log = self.run_command(self.executable(command), *options, '--report-mode', 'auto',
+                                           '--sidecar-threshold', threshold, '--output', str(output), trace)
+                    report = (output / 'index.html').read_text(encoding='utf-8')
+                    self.assertEqual('id="fgDataManifest"' in report, external)
+                    self.assertEqual('id="tlData"' in report, not external)
+                    self.assertIn('Automatic report mode: ' + ('sidecar' if external else 'single'), log)
+
     @unittest.skipUnless(WITH_EXTRAS, 'run with --with-extras after installing funcgraph[all]')
     def test_fast_resolver_and_highlighting(self):
         import pygments

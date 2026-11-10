@@ -35,7 +35,25 @@ funcgraph trace.txt --timeline --report-mode sidecar --enable-fold --filter --ou
 fgview trace-report --open
 ```
 
-Text and binary raw inputs use the same output mode; raw input still requires its optional native dependencies. `--report-mode single` is the default. No size/line threshold changes it automatically. Sidecar requires `--timeline`, an HTTP URL, and a dedicated output directory, not a filename.
+Text and binary raw inputs use the same output mode; raw input still requires its optional native dependencies. `--report-mode single` remains the default and never switches automatically. Sidecar requires `--timeline`, an HTTP URL, and a dedicated output directory, not a filename.
+
+### Automatic selection above an explicit byte threshold
+
+```bash
+# Example threshold: 64 MiB, not a built-in or universally recommended default.
+funcgraph trace.txt --timeline --report-mode auto --sidecar-threshold 67108864 --output trace-report
+fgview trace-report --open
+# The wrapper chooses trace.report and keeps Text available, including above 150k lines.
+fgreport --report-mode auto --sidecar-threshold 67108864 --open trace.txt
+```
+
+Auto mode also requires `--timeline` and a dedicated output **directory**, regardless of its decision. It counts the complete hypothetical single HTML's uncompressed UTF-8 bytes, including Text, embedded sources, view data and scripts. Only a strict `>` selects sidecar: equal or smaller stays a self-contained `index.html` that opens offline. The threshold is a nonnegative integer byte count; `0` forces sidecar for any nonempty report. There is **no default threshold**, and auto mode without one fails before processing. Trace line counts, compressed file sizes and shell sizes do not select the mode. This avoids treating equally long traces with different embedded-source sizes as equivalent.
+
+The CLI prints the actual mode, full HTML byte count, threshold and entry path; sidecar decisions also print a shell-safe `fgview` command. `fgview` works for either decision. `fgreport --open` in a directory mode runs the loopback viewer in the foreground until Ctrl+C, not a `file://` directory URL. Both options can be stored in INI defaults/presets or with `fgreport init NAME --report-mode auto --sidecar-threshold BYTES`. Explicit `--report-mode single` overrides configured auto mode and writes the ordinary HTML file. Wrapper single mode retains its existing 150k-line Text omission rule (`--text` overrides it); sidecar/auto preserve Text unless explicitly omitted.
+
+Generation still renders the full report once and stages the filter index even for a below-threshold decision, then discards that index for single output. It needs temporary disk space for the full HTML plus index and, above threshold, the extracted resources; it does not skip parsing or symbol resolution. Updating a managed directory may switch in either direction without moving its entry path. Old sidecar resources remain available to already-open pages even after a switch back to single; do not interpret those historical directories as evidence that the current entry uses sidecar. Fresh single decisions publish only `index.html` and the hidden ownership marker. The same publication protections described below apply to both decisions.
+
+### Sidecar loading
 
 - First Timeline loads its complete model but does not fetch Text or Compare and creates no per-record Text DOM. Sources and their index remain embedded and parse synchronously when used.
 - Timeline unified filtering fetches `text-index.json` on first use, evaluates all trace rows without creating Text DOM, and shares the Text expression/graph semantics. Progress is cancellable with Escape or Clear; a newer query supersedes the previous one. Errors retain the previous result and offer **Retry filter**. The complete index is cached until Text mounts; downloading/parsing it and graph preparation still use main-thread memory and time.

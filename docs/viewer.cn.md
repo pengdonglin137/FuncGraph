@@ -35,7 +35,25 @@ funcgraph trace.txt --timeline --report-mode sidecar --enable-fold --filter --ou
 fgview trace-report --open
 ```
 
-文本和二进制 raw 输入共用此输出模式；raw 仍需要原生依赖。默认 `--report-mode single`，不会按文件大小或行数自动切换。Sidecar 必须配合 `--timeline`，输出为独立目录而非文件，并通过 HTTP 打开。
+文本和二进制 raw 输入共用此输出模式；raw 仍需要原生依赖。默认 `--report-mode single`，不会自动切换。Sidecar 必须配合 `--timeline`，输出为独立目录而非文件，并通过 HTTP 打开。
+
+### 超过显式字节阈值时自动切换
+
+```bash
+# 示例阈值为 64 MiB，不是内置默认值，也不表示所有环境都适用。
+funcgraph trace.txt --timeline --report-mode auto --sidecar-threshold 67108864 --output trace-report
+fgview trace-report --open
+# 包装脚本默认输出 trace.report，超过 15 万行也保留 Text。
+fgreport --report-mode auto --sidecar-threshold 67108864 --open trace.txt
+```
+
+Auto 同样需要 `--timeline`，且两种结果的输出目标都为独立**目录**。按假想完整单文件 HTML 的未压缩 UTF-8 字节数判断，包含 Text、内嵌源码、视图数据和脚本；只有严格 `>` 才采用 sidecar，恰好相等或更小均为可离线打开的自包含 `index.html`。阈值是非负整数字节数；`0` 让任意非空报告进入 sidecar。**没有默认阈值**，auto 未指定阈值时在处理前报错。trace 行数、压缩文件体积、外壳大小不作为判断依据，避免相同行数但源码池大小不同的报告被误判。
+
+CLI 输出实际模式、完整 HTML 字节数、阈值和入口路径；进入 sidecar 时还会输出经过 shell 引号处理的 `fgview` 命令。两种结果均可用 `fgview` 打开。目录模式下 `fgreport --open` 在前台启动本机只读服务，按 Ctrl+C 结束，不再打开 `file://` 目录地址。两个选项均支持 INI 默认值/preset，也可用 `fgreport init NAME --report-mode auto --sidecar-threshold BYTES` 保存；显式 `--report-mode single` 覆盖配置的 auto，恢复普通 HTML 文件输出。包装脚本的 single 模式保留原有 15 万行省略 Text 规则（`--text` 可覆盖）；sidecar/auto 则保留 Text，除非显式省略。
+
+生成仍完整渲染一次，并暂存过滤索引；未超限时丢弃该索引。临时磁盘需要容纳完整 HTML、索引，以及超限后的外置资源，不减少解析或符号解析工作。更新已托管目录可在两种模式间切换，入口路径不变；切回 single 也保留旧 sidecar 资源供已打开页面使用，不能仅凭历史资源目录判断当前模式。首次生成的小报告只发布 `index.html` 和隐藏归属标记。下述发布保护同样适用于两种结果。
+
+### Sidecar 加载行为
 
 - 首次 Timeline 读取完整模型，不获取 Text/Compare，不创建逐行 Text DOM。源码池及索引仍内嵌，使用时同步解析。
 - Timeline 统一过滤首次读取 `text-index.json`，按 Text 表达式和调用树语义扫描全部 trace 行，不创建 Text DOM。进度可用 Escape / Clear 取消，新查询替代旧查询；失败保留上次结果并提供 **Retry filter**。完整索引缓存至 Text 挂载；下载、解析和调用树准备仍占用主线程及内存。

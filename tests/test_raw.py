@@ -171,9 +171,13 @@ class NativeRawTest(unittest.TestCase):
         self.path.write_bytes(container(sched=True, retaddr=True))
         single = Path(self.directory.name) / 'single.html'
         sidecar = Path(self.directory.name) / 'sidecar'
-        for output, mode in [(single, 'single'), (sidecar, 'sidecar')]:
+        offline = Path(self.directory.name) / 'auto-offline'
+        automatic = Path(self.directory.name) / 'auto-sidecar'
+        for output, mode, extra in [(single, 'single', []), (sidecar, 'sidecar', []),
+                                    (offline, 'auto', ['--sidecar-threshold', '1000000000']),
+                                    (automatic, 'auto', ['--sidecar-threshold', '0'])]:
             result = subprocess.run([sys.executable, str(Path(helpers.ROOT) / 'funcgraph.py'), '--no-config',
-                                     '--timeline', '--report-mode', mode, '--output', str(output), str(self.path)],
+                                     '--timeline', '--report-mode', mode, *extra, '--output', str(output), str(self.path)],
                                     capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         descriptor = helpers.json_script((sidecar / 'index.html').read_text(), 'fgDataManifest')
@@ -184,6 +188,17 @@ class NativeRawTest(unittest.TestCase):
         expected = helpers.json_script(single.read_text(), 'tlData')
         actual['stats'].pop('build_time', None)
         expected['stats'].pop('build_time', None)
+        self.assertEqual(actual, expected)
+        self.assertIn('fgText', manifest['resources'])
+        embedded = helpers.json_script((offline / 'index.html').read_text(), 'tlData')
+        embedded['stats'].pop('build_time', None)
+        self.assertEqual(embedded, expected)
+        descriptor = helpers.json_script((automatic / 'index.html').read_text(), 'fgDataManifest')
+        manifest_path = automatic / descriptor['manifest']['file']
+        manifest = json.loads(manifest_path.read_text())
+        resource = manifest_path.parent / manifest['resources']['tlData']['file']
+        actual = json.loads(resource.read_text())
+        actual['stats'].pop('build_time', None)
         self.assertEqual(actual, expected)
         self.assertIn('fgText', manifest['resources'])
 

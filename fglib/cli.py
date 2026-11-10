@@ -134,9 +134,11 @@ def build_parser():
                              'independent of --source-rev, which controls embedded source')
     parser.add_argument('--base-url', help='Custom base URL for source code links; overrides built-in browser settings')
     parser.add_argument('--module-url', action='append', help='Module URL mapping (can be specified multiple times, format: url:mod1,mod2)')
-    parser.add_argument('--output', default='ftrace_viz.html', help='Output HTML file path or sidecar report directory')
-    parser.add_argument('--report-mode', choices=('single', 'sidecar'), default='single',
-                        help='single: offline HTML (default); sidecar: HTTP report directory, requires --timeline; Text loads in full on first use')
+    parser.add_argument('--output', default='ftrace_viz.html', help='Output HTML file path (single) or dedicated report directory (sidecar/auto)')
+    parser.add_argument('--report-mode', choices=('single', 'sidecar', 'auto'), default='single',
+                        help='single: offline HTML (default); sidecar: HTTP directory; auto: directory with offline index.html unless the full HTML exceeds --sidecar-threshold; sidecar/auto require --timeline')
+    parser.add_argument('--sidecar-threshold', type=int, metavar='BYTES',
+                        help='Required for auto mode: switch only when complete uncompressed UTF-8 HTML exceeds this nonnegative byte count (no default)')
     parser.add_argument('--auto-search', action='store_true',
                         help='Automatically search common module directories')
     parser.add_argument('--verbose', action='store_true',
@@ -210,11 +212,17 @@ def build_parser():
 
 def validate_args(args):
     """Check paths/URLs; exits on fatal errors, warns otherwise."""
-    if args.report_mode not in ('single', 'sidecar'):
-        print('Error: report mode must be single or sidecar', file=sys.stderr)
+    if args.report_mode not in ('single', 'sidecar', 'auto'):
+        print('Error: report mode must be single, sidecar or auto', file=sys.stderr)
         sys.exit(1)
-    if args.report_mode == 'sidecar' and not args.timeline:
-        print('Error: --report-mode sidecar requires --timeline', file=sys.stderr)
+    if args.report_mode in ('sidecar', 'auto') and not args.timeline:
+        print(f'Error: --report-mode {args.report_mode} requires --timeline', file=sys.stderr)
+        sys.exit(1)
+    if args.sidecar_threshold is not None and args.sidecar_threshold < 0:
+        print('Error: --sidecar-threshold must be a nonnegative byte count', file=sys.stderr)
+        sys.exit(1)
+    if args.report_mode == 'auto' and args.sidecar_threshold is None:
+        print('Error: --report-mode auto requires --sidecar-threshold BYTES', file=sys.stderr)
         sys.exit(1)
     if args.tail_calls and not (args.timeline and args.vmlinux):
         print('Error: --tail-calls needs --timeline and --vmlinux', file=sys.stderr)
@@ -563,8 +571,12 @@ def main():
         if not args.keep_source:
             text_lines = [l for l in parsed_lines if l.raw_line.startswith('#')][:200]
     elif len(parsed_lines) > 150000:
-        print(f"Warning: {len(parsed_lines)} lines make a very large text view that browsers may fail to open; "
-              "consider --no-text-view (with --timeline) or a pre-filter (--pid/--graph/--time-range)", file=sys.stderr)
+        if args.report_mode in ('sidecar', 'auto'):
+            print(f'Warning: keeping Text for {len(parsed_lines)} lines; its first full mount may still be expensive. '
+                  'Sidecar defers Text loading, not its full mount cost; consider a pre-filter (--pid/--graph/--time-range).', file=sys.stderr)
+        else:
+            print(f"Warning: {len(parsed_lines)} lines make a very large text view that browsers may fail to open; "
+                  "consider --no-text-view (with --timeline) or a pre-filter (--pid/--graph/--time-range)", file=sys.stderr)
     source_provider = None
     if (args.source_url or args.source_rev) and vmlinux_path:
         from . import sources
@@ -580,6 +592,7 @@ def main():
             vmlinux_path,
             faddr2line_path,
             report_mode=args.report_mode,
+            sidecar_threshold=args.sidecar_threshold,
             omit_text=args.no_text_view and args.keep_source,
             module_dirs=module_dirs,  # 传递原始模块目录列表（用于auto-search）
             base_url=args.base_url,
@@ -623,9 +636,15 @@ def main():
     print("=============================\n")
     
     print(f"Generated interactive visualization: {args.output}")
-    if args.report_mode == 'sidecar':
+    if args.report_mode == 'auto':
+        print(f'Automatic report mode: {report_output.mode} '
+              f'(complete HTML {report_output.single_file_bytes} bytes; threshold {args.sidecar_threshold} bytes; switches only above threshold)')
+        print(f'Report entry: {report_output.entry_path}')
+    if getattr(report_output, 'mode', 'single') == 'sidecar':
         print(f"Open with: fgview {shlex.quote(os.path.abspath(args.output))}")
-        print('HTTP directory report: Timeline filtering loads an index; Text loads in full on first use; no automatic size threshold.')
+        print('HTTP directory report: Timeline filtering loads an index; Text loads in full on first use.')
+    elif args.report_mode == 'auto':
+        print('Offline report: open index.html directly, or use fgview on the report directory.')
     print(f"Processed {len(parsed_lines)} lines, with {expandable_count} expandable entries")
     print(f"Resolved {module_count} module functions, {kernel_count} kernel functions")
     
