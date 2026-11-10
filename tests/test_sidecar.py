@@ -692,6 +692,45 @@ class SidecarBrowserTest(unittest.TestCase):
         self.assertTrue(self.page.evaluate('fgDomTextModels.has(document.getElementById("content"))'))
         self.assertEqual(sum(url.endswith('text.html') for url in self.requests), 1)
 
+    def test_navigation_preparation_cancels_without_publishing_partial_order(self):
+        self.page.set_viewport_size({'width': 360, 'height': 640})
+        self.page.evaluate('''() => {
+            const prepare = fgPrepareTextNavigation;
+            window.holdNavigation = true;
+            window.navigationStarted = false;
+            window.navigationClosed = 0;
+            fgPrepareTextNavigation = function* (lines) {
+                const steps = prepare(lines);
+                try {
+                    const first = steps.next();
+                    window.navigationStarted = true;
+                    while (holdNavigation) yield first.value;
+                    if (!first.done) yield first.value;
+                    return first.done ? first.value : yield* steps;
+                } finally { steps.return(); navigationClosed++; }
+            };
+            window.navigationOpening = fgSwitchView('text');
+        }''')
+        self.page.wait_for_function('() => navigationStarted')
+        for theme in ['light', 'dark']:
+            self.page.evaluate('theme => document.documentElement.setAttribute("data-theme", theme)', theme)
+            for selector in ['#content [role=status]', '#content .fg-loading button']:
+                bounds = self.page.locator(selector).bounding_box()
+                self.assertIsNotNone(bounds)
+                self.assertGreaterEqual(bounds['x'], 0)
+                self.assertLessEqual(bounds['x'] + bounds['width'], 360)
+        self.assertTrue(self.page.evaluate('fgTextNavigation === null'))
+        self.assertEqual(self.page.locator('#content .line-container').count(), 0)
+        self.page.locator('#content button', has_text='Back to Timeline').click()
+        self.assertIsNone(self.page.evaluate('navigationOpening'))
+        self.assertEqual(self.page.evaluate('navigationClosed'), 1)
+        self.assertTrue(self.page.evaluate('fgTextNavigation === null && fgData.ready("fgText")'))
+        self.page.evaluate('async () => { holdNavigation = false; await fgEnsureText(); }')
+        self.assertEqual(self.page.evaluate('navigationClosed'), 2)
+        self.assertEqual(self.page.evaluate('fgTextNavigation.order.length'), self.page.locator('#content .line-container').count())
+        self.assertEqual(sum(url.endswith('text.html') for url in self.requests), 1)
+        self.assertFalse(any(url.endswith('text-index.json') for url in self.requests))
+
     def test_text_preparation_status_fits_compact_light_and_dark_viewports(self):
         self.stage_text()
         self.page.set_viewport_size({'width': 360, 'height': 640})

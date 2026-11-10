@@ -37,11 +37,13 @@
                     position = end;
                     yield 'Preparing Text… ' + Math.floor(position / html.length * 100) + '%';
                 }
-                const model = yield* fgPrepareTextModel(fragment.querySelectorAll('.line-container'));
+                const rows = fragment.querySelectorAll('.line-container');
+                const model = yield* fgPrepareTextModel(rows);
+                const navigation = yield* fgPrepareTextNavigation(rows);
                 yield { label: 'Finishing Text layout…', paint: true };
                 content.replaceChildren(fragment);
                 content.removeAttribute('data-fg-text');
-                try { fgInitText(true, model); }
+                try { fgInitText(true, model, navigation); }
                 catch (error) {
                     textFailed = true;
                     content.setAttribute('data-fg-text', 'true');

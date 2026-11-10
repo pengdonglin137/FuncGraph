@@ -117,6 +117,12 @@
             container.querySelectorAll('.task-group-head, .task-gap').forEach(e => e.remove());
             const blocks = orderedBlocks || fgBlocks(container).sort((a, b) => +a[0].dataset.lineNumber - +b[0].dataset.lineNumber);
             const frag = document.createDocumentFragment();
+            const navigation = fgTextNavigation;
+            const lineOrder = [];
+            const commit = () => {
+                container.replaceChildren(frag);
+                if (navigation) navigation.reorder(lineOrder);
+            };
             const chunkSize = Number(container.querySelector('.text-chunk')?.dataset.chunkSize) || 512;
             let chunk = null, chunkRows = 0;
             const boundary = element => { chunk = null; chunkRows = 0; frag.appendChild(element); };
@@ -126,6 +132,7 @@
                     chunk.dataset.chunkSize = chunkSize; frag.appendChild(chunk); chunkRows = 0;
                 }
                 chunk.appendChild(block[0]); if (block[1]) chunk.appendChild(block[1]); chunkRows++;
+                if (navigation) lineOrder.push(+block[0].getAttribute('data-line-number'));
             };
             fgTextOrder = mode;
             lsSet('textOrder', mode);
@@ -133,7 +140,7 @@
             if (btn) btn.textContent = 'Order: ' + (mode === 'task' ? 'by task' : 'time');
             if (mode !== 'task') {
                 blocks.forEach(put);
-                container.replaceChildren(frag);
+                commit();
                 container.classList.remove('grouped');
                 return;
             }
@@ -192,7 +199,7 @@
                     put(b);
                 }
             }
-            container.replaceChildren(frag);
+            commit();
             container.classList.add('grouped');
         }
         function fgToggleTextOrder() { fgSetTextOrder(fgTextOrder === 'task' ? 'time' : 'task'); }
@@ -249,13 +256,12 @@
         // 键盘导航相关变量
         let keyboardSelectedLine = null;
         let keyboardSelectedIndex = -1;
-        let allLines = [];
+        let fgTextNavigation = null;
         let fgTextInitialized = false;
         let fgFilterGeneration = 0;
         let fgFilterController = null;
         function fgTextDeferred() { return document.getElementById('content').hasAttribute('data-fg-text'); }
         let textGuideRevision = 0;
-        let expandableLines = [];
         let expandableLineIndices = [];
         let keyboardHintTimer = null;
         // 记录当前滚动位置
@@ -536,9 +542,9 @@
             // 如果有可展开行，设置默认选中第一个可展开行
             if (expandableLineIndices.length > 0) {
                 setKeyboardSelectedLine(expandableLineIndices[0], false);
-            } else if (allLines.length > 0) {
+            } else if (fgTextNavigation.visible.length > 0) {
                 // 如果没有可展开行，选中第一行
-                setKeyboardSelectedLine(0, false);
+                setKeyboardSelectedLine(fgTextNavigation.boundary(false), false);
             }
             
             // 初始显示键盘提示，但只在第一次加载页面时
@@ -1221,6 +1227,7 @@
             allLineElems.forEach(line => {
                 const show = visibleLines === null || visibleLines.has(+line.getAttribute('data-line-number'));
                 line.style.display = show ? '' : 'none';
+                fgTextNavigation?.setVisible(+line.getAttribute('data-line-number'), show);
 
                 // Collapse expanded content for hidden or all filtered lines (single pass)
                 if (hasFilter && line.classList.contains('expandable')) {
@@ -1294,19 +1301,30 @@
             if (visibleLinesContainer) visibleLinesContainer.style.display = 'none';
         }
 
-        // 更新展开行列表（只包含可见的）
+        function* fgPrepareTextNavigation(lines) {
+            const order = [], expandable = [], hidden = [];
+            for (const line of lines) {
+                const number = +line.getAttribute('data-line-number');
+                order.push(number);
+                if (line.classList.contains('expandable')) expandable.push(number);
+                if (line.style.display === 'none') hidden.push(number);
+                if (order.length % 512 === 0) yield 'Preparing Text navigation: ' + order.length + ' / ' + lines.length + '…';
+            }
+            return fgTextModel.navigation(order, expandable, hidden);
+        }
+
         function updateExpandableLines() {
+            if (fgTextDeferred()) return;
             textGuideRevision++;
-            // 重新获取所有行（包括隐藏的）
-            allLines = Array.from(document.querySelectorAll('.line-container'));
-            expandableLines = Array.from(document.querySelectorAll('.line-container.expandable'))
-                .filter(line => line.style.display !== 'none');
-            expandableLineIndices = [];
-            allLines.forEach((line, index) => {
-                if (line.classList.contains('expandable') && line.style.display !== 'none') {
-                    expandableLineIndices.push(index);
-                }
-            });
+            if (!fgTextNavigation) {
+                const steps = fgPrepareTextNavigation(document.getElementById('content').querySelectorAll('.line-container'));
+                let result;
+                do { result = steps.next(); } while (!result.done);
+                fgTextNavigation = result.value;
+            }
+            fgTextNavigation.refresh();
+            expandableLineIndices = fgTextNavigation.expandable;
+            if (keyboardSelectedLine) keyboardSelectedIndex = fgTextNavigation.indexOf(+keyboardSelectedLine.getAttribute('data-line-number'));
             document.getElementById('content')?.dispatchEvent(new Event('fg-guides-change'));
         }
 
@@ -1506,10 +1524,10 @@
             }
 
             if (index < 0) index = 0;
-            if (index >= allLines.length) index = allLines.length - 1;
+            if (index >= fgTextNavigation.order.length) index = fgTextNavigation.order.length - 1;
 
             keyboardSelectedIndex = index;
-            keyboardSelectedLine = allLines[index];
+            keyboardSelectedLine = document.getElementById('L' + fgTextNavigation.order[index]);
 
             // 添加新的选择样式
             if (keyboardSelectedLine) {
@@ -1550,61 +1568,13 @@
         
         // 导航到下一个可展开行
         function navigateToExpandableLine(direction) {
-            if (expandableLineIndices.length === 0) {
-                return; // 没有可展开行
-            }
-            
-            let currentExpandableIndex = -1;
-            
-            // 找到当前行在可展开行列表中的位置
-            for (let i = 0; i < expandableLineIndices.length; i++) {
-                if (expandableLineIndices[i] === keyboardSelectedIndex) {
-                    currentExpandableIndex = i;
-                    break;
-                }
-            }
-            
-            // 如果当前行不是可展开行，找到最近的可展开行
-            if (currentExpandableIndex === -1) {
-                if (direction > 0) {
-                    // 向下查找
-                    for (let i = 0; i < expandableLineIndices.length; i++) {
-                        if (expandableLineIndices[i] > keyboardSelectedIndex) {
-                            currentExpandableIndex = i;
-                            break;
-                        }
-                    }
-                    // 如果没找到，从第一个开始
-                    if (currentExpandableIndex === -1) {
-                        currentExpandableIndex = 0;
-                    }
-                } else {
-                    // 向上查找
-                    for (let i = expandableLineIndices.length - 1; i >= 0; i--) {
-                        if (expandableLineIndices[i] < keyboardSelectedIndex) {
-                            currentExpandableIndex = i;
-                            break;
-                        }
-                    }
-                    // 如果没找到，从最后一个开始
-                    if (currentExpandableIndex === -1) {
-                        currentExpandableIndex = expandableLineIndices.length - 1;
-                    }
-                }
-            }
-            
-            // 计算下一个索引
-            let nextIndex = currentExpandableIndex + direction;
-            
-            // 处理循环
-            if (nextIndex < 0) {
-                nextIndex = expandableLineIndices.length - 1; // 循环到最后一个
-            } else if (nextIndex >= expandableLineIndices.length) {
-                nextIndex = 0; // 循环到第一个
-            }
-            
-            // 设置新的选中行
-            setKeyboardSelectedLine(expandableLineIndices[nextIndex], true);
+            const next = fgTextNavigation.next(keyboardSelectedIndex, direction);
+            if (next >= 0) setKeyboardSelectedLine(next, true);
+        }
+
+        function navigateToTextBoundary(last) {
+            const next = fgTextNavigation.boundary(last);
+            if (next >= 0) setKeyboardSelectedLine(next, true);
         }
         
         // 处理行点击事件 - 现在只处理单击
@@ -1668,17 +1638,9 @@
 
             // 设置键盘选中行，但不滚动
             // 根据 data-line-id 查找对应的行元素
-            let clickedLine = null;
-            const allLineElements = Array.from(document.querySelectorAll('.line-container'));
-            for (let line of allLineElements) {
-                if (line.getAttribute('data-line-id') === lineId) {
-                    clickedLine = line;
-                    break;
-                }
-            }
-
-            if (clickedLine) {
-                const lineIndex = allLineElements.findIndex(line => line === clickedLine);
+            const clickedLine = event.target.closest('.line-container');
+            if (clickedLine?.getAttribute('data-line-id') === lineId) {
+                const lineIndex = fgTextNavigation.indexOf(+clickedLine.getAttribute('data-line-number'));
                 if (lineIndex >= 0) {
                     setKeyboardSelectedLine(lineIndex, false);
                 }
@@ -1791,6 +1753,7 @@
 
         function fgProjectFoldLine(line, visible) {
             if (!line) return;
+            fgTextNavigation?.setVisible(+line.getAttribute('data-line-number'), visible);
             const display = visible ? '' : 'none';
             if (line.style.display !== display) line.style.display = display;
             const content = line.nextElementSibling;
@@ -2338,13 +2301,13 @@
             if (keyLower === 'j' || event.key === 'ArrowDown') {
                 event.preventDefault();
                 handled = true;
-                if (expandableLineIndices.length > 0 && expandableLines.length > 0) {
+                if (expandableLineIndices.length > 0) {
                     navigateToExpandableLine(1); // 向下导航
                 }
             } else if (keyLower === 'k' || event.key === 'ArrowUp') {
                 event.preventDefault();
                 handled = true;
-                if (expandableLineIndices.length > 0 && expandableLines.length > 0) {
+                if (expandableLineIndices.length > 0) {
                     navigateToExpandableLine(-1); // 向上导航
                 }
             }
@@ -2384,11 +2347,7 @@
                         if (!event.shiftKey) {
                             event.preventDefault();
                             if (event.repeat) break;
-                            if (expandableLineIndices.length > 0) {
-                                setKeyboardSelectedLine(expandableLineIndices[0], true);
-                            } else if (allLines.length > 0) {
-                                setKeyboardSelectedLine(0, true);
-                            }
+                            navigateToTextBoundary(false);
                         }
                         break;
                         
@@ -2396,30 +2355,18 @@
                         if (event.shiftKey) {
                             event.preventDefault();
                             if (event.repeat) break;
-                            if (expandableLineIndices.length > 0) {
-                                setKeyboardSelectedLine(expandableLineIndices[expandableLineIndices.length - 1], true);
-                            } else if (allLines.length > 0) {
-                                setKeyboardSelectedLine(allLines.length - 1, true);
-                            }
+                            navigateToTextBoundary(true);
                         }
                         break;
                         
                     case 'Home': // Home键跳转到顶部
                         event.preventDefault();
-                        if (expandableLineIndices.length > 0) {
-                            setKeyboardSelectedLine(expandableLineIndices[0], true);
-                        } else if (allLines.length > 0) {
-                            setKeyboardSelectedLine(0, true);
-                        }
+                        navigateToTextBoundary(false);
                         break;
                         
                     case 'End': // End键跳转到底部
                         event.preventDefault();
-                        if (expandableLineIndices.length > 0) {
-                            setKeyboardSelectedLine(expandableLineIndices[expandableLineIndices.length - 1], true);
-                        } else if (allLines.length > 0) {
-                            setKeyboardSelectedLine(allLines.length - 1, true);
-                        }
+                        navigateToTextBoundary(true);
                         break;
                         
                     case 'PageDown': // PageDown向下翻页
@@ -2468,7 +2415,7 @@
                     // 从第一个行内容开始
                     range.setStart(allLineContents[0], 0);
                     // 到最后一个行内容结束
-                    range.setEnd(allLineContents[allLineContents.length - 1], allLineContents[allLines.length - 1].childNodes.length);
+                    range.setEnd(allLineContents[allLineContents.length - 1], allLineContents[allLineContents.length - 1].childNodes.length);
                     
                     selection.addRange(range);
                     highlightSelectedLines();
@@ -2482,7 +2429,9 @@
             const viewportBottom = viewportTop + window.innerHeight;
             const visibleLines = [];
             
-            allLines.forEach(line => {
+            (fgTextNavigation?.order || []).forEach(number => {
+                const line = document.getElementById('L' + number);
+                if (!line) return;
                 const rect = line.getBoundingClientRect();
                 const lineTop = rect.top + window.scrollY;
                 const lineBottom = rect.bottom + window.scrollY;
@@ -2797,8 +2746,8 @@
                 const element = document.getElementById(hash);
                 if (element && element.classList.contains('line-container')) {
                     // 如果是行容器，清除其他高亮，然后高亮此行
-                    const allLines = document.querySelectorAll('.line-container');
-                    allLines.forEach(line => line.classList.remove('highlighted'));
+                    if (highlightedLine) highlightedLine.classList.remove('highlighted');
+                    highlightedLine = element;
                     element.classList.add('highlighted');
                     
                     // 平滑滚动到该行
@@ -2807,8 +2756,7 @@
                     }, 100);
                     
                     // 设置键盘选中
-                    const lineId = element.getAttribute('data-line-id');
-                    const lineIndex = allLines.length > 0 ? Array.from(allLines).findIndex(line => line.getAttribute('data-line-id') === lineId) : -1;
+                    const lineIndex = fgTextNavigation.indexOf(+element.getAttribute('data-line-number'));
                     if (lineIndex >= 0) {
                         setKeyboardSelectedLine(lineIndex, false);
                     }
@@ -2984,13 +2932,17 @@
             if (summary) summary.remove();
         }
 
-        function fgInitText(mounted = false, model = null) {
+        function fgInitText(mounted = false, model = null, navigation = null) {
             if (fgTextInitialized || fgTextDeferred()) return;
             const root = document.getElementById('content');
             total_lines = root.querySelectorAll('.line-container').length;
             if (model) {
                 if (model.records.length !== total_lines) throw new Error('Text model does not cover mounted rows');
                 fgDomTextModels.set(root, model);
+            }
+            if (navigation) {
+                if (navigation.order.length !== total_lines) throw new Error('Text navigation does not cover mounted rows');
+                fgTextNavigation = navigation;
             }
             fgTextInitialized = true;
             if (mounted) {

@@ -186,6 +186,66 @@ class TextModelTest(unittest.TestCase):
             assert.deepEqual(Array.from(folding.visibleLines({root:true}, null)), [1]);
         ''')
 
+    def test_navigation_uses_presentation_order_nearest_calls_and_wraparound_without_dom(self):
+        self.run_model('''
+            const order = [5,1,9,3];
+            const original = order.slice();
+            const navigation = fgTextModel.navigation(order, [1,3]);
+            assert.deepEqual(navigation.order, original);
+            assert.equal(navigation.indexOf(9), 2);
+            assert.equal(navigation.indexOf(8), -1);
+            assert.equal(navigation.next(0, 1), 1);
+            assert.equal(navigation.next(2, -1), 1);
+            assert.equal(navigation.next(1, 1), 3);
+            assert.equal(navigation.next(3, 1), 1);
+            assert.equal(navigation.next(1, -1), 3);
+            assert.equal(navigation.next(-1, 1), 1);
+            assert.equal(navigation.next(-1, -1), 3);
+            navigation.setVisible(1, false);
+            navigation.refresh();
+            assert.deepEqual(navigation.expandable, [3]);
+            navigation.reorder([3,9,5,1]);
+            navigation.refresh();
+            assert.equal(navigation.indexOf(1), 3);
+            assert.deepEqual(navigation.expandable, [0]);
+            assert.deepEqual(order, original);
+        ''')
+
+    def test_navigation_validates_complete_orders_and_supports_empty_visible_sets(self):
+        self.run_model('''
+            const navigation = fgTextModel.navigation([2,4,7], [4]);
+            for (const invalid of [[2,4], [2,4,4], [2,4,8]]) {
+                assert.throws(() => navigation.reorder(invalid), /Invalid Text navigation/);
+                assert.deepEqual(navigation.order, [2,4,7]);
+            }
+            assert.throws(() => fgTextModel.navigation([2,2], []), /Invalid Text navigation/);
+            assert.throws(() => fgTextModel.navigation([2,4], [8]), /Invalid Text navigation/);
+            for (const line of [2,4,7]) navigation.setVisible(line, false);
+            navigation.refresh();
+            assert.equal(navigation.next(1, 1), -1);
+            assert.equal(navigation.boundary(false), -1);
+            assert.equal(navigation.boundary(true), -1);
+            navigation.setVisible(7, true);
+            navigation.refresh();
+            assert.equal(navigation.next(1, 1), -1);
+            assert.equal(navigation.boundary(false), 2);
+            assert.equal(navigation.boundary(true), 2);
+        ''')
+
+    def test_navigation_searches_large_candidate_lists_with_logarithmic_probes(self):
+        self.run_model('''
+            const order = Array.from({length:131072}, (unused, index) => index + 1);
+            const navigation = fgTextModel.navigation(order, order);
+            let probes = 0;
+            navigation.expandable = new Proxy(navigation.expandable, {get(target, property) {
+                if (/^\\d+$/.test(String(property))) probes++;
+                return Reflect.get(target, property);
+            }});
+            assert.equal(navigation.next(120000, 1), 120001);
+            assert.equal(navigation.next(120000, -1), 119999);
+            assert.ok(probes < 50, String(probes));
+        ''')
+
     def test_async_indexed_filter_preserves_result_shape_and_cancellation(self):
         self.run_model('''
             globalThis.parseFilterExpr = text => ({ast:text ? {type:'COND'} : null, sortDir:null});

@@ -149,16 +149,114 @@ class BrowserSmokeTest(unittest.TestCase):
                     const target = expandableLineIndices[expandableLineIndices.length - 2];
                     setKeyboardSelectedLine(target, false);
                     return {before, after:[scrollX, scrollY],
-                        focused:document.activeElement === allLines[target]};
+                        focused:document.activeElement === document.getElementById('L' + fgTextNavigation.order[target])};
                 }''', theme)
                 self.assertTrue(facts['focused'])
                 self.assertEqual(facts['after'], facts['before'])
+
+    def test_text_navigation_from_nonexpandable_rows_uses_the_nearest_call(self):
+        for direction in [1, -1]:
+            with self.subTest(direction=direction):
+                facts = self.ev('''direction => {
+                    const rows = Array.from(document.querySelectorAll('#content .line-container'));
+                    const candidates = rows.map((row, index) => row.matches('.expandable') ? index : -1)
+                        .filter(index => index >= 0);
+                    const start = rows.findIndex((row, index) => !row.matches('.expandable') &&
+                        (direction > 0 ? candidates.some(candidate => candidate > index) :
+                            candidates.some(candidate => candidate < index)));
+                    const expected = direction > 0 ? candidates.find(index => index > start) :
+                        candidates.filter(index => index < start).pop();
+                    setKeyboardSelectedLine(start, false);
+                    navigateToExpandableLine(direction);
+                    return {start, expected:rows[expected].id, actual:keyboardSelectedLine.id};
+                }''', direction)
+                self.assertGreaterEqual(facts['start'], 0)
+                self.assertEqual(facts['actual'], facts['expected'])
+
+    def test_text_navigation_selection_keeps_its_line_identity_after_reordering(self):
+        facts = self.ev('''() => {
+            const original = Array.from(document.querySelectorAll('#content .line-container'));
+            fgSetTextOrder('task');
+            const grouped = Array.from(document.querySelectorAll('#content .line-container'));
+            const target = original.find((row, index) => row.matches('.expandable') && grouped.indexOf(row) !== index);
+            const before = original.indexOf(target);
+            const expected = grouped.indexOf(target);
+            fgSetTextOrder('time');
+            setKeyboardSelectedLine(before, false);
+            fgSetTextOrder('task');
+            return {before, expected, actual:keyboardSelectedIndex, same:keyboardSelectedLine === target};
+        }''')
+        self.assertNotEqual(facts['before'], facts['expected'])
+        self.assertTrue(facts['same'])
+        self.assertEqual(facts['actual'], facts['expected'])
+
+    def test_text_navigation_hot_paths_do_not_scan_the_complete_dom(self):
+        facts = self.ev('''() => {
+            const root = document.getElementById('content');
+            const target = root.querySelector('.line-container.expandable');
+            const documentQuery = Document.prototype.querySelectorAll;
+            const elementQuery = Element.prototype.querySelectorAll;
+            const guard = function(original, selector) {
+                if ((this === document || this === root) && selector.includes('line-container')) {
+                    throw new Error('Whole-report navigation query: ' + selector);
+                }
+                return original.call(this, selector);
+            };
+            Document.prototype.querySelectorAll = function(selector) { return guard.call(this, documentQuery, selector); };
+            Element.prototype.querySelectorAll = function(selector) { return guard.call(this, elementQuery, selector); };
+            try {
+                updateExpandableLines();
+                navigateToExpandableLine(1);
+                handleLineClick({target:target.querySelector('.line-content'), clientX:0, clientY:0,
+                    preventDefault() {}}, target.dataset.lineId);
+                clearTimeout(clickTimer); clickTimer = null;
+                const clicked = keyboardSelectedLine === target;
+                history.replaceState(null, '', '#' + target.id);
+                handleAnchorNavigation();
+                return {clicked, anchored:keyboardSelectedLine === target, highlighted:highlightedLine === target};
+            } finally {
+                Document.prototype.querySelectorAll = documentQuery;
+                Element.prototype.querySelectorAll = elementQuery;
+            }
+        }''')
+        self.assertEqual(facts, dict(clicked=True, anchored=True, highlighted=True))
+        self.page.keyboard.press('Escape')
+        self.assertEqual(self.page.locator('#content .highlighted').count(), 0)
+
+    def test_text_navigation_visibility_and_order_match_filters_folds_and_duration_sort(self):
+        facts = self.ev('''() => {
+            const snapshots = [];
+            const check = () => {
+                const rows = Array.from(document.querySelectorAll('#content .line-container'));
+                snapshots.push({order:rows.map(row => +row.dataset.lineNumber), model:fgTextNavigation.order.slice(),
+                    expected:rows.filter(row => row.matches('.expandable') && row.style.display !== 'none')
+                        .map(row => +row.dataset.lineNumber), actual:expandableLineIndices.map(index => fgTextNavigation.order[index])});
+            };
+            check();
+            fgSetTextOrder('task'); check();
+            const entry = document.querySelector('#content [data-fold-type=entry]');
+            _setFolded(entry.dataset.foldId, true); check();
+            const input = document.getElementById('filterInput');
+            input.value = 'duration:>1 sort:desc'; applyFilter(); check();
+            clearFilter(); check();
+            input.value = 'cpu:999999'; applyFilter(); check();
+            const selected = keyboardSelectedLine;
+            navigateToExpandableLine(1); navigateToTextBoundary(false); navigateToTextBoundary(true);
+            return {snapshots, empty:expandableLineIndices.length === 0,
+                boundary:fgTextNavigation.boundary(false), unchanged:keyboardSelectedLine === selected};
+        }''')
+        for snapshot in facts['snapshots']:
+            self.assertEqual(snapshot['order'], snapshot['model'])
+            self.assertEqual(snapshot['expected'], snapshot['actual'])
+        self.assertTrue(facts['empty'])
+        self.assertTrue(facts['unchanged'])
+        self.assertEqual(facts['boundary'], -1)
 
     def test_text_navigation_scrolls_explicitly_after_focusing_without_native_scroll(self):
         facts = self.ev('''() => {
             window.scrollTo(0, 0);
             const target = expandableLineIndices[expandableLineIndices.length - 2];
-            const row = allLines[target];
+            const row = document.getElementById('L' + fgTextNavigation.order[target]);
             const original = row.scrollIntoView;
             const calls = [];
             const before = scrollY;
@@ -188,7 +286,7 @@ class BrowserSmokeTest(unittest.TestCase):
                     document.documentElement.setAttribute('data-theme', theme);
                     window.scrollTo(0, 0);
                     const target = expandableLineIndices[Math.floor(expandableLineIndices.length / 2)];
-                    const row = allLines[target];
+                    const row = document.getElementById('L' + fgTextNavigation.order[target]);
                     const height = row.getBoundingClientRect().height;
                     const toolbar = document.querySelector('.controls');
                     const toolbarHeight = toolbar.getBoundingClientRect().height;
@@ -1419,7 +1517,8 @@ class BrowserSmokeTest(unittest.TestCase):
             }
             return {projections, rows, after:document.querySelectorAll('#content .line-container').length,
                 same:folding === fgGetTextFolding(),
-                navigable:expandableLines.every(line => line.style.display !== 'none')};
+                navigable:expandableLineIndices.every(index =>
+                    document.getElementById('L' + fgTextNavigation.order[index]).style.display !== 'none')};
         }''', parent['fold'])
         self.assertEqual(facts['projections'], 3)
         self.assertEqual(facts['rows'], facts['after'])

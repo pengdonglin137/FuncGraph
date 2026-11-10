@@ -118,7 +118,71 @@
         do { result = steps.next(); } while (!result.done);
         return result.value;
     }
-    window.fgTextModel = { fields, prepare, filter, folding, prepareFolding };
+    function navigation(order, expandable, hidden = []) {
+        const original = new Set(order);
+        const sources = new Set(expandable);
+        const concealed = new Set(hidden);
+        if (original.size !== order.length || order.some(line => !Number.isSafeInteger(line) || line <= 0) ||
+            [...sources, ...concealed].some(line => !original.has(line))) {
+            throw new Error('Invalid Text navigation records');
+        }
+        let positions = new Map();
+        let dirty = true;
+        const result = {
+            order: [], expandable: [], visible: [],
+            indexOf(line) { return positions.get(line) ?? -1; },
+            setVisible(line, visible) {
+                if (!original.has(line)) throw new Error('Invalid Text navigation line');
+                if (concealed.has(line) === !visible) return;
+                if (visible) concealed.delete(line);
+                else concealed.add(line);
+                dirty = true;
+            },
+            reorder(next) {
+                const updated = new Map(next.map((line, index) => [line, index]));
+                if (next.length !== original.size || updated.size !== original.size ||
+                    next.some(line => !original.has(line))) throw new Error('Invalid Text navigation order');
+                result.order = next.slice();
+                positions = updated;
+                dirty = true;
+            },
+            refresh() {
+                if (!dirty) return;
+                const visible = [], candidates = [];
+                result.order.forEach((line, index) => {
+                    if (concealed.has(line)) return;
+                    visible.push(index);
+                    if (sources.has(line)) candidates.push(index);
+                });
+                result.visible = visible;
+                result.expandable = candidates;
+                dirty = false;
+            },
+            next(current, direction) {
+                result.refresh();
+                const candidates = result.expandable;
+                if (!candidates.length) return -1;
+                if (current < 0) return candidates[direction > 0 ? 0 : candidates.length - 1];
+                let lower = 0, upper = candidates.length;
+                while (lower < upper) {
+                    const middle = Math.floor((lower + upper) / 2);
+                    if (candidates[middle] < current || direction > 0 && candidates[middle] === current) lower = middle + 1;
+                    else upper = middle;
+                }
+                return direction > 0 ? candidates[lower % candidates.length] :
+                    candidates[(lower - 1 + candidates.length) % candidates.length];
+            },
+            boundary(last) {
+                result.refresh();
+                const candidates = result.expandable.length ? result.expandable : result.visible;
+                return candidates.length ? candidates[last ? candidates.length - 1 : 0] : -1;
+            },
+        };
+        result.reorder(order);
+        result.refresh();
+        return result;
+    }
+    window.fgTextModel = { fields, prepare, filter, folding, prepareFolding, navigation };
     window.fgIndexedFilter = async function (data, text, signal, progress) {
         const iterator = steps(data, text);
         try {
