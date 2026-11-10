@@ -1,6 +1,6 @@
 # FuncGraph - Specialized Linux ftrace Visualization Tool
 
-Timeline and Compare share a report data provider. Ordinary CLI output still embeds all data and opens offline. External-resource loading is a tested internal interface, not yet a sidecar export mode: the exporter, local viewer, Text/source chunking and automatic threshold remain future work.
+Timeline and Compare share a report data provider. Ordinary CLI output still embeds all data and opens offline. The optional `fgview report.html` command provides read-only local HTTP viewing; see the [viewer guide](docs/viewer.md). External-resource loading remains an internal interface, not a sidecar export mode: the exporter, Text/source chunking and automatic threshold remain future work.
 
 [![ci](https://github.com/pengdonglin137/FuncGraph/actions/workflows/ci.yml/badge.svg)](https://github.com/pengdonglin137/FuncGraph/actions/workflows/ci.yml)
 

@@ -2,7 +2,7 @@
 
 **raw 输入**：`funcgraph trace.dat --timeline --output trace.html` 支持带元数据的 trace-cmd 二进制容器，需要可选原生库和本机 C 编译器。支持压缩/stdin、纳秒时间戳和 `--raw-instance NAME`；不支持独立 `trace_pipe_raw` 裸页。文本模式不新增依赖。详见 [raw 使用与构建文档](docs/raw-input.cn.md)。
 
-Timeline 和 Compare 共用报告数据提供者。普通 CLI 输出仍内嵌全部数据、支持离线打开。外部资源加载只是已测试的内部接口，尚非可用的 sidecar 输出模式：导出器、本地查看器、Text/源码分块及自动阈值仍待实现。
+Timeline 和 Compare 共用报告数据提供者。普通 CLI 输出仍内嵌全部数据、支持离线打开。可选的 `fgview report.html` 提供本机只读 HTTP 查看，详见[查看器指南](docs/viewer.cn.md)。外部资源加载仍是内部接口，尚非 sidecar 输出模式：导出器、Text/源码分块及自动阈值仍待实现。
 
 [![ci](https://github.com/pengdonglin137/FuncGraph/actions/workflows/ci.yml/badge.svg)](https://github.com/pengdonglin137/FuncGraph/actions/workflows/ci.yml)
 

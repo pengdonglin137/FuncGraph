@@ -24,7 +24,7 @@
         validateResource(resource);
         const result = new URL(resource.file, base);
         if (!['http:', 'https:'].includes(base.protocol)) {
-            throw new Error('Sidecar data needs HTTP. Start the report viewer and open its http://127.0.0.1 address.');
+            throw new Error('Sidecar data needs HTTP. Run fgview REPORT_DIRECTORY and open its http://127.0.0.1 address.');
         }
         if (result.origin !== base.origin || !result.pathname.startsWith(base.pathname)) {
             throw new Error('Report resource paths must stay inside the report directory');

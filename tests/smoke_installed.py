@@ -3,6 +3,7 @@ import json
 import os
 from pathlib import Path
 import platform
+import queue
 import re
 import runpy
 import shutil
@@ -10,7 +11,10 @@ import subprocess
 import sys
 import sysconfig
 import tempfile
+import threading
 import unittest
+from urllib.error import HTTPError
+from urllib.request import urlopen
 from importlib.metadata import distribution
 
 import fglib
@@ -54,6 +58,42 @@ class InstalledPackageTest(unittest.TestCase):
                 self.assertEqual(read_asset(asset), (ROOT / 'assets' / asset).read_text(encoding='utf-8'))
         self.assertTrue(Path(PROJECT_DIR, 'fastfaddr2line.py').is_file())
         self.assertTrue(Path(PROJECT_DIR, 'fglib', 'native', 'raw.c').is_file())
+
+    @unittest.skipUnless(os.open in os.supports_dir_fd and hasattr(os, 'O_NOFOLLOW'), 'safe viewer file access unavailable')
+    def test_installed_viewer_serves_only_the_selected_report(self):
+        report = Path(self.tmp.name, '报告 trace.html')
+        content = b'<!doctype html><title>Installed viewer</title><p>trace</p>'
+        report.write_bytes(content)
+        Path(self.tmp.name, 'private.txt').write_text('must not be served', encoding='utf-8')
+        self.assertIn(APP_VERSION, self.run_command(self.executable('fgview'), '--version'))
+        process = subprocess.Popen([self.executable('fgview'), str(report)], cwd=self.tmp.name, env=self.env,
+                                   stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        lines = queue.Queue()
+        reader = threading.Thread(target=lambda: lines.put(process.stdout.readline()), daemon=True)
+        reader.start()
+        try:
+            url = lines.get(timeout=20).strip()
+            self.assertTrue(url.startswith('http://127.0.0.1:'), url)
+            with urlopen(url, timeout=5) as response:
+                self.assertEqual(response.read(), content)
+                self.assertEqual(response.headers['Cache-Control'], 'no-store')
+            with self.assertRaises(HTTPError) as error:
+                urlopen(url.rsplit('/', 1)[0] + '/private.txt', timeout=5)
+            self.assertEqual(error.exception.code, 404)
+            error.exception.close()
+        finally:
+            if process.poll() is None:
+                process.terminate()
+            try:
+                process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait(timeout=5)
+            reader.join(timeout=5)
+            process.stdout.close()
+            errors = process.stderr.read()
+            process.stderr.close()
+        self.assertNotIn('Traceback', errors)
 
     def test_fold_guides_from_installed_package(self):
         trace = Path(self.tmp.name, 'fold.txt')

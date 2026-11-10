@@ -546,11 +546,19 @@ CI（`.github/workflows/ci.yml`）：每次推送到 master 和每个 PR 在 Pyt
 
 ### 报告数据提供者（2026-11-10）
 
-`assets/report/data.js` 提供 `fgData.read/load/ready/external/length`；Timeline/Compare 不再直接解析 DOM JSON。普通输出保持内嵌数据、离线打开；当前没有生产 sidecar 导出器或查看器。Text/源码的按需分块传输、缓存淘汰、自动阈值也未实现；静态 `text-chunk` 绘制包装不是外部数据块。
+`assets/report/data.js` 提供 `fgData.read/load/ready/external/length`；Timeline/Compare 不再直接解析 DOM JSON。普通输出保持内嵌数据、离线打开；`fgview` 提供本地只读 HTTP 打开入口，但当前没有生产 sidecar 导出器。Text/源码的按需分块传输、缓存淘汰、自动阈值也未实现；静态 `text-chunk` 绘制包装不是外部数据块。
 
 原型通过 `fgDataManifest` JSON 配置 `{version:1, report_id, manifest:{file,bytes,sha256,format:"json"}}`。ID 为 32 位小写十六进制；manifest 内容为 `{version:1,report_id,resources:{tlData:{file,bytes,sha256,format:"json"}}}`，也可包含 `cmpData` 或 `text` 格式资源。manifest 路径相对 HTML，资源路径相对 manifest 目录。只允许 HTTP(S) 下同目录内的相对路径；禁止跨域、目录逃逸、编码路径和重定向，不带凭据。响应按声明大小有界读取，逐一验证长度、SHA-256、严格 UTF-8、JSON、版本及报告 ID；Web Crypto 需要安全上下文（如 loopback HTTP）。
 
 重复请求共享底层 fetch，但每个订阅者独立取消；最后一个订阅者退出才 abort。请求身份校验避免取消后的旧结果污染缓存。切标签/Back/Escape 取消加载和模型迭代；失败显示原生 Retry 按钮。Timeline 拷贝 strings 和每条 offcpu 行，防止半初始化或重试污染缓存。`fgView()` 在外部请求期间返回 readiness Promise；内嵌兼容同步 probe。15 项真实 loopback HTTP 浏览器测试覆盖共享取消、重入、重试、紧凑窗口、损坏响应和模型一致性。
+
+### 只读回环查看器（2026-11-10）
+
+`fgview` 的安装态入口是 `fglib.viewer:main`，源码目录可用 `./fgview` 或 `python3 -m fglib.viewer`。只绑定 `127.0.0.1`，默认端口 0，由操作系统分配；显式 `--port` 限制为 0–65535，没有全网绑定参数。先打印本次随机路径 URL，只有 `--open` 才调用浏览器，Ctrl+C 关闭监听及目录句柄。选单文件只提供该文件；选目录必须存在 index.html，提供其中的普通非隐藏文件，但不列目录。目录模式需要用户指定独立报告目录，不能当作只允许 manifest 资源的 allowlist。
+
+根目录先解析用户显式选择的路径，再从文件系统根起逐级 no-follow 打开，并核对选中对象的 dev/inode，随后固定目录句柄。后续每级路径使用 `dir_fd + O_DIRECTORY + O_NOFOLLOW`，叶子使用 `O_NOFOLLOW + O_NONBLOCK` 后检查普通文件，防止符号链接置换及 FIFO 阻塞；平台缺少这些能力就明确拒绝，不降级成跟随链接。关闭与根句柄复制共用锁，单次请求持有独立目录/文件句柄，重命名目录或并发请求不共享文件偏移。HTTP GET 以不超过 1 MiB 的块发送，HEAD 不读取正文；启动不解析或提前读取 Timeline、Text、源码资源。路径校验在一次严格 UTF-8 URL 解码后进行，拒绝逃逸、空组件、反斜杠、NUL 与隐藏路径。显式选择的入口可以先解析符号链接，但解析后的路径和根下面的内部链接不能在打开时重新跟随。
+
+请求要求正确回环 Host 和随机路径前缀，显式 Origin 必须同源，没有 CORS、目录列表或写接口。响应禁缓存、禁止 MIME 嗅探及跨源资源读取；CSP 允许报告现有内联脚本/样式和同源 fetch，但不开放 unsafe-eval、表单、base 或嵌入。随机 URL 只是防网页猜测入口，不是多用户认证；可信报告的 JS 仍在浏览器执行，不提供 HTML 安全沙箱。该查看器不改变生成输出、模型、阈值策略或 DOM 规模，也不产生 sidecar；后续仍需资源发布、Text 模型解耦/虚拟化及源码按需读取。命令、安全边界及排障见 [English](viewer.md) / [中文](viewer.cn.md)。
 
 - 时间轴内部仍以归一化文本建模；已支持 trace-cmd 二进制容器。独立 `trace_pipe_raw` 裸页仍缺少解码所需元数据，不支持实时流；raw 参数目前是原始寄存器值，不是 BTF 格式化参数。
 - 没有 `latency-format` 时，上下文是根据函数名推断的，覆盖了常见的中断入口函数，但不完整。

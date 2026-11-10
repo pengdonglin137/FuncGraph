@@ -36,6 +36,8 @@ Key flags: `--enable-fold` (collapsible call blocks), `--func-links` (resolve al
 
 `fgreport` (repo root) wraps funcgraph.py: all features on, kernel paths in presets of `~/.config/funcgraph/config.ini` (`fgreport init NAME --vmlinux ... --default`, `[fgreport] preset` marks the default; funcgraph.py ignores that section), output next to the trace, `--no-text-view` above 150k lines. `FG_CONFIG` overrides the config path (tests use it).
 
+`fgview report.html` provides optional read-only loopback HTTP viewing; directory mode requires a dedicated report directory with index.html. Default port is ephemeral, browser launch requires --open, and only the explicitly selected file is served in file mode. See docs/viewer.md + docs/viewer.cn.md. The viewer requires directory-relative no-follow access and never falls back to an unrestricted HTTP server.
+
 ## Testing
 
 ```bash
@@ -84,6 +86,7 @@ fglib/parser.py       FtraceParser: text -> list[FtraceLine], fold pairing
 fglib/resolver.py     AddressResolver: func+off/len -> source via (fast)faddr2line
 fglib/report.py       HtmlGenerator: content lines, info panel, embedded data
 fglib/output.py       ReportSpool: UTF-8 section ranges, exact bytes, atomic file publication
+fglib/viewer.py       read-only loopback HTTP viewer with pinned directory-relative file access
 fglib/assets.py       reads assets/ (report + timeline JS/CSS)
 fglib/timeline.py     TimelineBuilder: per-task slices, off-CPU, windows, error chains -> tlData
 fglib/tailcalls.py    opt-in batched static direct tail-jump evidence for caller/parent mismatches
@@ -111,7 +114,7 @@ Tail-jump analysis is opt-in, deduplicated by parent/child/module, and never cha
 
 - Front-end code lives in `assets/` (`report/` for the text view, `timeline/` for the Timeline tab) and is inlined by `fglib/assets.py` (read with `newline=''` so output stays byte-stable). `HtmlGenerator` only emits markup and data.
 - The generated HTML is fully self-contained with zero external dependencies.
-- Timeline/Compare read through `fgData`; cached inputs must not be mutated by models. The external manifest interface is internal only: no CLI sidecar exporter/viewer or automatic threshold exists yet. External loads require HTTP(S), same-directory relative paths, exact size/SHA-256/UTF-8 checks, independently cancellable shared requests and retry without stale-view activation. Keep embedded reports offline-compatible.
+- Timeline/Compare read through `fgData`; cached inputs must not be mutated by models. The external manifest interface is internal only: no CLI sidecar exporter or automatic threshold exists yet. `fgview` can serve existing files and external-resource prototype directories, not generate or virtualize reports. External loads require HTTP(S), same-directory relative paths, exact size/SHA-256/UTF-8 checks, independently cancellable shared requests and retry without stale-view activation. Keep embedded reports offline-compatible.
 - Environment variables `CROSS_COMPILE` and `LLVM` control toolchain selection for cross-architecture support.
 - Python code lives in the `fglib` package; `funcgraph.py` is a thin entry point that re-exports the public names. Dependencies between modules are one-way (see docs/design.md §2).
 - Use `PROJECT_DIR` (fglib/constants.py) for repo-relative paths, never `__file__` of a module.

@@ -375,6 +375,7 @@ class DataProviderTest(unittest.TestCase):
         self.page.goto(path.as_uri(), wait_until='load')
         self.assertFalse(self.page.evaluate("async () => !!(await fgSwitchView('timeline'))"))
         self.assertIn('Sidecar data needs HTTP', self.page.locator('.fg-loading-status').inner_text())
+        self.assertIn('fgview REPORT_DIRECTORY', self.page.locator('.fg-loading-status').inner_text())
         self.assertEqual(self.count('manifest.json'), 0)
 
 
