@@ -22,8 +22,8 @@
             --expanded-bg: #f9f9f9;
             --guide-color: rgba(76, 175, 80, 0.35);
             --fold-icon: #89939d;
-            --tree-guide: rgba(105, 116, 128, 0.13);
-            --tree-guide-active: rgba(105, 116, 128, 0.28);
+            --tree-guide: #b2bcc6;
+            --tree-guide-active: #7a8998;
             --fold-bg: rgba(100, 116, 139, 0.06);
         }
         [data-theme="dark"] {
@@ -50,8 +50,8 @@
             --expanded-bg: #363636;
             --guide-color: rgba(102, 187, 106, 0.35);
             --fold-icon: #85919d;
-            --tree-guide: rgba(168, 180, 192, 0.17);
-            --tree-guide-active: rgba(168, 180, 192, 0.33);
+            --tree-guide: #687582;
+            --tree-guide-active: #9aaaba;
             --fold-bg: rgba(148, 163, 184, 0.08);
         }
         body {
@@ -404,7 +404,7 @@
             margin-left: 40px;
             padding: 6px 8px;
             background-color: var(--expanded-bg);
-            border-left: 2px solid var(--btn-primary);
+            border-left: 2px solid var(--tree-guide);
             border-radius: 0;
             white-space: pre;
             font-family: 'SF Mono', Menlo, Consolas, 'DejaVu Sans Mono', 'Courier New', monospace;
@@ -1220,9 +1220,9 @@
         .floating-toggle { display: none !important; }
         body.hide-floating-controls .controls { display: flex !important; }
         /* source blocks, chain layout */
-        .src-chain .src-frame { border-left: 2px dashed var(--border-color); padding-left: 6px; margin: 2px 0; }
-        .src-chain .src-frame.src-call { border-left: 2px solid var(--btn-primary); }
+        .src-chain .src-frame { border-left: 1px solid var(--tree-guide); padding-left: 7px; margin: 2px 0; }
         .src-chain summary { cursor: pointer; padding: 2px 0; font-family: inherit; white-space: pre; }
+        .src-chain summary::marker { color: var(--fold-icon); }
         .src-chain summary .src-at { color: var(--link-color); }
         .src-chain summary .src-note { color: var(--text-muted); font-style: italic; }
         .src-chain .src-tag { font: 600 10px system-ui, sans-serif; padding: 0 5px; border-radius: 7px; background: var(--bg-secondary); color: var(--text-muted); }

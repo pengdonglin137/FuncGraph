@@ -121,7 +121,7 @@ function detailRowsHtml(list, rows) {
         let source = '';
         if (row.kind !== 'outside') {
             const at = row.file ? row.file + ':' + row.line : 'Source unavailable';
-            const basis = row.file ? row.sourceKind === 'function_entry' ? 'entry' : 'call site' : '';
+            const basis = row.file ? row.sourceKind === 'function_entry' ? 'Resolved function entry, not the calling line' : 'Call site inside this frame' : '';
             let href = '';
             if (row.href) {
                 try {
@@ -129,12 +129,13 @@ function detailRowsHtml(list, rows) {
                     if (['http:', 'https:', 'file:', 'vscode:', 'vscodium:'].includes(url.protocol)) href = url.href;
                 } catch (error) {}
             }
-            source = '<div class="tl-context-source">' + (basis ? '<span class="tl-source-kind">' + basis + '</span>' : '') +
+            source = '<div class="tl-context-source">' +
                 '<' + (href ? 'a href="' + esc(href) + '" target="_blank" rel="noopener noreferrer"' : 'span') +
-                ' title="' + esc(at + (row.file && !href ? ' — no source URL configured' : '')) + '">' + esc(at) + '</' + (href ? 'a' : 'span') + '></div>';
+                ' title="' + esc(at + (basis ? ' — ' + basis : '') + (row.file && !href ? ' — no source URL configured' : '')) + '">' +
+                (row.file ? '<span class="tl-source-file">' + esc(row.file) + '</span><span class="tl-source-line">:' + esc(row.line) + '</span>' : esc(at)) +
+                '</' + (href ? 'a' : 'span') + '></div>';
         }
-        return '<div class="tl-context-row' + (traced ? '' : ' inl') + '" data-context-kind="' + row.kind + '"' +
-            ' style="padding-left:' + Math.min(row.level, 6) * 4 + 'px">' + main + source + '</div>';
+        return '<div class="tl-context-row' + (traced ? '' : ' inl') + '" data-context-kind="' + row.kind + '">' + main + source + '</div>';
     }).join('');
 }
 function detailListHtml(kind) {
@@ -160,7 +161,7 @@ function appendDetailRows(kind) {
 function detailContextHint() {
     return '<div class="tl-context-note">Context is unfiltered. Durations follow Overhead; frame durations overlap and must not be summed. ' +
         'Inline, untraced and outside-window rows are context, not extra measured calls. ' +
-        'Source: call site = position inside the frame; entry = resolved function entry, not the calling line. Unresolved locations are not guessed.</div>';
+        'Source positions are on the right; hover for the full path and call-site / function-entry basis. Unresolved locations are not guessed.</div>';
 }
 function exportDetailCsv(kind) {
     const data = detailContext, list = data.lists.get(kind), unit = MODE === 'count' ? 'units' : 'ns', scale = MODE === 'count' ? 1000 : 1;

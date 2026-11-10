@@ -572,7 +572,7 @@ class BrowserSmokeTest(unittest.TestCase):
             const fill = CanvasRenderingContext2D.prototype.fillRect;
             const clear = CanvasRenderingContext2D.prototype.clearRect;
             CanvasRenderingContext2D.prototype.fillRect = function (left, top, width, height) {
-                if (this.canvas.classList.contains('fold-guide-layer')) guidePaint.push({left, top, width, height});
+                if (this.canvas.classList.contains('fold-guide-layer')) guidePaint.push({left, top, width, height, color:this.fillStyle});
                 return fill.call(this, left, top, width, height);
             };
             CanvasRenderingContext2D.prototype.clearRect = function (...args) {
@@ -580,6 +580,58 @@ class BrowserSmokeTest(unittest.TestCase):
                 return clear.apply(this, args);
             };
         }""")
+
+    def test_hierarchy_guides_share_visible_neutral_colors_in_both_themes(self):
+        child = self.nested_fold_rows()[1]
+        self.record_guide_paint()
+        for theme in ['light', 'dark']:
+            with self.subTest(theme=theme):
+                self.page.mouse.move(0, 0)
+                self.ev("theme => document.documentElement.setAttribute('data-theme', theme)", theme)
+                colors = self.ev("""id => {
+                    const entry = document.getElementById(id);
+                    const guide = getComputedStyle(entry).getPropertyValue('--tree-guide').trim();
+                    const active = getComputedStyle(entry).getPropertyValue('--tree-guide-active').trim();
+                    const gradient = getComputedStyle(entry.querySelector('.call-indent'), '::before').backgroundImage;
+                    const connector = getComputedStyle(entry.querySelector('.fold-marker'), '::after').backgroundColor;
+                    const exit = document.getElementById(entry.getAttribute('data-fold-end'));
+                    const corner = getComputedStyle(exit.querySelector('.fold-close'), '::before').borderLeftColor;
+                    const source = document.createElement('div');
+                    source.className = 'expanded-content src-chain';
+                    source.innerHTML = '<details class="src-frame"><summary>traced</summary><details class="src-frame src-call"><summary>inline</summary></details></details>';
+                    document.body.append(source);
+                    const frameColors = Array.from(source.querySelectorAll('.src-frame'), frame => getComputedStyle(frame).borderLeftColor);
+                    const outer = getComputedStyle(source).borderLeftColor;
+                    source.remove();
+                    return {guide, active, gradient, connector, corner, frameColors, outer};
+                }""", child['row'])
+                self.assertIn(colors['connector'], colors['gradient'])
+                self.assertEqual(colors['corner'], colors['connector'])
+                self.assertEqual(colors['frameColors'], [colors['connector']] * 2)
+                self.assertEqual(colors['outer'], colors['connector'])
+                self.assertTrue(colors['guide'].startswith('#'))
+                self.assertNotEqual(colors['guide'], colors['active'])
+                self.page.locator('#' + child['row'] + ' .fold-icon').hover()
+                self.page.wait_for_function('guidePaint.length > 3')
+                self.assertTrue(all(segment['color'] == colors['active'] for segment in self.ev('guidePaint')))
+
+    def test_ancestor_guides_actually_paint_at_standard_and_high_pixel_density(self):
+        child = self.nested_fold_rows()[1]
+        for scale in [1, 1.25, 2]:
+            with self.subTest(scale=scale):
+                page = self.browser.new_page(viewport={'width': 1500, 'height': 900}, device_scale_factor=scale)
+                try:
+                    page.goto(self.url, wait_until='load')
+                    indent = page.locator('#' + child['row'] + ' .call-indent')
+                    self.assertGreater(indent.bounding_box()['width'], 20)
+                    visible = indent.screenshot()
+                    page.locator('#foldGuidesBtn').click()
+                    hidden = indent.screenshot()
+                    self.assertNotEqual(visible, hidden, 'Ancestor gradient must paint pixels, not just have a CSS color')
+                    page.locator('#foldGuidesBtn').click()
+                    self.assertEqual(indent.screenshot(), visible)
+                finally:
+                    page.close()
 
     def test_fold_hover_highlights_the_visible_column_not_just_endpoints(self):
         parent, child, grandchild, outside = self.nested_fold_rows()
@@ -659,7 +711,9 @@ class BrowserSmokeTest(unittest.TestCase):
                 }""", parent['row'])
                 self.assertEqual(colors['summary'], colors['count'])
                 for name in ['icon', 'guide', 'background']:
-                    components = [float(value) for value in colors[name].strip().split('(')[1].rstrip(')').split(',')]
+                    color = colors[name].strip()
+                    components = ([int(color[offset:offset + 2], 16) for offset in [1, 3, 5]] if color.startswith('#') else
+                                  [float(value) for value in color.split('(')[1].rstrip(')').split(',')])
                     self.assertLessEqual(max(components[:3]) - min(components[:3]), 40)
                     if len(components) == 4:
                         self.assertLessEqual(components[3], 0.25)
@@ -2281,8 +2335,9 @@ class BrowserSmokeTest(unittest.TestCase):
         self.assertGreaterEqual(rows.count(), 2)
         self.assertEqual(rows.count(), section.locator('.tl-context-source a').count())
         self.assertEqual(section.locator('button a').count(), 0)
-        self.assertIn('entry', rows.last.locator('.tl-context-source').inner_text())
-        self.assertIn('call site', rows.first.locator('.tl-context-source').inner_text())
+        self.assertIn('function entry, not the calling line', rows.last.locator('.tl-context-source a').get_attribute('title'))
+        self.assertIn('Call site inside this frame', rows.first.locator('.tl-context-source a').get_attribute('title'))
+        self.assertEqual(section.locator('.tl-source-kind').count(), 0)
         exported = self.download_csv('[data-context-export=stack]')
         self.assertEqual(exported[-1]['source_kind'], 'function_entry')
         self.assertEqual(exported[0]['source_kind'], 'call_site')
@@ -2295,13 +2350,54 @@ class BrowserSmokeTest(unittest.TestCase):
         popup.value.close()
         self.assertEqual(self.ev("fgView('timeline').probe().sel()"), selected)
 
+    def test_call_stack_columns_align_without_indentation_and_keep_line_numbers(self):
+        names = ['root', 'long_function_' * 18, 'leaf']
+        sources = {'functions': {f'{index}:-1': ['kernel/' + 'long_directory/' * 18 + f'frame{index}.c', 100 + index,
+                                               f'https://example.org/frame{index}#L{100 + index}']
+                                 for index in range(3)}, 'callers': {}}
+        self.open_range_data(names, starts=[0, 100, 200], durations=[100000, 80000, 1000], parents=[-1, 0, 1],
+                             columns={'depth': [0, 1, 2]}, extra={'sources': sources})
+        self.ev("fgView('timeline').probe().select(2)")
+        for theme in ['light', 'dark']:
+            for width in [320, 390, 800, 1500]:
+                with self.subTest(theme=theme, width=width):
+                    self.page.set_viewport_size({'width': width, 'height': 900})
+                    self.ev("theme => document.documentElement.setAttribute('data-theme', theme)", theme)
+                    rows = self.ev("""() => Array.from(document.querySelectorAll('[data-context-list=stack] .tl-context-row'), row => {
+                        const bounds = selector => row.querySelector(selector).getBoundingClientRect();
+                        const frame = row.getBoundingClientRect();
+                        const name = bounds('.tl-context-text'), value = bounds('.tl-context-value');
+                        const source = bounds('.tl-context-source'), line = bounds('.tl-source-line');
+                        const file = row.querySelector('.tl-source-file');
+                        return {padding:getComputedStyle(row).paddingLeft, nameLeft:name.left, nameHeight:name.height,
+                            nameRight:name.right, valueRight:value.right, sourceLeft:source.left, sourceTop:source.top,
+                            nameTop:name.top, lineRight:line.right, frameRight:frame.right, lineWidth:line.width,
+                            fileClipped:file.scrollWidth > file.clientWidth, sourceTitle:file.parentElement.title};
+                    })""")
+                    self.assertEqual(len(rows), 3)
+                    for row in rows:
+                        self.assertEqual(row['padding'], '0px')
+                        self.assertAlmostEqual(row['nameLeft'], rows[0]['nameLeft'], delta=0.1)
+                        self.assertAlmostEqual(row['valueRight'], rows[0]['valueRight'], delta=0.1)
+                        self.assertAlmostEqual(row['sourceLeft'], rows[0]['sourceLeft'], delta=0.1)
+                        self.assertLess(row['nameRight'], row['sourceLeft'])
+                        self.assertAlmostEqual(row['nameTop'], row['sourceTop'], delta=3)
+                        self.assertLessEqual(row['lineRight'], row['frameRight'])
+                        self.assertGreater(row['lineWidth'], 0)
+                        self.assertLessEqual(row['nameHeight'], 30)
+                        self.assertTrue(row['fileClipped'])
+                        self.assertIn('Resolved function entry', row['sourceTitle'])
+                    self.assertLessEqual(rows[0]['frameRight'], width)
+                    self.assertEqual(self.page.locator('[data-context-list=stack] .tl-source-line').all_text_contents(),
+                                     [':100', ':101', ':102'])
+
     def test_call_stack_unresolved_sources_are_explicit_and_unsafe_urls_stay_text(self):
         self.open_range_data(['root', 'leaf'], starts=[0, 1], durations=[10000, 1000], parents=[-1, 0],
                              columns={'depth': [0, 1]},
                              extra={'sources': {'functions': {'0:-1': ['<b>root.c</b>', 10, 'javascript:alert(1)']}, 'callers': {}}})
         self.ev("fgView('timeline').probe().select(1)")
         section = self.page.locator('[data-context-list=stack]')
-        self.assertIn('<b>root.c</b>:10', section.inner_text())
+        self.assertEqual(section.locator('.tl-context-source').first.text_content(), '<b>root.c</b>:10')
         self.assertIn('Source unavailable', section.inner_text())
         self.assertEqual(section.locator('.tl-context-source a, .tl-context-source b').count(), 0)
 
@@ -2343,7 +2439,9 @@ class BrowserSmokeTest(unittest.TestCase):
         self.ev("fgView('timeline').probe().select(1)")
         section = self.page.locator('[data-context-list=stack]')
         self.assertEqual(section.locator('.tl-context-source a').count(), 3)
-        self.assertEqual(section.locator('.tl-source-kind').all_text_contents(), ['call site', 'call site', 'entry'])
+        self.assertEqual(section.locator('.tl-source-kind').count(), 0)
+        self.assertEqual(['Call site inside this frame' in link.get_attribute('title')
+                          for link in section.locator('.tl-context-source a').all()], [True, True, False])
         rows = self.download_csv('[data-context-export=stack]')
         self.assertEqual([row['source_line'] for row in rows], ['10', '20', '40'])
         self.assertEqual([row['kind'] for row in rows], ['traced', 'inline', 'traced'])
@@ -2360,7 +2458,7 @@ class BrowserSmokeTest(unittest.TestCase):
                              callers=[None, 'root+0x1/0x20'], columns={'depth': [0, 1]}, extra={'sources': sources})
         self.ev("fgView('timeline').probe().select(1)")
         root = self.page.locator('[data-context-list=stack] [data-context-kind=traced]').first
-        self.assertIn('entry', root.inner_text())
+        self.assertIn('Resolved function entry', root.locator('a').get_attribute('title'))
         self.assertEqual(root.locator('a').get_attribute('href'), 'https://example.org/root#L1')
 
     def test_detail_source_position_does_not_depend_on_text_dom(self):

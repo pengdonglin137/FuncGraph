@@ -2,17 +2,17 @@
     content: '';
     position: absolute;
     inset: -5px 2ch -5px 0;
-    background-image: linear-gradient(to right, transparent calc(1ch - 0.375px), var(--tree-guide) calc(1ch - 0.375px), var(--tree-guide) calc(1ch + 0.375px), transparent calc(1ch + 0.375px));
+    background-image: linear-gradient(to right, transparent calc(1ch - 0.5px), var(--tree-guide) calc(1ch - 0.5px), var(--tree-guide) calc(1ch + 0.5px), transparent calc(1ch + 0.5px));
     background-size: 2ch 100%;
     pointer-events: none;
 }
 .fold-entry:not(.folded) .fold-marker::after {
     content: '';
     position: absolute;
-    left: calc(-1ch - 0.375px);
+    left: calc(-1ch - 0.5px);
     top: calc(50% + 7px);
     height: 8px;
-    width: 0.75px;
+    width: 1px;
     background: var(--tree-guide);
 }
 .fold-close::before {
