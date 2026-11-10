@@ -59,7 +59,7 @@
         const { graphSets, ...result } = yield* filter(model, text);
         return result;
     }
-    function folding(model) {
+    function* prepareFolding(model) {
         if (foldModels.has(model)) return foldModels.get(model);
         const blocks = new Map();
         const ancestry = new Map();
@@ -72,16 +72,20 @@
             if (!blocks.has(id)) blocks.set(id, { id, entry: null, exit: null, calls: 0 });
             return blocks.get(id);
         };
+        let scanned = 0;
         for (const record of model.records) {
             const id = record.getAttribute('data-fold-id');
             const type = record.getAttribute('data-fold-type');
+            const parents = ancestors(record);
             if (id && (type === 'entry' || type === 'exit')) block(id)[type] = record;
             if (type === 'entry' || type === 'inner' && record.getAttribute('data-func')) {
-                for (const ancestor of ancestors(record)) {
+                for (const ancestor of parents) {
                     if (ancestor !== id || type === 'inner') block(ancestor).calls++;
                 }
-                if (type === 'inner' && id && !ancestors(record).includes(id)) block(id).calls++;
+                if (type === 'inner' && id && !parents.includes(id)) block(id).calls++;
             }
+            scanned++;
+            if (scanned % 512 === 0) yield 'Preparing Text fold metadata: ' + scanned + ' / ' + model.records.length + '…';
         }
         const result = {
             records: model.records,
@@ -108,7 +112,13 @@
         foldModels.set(model, result);
         return result;
     }
-    window.fgTextModel = { fields, prepare, filter, folding };
+    function folding(model) {
+        const steps = prepareFolding(model);
+        let result;
+        do { result = steps.next(); } while (!result.done);
+        return result.value;
+    }
+    window.fgTextModel = { fields, prepare, filter, folding, prepareFolding };
     window.fgIndexedFilter = async function (data, text, signal, progress) {
         const iterator = steps(data, text);
         try {

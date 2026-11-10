@@ -1134,13 +1134,14 @@
         }
 
         const fgDomTextModels = new WeakMap();
-        function fgGetTextModel(lines) {
+        function* fgPrepareTextModel(lines) {
             const root = document.getElementById('content');
             if (fgDomTextModels.has(root)) return fgDomTextModels.get(root);
             let data;
             if (fgData.ready('fgTextIndex')) data = fgData.read('fgTextIndex');
             else {
-                const rows = Array.from(lines, line => {
+                const rows = [];
+                for (const line of lines) {
                     const content = line.querySelector('.line-content');
                     let text = content?.textContent || '';
                     const summary = line.classList.contains('folded') && content?.querySelector('.fold-summary');
@@ -1153,16 +1154,25 @@
                         range.setStartAfter(summary);
                         text += range.toString();
                     }
-                    return [+line.getAttribute('data-line-number'), text,
-                        ...fgTextModel.fields.map(field => line.getAttribute('data-' + field))];
-                });
+                    rows.push([+line.getAttribute('data-line-number'), text,
+                        ...fgTextModel.fields.map(field => line.getAttribute('data-' + field))]);
+                    if (rows.length % 512 === 0) yield 'Reading complete Text rows: ' + rows.length + ' / ' + lines.length + '…';
+                }
                 rows.sort((left, right) => left[0] - right[0]);
                 data = { version: 1, fields: fgTextModel.fields, rows };
             }
-            const iterator = fgTextModel.prepare(data);
+            const model = yield* fgTextModel.prepare(data);
+            if (model.records.length !== lines.length) throw new Error('Text model does not cover mounted rows');
+            yield* fgTextModel.prepareFolding(model);
+            return model;
+        }
+
+        function fgGetTextModel(lines) {
+            const root = document.getElementById('content');
+            if (fgDomTextModels.has(root)) return fgDomTextModels.get(root);
+            const iterator = fgPrepareTextModel(lines);
             let result;
             do { result = iterator.next(); } while (!result.done);
-            if (result.value.records.length !== lines.length) throw new Error('Text model does not cover mounted rows');
             fgDomTextModels.set(root, result.value);
             return result.value;
         }
@@ -2974,18 +2984,20 @@
             if (summary) summary.remove();
         }
 
-        function fgInitText(mounted = false) {
+        function fgInitText(mounted = false, model = null) {
             if (fgTextInitialized || fgTextDeferred()) return;
+            const root = document.getElementById('content');
+            total_lines = root.querySelectorAll('.line-container').length;
+            if (model) {
+                if (model.records.length !== total_lines) throw new Error('Text model does not cover mounted rows');
+                fgDomTextModels.set(root, model);
+            }
             fgTextInitialized = true;
             if (mounted) {
                 fgRestoreTextOrder();
                 initTextFolds();
                 restoreFoldedState();
             }
-            // 初始化总行数
-            // (the old .summary element no longer exists; count the rendered lines)
-            total_lines = document.querySelectorAll('.line-container').length;
-
             // 恢复展开状态
             restoreExpandedState();
 

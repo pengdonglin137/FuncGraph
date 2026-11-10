@@ -164,6 +164,28 @@ class TextModelTest(unittest.TestCase):
             assert.deepEqual(Array.from(folding.members('scope600')), []);
         ''')
 
+    def test_fold_preparation_yields_and_never_caches_partial_metadata(self):
+        self.run_model('''
+            const input = data(Array.from({length:2501}, (unused, index) => [index + 1, 'call',
+                {'fold-id':'root', 'fold-type':index ? 'inner' : 'entry', func:'call',
+                    'fold-ancestors':index ? 'root' : ''}]));
+            const model = drain(fgTextModel.prepare(input));
+            const cancelled = fgTextModel.prepareFolding(model);
+            assert.equal(cancelled.next().done, false);
+            cancelled.return();
+            const retry = fgTextModel.prepareFolding(model);
+            assert.equal(retry.next().done, false);
+            const folding = drain(retry);
+            assert.equal(folding.records.length, 2501);
+            assert.equal(folding.blocks.get('root').calls, 2500);
+            assert.equal(folding.blocks.get('root').entry, model.records[0]);
+            const cached = fgTextModel.prepareFolding(model).next();
+            assert.equal(cached.done, true);
+            assert.equal(cached.value, folding);
+            assert.equal(fgTextModel.folding(model), folding);
+            assert.deepEqual(Array.from(folding.visibleLines({root:true}, null)), [1]);
+        ''')
+
     def test_async_indexed_filter_preserves_result_shape_and_cancellation(self):
         self.run_model('''
             globalThis.parseFilterExpr = text => ({ast:text ? {type:'COND'} : null, sortDir:null});

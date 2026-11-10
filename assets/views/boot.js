@@ -37,10 +37,11 @@
                     position = end;
                     yield 'Preparing Text… ' + Math.floor(position / html.length * 100) + '%';
                 }
+                const model = yield* fgPrepareTextModel(fragment.querySelectorAll('.line-container'));
                 yield { label: 'Finishing Text layout…', paint: true };
                 content.replaceChildren(fragment);
                 content.removeAttribute('data-fg-text');
-                try { fgInitText(true); }
+                try { fgInitText(true, model); }
                 catch (error) {
                     textFailed = true;
                     content.setAttribute('data-fg-text', 'true');

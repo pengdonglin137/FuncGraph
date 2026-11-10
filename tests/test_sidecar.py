@@ -595,6 +595,103 @@ class SidecarBrowserTest(unittest.TestCase):
         self.assertTrue(self.page.evaluate('finishedBeforeInit'))
         self.assertGreater(self.page.locator('#content .line-container').count(), 100)
 
+    def test_text_fold_metadata_is_prepared_before_mount_and_reused_on_first_click(self):
+        self.assertEqual(self.page.evaluate('typeof fgTextModel.prepareFolding'), 'function')
+        facts = self.page.evaluate('''async () => {
+            const prepare = fgTextModel.prepareFolding;
+            const checkpoints = [];
+            fgTextModel.prepareFolding = function* (model) {
+                const steps = prepare(model);
+                try {
+                    while (true) {
+                        const result = steps.next();
+                        if (result.done) return result.value;
+                        checkpoints.push({mounted:document.querySelectorAll('#content .line-container').length,
+                            deferred:fgTextDeferred(), inert:document.querySelector('.controls').inert,
+                            published:fgDomTextModels.has(document.getElementById('content'))});
+                        yield result.value;
+                    }
+                } finally { steps.return(); }
+            };
+            await fgEnsureText();
+            const model = fgDomTextModels.get(document.getElementById('content'));
+            const folding = prepare(model).next();
+            fgGetTextModel = () => { throw new Error('First fold rebuilt Text rows'); };
+            const target = Array.from(folding.value.blocks.values()).find(block => block.entry && block.calls);
+            _setFolded(target.id, true);
+            _setFolded(target.id, false);
+            return {checkpoints, cached:folding.done, records:model.records.length,
+                rows:document.querySelectorAll('#content .line-container').length};
+        }''')
+        self.assertTrue(facts['checkpoints'])
+        self.assertTrue(all(checkpoint == dict(mounted=0, deferred=True, inert=True, published=False)
+                            for checkpoint in facts['checkpoints']))
+        self.assertTrue(facts['cached'])
+        self.assertEqual(facts['records'], facts['rows'])
+        self.assertFalse(any(url.endswith('text-index.json') for url in self.requests))
+
+    def test_cancelling_fold_metadata_discards_partial_work_and_retries_without_refetch(self):
+        self.assertEqual(self.page.evaluate('typeof fgTextModel.prepareFolding'), 'function')
+        self.page.evaluate('''() => {
+            window.holdFolds = true;
+            window.foldStarted = false;
+            window.foldClosed = 0;
+            window.prepareFolds = fgTextModel.prepareFolding;
+            fgTextModel.prepareFolding = function* (model) {
+                const steps = prepareFolds(model);
+                try {
+                    window.cancelledFoldModel = model;
+                    const first = steps.next();
+                    window.foldStarted = true;
+                    while (holdFolds) yield first.value;
+                    if (!first.done) yield first.value;
+                    return first.done ? first.value : yield* steps;
+                } finally { steps.return(); foldClosed++; }
+            };
+            window.foldOpening = fgSwitchView('text');
+        }''')
+        self.page.wait_for_function('() => foldStarted')
+        self.assertEqual(self.page.locator('#content .line-container').count(), 0)
+        self.assertFalse(self.page.evaluate('fgDomTextModels.has(document.getElementById("content"))'))
+        self.page.locator('#content button', has_text='Back to Timeline').click()
+        self.assertIsNone(self.page.evaluate('foldOpening'))
+        self.assertEqual(self.page.evaluate('foldClosed'), 1)
+        self.assertTrue(self.page.evaluate('''() => {
+            const retry = prepareFolds(cancelledFoldModel);
+            const partial = !retry.next().done;
+            retry.return();
+            return partial && fgTextDeferred() && fgData.ready('fgText');
+        }'''))
+        self.page.evaluate('async () => { holdFolds = false; await fgEnsureText(); }')
+        self.assertEqual(self.page.evaluate('foldClosed'), 2)
+        self.assertTrue(self.page.evaluate('fgDomTextModels.has(document.getElementById("content"))'))
+        self.assertGreater(self.page.locator('#content .line-container').count(), 100)
+        self.assertEqual(sum(url.endswith('text.html') for url in self.requests), 1)
+
+    def test_fold_metadata_failure_retries_before_text_initialization(self):
+        self.page.evaluate('''() => {
+            const prepare = fgTextModel.prepareFolding;
+            let fail = true;
+            fgTextModel.prepareFolding = function* (model) {
+                yield 'Preparing Text fold metadata…';
+                if (fail) {
+                    fail = false;
+                    throw new Error('fold metadata <failed>');
+                }
+                return yield* prepare(model);
+            };
+        }''')
+        self.assertIsNone(self.page.evaluate('async () => await fgSwitchView("text")'))
+        self.assertIn('fold metadata <failed>', self.page.locator('#content [role=alert]').inner_text())
+        self.assertEqual(self.page.locator('#content .line-container').count(), 0)
+        self.assertFalse(self.page.evaluate('fgDomTextModels.has(document.getElementById("content"))'))
+        self.assertFalse(self.page.evaluate('fgTextInitialized'))
+        self.page.locator('#content').get_by_role('button', name='Retry', exact=True).click()
+        self.page.wait_for_function('() => !fgTextDeferred()')
+        self.assertTrue(self.page.evaluate('fgTextInitialized'))
+        self.assertTrue(self.page.evaluate('fgDomTextModels.has(document.getElementById("content"))'))
+        self.assertEqual(sum(url.endswith('text.html') for url in self.requests), 1)
+
     def test_text_preparation_status_fits_compact_light_and_dark_viewports(self):
         self.stage_text()
         self.page.set_viewport_size({'width': 360, 'height': 640})
