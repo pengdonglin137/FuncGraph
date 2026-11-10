@@ -166,8 +166,40 @@
             return verified(value.resources[name], new URL('.', url), active);
         });
     }
+    function sourceInfo(source) {
+        if (!Number.isSafeInteger(source) || source < 0) throw new Error('Invalid source identity');
+        if (!embedded('fgSourceChunks')) return { name: 'fgSrc', index: source, count: null };
+        const catalog = read('fgSourceChunks');
+        if (!catalog || catalog.version !== 1 || !Number.isSafeInteger(catalog.count) || catalog.count < 0 ||
+            !Number.isSafeInteger(catalog.chunk_size) || catalog.chunk_size <= 0 || source >= catalog.count) {
+            throw new Error('Invalid source chunk catalog or identity');
+        }
+        const first = Math.floor(source / catalog.chunk_size) * catalog.chunk_size;
+        return { name: 'fgSrc' + first, index: source - first, count: Math.min(catalog.chunk_size, catalog.count - first) };
+    }
+    const checkedSources = new WeakSet();
+    function sourceValue(info, data) {
+        if (!Array.isArray(data) || info.count !== null && data.length !== info.count ||
+            !checkedSources.has(data) && data.some(value => typeof value !== 'string')) {
+            cache.delete('data:' + info.name);
+            throw new Error('Invalid source chunk contents: ' + info.name);
+        }
+        checkedSources.add(data);
+        return data[info.index] || '';
+    }
+    function readSource(source) {
+        const info = sourceInfo(source);
+        return sourceValue(info, read(info.name));
+    }
+    function loadSource(source, options = {}) {
+        try {
+            const info = sourceInfo(source);
+            return load(info.name, options).then(data => sourceValue(info, data));
+        } catch (error) { return Promise.reject(error); }
+    }
     window.fgData = {
         read, load, ready,
+        readSource, loadSource, sourceReady: source => ready(sourceInfo(source).name),
         release: name => cache.delete('data:' + name),
         external: name => !!descriptorNode && !embedded(name),
         length: name => {

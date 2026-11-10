@@ -38,6 +38,8 @@ Key flags: `--enable-fold` (collapsible call blocks), `--func-links` (resolve al
 
 `fgview report.html` provides optional read-only loopback HTTP viewing; directory mode requires a dedicated report directory with index.html. Default port is ephemeral, browser launch requires --open, and only the explicitly selected file is served in file mode. See docs/viewer.md + docs/viewer.cn.md. The viewer requires directory-relative no-follow access and never falls back to an unrestricted HTTP server.
 
+Sidecar sources are demand-loaded in stable-ID chunks of up to 64 records (`fgSourceChunks`, manifest `sources=chunks-v1`); `fgSrcLines` remains embedded. Single/auto-below-threshold reports keep embedded `fgSrc`. Use `fgData.readSource/loadSource/sourceReady`, not direct pool reads; `fgFill` may return a Promise and fires `fg-source-ready` after filling. Cancel pending consumers when collapsing/replacing/leaving a view and resume still-open panels on reentry; legacy compact-position fallback may fetch a source chunk. Source chunks are cached without LRU and have no byte bound. Preserve complete sources/line identities and do not claim bounded memory or Text virtualization.
+
 ## Testing
 
 ```bash

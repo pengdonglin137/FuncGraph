@@ -2,7 +2,7 @@
 
 **raw 采集文件**：自动识别 trace-cmd 二进制容器：`funcgraph trace.dat --timeline --output trace.html`。原生依赖、固定子模块、buffer 选择及边界见 [raw 输入文档](raw-input.cn.md)；不支持独立 trace_pipe_raw 裸页。
 
-报告加载：普通报告仍为离线单文件。大报告可显式运行 `funcgraph TRACE --timeline --report-mode sidecar --output REPORT_DIRECTORY`，再用 `fgview REPORT_DIRECTORY` 打开。默认 Timeline 不加载 Text 行，Compare 按需读取；统一过滤按需加载完整 Text 过滤索引，不挂载 Text DOM，提供进度、取消及失败保留旧结果后的重试。首次进入 Text 或跳转 trace 行号/锚点时才**完整加载 Text**，在文档外分批准备、显示进度并支持取消，随后重新应用当前过滤。最终布局仍可能阻塞，完整 DOM 仍常驻；不是虚拟列表，也不保证打开总时间更短。保存的 Text 偏好和行号锚点优先于初始 Timeline。源码仍内嵌，尚无 Text 虚拟化或源码分块；可选 `--report-mode auto --sidecar-threshold BYTES` 仅在完整 HTML 严格超过显式字节阈值时选择 sidecar，没有默认阈值。共享、更新和错误恢复见[查看器指南](viewer.cn.md)。
+报告加载：普通报告仍为离线单文件。大报告可显式运行 `funcgraph TRACE --timeline --report-mode sidecar --output REPORT_DIRECTORY`，再用 `fgview REPORT_DIRECTORY` 打开。默认 Timeline 不加载 Text 行，Compare 按需读取；统一过滤按需加载完整 Text 过滤索引，不挂载 Text DOM，提供进度、取消及失败保留旧结果后的重试。首次进入 Text 或跳转 trace 行号/锚点时才**完整加载 Text**，在文档外分批准备、显示进度并支持取消，随后重新应用当前过滤。最终布局仍可能阻塞，完整 DOM 仍常驻；不是虚拟列表，也不保证打开总时间更短。保存的 Text 偏好和行号锚点优先于初始 Timeline。sidecar 源码正文按最多 64 条记录分块按需读取，支持校验、共享请求、加载/Retry 反馈和取消；访问过的块缓存保留，尚无 LRU 或字节上限。已解析悬停位置不请求源码正文，单文件源码仍内嵌。可选 `--report-mode auto --sidecar-threshold BYTES` 仅在完整 HTML 严格超过显式字节阈值时选择 sidecar，没有默认阈值。共享、更新和错误恢复见[查看器指南](viewer.cn.md)。
 
 本文介绍从采集 trace 到阅读报告的完整流程，并逐一说明报告中每个视图的字段和配色。命令行参数的完整列表见 `python3 funcgraph.py --help`，实现细节见 [design.md](design.md)。English: [guide.en.md](guide.en.md).
 
@@ -418,7 +418,7 @@ python3 funcgraph.py --preset pi4 --output r.html ftrace.txt
 - **chain**（默认）：从外到内排列。标 `traced` 的是被 ftrace 跟踪到的那个函数，下面依次是内联进来的各层 `inline` 函数，每层缩进一级、可以折叠，并注明"→ inlines X here"。只有最内层（"← the traced call happens here"，真正发起这次调用的那一行）默认展开。每层右边的 ↗ 是在线源码链接。
 - **flat**：和 faddr2line 的原始输出一样，最内层在前，全部展开。
 
-Text 工具栏与 Timeline 调用点面板的 Source 按钮保持同步。在支持弱引用的浏览器中，切换只重排已填充的源码面板，不扫描整份 trace 的空占位块，也不会提前解析尚未使用的源码池。未打开的块首次展开时直接使用当前模式；被替换的详情面板不会被登记表强引用保留。旧浏览器仍可切换模式，但使用兼容扫描路径。这不改变源码内容，也不等同于 sidecar 或按需网络加载。
+Text 工具栏与 Timeline 调用点面板的 Source 按钮保持同步。在支持弱引用的浏览器中，切换只重排已填充的源码面板，不扫描整份 trace 的空占位块，也不会提前解析尚未使用的源码池。未打开的块首次展开时直接使用当前模式；被替换的详情面板不会被登记表强引用保留。旧浏览器仍可切换模式，但使用兼容扫描路径。这不改变源码内容。sidecar 展开时只请求对应的校验源码块，收起的 Timeline 源码面板等到打开才读取；等待显示 **Loading source…**，失败提供 **Retry**。收起、替换/关闭详情或切换视图会取消当前面板的请求，不影响同块其他消费者；返回视图时重启仍展开的未完成面板，成功块复用缓存。单文件报告仍同步读取内嵌源码。
 
 ### 5.6 按任务分组
 

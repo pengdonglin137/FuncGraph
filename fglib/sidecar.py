@@ -16,6 +16,7 @@ from .textindex import TextIndexWriter
 
 
 MARKER = b'FuncGraph sidecar report v1\n'
+SOURCE_CHUNK_ROWS = 64
 
 
 @dataclass(frozen=True)
@@ -157,8 +158,19 @@ def write_sidecar(path, generator, byte_limit=None):
                         resources[name] = _resource(spool, 'view_data:' + name, resources_directory / filename, 'json')
                 if deferred:
                     resources['fgText'] = _resource(spool, 'text', resources_directory / 'text.html', 'text')
+                source_count = 0
+                for first, sources in generator.iter_source_chunks(SOURCE_CHUNK_ROWS):
+                    payload = _json(sources)
+                    filename = 'source-' + str(first) + '.json'
+                    with (resources_directory / filename).open('xb') as stream:
+                        stream.write(payload)
+                        _sync(stream)
+                    resources['fgSrc' + str(first)] = dict(file=filename, bytes=len(payload),
+                                                          sha256=hashlib.sha256(payload).hexdigest(), format='json')
+                    source_count += len(sources)
+                source_catalog = _json(dict(version=1, count=source_count, chunk_size=SOURCE_CHUNK_ROWS))
                 manifest = _json(dict(version=1, report_id=report_id, resources=resources,
-                                      capabilities=dict(text='deferred-full' if deferred else 'omitted', sources='embedded',
+                                      capabilities=dict(text='deferred-full' if deferred else 'omitted', sources='chunks-v1',
                                                         text_filter='index-v1' if deferred else 'omitted')))
                 with (resources_directory / 'manifest.json').open('xb') as stream:
                     stream.write(manifest)
@@ -172,8 +184,11 @@ def write_sidecar(path, generator, byte_limit=None):
                             continue
                         if deferred and section.name == 'text':
                             continue
+                        if section.name in ('source_open', 'source_data', 'source_close'):
+                            continue
                         if section.name == 'report_script':
                             stream.write(b'    <script type="application/json" id="fgDataManifest">' + descriptor + b'</script>\n')
+                            stream.write(b'    <script type="application/json" id="fgSourceChunks">' + source_catalog + b'</script>\n')
                         if deferred and section.name == 'chrome':
                             _copy(spool, section, stream, (
                                 (b'<div id="content">', b'<div id="content" data-fg-text="true" data-fg-text-index="true">'),

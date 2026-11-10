@@ -94,7 +94,7 @@ class DataProviderTest(unittest.TestCase):
         self.server.server_close()
         self.assertEqual(self.errors, [])
 
-    def publish(self, manifest_change=None, descriptor_change=None, embedded=False):
+    def publish(self, manifest_change=None, descriptor_change=None, embedded=False, source_catalog=None):
         resources = {}
         for name, body in self.payloads.items():
             filename = name + ('.txt' if name == 'raw' else '.json')
@@ -109,6 +109,10 @@ class DataProviderTest(unittest.TestCase):
             descriptor_change(descriptor)
         self.server.responses['/report/data/manifest.json'] = (200, manifest_body, None)
         report = self.html
+        if source_catalog is not None:
+            report = re.sub(r'    <script type="application/json" id="fgSrc">.*?</script>\n', '', report, flags=re.S)
+            report = report.replace('</head>', '<script type="application/json" id="fgSourceChunks">' +
+                                    encode(source_catalog).decode() + '</script></head>', 1)
         if not embedded:
             report = re.sub(r'    <script type="application/json" id="(?:tlData|cmpData)">.*?</script>\n', '', report, flags=re.S)
         report = report.replace('</head>', '<script type="application/json" id="fgDataManifest">' +
@@ -139,6 +143,88 @@ class DataProviderTest(unittest.TestCase):
                 columns: ['sName', 'sStart', 'sEnd', 'sDepth', 'sParent', 'sTask'].map(name => Array.from(probe[name])),
                 tracks: probe.TRACKS.map(track => [track.rowsT, track.rowsI, track.off, track.rs, track.io]) };
         }''')
+
+    def test_source_chunks_load_only_the_requested_group_and_share_cache(self):
+        self.payloads.update(fgSrc0=encode(['first 中文🙂', 'second']), fgSrc2=encode(['third', 'fourth']))
+        self.publish(source_catalog=dict(version=1, count=4, chunk_size=2))
+        self.assertEqual(self.count('fgSrc0.json'), 0)
+        self.assertEqual(self.count('fgSrc2.json'), 0)
+        result = self.page.evaluate('''async () => {
+            const initial = fgData.sourceReady(0);
+            const values = await Promise.all([fgData.loadSource(0), fgData.loadSource(1), fgData.loadSource(0)]);
+            return {initial, values, first:fgData.readSource(0), second:fgData.sourceReady(1), third:fgData.sourceReady(2)};
+        }''')
+        self.assertEqual(result, dict(initial=False, values=['first 中文🙂', 'second', 'first 中文🙂'],
+                                      first='first 中文🙂', second=True, third=False))
+        self.assertEqual(self.count('fgSrc0.json'), 1)
+        self.assertEqual(self.count('fgSrc2.json'), 0)
+        self.assertEqual(self.page.evaluate('async () => await fgData.loadSource(3)'), 'fourth')
+        self.assertEqual(self.count('fgSrc2.json'), 1)
+
+    def test_source_catalog_rejects_invalid_identities_without_fetching_chunks(self):
+        self.payloads['fgSrc0'] = encode(['source'])
+        for catalog, identity in [(dict(version=2, count=1, chunk_size=1), 0),
+                                  (dict(version=1, count=-1, chunk_size=1), 0),
+                                  (dict(version=1, count=1, chunk_size=0), 0),
+                                  (dict(version=1, count=1, chunk_size=1), -1),
+                                  (dict(version=1, count=1, chunk_size=1), 1),
+                                  (dict(version=1, count=1, chunk_size=1), 0.5)]:
+            with self.subTest(catalog=catalog, identity=identity):
+                self.publish(source_catalog=catalog)
+                error = self.page.evaluate('''async identity => {
+                    try { await fgData.loadSource(identity); } catch (error) { return error.message; }
+                }''', identity)
+                self.assertIn('Invalid source', error)
+                self.assertEqual(self.count('fgSrc0.json'), 0)
+
+    def test_invalid_source_group_shapes_never_stay_cached(self):
+        for contents in [[], ['one', 'extra'], [7], dict(source='not an array')]:
+            with self.subTest(contents=contents):
+                self.payloads['fgSrc0'] = encode(contents)
+                self.publish(source_catalog=dict(version=1, count=1, chunk_size=1))
+                errors = self.page.evaluate('''async () => {
+                    const errors = [];
+                    for (let attempt = 0; attempt < 2; attempt++) {
+                        try { await fgData.loadSource(0); } catch (error) { errors.push(error.message); }
+                    }
+                    return {errors, ready:fgData.sourceReady(0)};
+                }''')
+                self.assertEqual(len(errors['errors']), 2)
+                self.assertTrue(all('Invalid source chunk contents' in error for error in errors['errors']))
+                self.assertFalse(errors['ready'])
+                self.server.counts.clear()
+
+    def test_source_chunk_checksum_failures_can_retry_without_reloading_manifest(self):
+        original = encode(['source'])
+        self.payloads['fgSrc0'] = original
+        self.publish(source_catalog=dict(version=1, count=1, chunk_size=64))
+        self.server.responses['/report/data/fgSrc0.json'] = (200, original.replace(b'source', b'broken'), None)
+        error = self.page.evaluate('''async () => {
+            try { await fgData.loadSource(0); } catch (error) { return error.message; }
+        }''')
+        self.assertIn('checksum mismatch', error)
+        self.assertFalse(self.page.evaluate('fgData.sourceReady(0)'))
+        self.server.responses['/report/data/fgSrc0.json'] = (200, original, None)
+        self.assertEqual(self.page.evaluate('async () => await fgData.loadSource(0)'), 'source')
+        self.assertEqual(self.count('fgSrc0.json'), 2)
+        self.assertEqual(self.count('manifest.json'), 1)
+
+    def test_canceling_one_source_consumer_preserves_another_in_same_group(self):
+        self.payloads['fgSrc0'] = encode(['first', 'second'])
+        self.publish(source_catalog=dict(version=1, count=2, chunk_size=2))
+        gate, requested = self.gate('fgSrc0.json')
+        self.page.evaluate('''() => {
+            window.sourceController = new AbortController();
+            window.firstSource = fgData.loadSource(0, {signal:sourceController.signal}).catch(error => error.name);
+            window.secondSource = fgData.loadSource(1);
+        }''')
+        self.assertTrue(requested.wait(10), 'source chunk was not requested')
+        self.page.evaluate('sourceController.abort()')
+        self.assertEqual(self.page.evaluate('async () => await firstSource'), 'AbortError')
+        gate.set()
+        self.assertEqual(self.page.evaluate('async () => await secondSource'), 'second')
+        self.assertEqual(self.count('fgSrc0.json'), 1)
+        self.assertTrue(self.page.evaluate('fgData.sourceReady(0)'))
 
     def test_external_views_are_loaded_only_on_demand_and_reused(self):
         self.publish()

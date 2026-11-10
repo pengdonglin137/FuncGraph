@@ -7,6 +7,7 @@ import unittest
 
 import helpers
 from fglib import assets
+from fglib.report import HtmlGenerator
 
 # Markers that must be present in a full-featured report (migrated from test_refactor.sh)
 FEATURES = {
@@ -34,6 +35,28 @@ class VersionTest(__import__('unittest').TestCase):
         import re
         from fglib.constants import APP_VERSION
         self.assertRegex(APP_VERSION, r'^\d+\.\d+\.\d+$')
+
+
+class SourceChunkTest(unittest.TestCase):
+    def test_chunks_keep_stable_identities_without_changing_the_pool(self):
+        generator = HtmlGenerator.__new__(HtmlGenerator)
+        generator._src_pool = ['中文🙂 ' + str(index) for index in range(130)]
+        original = list(generator._src_pool)
+        chunks = list(generator.iter_source_chunks(64))
+        self.assertEqual([first for first, values in chunks], [0, 64, 128])
+        self.assertEqual([len(values) for first, values in chunks], [64, 64, 2])
+        self.assertEqual([value for first, values in chunks for value in values], original)
+        chunks[0][1][0] = 'changed'
+        self.assertEqual(generator._src_pool, original)
+
+    def test_empty_pool_and_invalid_record_counts(self):
+        generator = HtmlGenerator.__new__(HtmlGenerator)
+        generator._src_pool = []
+        self.assertEqual(list(generator.iter_source_chunks(64)), [])
+        for count in [0, -1, True, False, None, '64', 1.5]:
+            with self.subTest(count=count), self.assertRaises(ValueError):
+                list(generator.iter_source_chunks(count))
+
 
 class ReportTest(unittest.TestCase):
     @classmethod

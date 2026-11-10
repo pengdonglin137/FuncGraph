@@ -411,6 +411,11 @@
             opacity: 1;
             background-color: var(--btn-primary-hover);
         }
+        .fg-source-status {
+            white-space: normal;
+            color: var(--summary-text);
+            padding: 6px 0;
+        }
         .expanded-content {
             display: none;
             margin-left: 40px;

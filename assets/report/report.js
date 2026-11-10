@@ -11,7 +11,7 @@
             if (typeof window.fgOnFilter === 'function') window.fgOnFilter();
         }
         function fgSourceHtml(source) {
-            return fgData.read('fgSrc')[source] || '';
+            return fgData.readSource(source);
         }
         function fgSourceForLine(line) {
             const index = fgData.read('fgSrcLines');
@@ -32,11 +32,74 @@
             fgSourceCleanup.register(element, reference);
         }
         function fgSourceMode() { return fgSrcMode; }
+        const fgSourceJobs = new Map();
+        function fgCancelSources(root) {
+            const paused = [];
+            if (root) for (const element of fgSourceJobs.keys()) {
+                if (root.contains(element)) {
+                    paused.push(element);
+                    fgCancelSource(element);
+                }
+            }
+            return paused;
+        }
+        function fgCancelSource(element) {
+            const job = element && fgSourceJobs.get(element);
+            if (!job) return;
+            fgSourceJobs.delete(element);
+            job.controller.abort();
+            element.removeAttribute('aria-busy');
+            element.replaceChildren();
+        }
         function fgFill(el, force) {
-            if (!el || el.dataset.src === undefined || (el.firstChild && !force)) return;
-            el.innerHTML = fgSourceHtml(+el.dataset.src);
-            if (fgSrcMode === 'chain') fgChainView(el);
-            fgTrackSource(el);
+            if (!el || el.dataset.src === undefined) return;
+            const active = fgSourceJobs.get(el);
+            if (active && !force) return active.promise;
+            if (el.firstChild && !force) return;
+            fgCancelSource(el);
+            const source = +el.dataset.src;
+            const fill = text => {
+                el.innerHTML = text;
+                if (fgSrcMode === 'chain') fgChainView(el);
+                fgTrackSource(el);
+                el.dispatchEvent(new Event('fg-source-ready'));
+            };
+            try {
+                if (fgData.sourceReady(source)) { fill(fgSourceHtml(source)); return; }
+            } catch (error) {}
+            const controller = new AbortController();
+            const status = document.createElement('div');
+            status.className = 'fg-source-status';
+            status.setAttribute('role', 'status');
+            status.textContent = 'Loading source…';
+            el.replaceChildren(status);
+            el.setAttribute('aria-busy', 'true');
+            const job = { controller, source, promise: null };
+            fgSourceJobs.set(el, job);
+            job.promise = fgData.loadSource(source, { signal: controller.signal }).then(text => {
+                if (fgSourceJobs.get(el) !== job || +el.dataset.src !== source || !el.isConnected) return false;
+                fill(text);
+                return true;
+            }).catch(error => {
+                if (fgSourceJobs.get(el) !== job || error.name === 'AbortError') return false;
+                status.setAttribute('role', 'alert');
+                status.textContent = 'Source not loaded: ' + error.message + ' ';
+                const retry = document.createElement('button');
+                retry.type = 'button';
+                retry.className = 'control-btn btn-tool';
+                retry.textContent = 'Retry';
+                retry.addEventListener('click', event => {
+                    event.preventDefault(); event.stopPropagation(); fgFill(el, true);
+                });
+                status.appendChild(retry);
+                return false;
+            }).finally(() => {
+                if (fgSourceJobs.get(el) === job) {
+                    fgSourceJobs.delete(el);
+                    el.removeAttribute('aria-busy');
+                }
+            });
+            return job.promise;
         }
         function fgChainView(el) {
             // split into frames: a location line starts a frame, source lines belong to it
@@ -1767,6 +1830,7 @@
             if (!content?.classList.contains('expanded-content')) return;
             const expanded = visible && expandedLines[line.getAttribute('data-line-id')] === true;
             if (expanded) fgFill(content);
+            else fgCancelSource(content);
             const sourceDisplay = expanded ? 'block' : 'none';
             if (content.style.display !== sourceDisplay) content.style.display = sourceDisplay;
             const button = line.querySelector('.expand-btn');
@@ -1857,6 +1921,7 @@
             const isCurrentlyVisible = computedStyle.display === 'block';
 
             if (isCurrentlyVisible) {
+                fgCancelSource(content);
                 // 收起当前行
                 content.style.display = 'none';
                 if (btn) btn.textContent = '+';
@@ -2682,6 +2747,7 @@
                     const isVisible = container.style.display !== 'none';
 
                     if (content && isVisible) {
+                        fgCancelSource(content);
                         content.style.display = 'none';
                         if (expandBtn) expandBtn.textContent = '+';
                         container.classList.remove('selected');

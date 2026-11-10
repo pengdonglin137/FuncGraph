@@ -304,6 +304,12 @@ class HtmlGenerator:
     def _source_pool_script(self):
         return ''.join(fragment for name, fragment in self._iter_source_parts())
 
+    def iter_source_chunks(self, rows):
+        if isinstance(rows, bool) or not isinstance(rows, int) or rows <= 0:
+            raise ValueError('source chunk rows must be a positive integer')
+        for first in range(0, len(self._src_pool), rows):
+            yield first, self._src_pool[first:first + rows]
+
     def _iter_source_parts(self):
         yield 'source_open', '    <script type="application/json" id="fgSrc">'
         data = json.dumps(self._src_pool, ensure_ascii=False, separators=(',', ':')).replace('<', '\\u003c')

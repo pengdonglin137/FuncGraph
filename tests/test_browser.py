@@ -3343,6 +3343,7 @@ class BrowserSmokeTest(unittest.TestCase):
 
     def test_timeline_hover_uses_compact_positions_without_reading_source_html(self):
         self.ev('''() => {
+            fgData.readSource = fgData.loadSource = () => { throw new Error('Tooltip read source body'); };
             const read = fgData.read;
             fgData.read = name => {
                 if (name === 'fgSrc' || name === 'fgSrcLines') throw new Error('Tooltip read full source data');
@@ -3388,9 +3389,9 @@ class BrowserSmokeTest(unittest.TestCase):
             const index = data.cols.caller.findIndex(caller => data.sources.callers[caller]?.length);
             const frame = data.sources.callers[data.cols.caller[index]].slice(-1)[0];
             delete data.sources;
-            const read = fgData.read;
+            const readSource = fgData.readSource;
             window.legacySourceReads = 0;
-            fgData.read = name => { if (name === 'fgSrc') legacySourceReads++; return read(name); };
+            fgData.readSource = source => { legacySourceReads++; return readSource(source); };
             return {index, source:frame[1] + ':' + frame[2]};
         }''')
         self.open_timeline()

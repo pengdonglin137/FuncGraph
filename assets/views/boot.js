@@ -6,6 +6,7 @@
     const views = window.fgViews = window.fgViews || {};
     const apis = {};
     const pending = {};
+    const pausedSources = {};
     let current = 'text';
     let textScroll = 0;
     let textFailed = false;
@@ -242,6 +243,8 @@
         }
         if (current === 'text') textScroll = window.scrollY;
         if (typeof closeKeyboardHint === 'function') closeKeyboardHint();
+        pausedSources[current] = fgCancelSources(document.getElementById(current === 'text' ? 'content' : views[current]?.el));
+        apis[current]?.suspend?.();
         cancel(current);
         for (const [name, v] of Object.entries(views)) {
             const el = document.getElementById(v.el);
@@ -259,6 +262,11 @@
         pc.tabs.forEach(b => b.classList.toggle('active', b.dataset.view === which));
         current = which;
         set('view', which);
+        const sourceRoot = document.getElementById(which === 'text' ? 'content' : views[which]?.el);
+        for (const source of pausedSources[which] || []) {
+            if (source.isConnected && sourceRoot?.contains(source)) fgFill(source);
+        }
+        delete pausedSources[which];
         if (which === 'text') {
             window.scrollTo(0, textScroll);
             if (views.text) return open('text');

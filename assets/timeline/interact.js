@@ -244,6 +244,23 @@ function openTaskAt(tid, tm) {
     revealTaskTrack(task);
     draw();
 }
+let hoverSourceRequest = null;
+let hoverSourcePointer = null;
+function loadCallSitePosition(index, source) {
+    if (index !== hov || !hoverSourcePointer) return;
+    if (hoverSourceRequest?.index === index && hoverSourceRequest.source === source) return;
+    hoverSourceRequest?.controller.abort();
+    const request = { index, source, controller: new AbortController() };
+    hoverSourceRequest = request;
+    fgData.loadSource(source, { signal: request.controller.signal }).then(() => {
+        if (hoverSourceRequest !== request || hov !== index || !hoverSourcePointer || fgCurrentView() !== 'timeline') return;
+        const { event, dense } = hoverSourcePointer;
+        showTip(tipSlice(index) + (dense ? tipDense(dense) : ''), event);
+    }).catch(error => {
+        if (hoverSourceRequest !== request || error.name === 'AbortError' || hov !== index) return;
+        elTip.insertAdjacentHTML('beforeend', '<div class="t-warn">Source not loaded: ' + esc(error.message) + '. Select the call to retry.</div>');
+    });
+}
 function showTip(html, ev) {
     elTip.innerHTML = html;
     elTip.style.display = 'block';
@@ -254,7 +271,12 @@ function showTip(html, ev) {
     elTip.style.left = Math.max(4, x) + 'px';
     elTip.style.top = Math.max(4, y) + 'px';
 }
-function hideTip() { elTip.style.display = 'none'; }
+function hideTip() {
+    elTip.style.display = 'none';
+    hoverSourceRequest?.controller.abort();
+    hoverSourceRequest = null;
+    hoverSourcePointer = null;
+}
 
 // ---- mouse ----
 let drag = null;   // {mode:'pan'|'range'|'ov', x0, s0, e0, moved, track}
@@ -292,6 +314,10 @@ window.addEventListener('mousemove', ev => {
     cursorX = mx;
     const h = hitTest(mx, my);
     const nh = h.slice;
+    hoverSourcePointer = { event: ev, dense: h.dense };
+    if (hoverSourceRequest && hoverSourceRequest.index !== nh) {
+        hoverSourceRequest.controller.abort(); hoverSourceRequest = null;
+    }
     if (nh !== hov || h.off !== hovOff) { hov = nh; hovOff = h.off; }
     hovCpu = h.cpuSeg || null;
     elCv.classList.toggle('ptr', nh >= 0 || h.header || !!hovCpu);

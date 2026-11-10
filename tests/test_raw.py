@@ -280,8 +280,10 @@ class NativeRawTest(unittest.TestCase):
                 sources = {str(row[0]): row[-1] for row in index['rows'] if row[-1] is not None}
                 self.assertEqual(sources, {})
                 self.assertEqual(sources, helpers.json_script(report, 'fgSrcLines'))
-                pool = helpers.json_script(report, 'fgSrc')
-                self.assertEqual(pool, [])
+                self.assertIsNone(helpers.json_script(report, 'fgSrc'))
+                self.assertEqual(helpers.json_script(report, 'fgSourceChunks'),
+                                 {'version': 1, 'count': 0, 'chunk_size': 64})
+                self.assertEqual(manifest['capabilities']['sources'], 'chunks-v1')
         embedded = helpers.json_script((offline / 'index.html').read_text(), 'tlData')
         embedded['stats'].pop('build_time', None)
         self.assertEqual(embedded, expected)
@@ -309,8 +311,16 @@ class NativeRawTest(unittest.TestCase):
         self.assertTrue(sources)
         self.assertIn(0, sources.values())
         self.assertEqual(sources, helpers.json_script(report, 'fgSrcLines'))
-        pool = helpers.json_script(report, 'fgSrc')
+        self.assertIsNone(helpers.json_script(report, 'fgSrc'))
+        catalog = helpers.json_script(report, 'fgSourceChunks')
+        pool = []
+        for first in range(0, catalog['count'], catalog['chunk_size']):
+            resource = manifest['resources']['fgSrc' + str(first)]
+            pool.extend(json.loads((manifest_path.parent / resource['file']).read_text()))
+        self.assertEqual(len(pool), catalog['count'])
         self.assertTrue(all(isinstance(pool[source], str) for source in sources.values()))
+        embedded, _ = kernel.run(str(self.path), '--timeline', '--func-links', out='resolved.html')
+        self.assertEqual(pool, helpers.json_script(embedded, 'fgSrc'))
 
     def test_endian_and_word_size(self):
         for endian in ('<', '>'):

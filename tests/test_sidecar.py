@@ -29,13 +29,18 @@ class Render:
         self.label = label
         self.timeline_json = dict(n=2, no_text=no_text)
         self.compare = compare
+        self._src_pool = ['source']
+
+    def iter_source_chunks(self, rows):
+        for first in range(0, len(self._src_pool), rows):
+            yield first, self._src_pool[first:first + rows]
 
     def iter_sections(self):
         yield 'chrome', '<!doctype html><script data-default-view="text"></script><div id="content">'
         yield 'text', '<p>' + self.label + '</p>'
         yield 'chrome', '</div>'
         yield 'source_open', '<script type="application/json" id="fgSrc">'
-        yield 'source_data', '["source"]'
+        yield 'source_data', json.dumps(self._src_pool, ensure_ascii=False, separators=(',', ':'))
         yield 'source_close', '</script>'
         yield 'report_script', '<script>const report = true;</script>'
         for name in ['tlData', 'cmpData'] if self.compare else ['tlData']:
@@ -69,7 +74,7 @@ class SidecarTest(unittest.TestCase):
             result[name] = payload
         return result
 
-    def test_bundle_has_exact_utf8_resources_and_preserves_embedded_sources(self):
+    def test_bundle_has_exact_utf8_resources_and_lossless_source_chunks(self):
         render = Render()
         full = ''.join(fragment for name, fragment in render.iter_sections()).encode('utf-8')
         written = write_sidecar(self.output, render)
@@ -78,7 +83,9 @@ class SidecarTest(unittest.TestCase):
         self.assertEqual(resources['fgText'], '<p>报告</p>'.encode('utf-8'))
         self.assertEqual(json.loads(resources['tlData']), dict(name='报告', count=2))
         self.assertEqual(json.loads(resources['cmpData']), dict(name='报告', count=2))
-        self.assertEqual(helpers.json_script(html, 'fgSrc'), ['source'])
+        self.assertIsNone(helpers.json_script(html, 'fgSrc'))
+        self.assertEqual(json.loads(resources['fgSrc0']), ['source'])
+        self.assertEqual(helpers.json_script(html, 'fgSourceChunks'), {'version': 1, 'count': 1, 'chunk_size': 64})
         self.assertIsNone(helpers.json_script(html, 'tlData'))
         self.assertNotIn('<p>报告</p>', html)
         self.assertIn('data-fg-text="true"', html)
@@ -92,7 +99,7 @@ class SidecarTest(unittest.TestCase):
     def test_omitted_text_is_not_exported_or_enabled_by_sidecar(self):
         write_sidecar(self.output, Render(no_text=True, compare=False))
         html = (self.output / 'index.html').read_text(encoding='utf-8')
-        self.assertEqual(set(self.resources(html)), {'tlData'})
+        self.assertEqual(set(self.resources(html)), {'tlData', 'fgSrc0'})
         self.assertNotIn('data-fg-text=', html)
         self.assertIn('<p>报告</p>', html)
 
@@ -100,6 +107,43 @@ class SidecarTest(unittest.TestCase):
         self.output.mkdir()
         write_sidecar(self.output, Render())
         self.assertIn('fgText', self.resources())
+
+    def test_source_chunks_keep_every_identity_unicode_and_oversized_block(self):
+        render = Render()
+        render._src_pool = ['<source>中文🙂 ' + str(index) for index in range(130)]
+        render._src_pool[64] += 'x' * (1024 * 1024 + 1)
+        write_sidecar(self.output, render)
+        html = (self.output / 'index.html').read_text()
+        self.assertEqual(helpers.json_script(html, 'fgSourceChunks'), {'version': 1, 'count': 130, 'chunk_size': 64})
+        resources = self.resources(html)
+        chunks = [json.loads(resources['fgSrc' + str(first)]) for first in [0, 64, 128]]
+        self.assertEqual(list(map(len, chunks)), [64, 64, 2])
+        self.assertEqual([source for chunk in chunks for source in chunk], render._src_pool)
+        self.assertNotIn('<source>', html)
+        self.assertIsNone(helpers.json_script(html, 'fgSrc'))
+
+    def test_small_auto_report_never_exports_source_chunks(self):
+        render = Render()
+        with mock.patch.object(render, 'iter_source_chunks', side_effect=AssertionError('unneeded chunks')):
+            write_sidecar(self.output, render, byte_limit=10**9)
+        html = (self.output / 'index.html').read_text()
+        self.assertEqual(helpers.json_script(html, 'fgSrc'), ['source'])
+        self.assertIsNone(helpers.json_script(html, 'fgSourceChunks'))
+
+    def test_source_chunk_failure_preserves_existing_report_and_resources(self):
+        write_sidecar(self.output, Render('old'))
+        previous = (self.output / 'index.html').read_bytes()
+        entries = set(self.output.iterdir())
+        render = Render('new')
+        def interrupted(rows):
+            yield 0, ['partial']
+            raise OSError('source chunks interrupted')
+        with mock.patch.object(render, 'iter_source_chunks', side_effect=interrupted):
+            with self.assertRaisesRegex(OSError, 'source chunks interrupted'):
+                write_sidecar(self.output, render)
+        self.assertEqual((self.output / 'index.html').read_bytes(), previous)
+        self.assertEqual(set(self.output.iterdir()), entries)
+        self.assertEqual(list(self.root.glob('.funcgraph-*')), [])
 
     def test_auto_threshold_uses_strict_complete_utf8_bytes_and_renders_once(self):
         class CountedRender(Render):
@@ -168,7 +212,7 @@ class SidecarTest(unittest.TestCase):
             with self.subTest(threshold=threshold):
                 written = write_sidecar(self.output, Render(no_text=True), byte_limit=threshold)
                 if written.mode == 'sidecar':
-                    self.assertEqual(set(self.resources()), {'tlData', 'cmpData'})
+                    self.assertEqual(set(self.resources()), {'tlData', 'cmpData', 'fgSrc0'})
                 else:
                     html = (self.output / 'index.html').read_text(encoding='utf-8')
                     self.assertIsNotNone(helpers.json_script(html, 'tlData'))
@@ -391,7 +435,7 @@ class SidecarTest(unittest.TestCase):
 class SidecarBrowserTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.kernel = helpers.FakeKernel()
+        cls.kernel = helpers.FakeKernel(inline_source=True)
         cls.kernel.run(helpers.fixture('pi4_sched'), '--timeline', '--enable-fold', '--filter', '--func-links',
                        '--compare', helpers.fixture('pi4_default'), '--report-mode', 'auto',
                        '--sidecar-threshold', '0', out='report')
@@ -460,6 +504,7 @@ class SidecarBrowserTest(unittest.TestCase):
             const data = fgData.read('tlData'), probe = fgView('timeline').probe();
             const index = data.cols.caller.findIndex(caller => data.sources.callers[caller]?.length);
             const frame = data.sources.callers[data.cols.caller[index]].slice(-1)[0];
+            fgData.readSource = fgData.loadSource = () => { throw new Error('Hover read source body'); };
             const read = fgData.read;
             fgData.read = name => {
                 if (name === 'fgSrc' || name === 'fgSrcLines') throw new Error('Hover read source HTML');
@@ -472,7 +517,215 @@ class SidecarBrowserTest(unittest.TestCase):
         self.page.locator('.tl-tip').wait_for(state='visible')
         self.assertIn(target['source'], self.page.locator('.tl-tip').inner_text())
         self.assertEqual(self.page.locator('#content .line-container').count(), 0)
-        self.assertFalse(any(url.endswith(('text.html', 'text-index.json', 'compare.json')) for url in self.requests))
+        self.assertFalse(any(url.endswith(('text.html', 'text-index.json', 'compare.json')) or '/source-' in url
+                             for url in self.requests))
+
+    def hold_sources(self):
+        self.page.set_default_timeout(5000)
+        self.page.evaluate('''() => {
+            const original = fgData.loadSource;
+            window.sourceJobs = [];
+            fgData.loadSource = (source, options) => new Promise((resolve, reject) => {
+                sourceJobs.push({source, signal:options?.signal,
+                    finish:() => original(source).then(resolve, reject)});
+            });
+        }''')
+
+    def open_text_source(self):
+        self.page.set_default_timeout(5000)
+        self.page.evaluate("() => fgSwitchView('text')")
+        source_line = self.page.locator('#content .line-container.expandable').first
+        source_line.locator('.line-content').click()
+        return source_line.locator('xpath=following-sibling::*[1]')
+
+    def select_timeline_source(self):
+        self.page.set_default_timeout(5000)
+        return self.page.evaluate('''() => {
+            const data = fgData.read('tlData'), probe = fgView('timeline').probe();
+            const index = data.cols.caller.findIndex(caller => data.sources.callers[caller]?.length);
+            probe.select(index);
+            return index;
+        }''')
+
+    def test_source_chunks_are_absent_from_shell_and_only_fetched_on_expansion(self):
+        self.assertEqual(self.page.locator('#fgSrc').count(), 0)
+        self.assertEqual(self.page.locator('#fgSourceChunks').count(), 1)
+        self.assertFalse(any('/source-' in url for url in self.requests))
+        source = self.open_text_source()
+        source.locator('.location-link').first.wait_for()
+        source.locator('.source-line').first.wait_for(state='attached')
+        self.assertFalse(source.get_attribute('aria-busy'))
+        self.assertEqual(sum('/source-' in url for url in self.requests), 1)
+        original = source.inner_html()
+        self.page.locator('#content .line-container.expandable .line-content').first.click()
+        source.wait_for(state='hidden')
+        self.page.locator('#content .line-container.expandable .line-content').first.click()
+        source.wait_for(state='visible')
+        self.assertEqual(source.inner_html(), original)
+        self.assertEqual(sum('/source-' in url for url in self.requests), 1)
+
+    def test_source_checksum_failure_has_retry_without_partial_code(self):
+        attempts = []
+        def respond(route):
+            attempts.append(route.request.url)
+            if len(attempts) == 1:
+                route.fulfill(status=200, body='["damaged"]', content_type='application/json')
+            else:
+                route.continue_()
+        self.page.route('**/source-*.json', respond)
+        source = self.open_text_source()
+        source.locator('[role=alert]').wait_for()
+        self.assertIn('mismatch', source.inner_text())
+        self.assertEqual(source.locator('.source-line').count(), 0)
+        source.get_by_role('button', name='Retry', exact=True).click()
+        source.locator('.source-line').first.wait_for(state='attached')
+        self.assertEqual(source.locator('[role=alert]').count(), 0)
+        self.assertEqual(len(attempts), 2)
+
+    def test_collapsing_source_discards_late_completion_and_reopens_from_cache(self):
+        self.hold_sources()
+        source = self.open_text_source()
+        source.locator('[role=status]').wait_for()
+        line = self.page.locator('#content .line-container.expandable .line-content').first
+        line.click()
+        self.page.wait_for_function('() => sourceJobs[0].signal.aborted')
+        self.assertTrue(self.page.evaluate('sourceJobs[0].signal.aborted'))
+        self.page.evaluate('() => sourceJobs[0].finish()')
+        self.assertEqual(source.inner_html(), '')
+        line.click()
+        source.locator('.source-line').first.wait_for(state='attached')
+        self.assertEqual(self.page.evaluate('sourceJobs.length'), 1)
+
+    def test_text_source_cancels_on_view_switch_and_resumes_only_on_reentry(self):
+        self.hold_sources()
+        source = self.open_text_source()
+        source.locator('[role=status]').wait_for()
+        self.page.evaluate("() => fgSwitchView('timeline')")
+        self.assertTrue(self.page.evaluate('sourceJobs[0].signal.aborted'))
+        self.assertEqual(source.inner_html(), '')
+        self.page.evaluate("() => fgSwitchView('text')")
+        self.page.wait_for_function('() => sourceJobs.length === 2')
+        self.page.evaluate('() => sourceJobs[0].finish()')
+        self.assertEqual(source.locator('.source-line').count(), 0)
+        self.page.evaluate('() => sourceJobs[1].finish()')
+        source.locator('.source-line').first.wait_for(state='attached')
+        self.assertEqual(sum('/source-' in url for url in self.requests), 1)
+
+    def test_closed_timeline_source_waits_for_open_and_restores_mode_controls(self):
+        self.page.evaluate("localStorage.setItem('fgTl.csOpen', '0')")
+        self.select_timeline_source()
+        details = self.page.locator('.tl-cs')
+        self.assertFalse(details.evaluate('element => element.open'))
+        self.assertFalse(any('/source-' in url for url in self.requests))
+        details.locator('summary').click()
+        details.locator('.source-line').first.wait_for(state='attached')
+        details.locator('[data-fg-source-mode]').wait_for()
+        before = self.page.evaluate('fgSourceMode()')
+        details.locator('[data-fg-source-mode]').click()
+        self.assertNotEqual(self.page.evaluate('fgSourceMode()'), before)
+        self.assertTrue(details.evaluate('element => element.open'))
+        self.assertEqual(sum('/source-' in url for url in self.requests), 1)
+
+    def test_closing_timeline_detail_cancels_source_and_cannot_fill_old_panel(self):
+        self.hold_sources()
+        self.select_timeline_source()
+        self.page.locator('.tl-cs-src [role=status]').wait_for()
+        self.page.evaluate("() => fgView('timeline').probe().select(-1)")
+        self.assertTrue(self.page.evaluate('sourceJobs[0].signal.aborted'))
+        self.page.evaluate('() => sourceJobs[0].finish()')
+        self.assertEqual(self.page.locator('.tl-cs-src .source-line').count(), 0)
+
+    def test_timeline_source_resumes_after_view_reentry_without_text_loading(self):
+        self.hold_sources()
+        self.select_timeline_source()
+        self.page.locator('.tl-cs-src [role=status]').wait_for()
+        self.page.evaluate("() => fgSwitchView('compare')")
+        self.assertTrue(self.page.evaluate('sourceJobs[0].signal.aborted'))
+        self.page.evaluate("() => fgSwitchView('timeline')")
+        self.page.wait_for_function('() => sourceJobs.length === 2')
+        self.page.evaluate('() => sourceJobs[1].finish()')
+        self.page.locator('.tl-cs-src .source-line').first.wait_for(state='attached')
+        self.page.locator('.tl-cs [data-fg-source-mode]').wait_for()
+        self.assertFalse(any(url.endswith('text.html') for url in self.requests))
+
+    def test_replacing_timeline_detail_discards_late_source_completion(self):
+        self.hold_sources()
+        index = self.select_timeline_source()
+        self.page.locator('.tl-cs-src [role=status]').wait_for()
+        self.page.evaluate("window.previousSourcePanel = document.querySelector('.tl-cs-src')")
+        self.page.evaluate("index => fgView('timeline').probe().select(index)", index)
+        self.assertTrue(self.page.evaluate('sourceJobs[0].signal.aborted'))
+        self.assertFalse(self.page.evaluate('previousSourcePanel.isConnected'))
+        self.page.evaluate('() => sourceJobs[0].finish()')
+        self.assertEqual(self.page.evaluate('previousSourcePanel.childElementCount'), 0)
+        self.assertEqual(self.page.locator('.tl-cs-src .source-line').count(), 0)
+        self.page.evaluate('() => sourceJobs[1].finish()')
+        self.page.locator('.tl-cs-src .source-line').first.wait_for(state='attached')
+        self.assertEqual(sum('/source-' in url for url in self.requests), 1)
+
+    def test_ancestor_fold_cancels_pending_descendant_source(self):
+        self.hold_sources()
+        self.page.evaluate("() => fgSwitchView('text')")
+        target = self.page.evaluate('''() => {
+            const line = document.querySelector('.line-container.expandable[data-fold-ancestors]');
+            toggleExpand(line.dataset.lineId);
+            return {id:line.id, parent:line.dataset.foldAncestors.split(' ')[0]};
+        }''')
+        source = self.page.locator('#' + target['id']).locator('xpath=following-sibling::*[1]')
+        source.locator('[role=status]').wait_for()
+        self.page.evaluate('parent => toggleFold(parent)', target['parent'])
+        self.assertTrue(self.page.evaluate('sourceJobs[0].signal.aborted'))
+        self.page.evaluate('() => sourceJobs[0].finish()')
+        self.assertEqual(source.inner_html(), '')
+        self.assertFalse(source.is_visible())
+
+    def hover_legacy_source(self):
+        point = self.page.evaluate('''() => {
+            const data = fgData.read('tlData'), probe = fgView('timeline').probe();
+            const index = data.cols.caller.findIndex(caller => data.sources.callers[caller]?.length);
+            data.sources.callers[data.cols.caller[index]] = null;
+            probe.zoomTo(probe.sStart[index], probe.sEnd[index], index);
+            return probe.xyOf(index);
+        }''')
+        self.page.mouse.move(*point)
+        self.page.wait_for_function('() => sourceJobs.length === 1')
+
+    def test_legacy_hover_loads_source_chunk_and_updates_stationary_tooltip(self):
+        self.hold_sources()
+        self.hover_legacy_source()
+        self.page.evaluate('() => sourceJobs[0].finish()')
+        self.page.wait_for_function("() => document.querySelector('.tl-tip').textContent.includes('kernel/fake.c:2')")
+        self.assertEqual(sum('/source-' in url for url in self.requests), 1)
+        self.assertFalse(any(url.endswith('text.html') for url in self.requests))
+
+    def test_leaving_legacy_hover_cancels_and_does_not_revive_tooltip(self):
+        self.hold_sources()
+        self.hover_legacy_source()
+        self.page.mouse.move(0, 0)
+        self.assertTrue(self.page.evaluate('sourceJobs[0].signal.aborted'))
+        self.page.evaluate('() => sourceJobs[0].finish()')
+        self.assertFalse(self.page.locator('.tl-tip').is_visible())
+
+    def test_timeline_source_without_code_keeps_location_link_only(self):
+        self.page.evaluate("() => { fgData.loadSource = async () => ''; }")
+        self.select_timeline_source()
+        self.page.locator('.tl-cs').wait_for(state='detached')
+        self.assertIn('kernel/fake.c:', self.page.locator('.tl-cs-at').inner_text())
+
+    def test_invalid_source_catalog_shows_retry_without_breaking_legacy_details(self):
+        self.page.evaluate('''() => {
+            const data = fgData.read('tlData'), probe = fgView('timeline').probe();
+            const index = data.cols.caller.findIndex(caller => data.sources.callers[caller]?.length);
+            data.sources.callers[data.cols.caller[index]] = null;
+            fgData.read('fgSourceChunks').version = 2;
+            probe.select(index);
+        }''')
+        self.page.locator('.tl-cs-src [role=alert]').wait_for()
+        self.assertFalse(any('/source-' in url for url in self.requests))
+        self.page.evaluate("fgData.read('fgSourceChunks').version = 1")
+        self.page.locator('.tl-cs-src').get_by_role('button', name='Retry', exact=True).click()
+        self.page.locator('.tl-cs-src .source-line').first.wait_for(state='attached')
+        self.page.locator('.tl-cs [data-fg-source-mode]').wait_for()
 
     def test_auto_small_report_remains_offline_and_keeps_full_text(self):
         self.requests.clear()
@@ -771,11 +1024,12 @@ class SidecarBrowserTest(unittest.TestCase):
                     await fgEnsureText();
                     const model = fgDomTextModels.get(document.getElementById('content'));
                     const mapping = model.records.map(record => [record.row[0], record.source]);
-                    const pool = fgData.read('fgSrc');
+                    const pool = new Map(await Promise.all([...new Set(model.records.map(record => record.source)
+                        .filter(source => source !== null))].map(async source => [source, await fgData.loadSource(source)])));
                     const sourceLines = fgData.read('fgSrcLines');
                     return {calls, mapping, candidates:fgTextNavigation.expandable.map(position => fgTextNavigation.order[position]),
                         exact:model.records.every(record => record.source === null ? !(record.row[0] in sourceLines) :
-                            record.source === sourceLines[record.row[0]] && typeof pool[record.source] === 'string'),
+                            record.source === sourceLines[record.row[0]] && typeof pool.get(record.source) === 'string'),
                         mounted:document.querySelectorAll('#content .line-container').length};
                 }''', preload)
                 self.assertEqual(facts['calls'], 1)

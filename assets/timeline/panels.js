@@ -313,6 +313,12 @@ function callSitePos(i) {
     const k = callSiteBlock(i);
     if (k === null) return null;
     if (csPosCache.has(k)) return csPosCache.get(k);
+    try {
+        if (typeof fgData !== 'undefined' && fgData.sourceReady && !fgData.sourceReady(k)) {
+            if (typeof loadCallSitePosition === 'function') loadCallSitePosition(i, k);
+            return null;
+        }
+    } catch (error) { return null; }
     let r = null;
     if (typeof fgSourceHtml === 'function') {
         const tmp = document.createElement('div');
@@ -336,37 +342,44 @@ function fillCallSite(i) {
     const el = box.querySelector('.tl-cs-src');
     el.className = 'tl-cs-src expanded-content';
     el.dataset.src = k;
-    fgFill(el, true);
-    // innermost position (the line of the call) next to the call-site address
-    const pos = callSitePos(i);
-    const at = elDetail.querySelector('.tl-cs-at');
-    const hasCode = !!el.querySelector('.source-line');
-    if (!hasCode) box.remove();          // no --kernel-src / source provider: position link only
-    if (!pos) return;
-    if (at) {
+    const location = () => {
+        const pos = callSitePos(i);
+        const at = elDetail.querySelector('.tl-cs-at');
+        if (!pos || !at || at.querySelector('[data-callsite-position]')) return;
         const link = document.createElement(pos.href ? 'a' : 'span');
         link.className = 'tl-link';
+        link.dataset.callsitePosition = '';
         if (pos.href) { link.href = pos.href; link.target = '_blank'; }
         link.textContent = pos.at;
         at.append(document.createElement('br'), link);
-        if (pos.inl) { const s = document.createElement('span'); s.className = 'tl-muted'; s.textContent = '  in ' + pos.func + ' (inlined)'; at.append(s); }
-    }
-    if (!hasCode) return;
-    const mode = document.createElement('button');
-    mode.type = 'button';
-    mode.className = 'tl-btn';
-    mode.dataset.fgSourceMode = '';
-    mode.textContent = 'Source: ' + fgSourceMode();
-    mode.title = 'Switch source layout between inline chain and flat frames';
-    mode.addEventListener('click', event => {
-        event.preventDefault();
-        event.stopPropagation();
-        fgToggleSrcMode();
+        if (pos.inl) { const label = document.createElement('span'); label.className = 'tl-muted'; label.textContent = '  in ' + pos.func + ' (inlined)'; at.append(label); }
+    };
+    location();
+    el.addEventListener('fg-source-ready', () => {
+        if (!box.isConnected) return;
+        location();
+        if (!el.querySelector('.source-line')) { box.remove(); return; }
+        if (box.querySelector('[data-fg-source-mode]')) return;
+        const mode = document.createElement('button');
+        mode.type = 'button';
+        mode.className = 'tl-btn';
+        mode.dataset.fgSourceMode = '';
+        mode.textContent = 'Source: ' + fgSourceMode();
+        mode.title = 'Switch source layout between inline chain and flat frames';
+        mode.addEventListener('click', event => {
+            event.preventDefault(); event.stopPropagation(); fgToggleSrcMode();
+        });
+        box.querySelector('summary').append(' ', mode);
+        fgTrackSource(mode);
+        sizeDetailHead();
     });
-    box.querySelector('summary').append(' ', mode);
-    fgTrackSource(mode);
     if (prefGet('csOpen') === '0') box.open = false;
-    box.addEventListener('toggle', () => prefSet('csOpen', box.open ? '1' : '0'));
+    box.addEventListener('toggle', () => {
+        prefSet('csOpen', box.open ? '1' : '0');
+        if (box.open) fgFill(el);
+        else fgCancelSource(el);
+    });
+    if (box.open) fgFill(el, true);
 }
 function sizeDetailHead() {
     const head = elDetail.querySelector('.tl-detail-head');
@@ -378,6 +391,7 @@ function sizeDetailHead() {
 const detailHeadObserver = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(sizeDetailHead) : null;
 function openDetail(html) {
     const was = elDetail.classList.contains('show');
+    fgCancelSources(elDetail);
     elDetail.innerHTML = html;
     elDetail.classList.add('show');
     elResizer.classList.add('show');
@@ -392,6 +406,7 @@ function openDetail(html) {
 }
 function hideDetail() {
     if (!elDetail.classList.contains('show')) return;
+    fgCancelSources(elDetail);
     elDetail.classList.remove('show');
     elResizer.classList.remove('show');
     resize();
@@ -927,4 +942,4 @@ const probe = () => ({ N, NA, SYN, S, sName, sStart, sEnd, sDepth, sParent, sTas
     range: (s, e, track) => { range = { s: s, e: e, track: track === undefined ? null : track }; select(-1); showRangeSummary(); draw(); },
     errors: showErrors, latency: showLatency, sections: showSections, dist: showDist, wait: showWaitChain,
     inline: (on) => { if (!!on !== inlineView) toggleInlineView(); } });
-return { resize: resize, revealLine: revealLine, draw: draw, probe: probe, showHelp: () => elHelp.classList.add('show') };
+return { resize: resize, revealLine: revealLine, draw: draw, probe: probe, suspend: hideTip, showHelp: () => elHelp.classList.add('show') };
