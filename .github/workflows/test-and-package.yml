@@ -38,8 +38,41 @@ jobs:
       - name: Run tests
         run: tests/run.sh
 
+  raw:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install native build prerequisites
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q build-essential pkg-config flex bison linux-libc-dev libzstd-dev zlib1g-dev
+          pip install build
+      - name: Build pinned decoder libraries without system installation
+        run: third_party/build.sh "$RUNNER_TEMP/funcgraph-raw"
+      - name: Verify native raw decoding and installed distributions
+        env:
+          PKG_CONFIG_PATH: ${{ runner.temp }}/funcgraph-raw/lib/pkgconfig
+          LD_LIBRARY_PATH: ${{ runner.temp }}/funcgraph-raw/lib
+          FG_RAW_REQUIRED: "1"
+        run: |
+          PYTHONPATH=tests python -m unittest test_raw -v
+          python -m build
+          workspace="$PWD"
+          cd "$(mktemp -d)"
+          for package in "$workspace"/dist/*.whl "$workspace"/dist/*.tar.gz; do
+            virtualenv="$(mktemp -d)"
+            python -m venv "$virtualenv"
+            "$virtualenv/bin/python" -m pip install "$package"
+            "$virtualenv/bin/python" -I "$workspace/tests/smoke_installed.py" --with-raw
+          done
+
   package:
-    needs: test
+    needs: [test, raw]
     runs-on: ubuntu-22.04
     strategy:
       fail-fast: false

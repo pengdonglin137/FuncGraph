@@ -4,6 +4,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
+Raw input: `fglib/raw.py` lazily compiles packaged `fglib/native/raw.c` into a private temporary directory using host `CC` + pkg-config (libtracecmd >= 1.5.0). Text-only use needs no native dependencies. Official fixed submodules live in `third_party/`; `build.sh` installs into a user prefix, without system ldconfig edits. See bilingual `docs/raw-input*.md`. Container magic detection covers compressed/stdin input and Compare; bare trace_pipe_raw is unsupported. Native tests use synthetic v6 containers (both byte orders/word sizes); set `FG_RAW_REQUIRED=1` to forbid dependency skips. The raw CI job builds pinned libraries and tests installed wheel/sdist.
+
 FuncGraph (v0.9.1) converts Linux kernel ftrace `function_graph` output into interactive, self-contained HTML visualizations. It resolves kernel function addresses to source file:line locations and embeds clickable source code panels in the output.
 
 ## Running the Tool

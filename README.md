@@ -122,6 +122,10 @@ python3 funcgraph.py trace.txt \
     --output result.html
 ```
 
+### Binary raw input
+
+`funcgraph trace.dat --timeline --output trace.html` accepts binary **trace-cmd containers**, with optional native decoding libraries and a host C compiler. Text inputs remain dependency-free; compressed raw/stdin, nanosecond timestamps and `--raw-instance NAME` are supported. Bare `trace_pipe_raw` pages are not standalone inputs. Setup, pinned submodules and exact limits: [Raw input guide](docs/raw-input.md).
+
 ### Parameter Description
 
 The following table documents each command-line option supported by `funcgraph.py`, including types, defaults, and examples.
@@ -129,6 +133,8 @@ The following table documents each command-line option supported by `funcgraph.p
 | Parameter | Type / Default | Description | Example |
 |-----------|----------------|-------------|---------|
 | `ftrace_file` | paths (required) | Trace file(s); `-` reads stdin, `.gz`/`.xz`/`.bz2` are decompressed, several files are merged by timestamp | `trace.txt`, `- `, `cpu*.txt.gz` |
+| `--input-format` | `auto` / `text` / `raw` | Auto-detect text or trace-cmd binary containers (default: auto); comparison inputs are independently detected | `--input-format raw` |
+| `--raw-instance` | name | Select a named binary buffer instead of the top-level buffer; also applies to raw comparison inputs | `--raw-instance capture` |
 | `--vmlinux` | path (optional) | vmlinux for address -> source resolution, source links and BTF; without it the trace views, timeline and analyses still work | `--vmlinux /path/to/vmlinux` |
 | `--kernel-src` | path | Kernel source tree root (used for local source linking and syntax highlighting) | `--kernel-src /usr/src/linux` |
 | `--module-dirs` | paths... | Directories to search for kernel modules (can specify multiple) | `--module-dirs /lib/modules /usr/lib/modules` |
@@ -470,5 +476,5 @@ Open source project, contributions welcome!
 ---
 
 **Version**: v0.9.1
-**Last Updated**: 2026-11-09
+**Last Updated**: 2026-11-10
 **Status**: ✅ Production Ready

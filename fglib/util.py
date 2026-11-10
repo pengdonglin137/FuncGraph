@@ -341,6 +341,8 @@ def format_args_info(args):
     for key, value in args_dict.items():
         if key in hidden_params:
             continue
+        if (key == 'input_format' and value == 'auto') or (key == 'raw_instance' and not value):
+            continue
         # Timeline options are only listed when used (keeps output identical otherwise)
         if key in ('timeline', 'btf', 'no_btf', 'pid', 'comm', 'cpu', 'time_range', 'graph', 'notrace', 'compare', 'overhead', 'no_text_view', 'config', 'preset', 'no_config', 'source_url', 'source_rev', 'source_cache', 'export') and not value:
             continue

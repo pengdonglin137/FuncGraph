@@ -1,5 +1,7 @@
 # FuncGraph 使用指南
 
+**raw 采集文件**：自动识别 trace-cmd 二进制容器：`funcgraph trace.dat --timeline --output trace.html`。原生依赖、固定子模块、buffer 选择及边界见 [raw 输入文档](raw-input.cn.md)；不支持独立 trace_pipe_raw 裸页。
+
 报告加载：普通报告仍是可离线打开的单文件。Timeline/Compare 使用共享内部数据提供者；外部资源原型支持取消、完整性检查及重试。CLI 尚无 sidecar 导出器或查看器，Text/源码分块及自动切换仍未实现。
 
 本文介绍从采集 trace 到阅读报告的完整流程，并逐一说明报告中每个视图的字段和配色。命令行参数的完整列表见 `python3 funcgraph.py --help`，实现细节见 [design.md](design.md)。English: [guide.en.md](guide.en.md).

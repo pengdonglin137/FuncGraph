@@ -3,6 +3,7 @@ import json
 import os
 from pathlib import Path
 import re
+import runpy
 import shutil
 import subprocess
 import sys
@@ -20,6 +21,9 @@ ROOT = Path(__file__).resolve().parent.parent
 WITH_EXTRAS = '--with-extras' in sys.argv
 if WITH_EXTRAS:
     sys.argv.remove('--with-extras')
+WITH_RAW = '--with-raw' in sys.argv
+if WITH_RAW:
+    sys.argv.remove('--with-raw')
 
 
 class InstalledPackageTest(unittest.TestCase):
@@ -47,6 +51,23 @@ class InstalledPackageTest(unittest.TestCase):
             with self.subTest(asset=asset):
                 self.assertTrue(read_asset(asset))
         self.assertTrue(Path(PROJECT_DIR, 'fastfaddr2line.py').is_file())
+        self.assertTrue(Path(PROJECT_DIR, 'fglib', 'native', 'raw.c').is_file())
+
+    @unittest.skipUnless(WITH_RAW, 'optional raw dependencies not requested')
+    def test_raw_report_from_installed_package(self):
+        factory = runpy.run_path(str(ROOT / 'tests' / 'raw_fixture.py'))['container']
+        trace = Path(self.tmp.name, 'trace.dat')
+        output = trace.with_suffix('.html')
+        trace.write_bytes(factory(sched=True, retaddr=True))
+        self.run_command(self.executable('funcgraph'), '--no-config', '--timeline',
+                         '--output', str(output), str(trace))
+        report = output.read_text()
+        match = re.search(r'<script[^>]+id="tlData"[^>]*>(.*?)</script>', report, re.S)
+        self.assertIsNotNone(match)
+        data = json.loads(match.group(1))
+        self.assertEqual(data['n'], 2)
+        self.assertTrue(data['caps']['sched_events'])
+        self.assertTrue(data['caps']['retaddr'])
 
     def test_command_help(self):
         for command in ('funcgraph', 'fgreport', 'fgcapture.sh'):

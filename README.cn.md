@@ -1,5 +1,7 @@
 # FuncGraph - 专业 Linux ftrace 可视化工具
 
+**raw 输入**：`funcgraph trace.dat --timeline --output trace.html` 支持带元数据的 trace-cmd 二进制容器，需要可选原生库和本机 C 编译器。支持压缩/stdin、纳秒时间戳和 `--raw-instance NAME`；不支持独立 `trace_pipe_raw` 裸页。文本模式不新增依赖。详见 [raw 使用与构建文档](docs/raw-input.cn.md)。
+
 Timeline 和 Compare 共用报告数据提供者。普通 CLI 输出仍内嵌全部数据、支持离线打开。外部资源加载只是已测试的内部接口，尚非可用的 sidecar 输出模式：导出器、本地查看器、Text/源码分块及自动阈值仍待实现。
 
 [![ci](https://github.com/pengdonglin137/FuncGraph/actions/workflows/ci.yml/badge.svg)](https://github.com/pengdonglin137/FuncGraph/actions/workflows/ci.yml)
@@ -130,6 +132,8 @@ python3 funcgraph.py trace.txt \
 | 参数 | 类型 / 默认值 | 说明 | 示例 |
 |------|----------------|------|------|
 | `ftrace_file` | 路径（必需，可多个） | trace 文件；`-` 表示 stdin，`.gz`/`.xz`/`.bz2` 自动解压，多个文件按时间戳合并 | `trace.txt`、`-`、`cpu*.txt.gz` |
+| `--input-format` | `auto` / `text` / `raw` | 默认 auto，自动识别文本或 trace-cmd 二进制容器；比较文件独立识别 | `--input-format raw` |
+| `--raw-instance` | 名称 | 选择命名 buffer 而非顶层 buffer，也用于 raw 比较基线 | `--raw-instance capture` |
 | `--vmlinux` | 路径（可选） | 用于地址 -> 源码解析、源码链接和 BTF；不提供时仍可使用文本视图、时间轴和各种分析 | `--vmlinux /path/to/vmlinux` |
 | `--kernel-src` | 路径 | 内核源码树根目录（用于本地源码链接和语法高亮） | `--kernel-src /usr/src/linux` |
 | `--module-dirs` | 路径... | 搜索内核模块的目录（可指定多个） | `--module-dirs /lib/modules /usr/lib/modules` |
@@ -472,5 +476,5 @@ tests/run.sh --golden              # 修改后与基线比较
 ---
 
 **版本**: v0.9.1
-**最后更新**: 2026-11-09
+**最后更新**: 2026-11-10
 **状态**: ✅ 生产就绪

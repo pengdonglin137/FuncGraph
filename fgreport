@@ -26,6 +26,7 @@ import sys
 import webbrowser
 
 from fglib.constants import PROJECT_DIR
+from fglib.raw import MAGIC
 
 FUNCGRAPH = os.path.join(PROJECT_DIR, 'funcgraph.py')
 CONFIG = os.path.join(os.path.expanduser('~'), '.config', 'funcgraph', 'config.ini')
@@ -117,11 +118,14 @@ def have(mod):
 
 
 def count_lines(path, limit):
-    """Lines of a plain file, stopping at limit (compressed / stdin input: unknown)."""
-    if path == '-' or path.endswith(('.gz', '.xz', '.bz2')):
+    """Lines of plain text only; compressed, binary and stdin inputs are unknown."""
+    if path == '-' or path.endswith(('.gz', '.xz', '.lzma', '.bz2')):
         return None
     n = 0
     with open(path, 'rb') as f:
+        if f.read(len(MAGIC)) == MAGIC:
+            return None
+        f.seek(0)
         for _ in f:
             n += 1
             if n > limit:

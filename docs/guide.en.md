@@ -1,5 +1,7 @@
 # FuncGraph User Guide
 
+**Raw capture files:** binary trace-cmd containers are auto-detected: `funcgraph trace.dat --timeline --output trace.html`. Native dependencies, pinned submodules, buffer selection and limitations are documented in [Binary raw input](raw-input.md); bare trace_pipe_raw pages are not supported.
+
 Report loading: ordinary reports remain self-contained and work offline. Timeline/Compare use a shared internal data provider with cancellable loading, integrity checks and retry for external-resource prototypes. There is no CLI sidecar exporter or viewer yet; Text/source chunking and automatic switching are not implemented.
 
 This guide covers the whole workflow from capturing a trace to reading the report, and explains every field and color in each view. For the full option list run `python3 funcgraph.py --help`; for implementation details see [design.md](design.md). 中文版：[guide.cn.md](guide.cn.md).

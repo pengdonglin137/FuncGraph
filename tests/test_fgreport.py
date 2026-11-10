@@ -62,6 +62,14 @@ class FgreportTest(unittest.TestCase):
         self.assertIn('--no-text-view', self.command(big))
         self.assertNotIn('--no-text-view', self.command('--text', big))
 
+    def test_raw_binary_is_not_counted_as_text_lines(self):
+        path = os.path.join(self.tmp.name, 'trace.dat')
+        with open(path, 'wb') as output:
+            output.write(b'\x17\x08Dtracing' + b'\n' * 150001)
+        command = self.command(path, '--', '--input-format', 'raw')
+        self.assertNotIn('--no-text-view', command)
+        self.assertIn('--input-format', command)
+
     def test_real_report(self):
         out = os.path.join(self.tmp.name, 'r.html')
         self.run_fg('-P', '-o', out, helpers.fixture('pi4_sched'))

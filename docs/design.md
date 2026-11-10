@@ -421,6 +421,16 @@ CI（`.github/workflows/ci.yml`）：每次推送到 master 和每个 PR 在 Pyt
 
 ## 11. 已知限制
 
+### Raw 容器输入（2026-11-10）
+
+`inputs.read_text/read_lines` 在解压后检测 trace-cmd 魔数；普通文本不构建任何原生代码。raw 路径由 `fglib/raw.py` 在私有临时目录构建 `fglib/native/raw.c`，经 libtracecmd 处理容器/压缩/CPU 时序，经 libtraceevent 按元数据字段读取，避免手写 reader 或 ctypes ABI 假设。所有 native 输出只在退出成功后交给现有 parser；失败不发布部分 HTML。实例按 `--raw-instance` 显式选择，顶层为默认，不混合不同 buffer。
+
+桥接器禁用插件，保留符号、模块归属、原始参数/返回位模式及 retaddr，生成纳秒入口/出口行；调度注释及同时间 switch-in 行复用现有 off-CPU/唤醒分析。模块归属通过公共 `tep_print_funcs` 导出到子进程私有临时文件，建立仅模块符号的有序查找表，不访问 libtraceevent 私有结构体。时钟检查使用固定 libtracecmd 的导出 accessor，限制纳秒时钟；cycle/counter 时钟明确失败。丢事件数量未知时保留 null，不伪造数量。多输入排序和 Timeline 支持 6–9 位小数，预过滤时间范围用十进制定点换算，避免浮点丢失纳秒。
+
+第三方源码固定为官方 submodule，普通 wheel/sdist 只分发桥接 C 源码；`third_party/build.sh` 为可选依赖构建入口。构建脚本需要较新已导出的 UAPI 头文件，检查后在用户 prefix 安装，禁用上游系统 ldconfig 修改。原生 CI 在 Ubuntu 24.04 构建全部固定库，再检查离线合成容器、安装态 wheel/sdist。支持范围和限制见 [中文](raw-input.cn.md) / [English](raw-input.md)。这不是 sidecar 或实时裸页 reader。
+
+本地验收使用固定子模块构建的库：VM 两份 v7/zstd 容器各 24 条 graph 事件、Pi 4 aarch64 容器 162 条 graph 事件，与 `trace-cmd report -N -t -R` 核对时间戳、CPU/PID、函数/深度、calltime/rettime 差值及返回位模式全部一致；真实记录的十六进制返回约定经内核 print fmt 确认，不把 `-R` 当作通用数字协议。三份报告在 Chromium 中打开 Timeline 无脚本错误；Pi 4 的符号/源码模式解析 82 个条目。原始参数数组另由合成容器覆盖，实测文件未启用/未携带的参数不会伪造。
+
 ### 报告数据提供者（2026-11-10）
 
 `assets/report/data.js` 提供 `fgData.read/load/ready/external/length`；Timeline/Compare 不再直接解析 DOM JSON。普通输出保持内嵌数据、离线打开；当前没有生产 sidecar 导出器或查看器。Text/源码分块、缓存淘汰、自动阈值也未实现。
@@ -429,7 +439,7 @@ CI（`.github/workflows/ci.yml`）：每次推送到 master 和每个 PR 在 Pyt
 
 重复请求共享底层 fetch，但每个订阅者独立取消；最后一个订阅者退出才 abort。请求身份校验避免取消后的旧结果污染缓存。切标签/Back/Escape 取消加载和模型迭代；失败显示原生 Retry 按钮。Timeline 拷贝 strings 和每条 offcpu 行，防止半初始化或重试污染缓存。`fgView()` 在外部请求期间返回 readiness Promise；内嵌兼容同步 probe。15 项真实 loopback HTTP 浏览器测试覆盖共享取消、重入、重试、紧凑窗口、损坏响应和模型一致性。
 
-- 时间轴依赖文本格式。读取 `trace_pipe_raw`（二进制）可以绕过 6.18 格式化参数很慢、以及 args 和 retaddr 不能同时输出的问题，但还没有实现。
+- 时间轴内部仍以归一化文本建模；已支持 trace-cmd 二进制容器。独立 `trace_pipe_raw` 裸页仍缺少解码所需元数据，不支持实时流；raw 参数目前是原始寄存器值，不是 BTF 格式化参数。
 - 没有 `latency-format` 时，上下文是根据函数名推断的，覆盖了常见的中断入口函数，但不完整。
 - `funcgraph-abstime` 只精确到 us。时间戳和 duration 不一致的部分用限制在父切片内的方式修正，修正次数记录在 `stats.clamped` 中。
 - 文本视图仍然为每一行生成 DOM，十几万行以上的 trace 浏览器难以打开；目前的办法是预过滤或 `--no-text-view`。下一步是虚拟列表，需要重写 `report.js` 中直接操作 DOM 的过滤、折叠和键盘导航。

@@ -2,23 +2,63 @@
 import bz2
 import gzip
 import heapq
+import io
 import lzma
 import re
+import shutil
 import sys
+import tempfile
 
-RE_TS = re.compile(r'^\s*(\d+)\.(\d{6}) \|')
+from . import raw
+
+RE_TS = re.compile(r'^\s*(\d+)\.(\d{6,9}) \|')
 OPENERS = {'.gz': gzip.open, '.xz': lzma.open, '.lzma': lzma.open, '.bz2': bz2.open}
 
 
-def read_text(path):
+def _read_stream(stream, path, input_format, raw_instance):
+    prefix = stream.read(4096)
+    stream.seek(0)
+    binary = prefix.startswith(raw.MAGIC)
+    if input_format == 'raw' and not binary:
+        raise raw.RawInputError('raw input must be a trace-cmd trace.dat container; '
+                                'bare trace_pipe_raw pages need event formats, symbols and clock metadata')
+    if input_format == 'text' and binary:
+        raise raw.RawInputError('binary trace-cmd input cannot be read as text (use --input-format auto or raw)')
+    if binary:
+        if path is not None:
+            lines = raw.read_lines(path, instance=raw_instance)
+        else:
+            with tempfile.TemporaryDirectory(prefix='funcgraph-input-') as directory:
+                temporary = directory + '/trace.dat'
+                with open(temporary, 'wb') as output:
+                    shutil.copyfileobj(stream, output, length=1024 * 1024)
+                lines = raw.read_lines(temporary, instance=raw_instance)
+        return '\n'.join(lines) + '\n'
+    if b'\0' in prefix:
+        raise raw.RawInputError('unrecognized binary trace: use a trace-cmd trace.dat container, '
+                                'not bare trace_pipe_raw/perf/Perfetto data')
+    with io.TextIOWrapper(stream, errors='replace') as text:
+        return text.read()
+
+
+def read_text(path, input_format='auto', raw_instance=None):
+    if input_format not in ('auto', 'text', 'raw'):
+        raise ValueError('unknown input format: ' + input_format)
     if path == '-':
-        return sys.stdin.read()
+        if not hasattr(sys.stdin, 'buffer'):
+            if input_format == 'raw':
+                raise raw.RawInputError('raw stdin needs a binary input stream')
+            return sys.stdin.read()
+        with tempfile.TemporaryFile() as stream:
+            shutil.copyfileobj(sys.stdin.buffer, stream, length=1024 * 1024)
+            stream.seek(0)
+            return _read_stream(stream, None, input_format, raw_instance)
     for ext, op in OPENERS.items():
         if path.endswith(ext):
-            with op(path, 'rt', errors='replace') as f:
-                return f.read()
-    with open(path, 'r', errors='replace') as f:
-        return f.read()
+            with op(path, 'rb') as stream:
+                return _read_stream(stream, None, input_format, raw_instance)
+    with open(path, 'rb') as stream:
+        return _read_stream(stream, path, input_format, raw_instance)
 
 
 def split_lines(text):
@@ -42,7 +82,7 @@ def _chunks(lines):
         if m:
             if cur:
                 chunks.append((ts, cur))
-            ts = int(m.group(1)) * 1000000 + int(m.group(2))
+            ts = int(m.group(1)) * 1000000000 + int(m.group(2).ljust(9, '0'))
             cur = [l]
         else:
             if ts is None and l.strip() and not l.startswith('#'):
@@ -53,11 +93,11 @@ def _chunks(lines):
     return head, chunks, timed
 
 
-def read_lines(paths):
+def read_lines(paths, input_format='auto', raw_instance=None):
     """Return (lines, note). Several files are merged by absolute timestamp when all have one."""
     if len(paths) == 1:
-        return split_lines(read_text(paths[0])), None
-    parts = [_chunks(split_lines(read_text(p))) for p in paths]
+        return split_lines(read_text(paths[0], input_format, raw_instance)), None
+    parts = [_chunks(split_lines(read_text(path, input_format, raw_instance))) for path in paths]
     head = max((p[0] for p in parts), key=len)     # per-CPU files repeat the header: keep one
     if not all(p[2] for p in parts):
         out = list(head)

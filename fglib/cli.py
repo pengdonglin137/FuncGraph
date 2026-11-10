@@ -21,7 +21,7 @@ def build_compare_data(args, raw_lines, parsed_lines, timeline_json, vmlinux_pat
     """Compare tab data: per-function statistics of --compare BASE vs. this trace."""
     from . import compare, timeline as tlmod
     t0 = time.time()
-    base_lines = inputs.split_lines(inputs.read_text(args.compare))
+    base_lines, _ = inputs.read_lines([args.compare], raw_instance=args.raw_instance)
     pre = prefilter.Filter(pids=args.pid, comms=args.comm, cpus=args.cpu, time_range=args.time_range,
                            graph=args.graph, notrace=args.notrace)
     if pre.active():
@@ -101,6 +101,10 @@ def build_parser():
     parser.add_argument('ftrace_file', nargs='+',
                         help="ftrace output file(s); '-' reads stdin, .gz/.xz/.bz2 are decompressed, "
                              'several files are merged by timestamp')
+    parser.add_argument('--input-format', choices=('auto', 'text', 'raw'), default='auto',
+                        help='Primary input format: auto-detect text or binary trace-cmd trace.dat (default: auto)')
+    parser.add_argument('--raw-instance', metavar='NAME',
+                        help='Select this named trace-cmd buffer instead of the top-level buffer (also for --compare)')
     parser.add_argument('--config', metavar='FILE',
                         help='INI file with option defaults (default: ./funcgraph.ini or ~/.config/funcgraph/config.ini)')
     parser.add_argument('--preset', metavar='NAME', help='use the [preset NAME] section of the config file')
@@ -452,8 +456,8 @@ def main():
     # 解析ftrace文件
     start_time = time.time()
     try:
-        raw_lines, note = inputs.read_lines(args.ftrace_file)
-    except (OSError, EOFError, lzma.LZMAError) as e:
+        raw_lines, note = inputs.read_lines(args.ftrace_file, args.input_format, args.raw_instance)
+    except (OSError, EOFError, lzma.LZMAError, inputs.raw.RawInputError) as e:
         print(f"Error: cannot read trace input: {e}", file=sys.stderr)
         sys.exit(1)
     if note:
@@ -490,7 +494,11 @@ def main():
 
     compare_json = None
     if args.compare:
-        compare_json = build_compare_data(args, raw_lines, parsed_lines, timeline_json, vmlinux_path, module_dirs)
+        try:
+            compare_json = build_compare_data(args, raw_lines, parsed_lines, timeline_json, vmlinux_path, module_dirs)
+        except (OSError, EOFError, lzma.LZMAError, inputs.raw.RawInputError) as error:
+            print(f"Error: cannot read comparison input: {error}", file=sys.stderr)
+            sys.exit(1)
 
     # 计算统计信息
     expandable_count = sum(1 for l in parsed_lines if l['expandable'])

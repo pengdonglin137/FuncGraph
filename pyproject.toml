@@ -35,6 +35,7 @@ Issues = "https://github.com/pengdonglin137/FuncGraph/issues"
 py-modules = ["funcgraph", "fastfaddr2line"]
 packages = [
     "fglib",
+    "fglib.native",
     "fglib._assets",
     "fglib._assets.report",
     "fglib._assets.timeline",
@@ -48,6 +49,8 @@ script-files = ["fgreport", "fgcapture.sh"]
 
 [tool.setuptools.package-data]
 "*" = ["*.js", "*.css"]
+"fglib" = ["native/*.c"]
+"fglib.native" = ["*.c"]
 
 [tool.setuptools.dynamic]
 version = {attr = "fglib.constants.APP_VERSION"}

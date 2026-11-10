@@ -11,6 +11,7 @@ timeline) sees a smaller, still well-formed trace:
 * lines that carry no task/CPU (e.g. LOST EVENTS) are kept.
 """
 import re
+from decimal import Decimal
 
 from .timeline import RE_SWITCH, RE_FUNC_HEAD, TimelineBuilder
 
@@ -23,7 +24,7 @@ def parse_time(text):
     m = RE_TIME.match(text)
     if not m:
         raise ValueError(f'bad time value {text!r} (use e.g. 2003249.6915, 120us, 3.5ms)')
-    return int(float(m.group(1)) * _UNIT[m.group(2)])
+    return int(Decimal(m.group(1)) * _UNIT[m.group(2)])
 
 
 def parse_range(spec):

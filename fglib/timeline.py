@@ -35,7 +35,7 @@ import time
 # ------------------------------------------------------------------
 # Line grammar
 # ------------------------------------------------------------------
-RE_ABS = re.compile(r' *(\d+)\.(\d{6}) \|  ')
+RE_ABS = re.compile(r' *(\d+)\.(\d{6,9}) \|  ')
 RE_REL = re.compile(r' *(\d+) us \|  ')
 RE_CPU = re.compile(r' *(\d+)\) ')
 RE_PROC = re.compile(r' *(.+?)-(\d+) *\| ')
@@ -45,7 +45,7 @@ RE_DUR_NOMARK = re.compile(r' {1,2}(\d+(?:\.\d+)?) us *\|  ')
 RE_FILL = re.compile(r' {14}\|  ')
 
 RE_SWITCH = re.compile(r'^\s*(?:(\d+)\)\s+)?(.+?)-(\d+)\s+=>\s+(.+?)-(\d+)\s*$')
-RE_LOST = re.compile(r'^CPU:(\d+) \[LOST (\d+) EVENTS\]')
+RE_LOST = re.compile(r'^CPU:(\d+) \[LOST (\d+|\?) EVENTS\]')
 
 RE_FUNC_HEAD = re.compile(r'([A-Za-z_$][\w.$]*)(?: \[([\w-]+)\])?\(')
 RE_CALLER = re.compile(r'<-([A-Za-z_$][\w.$]*)\+(0x[0-9a-fA-F]+)/(0x[0-9a-fA-F]+)(?: \[([\w-]+)\])?')
@@ -270,7 +270,7 @@ class TimelineBuilder:
         has_dur_col = False
         m = RE_ABS.match(line, pos)
         if m:
-            ts = int(m.group(1)) * 1000000000 + int(m.group(2)) * 1000
+            ts = int(m.group(1)) * 1000000000 + int(m.group(2).ljust(9, '0'))
             self.caps['abs'] = True
             pos = m.end()
         else:
@@ -366,7 +366,8 @@ class TimelineBuilder:
             if st.startswith('CPU:'):
                 m = RE_LOST.match(st)
                 if m:
-                    self.lost.append([int(m.group(1)), None, int(m.group(2)), lineno])
+                    count = None if m.group(2) == '?' else int(m.group(2))
+                    self.lost.append([int(m.group(1)), None, count, lineno])
                 continue
             if st.startswith('#####') or st.startswith('(Overruns'):
                 continue

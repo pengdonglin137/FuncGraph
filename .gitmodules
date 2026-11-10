@@ -1,0 +1,9 @@
+[submodule "third_party/libtraceevent"]
+	path = third_party/libtraceevent
+	url = https://git.kernel.org/pub/scm/libs/libtrace/libtraceevent.git
+[submodule "third_party/libtracefs"]
+	path = third_party/libtracefs
+	url = https://git.kernel.org/pub/scm/libs/libtrace/libtracefs.git
+[submodule "third_party/trace-cmd"]
+	path = third_party/trace-cmd
+	url = https://git.kernel.org/pub/scm/utils/trace-cmd/trace-cmd.git
