@@ -2,6 +2,8 @@
 
 2026-11-10 更新：Timeline/Compare 的数据提供者已实现并测试（内嵌读取、按标签请求、共享取消、长度/校验/身份验证、重试）；生产 sidecar 导出器、本地查看器和 Text/源码分块尚未实现。普通报告仍为离线单文件。
 
+源码前置解耦已完成：`fgSrcLines` 保存真实行号 → source ID，Timeline 从共享 `fgData` / `fgSrc` 查调用点，不再要求对应 Text 行或占位 DOM 已挂载；源码块按完整函数标识缓存。可选 `--timeline --no-text-view --keep-source` 保留完整源码池及 inline，同时省略逐调用 Text DOM，默认轻量模式不变。源码面板内可直接切换 chain/flat。它只是解耦和显式省略 Text 的入口，源码池/索引仍完整内嵌、首次使用时同步解析；尚无外部源码分块、LRU 或完整 Text 的按需加载。
+
 用户随后提出按 trace 行数判断是否启用 sidecar。建议使用预过滤后实际 Text 行数、严格超过阈值时切换，`--no-text-view` 不按 Text 行数触发；完整 HTML 字节数仍作诊断。该建议及默认阈值尚待确认，未接入 CLI；下文 HTML 阈值是原方案，不代表最终决定。
 
 状态：输出基础已落地，sidecar 与前端按需加载尚未实现。用户确认边界：**仅完整 HTML 超过可配置大小阈值时，才自动使用 sidecar 按需加载；小报告保持单文件。** 现有 `--no-text-view` 和单文件 HTML 行为不变。
@@ -12,7 +14,7 @@
 
 真实 traceB 有 72176 行、55186 个真实调用，完整报告约 114.7 MB、103.5 万 DOM 元素。首次 Text → Timeline 的诊断中，JSON.parse 约 5ms，样式更新约 115ms，GC 的 DOM embedder tracing 约 174ms。诊断 profile 有额外开销，不能替代无干扰基准，但说明只外置 Timeline JSON 并不能消除巨大 Text DOM 的负担。
 
-CLI 生成器已改用 `HtmlGenerator.iter_sections()` / `ReportSpool`：逐行写入临时文件、准确统计完整 UTF-8 字节数，并记录可提取的命名区段，最后原子发布。旧的 `generate_html()` 字符串 API 保留。当前没有 size/sidecar 命令行参数，也没有自动分流；阈值比较函数仅为后续实现提供基础。源码池与 Timeline/Compare JSON 仍各自完整序列化并内嵌；Timeline 使用 DOM 文本节点读取 JSON。过滤、折叠、键盘导航、Timeline 跳转 Text 和调用点源码还依赖逐行 DOM。
+CLI 生成器已改用 `HtmlGenerator.iter_sections()` / `ReportSpool`：逐行写入临时文件、准确统计完整 UTF-8 字节数，并记录可提取的命名区段，最后原子发布。旧的 `generate_html()` 字符串 API 保留。当前没有 size/sidecar 命令行参数，也没有自动分流；阈值比较函数仅为后续实现提供基础。源码池/索引与 Timeline/Compare JSON 仍完整序列化并内嵌，由共享 `fgData` 读取。Text 过滤、折叠、键盘导航和 Timeline 跳转 Text 仍依赖逐行 DOM；调用点源码已不再依赖这些行。
 
 目标不是把一个大文件换成几个同时加载的大文件，而是：首屏不传输、不解析、不创建未使用的内容；已访问内容复用缓存；不牺牲完整 trace 语义。
 

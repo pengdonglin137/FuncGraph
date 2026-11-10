@@ -160,7 +160,8 @@ The following table documents each command-line option supported by `funcgraph.p
 | `--config` / `--preset` | path / name | Option defaults from an INI file (`./funcgraph.ini` or `~/.config/funcgraph/config.ini`); `[default]` plus `[preset NAME]`; `--no-config` ignores it | `--preset pi4` |
 | `--source-url` / `--source-rev` | template / rev | Source blocks from a URL (`{path}`, `{rev}`; cached in `~/.cache/funcgraph/src`) or from `git show REV:path` in `--kernel-src`; a version check is reported | `--source-rev v6.18` |
 | `--export` | path | Also write the analyses as JSON (functions, errors, critical sections, latency, atomic sleeps, off-CPU) or CSV (function statistics) | `--export result.json` |
-| `--no-text-view` | flag | Only build Timeline/Compare (no per-line text view, no address resolution), for very large traces | `--timeline --no-text-view` |
+| `--no-text-view` | flag | Only build Timeline/Compare; skip Text rows and, by default, address resolution | `--timeline --no-text-view` |
+| `--keep-source` | flag | Opt into resolved source/inline frames without Text rows; adds normal source-resolution cost | `--timeline --no-text-view --keep-source` |
 | `--pid` / `--comm` / `--cpu` | lists | Pre-filter: keep only these tasks / comm regexes / CPUs (comma separated) | `--pid 1234,1235` |
 | `--time-range` | `START:END` | Pre-filter: keep calls starting in this window; absolute seconds or `+offset` with units | `--time-range +2ms:+5ms` |
 | `--graph` / `--notrace` | regexes | Pre-filter: keep / drop whole call trees of matching functions | `--graph vfs_read` |

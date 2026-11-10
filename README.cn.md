@@ -159,7 +159,8 @@ python3 funcgraph.py trace.txt \
 | `--config` / `--preset` | 路径 / 名称 | 从 INI 文件读取默认参数（`./funcgraph.ini` 或 `~/.config/funcgraph/config.ini`）；`[default]` 加 `[preset NAME]`；`--no-config` 忽略 | `--preset pi4` |
 | `--source-url` / `--source-rev` | 模板 / 版本 | 源码块来自 URL（`{path}`、`{rev}`，缓存在 `~/.cache/funcgraph/src`）或 `--kernel-src` 中的 `git show REV:path`，并报告版本一致性 | `--source-rev v6.18` |
 | `--export` | 路径 | 另外把分析结果写成 JSON（函数统计、错误、临界区、调度延迟、原子睡眠、off-CPU）或 CSV（函数统计） | `--export result.json` |
-| `--no-text-view` | 标志 | 只生成 Timeline/Compare，不生成逐行文本视图、不解析地址，用于很大的 trace | `--timeline --no-text-view` |
+| `--no-text-view` | 标志 | 只生成 Timeline/Compare，不生成逐行文本视图，默认跳过地址解析，用于很大的 trace | `--timeline --no-text-view` |
+| `--keep-source` | 标志 | 无 Text 行时仍保留已解析的源码/内联帧；需承担正常源码解析开销 | `--timeline --no-text-view --keep-source` |
 | `--pid` / `--comm` / `--cpu` | 列表 | 预过滤：只保留这些任务 / comm 正则 / CPU（逗号分隔） | `--pid 1234,1235` |
 | `--time-range` | `START:END` | 预过滤：保留在此时间窗口内开始的调用；绝对秒数，或带单位的 `+偏移` | `--time-range +2ms:+5ms` |
 | `--graph` / `--notrace` | 正则 | 预过滤：保留 / 去掉匹配函数的整棵调用树 | `--graph vfs_read` |

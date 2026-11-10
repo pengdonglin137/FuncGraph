@@ -374,6 +374,14 @@ python3 tests/benchmark_startup.py /tmp/before-no-text.html /tmp/after-no-text.h
 
 两组均设置 `FG_CONFIG=/dev/null`。新旧完整 HTML 经现有 golden 规范化（仅耗时、生成时间及环境/输出元数据）逐字一致，包含全部 Text、源码池和模型。流式写出避免了完整报告字符串的重复拼接，但带符号流水线的整体峰值没有明显改善；不能把控制组比例推广到所有生成场景，也未据此证明具体哪个阶段主导内存。输出内容和浏览器加载路径不变，**不表示大型 Timeline 打开已因此加快，也不表示 sidecar/按需加载已经实现**。
 
+### 8.4 无 Text DOM 时保留完整源码（2026-11-10）
+
+Timeline 调用点不再通过 `L<n>` / `line_<n>_content` 查源码。`fgSrcLines` 保存原始 trace 行号到源码池 ID 的稀疏映射，`fgSourceForLine/fgSourceHtml` 通过 `fgData` 读取索引和共享 `fgSrc`，真实行不存在于 DOM 也能定位。源码渲染按完整 `func_info` 缓存，池内仍按 HTML 去重；正常报告的 Text 行、源码块、inline 和 Timeline 完整核对不变，仅增加索引和相应前端资源。
+
+默认 `--no-text-view` 保持不解析地址的轻量行为。显式 `--timeline --no-text-view --keep-source` 才将完整 parsed trace 交给 resolver 和 inline 生成，只在输出时跳过非注释 Text 行；最多保留 200 行原始行号的头部/注释，不创建逐调用占位 DOM。源码块及 chain/flat 模式照常可用，面板内原生按钮支持鼠标/Enter/Space，不会误触 disclosure；无源码时仍只显示有效位置，不显示空代码面板。Text 跳转保持“该视图已省略”的提示，不指向不存在的行。
+
+真实 traceB 保留 55,186 个调用、84,453 个含合成帧的模型条目、3,210 个去重源码块、1,594 个内联调用点和全部 55,186 条源索引；新旧源码池及完整 Timeline（除现有耗时/no_text 元数据）逐项相同。新完整报告约 114.65 MiB，保留源码的无 Text 报告约 14.60 MiB，仅 16 行注释；索引 JSON 为 644,590 字节。此选项显式省略 Text，并非完整 Text 的按需加载；不能据此宣称 sidecar 或默认报告已虚拟化。
+
 ## 9. 自测
 
 ```bash

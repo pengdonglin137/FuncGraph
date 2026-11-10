@@ -172,8 +172,12 @@ def build_parser():
     parser.add_argument('--compare', metavar='BASE_TRACE',
                         help='Add a Compare tab: per-function calls/self/inclusive time vs. this base trace')
     parser.add_argument('--no-text-view', action='store_true',
-                        help='Only build the Timeline/Compare tabs (no per-line text view, no address resolution); '
+                        help='Only build the Timeline/Compare tabs (no per-line text view; '
+                             'skip address resolution unless --keep-source is used); '
                              'for traces too large for the text view (more than ~100k lines)')
+    parser.add_argument('--keep-source', action='store_true',
+                        help='With --timeline --no-text-view, retain resolved source blocks and inline frames '
+                             'without per-line Text DOM; adds normal source-resolution generation cost')
     parser.add_argument('--timeline', action='store_true',
                         help='Add a Timeline tab: per-task flame chart over time with context/error-path coloring')
     parser.add_argument('--btf', nargs='*', default=None, metavar='FILE',
@@ -186,6 +190,9 @@ def build_parser():
 
 def validate_args(args):
     """Check paths/URLs; exits on fatal errors, warns otherwise."""
+    if args.keep_source and not (args.timeline and args.no_text_view):
+        print('Error: --keep-source needs --timeline and --no-text-view', file=sys.stderr)
+        sys.exit(1)
     if args.time_range:
         try:
             prefilter.parse_range(args.time_range)
@@ -513,7 +520,8 @@ def main():
             sys.exit(1)
         if timeline_json is not None:
             timeline_json['no_text'] = True
-        text_lines = [l for l in parsed_lines if l.raw_line.startswith('#')][:200]
+        if not args.keep_source:
+            text_lines = [l for l in parsed_lines if l.raw_line.startswith('#')][:200]
     elif len(parsed_lines) > 150000:
         print(f"Warning: {len(parsed_lines)} lines make a very large text view that browsers may fail to open; "
               "consider --no-text-view (with --timeline) or a pre-filter (--pid/--graph/--time-range)", file=sys.stderr)
@@ -531,6 +539,7 @@ def main():
             text_lines,
             vmlinux_path,
             faddr2line_path,
+            omit_text=args.no_text_view and args.keep_source,
             module_dirs=module_dirs,  # 传递原始模块目录列表（用于auto-search）
             base_url=args.base_url,
             module_url=args.module_url,  # 传递模块URL

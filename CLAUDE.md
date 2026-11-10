@@ -101,6 +101,8 @@ Data flow: `FtraceParser.parse()` → `AddressResolver.resolve_batch()` → (opt
 
 `inputs.read_lines()` keeps normalized raw decoder rows directly; do not route it through the string-returning `read_text()` API or reintroduce whole-trace join/split copies. Compressed/stdin/mixed merges share the representation-aware reader. This still retains the full line model, not constant-memory streaming or sidecar output.
 
+Timeline call-site sources use `fgSrcLines` (original trace line → source-pool ID), not Text DOM placeholders. Both views read `fgSrc` through `fgData`; source blocks cache by full function identity. Plain `--no-text-view` still skips resolution. Opt-in `--timeline --no-text-view --keep-source` resolves the complete parsed trace while omitting non-header Text rows, retains inline chains and shares the full source pool; it adds generation/size cost and is not lazy external source loading.
+
 ## Code Conventions
 
 - Front-end code lives in `assets/` (`report/` for the text view, `timeline/` for the Timeline tab) and is inlined by `fglib/assets.py` (read with `newline=''` so output stays byte-stable). `HtmlGenerator` only emits markup and data.

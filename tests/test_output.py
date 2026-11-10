@@ -247,7 +247,7 @@ class ReportSectionsTest(unittest.TestCase):
         self.assertEqual(sum(name == 'source_data' for name, fragment in sections), 1)
         with ReportSpool(self.path) as spool:
             spool.write_sections(iter(sections))
-            for name in ['source_data', 'view_data:tlData']:
+            for name in ['source_data', 'source_index_data', 'view_data:tlData']:
                 extracted = io.BytesIO()
                 spool.copy_sections(name, extracted)
                 self.assertNotIn(b'<script', extracted.getvalue())

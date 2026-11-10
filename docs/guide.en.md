@@ -207,7 +207,8 @@ With either origin the tool checks whether the source matches the vmlinux and re
 | `--filter` | the unified filter in the text view |
 | `--timeline` | the Timeline tab |
 | `--compare BASE` | the Compare tab against the trace BASE |
-| `--no-text-view` | no per-line text view and no address resolution; only Timeline/Compare. For very large traces |
+| `--no-text-view` | No per-line text view; skip address resolution unless `--keep-source` is used. Only Timeline/Compare; for very large traces |
+| `--keep-source` | With `--timeline --no-text-view`, retain resolved call-site source and inline frames without per-line Text DOM. Needs matching debug/source information and adds normal address-resolution cost |
 | `--btf FILE...` / `--no-btf` | BTF sources (e.g. `/sys/kernel/btf/vmlinux` copied from the target) / do not use BTF |
 | `--overhead CHILD[,SELF]` | tracing overhead estimate in ns; default: read from the header written by `fgcapture.sh --calibrate` |
 | `--export FILE.json\|FILE.csv` | also export the analyses (section 9) |
@@ -602,7 +603,7 @@ Inline/untraced frames stay bright if any recorded child matches the **intersect
 - Tags next to the title: context (`?` if inferred), irqs off, BH off, need-resched, preempt off (preempt count above the trace's baseline, `×N` for N extra levels; hover the tag for the numbers. function_graph disables preemption itself while recording, so on `CONFIG_PREEMPTION` kernels every line's preempt digit is one too high: the baseline is the lowest value seen in task context, capped at 1, so a trace that lies entirely in a preempt-off region is not hidden. Preempt off, Sections, atomic sleeps, the Preempt depth overlay and Sched latency's max preempt off all subtract it; the text view shows the raw digit, so filter with e.g. `preempt:>1` there), migrate off, error origin/propagated, may sleep in atomic context, no exit, no entry, estimated.
 - Left column: duration, self (and its share), start, task, depth, flags, return, call site, args, trace lines (entry and exit line numbers; click to open the text view).
   - Below **call site**: the source position of the call (`file:line`, click to open the online source); `in FUNC (inlined)` when the call sits in inlined code.
-  - **Call site source**: the call site's source block, the same as when expanding the line in the text view (highlighting, `>line<` marks the call, inline chain in the chain/flat layout of the Source button). Click the title to collapse it; the choice is remembered. It reuses the block the text view already resolved, so the report gets no extra data. Without `--kernel-src` / `--source-rev` / `--source-url` only the position link is shown, with `--no-text-view` neither.
+  - **Call site source**: the call site's source block, the same as when expanding the line in the text view (highlighting, `>line<` marks the call, inline chain in the chain/flat layout of the Source button). Click the title to collapse it; the choice is remembered. Text and Timeline share one de-duplicated source pool and a trace-line → source-ID index; the corresponding Text row does not need to exist in the DOM. Without `--kernel-src` / `--source-rev` / `--source-url` only the position link is shown. Plain `--no-text-view` omits both; add `--keep-source` to retain available source/position/inline information in Timeline-only reports.
 - Right column:
   - **Where the time went**: a stacked bar splitting the recorded interval. It uses real parent links, including skipped depths and stacks deeper than 256 calls; synthetic inline/untraced frames are never counted as extra calls:
 
@@ -982,6 +983,8 @@ EOF
 **The report is too large; the browser is slow or does not open it**
 
 The text view creates DOM for every line; above ~150k lines the console warns. Either narrow the trace with a pre-filter (`--pid`, `--comm`, `--graph`, `--time-range`) or build only the timeline with `--timeline --no-text-view` (measured: 362k lines → 15.7 MB, opens in about a second).
+
+To keep source analysis without Text rows, use `--timeline --no-text-view --keep-source --vmlinux vmlinux --kernel-src /path/to/linux`. The ordinary lightweight `--no-text-view` behavior stays unchanged. The opt-in retains the complete resolved source pool, inline chains and original trace-line IDs, but not the per-line Text DOM; Text jumps still report that the view was omitted. The source panel has its own **Source: chain/flat** button, accessible by click, Enter or Space without collapsing the panel; it stays synchronized with the Text toolbar. Source resolution can increase generation time and report size. This remains an embedded, offline-compatible report, not asynchronous source chunk loading, Text virtualization or automatic sidecar output.
 
 When keeping Text, leave the report on **Timeline** or **Compare** before reopening it. The saved tab is read early enough to suppress Text rendering before trace lines are parsed; the theme is restored then too, and initialization does not focus hidden text rows. Text and source content remain available for filtering, folding and navigation when switching back. A `#Lnumber` link takes precedence and opens Text; `--no-text-view` reports still default to Timeline.
 

@@ -1872,6 +1872,62 @@ class BrowserSmokeTest(unittest.TestCase):
         self.assertRegex(at, r'\.[ch]:\d+$')
         self.assertTrue(self.ev("(document.querySelector('.tl-cs-at a') || {}).href || ''").startswith('https://example.org/src/'))
 
+    def test_detail_source_position_does_not_depend_on_text_dom(self):
+        self.open_timeline()
+        selected = self.ev("""() => {
+            document.getElementById('content').replaceChildren();
+            const data = fgData.read('tlData');
+            const index = data.cols.line.findIndex(line => fgSourceForLine(line) !== null);
+            fgView('timeline').probe().select(index);
+            return index;
+        }""")
+        self.assertGreaterEqual(selected, 0)
+        self.assertEqual(self.page.locator('#content .line-container').count(), 0)
+        self.assertRegex(self.page.locator('.tl-cs-at .tl-link').inner_text(), r'\.[ch]:\d+$')
+        self.assertTrue(self.page.locator('.tl-cs-at a').get_attribute('href').startswith('https://example.org/src/'))
+
+    def test_timeline_only_retains_source_code_inline_frames_and_source_controls(self):
+        kernel = helpers.FakeKernel(inline_source=True)
+        try:
+            kernel.run(helpers.fixture('pi4_full'), '--timeline', '--no-text-view', '--keep-source',
+                       '--highlight-code', '--base-url', 'https://example.org/src')
+            self.page.goto('file://' + kernel.dir + '/out.html', wait_until='load')
+            self.page.wait_for_function("fgCurrentView() === 'timeline' && !!fgView('timeline')")
+            selected = self.ev("""() => {
+                const data = fgData.read('tlData');
+                const index = data.cols.line.findIndex(line => fgSourceForLine(line) !== null);
+                fgView('timeline').probe().select(index);
+                return index;
+            }""")
+            self.assertGreaterEqual(selected, 0)
+            self.assertTrue(self.ev("Object.keys(fgData.read('tlData').inline).length > 0"))
+            self.assertEqual(self.page.locator('#content .expandable').count(), 0)
+            self.assertGreater(self.page.locator('.tl-cs .source-line').count(), 0)
+            self.assertEqual(self.page.locator('.tl-cs .src-frame').count(), 2)
+            self.assertIn('kernel/fake.c:2', self.page.locator('.tl-cs-at').inner_text())
+            source_mode = self.page.locator('.tl-cs [data-fg-source-mode]')
+            source_mode.click()
+            self.assertEqual(source_mode.inner_text(), 'Source: flat')
+            self.assertTrue(self.page.locator('.tl-cs').evaluate('element => element.open'))
+            self.assertEqual(self.page.locator('.tl-cs .src-frame').count(), 0)
+            self.assertGreater(self.page.locator('.tl-cs .source-line').count(), 0)
+            source_mode.press('Enter')
+            self.assertEqual(source_mode.inner_text(), 'Source: chain')
+            self.assertEqual(self.page.locator('.tl-cs .src-frame').count(), 2)
+            source_mode.press('Space')
+            self.assertEqual(source_mode.inner_text(), 'Source: flat')
+            source_mode.click()
+            self.assertEqual(source_mode.inner_text(), 'Source: chain')
+            self.page.locator('.tl-cs > summary').click()
+            self.page.wait_for_function("localStorage.getItem('fgTl.csOpen') === '0'")
+            self.ev('index => fgView("timeline").probe().select(index)', selected)
+            self.assertFalse(self.page.locator('.tl-cs').evaluate('element => element.open'))
+            self.page.locator('.tl-detail [data-line]').first.click()
+            self.assertEqual(self.ev('fgCurrentView()'), 'timeline')
+            self.assertEqual(self.ev("fgView('timeline').probe().sel()"), selected)
+        finally:
+            kernel.close()
+
     def test_untraced_frames_fill_depth_gaps(self):
         # pi4_nodur has calls two levels below their parent (kernel depth jump): the missing level is
         # drawn as an "untraced" frame named after the calls' caller, and selecting it opens its panel

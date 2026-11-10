@@ -9,15 +9,21 @@
             window.fgFilterState = { text: text, lines: lines };
             if (typeof window.fgOnFilter === 'function') window.fgOnFilter();
         }
-        let _fgSrcPool = null;
+        function fgSourceHtml(source) {
+            return fgData.read('fgSrc')[source] || '';
+        }
+        function fgSourceForLine(line) {
+            const index = fgData.read('fgSrcLines');
+            return Object.prototype.hasOwnProperty.call(index, line) ? index[line] : null;
+        }
         // Two layouts for source blocks (toolbar "Source" button):
         //   chain: inline frames outer -> inner, each collapsible, innermost (the call) open
         //   flat : faddr2line order (innermost first), everything expanded
         let fgSrcMode = lsGet('srcMode') || 'chain';
+        function fgSourceMode() { return fgSrcMode; }
         function fgFill(el, force) {
             if (!el || el.dataset.src === undefined || (el.firstChild && !force)) return;
-            if (!_fgSrcPool) _fgSrcPool = JSON.parse(document.getElementById('fgSrc').textContent);
-            el.innerHTML = _fgSrcPool[+el.dataset.src] || '';
+            el.innerHTML = fgSourceHtml(+el.dataset.src);
             if (fgSrcMode === 'chain') fgChainView(el);
         }
         function fgChainView(el) {
@@ -178,6 +184,9 @@
             lsSet('srcMode', fgSrcMode);
             const b = document.getElementById('srcModeBtn');
             if (b) b.textContent = 'Source: ' + fgSrcMode;
+            document.querySelectorAll('[data-fg-source-mode]').forEach(button => {
+                button.textContent = 'Source: ' + fgSrcMode;
+            });
             document.querySelectorAll('.expanded-content[data-src]').forEach(el => {
                 if (el.firstChild) { el.classList.remove('src-chain'); fgFill(el, true); }
             });

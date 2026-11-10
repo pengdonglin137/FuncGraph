@@ -207,7 +207,8 @@ python3 funcgraph.py --timeline --pid 1234 --graph vfs_read --vmlinux vmlinux --
 | `--filter` | 文本视图显示统一过滤器 |
 | `--timeline` | 生成 Timeline 标签页 |
 | `--compare BASE` | 生成 Compare 标签页，和 BASE 这份 trace 比较 |
-| `--no-text-view` | 不生成逐行的文本视图，也不解析地址，只生成 Timeline/Compare。用于很大的 trace |
+| `--no-text-view` | 不生成逐行的文本视图；未加 `--keep-source` 时也不解析地址，只生成 Timeline/Compare。用于很大的 trace |
+| `--keep-source` | 配合 `--timeline --no-text-view`，保留调用点源码及内联帧，不生成逐行 Text DOM；需要匹配的调试/源码信息，并承担正常地址解析开销 |
 | `--btf FILE...` / `--no-btf` | 指定 BTF 来源（例如从目标机复制的 `/sys/kernel/btf/vmlinux`）/ 不使用 BTF |
 | `--overhead CHILD[,SELF]` | 跟踪开销估计值（纳秒）。默认从 `fgcapture.sh --calibrate` 写入的文件头读取 |
 | `--export FILE.json\|FILE.csv` | 另外导出分析结果（见第 9 节） |
@@ -602,7 +603,7 @@ irqs:d AND duration:>50                       关中断状态下耗时超过 50 
 - 标题旁的标签：上下文（`?` 表示推断）、irqs off、BH off、need-resched、preempt off（抢占计数高于这份 trace 的基线，`×N` 表示多关了几层，悬停标签可看到具体数值。function_graph 在记录时自己关了一层抢占，开了 `CONFIG_PREEMPTION` 的内核上每行的 preempt 数字都多 1：基线取任务上下文里出现过的最小值，最大为 1，这样整份 trace 都在关抢占区间里时也不会被掩盖。时间轴里的 preempt off、Sections、在原子上下文睡眠、Preempt depth 叠加层、Sched latency 的 max preempt off 都扣除了基线；文本视图显示的是原始数字，过滤时要用 `preempt:>1` 这样的写法）、migrate off、error origin/propagated、may sleep in atomic context、no exit、no entry、estimated。
 - 左栏：duration、self（及占总耗时的比例）、start、task、depth、flags、return、call site、args、trace lines（入口和出口在 trace 中的行号，点击跳到文本视图）。
   - **call site** 下面是调用所在的源码位置（`文件:行号`，点击打开在线源码）；调用点在内联代码里时附上 `in 内联函数 (inlined)`。
-  - **Call site source**：调用点的源码块，和文本视图展开一行时看到的完全相同（语法高亮、`>行号<` 标出调用所在行、内联链按 Source 按钮的 chain/flat 布局）。点标题可以收起，状态会被记住。这部分直接复用文本视图已经解析好的源码块，报告不增加数据；没有 `--kernel-src` / `--source-rev` / `--source-url` 时只显示位置链接，`--no-text-view` 时两者都没有。
+  - **Call site source**：调用点的源码块，和文本视图展开一行时看到的完全相同（语法高亮、`>行号<` 标出调用所在行、内联链按 Source 按钮的 chain/flat 布局）。点标题可以收起，状态会被记住。Text 和 Timeline 共享去重源码池及“trace 行号 → source ID”索引，不要求对应 Text 行已存在于 DOM 中。没有 `--kernel-src` / `--source-rev` / `--source-url` 时只显示位置链接；普通 `--no-text-view` 不保留两者，加上 `--keep-source` 可在纯 Timeline 报告中保留已有的源码/位置/内联信息。
 - 右栏：
   - **Where the time went**：一条堆叠条，分解记录中的区间。按真实父子关系处理深度缺口和超过 256 层的栈，不把合成的 inline/untraced 帧算成额外调用：
 
@@ -984,6 +985,8 @@ EOF
 文本视图为每一行生成 DOM。超过约 15 万行时，命令行会给出提示。可以：
 - 用预过滤缩小范围：`--pid`、`--comm`、`--graph`、`--time-range`；
 - 只生成时间轴：`--timeline --no-text-view`。实测 36 万行的 trace 生成的报告是 15.7 MB，约 1 秒打开。
+
+若要没有 Text 行但仍保留源码分析，使用 `--timeline --no-text-view --keep-source --vmlinux vmlinux --kernel-src /path/to/linux`。默认轻量 `--no-text-view` 行为不变；新选项保留完整解析后的源码池、内联链和原始 trace 行号，不生成逐行 Text DOM，点击 Text 跳转仍会说明视图已省略。源码面板自带 **Source: chain/flat** 按钮，点击、Enter、Space 均可切换且不会误收起面板，并与 Text 工具栏保持同步。源码解析会增加生成耗时和报告大小。这仍是内嵌数据、可离线打开的报告，不是异步源码分块、Text 虚拟化或自动 sidecar。
 
 保留文本时，停留在 **Timeline** 或 **Compare** 后重新打开报告，页面会提前读取已保存的标签页，在解析逐行文本之前抑制 Text 渲染；主题也在这时恢复，初始化不会抢焦点到隐藏的文本行。不会删除文本或源码，切回 Text 后仍可过滤、折叠和跳转。带 `#L行号` 的链接优先打开 Text；`--no-text-view` 报告仍默认打开 Timeline。
 

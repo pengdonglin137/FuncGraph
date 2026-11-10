@@ -244,14 +244,9 @@ function showDetail(i) {
     openDetail(h);
     fillCallSite(i);
 }
-// Source of the call site: the text view already holds it (resolved, highlighted, de-duplicated in
-// #fgSrc), so the panel reuses that block (no extra data in the report). Lookup is by trace line id.
 function callSiteBlock(i) {
-    if (D.no_text || typeof fgFill !== 'function' || isSyn(i)) return null;
-    const line = document.getElementById('L' + sLine[i]);
-    const lid = line && line.getAttribute('data-line-id');
-    const content = lid && document.getElementById(lid + '_content');
-    return content && content.dataset.src !== undefined ? content.dataset.src : null;
+    if (typeof fgSourceForLine !== 'function' || isSyn(i)) return null;
+    return fgSourceForLine(sLine[i]);
 }
 // {func, at: 'file:line', href, inl} of the call itself (innermost frame of the block), cached per block
 const csPosCache = new Map();
@@ -260,10 +255,9 @@ function callSitePos(i) {
     if (k === null) return null;
     if (csPosCache.has(k)) return csPosCache.get(k);
     let r = null;
-    if (typeof _fgSrcPool !== 'undefined') {
-        if (!_fgSrcPool) _fgSrcPool = JSON.parse(document.getElementById('fgSrc').textContent);
+    if (typeof fgSourceHtml === 'function') {
         const tmp = document.createElement('div');
-        tmp.innerHTML = _fgSrcPool[+k] || '';
+        tmp.innerHTML = fgSourceHtml(k);
         const locs = tmp.querySelectorAll('a.location-link, div.location-link:not(:first-child)');
         const a = locs[0];
         if (a) {
@@ -299,6 +293,18 @@ function fillCallSite(i) {
         if (pos.inl) { const s = document.createElement('span'); s.className = 'tl-muted'; s.textContent = '  in ' + pos.func + ' (inlined)'; at.append(s); }
     }
     if (!hasCode) return;
+    const mode = document.createElement('button');
+    mode.type = 'button';
+    mode.className = 'tl-btn';
+    mode.dataset.fgSourceMode = '';
+    mode.textContent = 'Source: ' + fgSourceMode();
+    mode.title = 'Switch source layout between inline chain and flat frames';
+    mode.addEventListener('click', event => {
+        event.preventDefault();
+        event.stopPropagation();
+        fgToggleSrcMode();
+    });
+    box.querySelector('summary').append(' ', mode);
     if (prefGet('csOpen') === '0') box.open = false;
     box.addEventListener('toggle', () => prefSet('csOpen', box.open ? '1' : '0'));
 }

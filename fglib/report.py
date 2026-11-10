@@ -51,15 +51,18 @@ class HtmlGenerator:
                  module_src=None, module_srcs=None, script_args=None,
                  enable_filter=False, parse_time=0, total_time=0,
                  func_links=False, entry_offset=0, enable_fold=False,
-                 timeline_json=None, compare_json=None, source_provider=None):
+                 timeline_json=None, compare_json=None, source_provider=None, omit_text=False):
         # Store all parameters as instance attributes
         self.parsed_lines = parsed_lines
         self.timeline_json = timeline_json
         self.compare_json = compare_json
         self.source_provider = source_provider
+        self.omit_text = omit_text
         self.source_note = None
         self._src_pool = []
         self._src_index = {}
+        self._src_calls = {}
+        self._src_lines = {}
         self._list_cache = {}
         self.vmlinux_path = vmlinux_path
         self.faddr2line_path = faddr2line_path
@@ -276,6 +279,10 @@ class HtmlGenerator:
         data = json.dumps(self._src_pool, ensure_ascii=False, separators=(',', ':')).replace('<', '\\u003c')
         yield 'source_data', data
         yield 'source_close', '</script>\n'
+        if self.timeline_json is not None:
+            yield 'source_index_open', '    <script type="application/json" id="fgSrcLines">'
+            yield 'source_index_data', json.dumps(self._src_lines, separators=(',', ':'))
+            yield 'source_index_close', '</script>\n'
 
     # ---- Optional views (Timeline, Compare): tabs, containers, CSS, data, scripts ----
     def _early_view_script(self):
@@ -1012,11 +1019,80 @@ class HtmlGenerator:
         """
         return ''.join(self._iter_content_lines())
 
+    def _source_index(self, func_info):
+        cached = self._src_calls.get(func_info)
+        if cached is not None:
+            return cached
+        func_info_for_call = self._adjust_func_info(func_info, remove_suffix=False)
+        func_info_for_display = self._adjust_func_info(func_info, remove_suffix=True)
+        locations = self.func_locations_map.get(func_info_for_call, {})
+        content_parts = []
+        if locations:
+            module_match = re.search(r'\[(.*?)\]', func_info_for_call)
+            return_addr_module_name = module_match.group(1) if module_match else None
+            if return_addr_module_name:
+                current_base_url = self.combined_module_url_map.get(
+                    return_addr_module_name, self.default_module_url or self.base_url)
+            else:
+                current_base_url = self.base_url
+            if isinstance(locations, dict) and 'func' in str(next(iter(locations.values()), {})):
+                loc_list = locations.get(func_info_for_call, [])
+                for loc in loc_list:
+                    file_path = clean_file_path(loc['file'], self.kernel_src, self.path_prefix)
+                    clean_path = self._extract_file_path(file_path, self.kernel_src, self.path_prefix)
+                    line_num = loc.get('line')
+                    if line_num is None:
+                        line_num = self._extract_line_number(file_path, self.kernel_src, self.path_prefix)
+                    if clean_path and line_num is not None:
+                        if current_base_url:
+                            relative_path = get_relative_path(clean_path, self.kernel_src)
+                            url = build_source_url(current_base_url, relative_path, line_num)
+                            link_text = f"{loc['func']} at {relative_path}:{line_num}"
+                        else:
+                            link_text = f"{loc['func']} at {clean_path}:{line_num}"
+                    else:
+                        link_text = f"{loc['func']} at {file_path}"
+                    if loc.get('inlined'):
+                        link_text = f"(inlined) {link_text}"
+                    escaped_link = escape_html_preserve_spaces(link_text)
+                    if current_base_url and clean_path and line_num is not None:
+                        escaped_url = html.escape(url)
+                        content_parts.append(f'<a class="location-link" href="{escaped_url}" target="_blank">{escaped_link}</a>')
+                    else:
+                        content_parts.append(f'<div class="location-link">{escaped_link}</div>')
+            elif isinstance(locations, str):
+                list_key = (locations, current_base_url)
+                rendered = self._list_cache.get(list_key)
+                if rendered is None:
+                    rendered = parse_list_output(locations, current_base_url, self.kernel_src,
+                                                 self.highlight_code, self.path_prefix, self.module_src)
+                    self._list_cache[list_key] = rendered
+                content_parts.append(rendered)
+            else:
+                content_parts.append(f'<div class="location-link">Source information unavailable for: {escape_html_preserve_spaces(func_info_for_display)}</div>')
+        else:
+            content_parts.append(f'<div class="location-link">Source information unavailable for: {escape_html_preserve_spaces(func_info_for_display)}</div>')
+        block_html = ''.join(content_parts)
+        source_index = self._src_index.get(block_html)
+        if source_index is None:
+            source_index = len(self._src_pool)
+            self._src_pool.append(block_html)
+            self._src_index[block_html] = source_index
+        self._src_calls[func_info] = source_index
+        return source_index
+
     def _iter_content_lines(self):
         """Yield each trace row with its source placeholder, retaining stable source IDs."""
 
         # 添加行号并输出原始ftrace日志
+        header_count = 0
         for idx, line_data in enumerate(self.parsed_lines):
+            if self.omit_text:
+                if line_data['expandable'] and line_data['func_info']:
+                    self._src_lines[idx + 1] = self._source_index(line_data['func_info'])
+                if not line_data['raw_line'].startswith('#') or header_count >= 200:
+                    continue
+                header_count += 1
             content_parts = []
             line_number = idx + 1  # 行号从1开始
             line_anchor_id = f"L{line_number}"  # 使用L{行号}格式作为锚点
@@ -1236,126 +1312,9 @@ class HtmlGenerator:
             content_parts.append('</div>')
 
             if is_expandable:
-                # 获取函数信息
-                func_info = line_data['func_info']
-
-                # 为调用fastfaddr2line准备的键（保留后缀，调整偏移）
-                func_info_for_call = self._adjust_func_info(func_info, remove_suffix=False)
-
-                # 为显示准备的键（移除后缀，调整偏移）
-                func_info_for_display = self._adjust_func_info(func_info, remove_suffix=True)
-
-                # 从预取的数据中获取位置信息（使用调用时的键）
-                locations = self.func_locations_map.get(func_info_for_call, {})
-
-                # 为expanded-content添加内联样式style="display: none;"，确保初始状态
-                block_start = len(content_parts)
-
-                if locations:
-                    # 确定使用哪个URL
-                    # 从func_info_for_call中提取模块名，判断返回地址的函数类型
-                    # func_info_for_call格式: func+offset/length [module]
-                    return_addr_module_name = None
-                    if '[' in func_info_for_call and ']' in func_info_for_call:
-                        module_match = re.search(r'\[(.*?)\]', func_info_for_call)
-                        if module_match:
-                            return_addr_module_name = module_match.group(1)
-
-                    if return_addr_module_name:
-                        # 返回地址是模块函数
-                        if return_addr_module_name in self.combined_module_url_map:
-                            current_base_url = self.combined_module_url_map[return_addr_module_name]
-                        else:
-                            current_base_url = self.default_module_url if self.default_module_url else self.base_url
-                    else:
-                        # 返回地址是内核函数
-                        current_base_url = self.base_url
-
-                    # 检查是结构化数据还是原始输出
-                    if isinstance(locations, dict) and 'func' in str(next(iter(locations.values()), {})):
-                        # 结构化数据（标准模式）- 这部分可能不会执行，保留以兼容性
-                        loc_list = locations.get(func_info_for_call, [])
-                        for loc in loc_list:
-                            if current_base_url:
-                                file_path = loc['file']
-                                # 清理文件路径
-                                file_path = clean_file_path(file_path, self.kernel_src, self.path_prefix)
-
-                                # 提取文件路径和行号
-                                clean_path = self._extract_file_path(file_path, self.kernel_src, self.path_prefix)
-                                line_num = loc.get('line')
-
-                                # 如果行号不在loc中，尝试从file_path中提取
-                                if line_num is None:
-                                    line_num = self._extract_line_number(file_path, self.kernel_src, self.path_prefix)
-
-                                if clean_path and line_num is not None:
-                                    # 获取相对于内核源码的路径
-                                    relative_path = get_relative_path(clean_path, self.kernel_src)
-
-                                    # 构建URL
-                                    url = build_source_url(current_base_url, relative_path, line_num)
-
-                                    link_text = f"{loc['func']} at {relative_path}:{line_num}"
-                                    if loc.get('inlined'):
-                                        link_text = f"(inlined) {link_text}"
-
-                                    escaped_link = escape_html_preserve_spaces(link_text)
-                                    escaped_url = html.escape(url)
-                                    content_parts.append(f'<a class="location-link" href="{escaped_url}" target="_blank">{escaped_link}</a>')
-                                else:
-                                    # 无法提取有效路径或行号
-                                    link_text = f"{loc['func']} at {file_path}"
-                                    if loc.get('inlined'):
-                                        link_text = f"(inlined) {link_text}"
-                                    escaped_link = escape_html_preserve_spaces(link_text)
-                                    content_parts.append(f'<div class="location-link">{escaped_link}</div>')
-                            else:
-                                # 没有base_url，只显示文本
-                                file_path = loc['file']
-                                # 清理文件路径
-                                file_path = clean_file_path(file_path, self.kernel_src, self.path_prefix)
-
-                                # 提取文件路径
-                                clean_path = self._extract_file_path(file_path, self.kernel_src, self.path_prefix)
-                                line_num = loc.get('line')
-
-                                # 如果行号不在loc中，尝试从file_path中提取
-                                if line_num is None:
-                                    line_num = self._extract_line_number(file_path, self.kernel_src, self.path_prefix)
-
-                                if clean_path and line_num is not None:
-                                    link_text = f"{loc['func']} at {clean_path}:{line_num}"
-                                else:
-                                    link_text = f"{loc['func']} at {file_path}"
-
-                                if loc.get('inlined'):
-                                    link_text = f"(inlined) {link_text}"
-                                escaped_link = escape_html_preserve_spaces(link_text)
-                                content_parts.append(f'<div class="location-link">{escaped_link}</div>')
-                    elif isinstance(locations, str):
-                        # 原始输出（--list模式）
-                        # Same location text + URL always renders the same block (55k calls -> ~3k distinct)
-                        list_key = (locations, current_base_url)
-                        rendered = self._list_cache.get(list_key)
-                        if rendered is None:
-                            rendered = parse_list_output(locations, current_base_url, self.kernel_src, self.highlight_code, self.path_prefix, self.module_src)
-                            self._list_cache[list_key] = rendered
-                        content_parts.append(rendered)
-                    else:
-                        # 未知格式
-                        content_parts.append(f'<div class="location-link">Source information unavailable for: {escape_html_preserve_spaces(func_info_for_display)}</div>')
-                else:
-                    content_parts.append(f'<div class="location-link">Source information unavailable for: {escape_html_preserve_spaces(func_info_for_display)}</div>')
-
-                # De-duplicated source block, filled into the DOM on first expand (fgFill)
-                block_html = ''.join(content_parts[block_start:])
-                del content_parts[block_start:]
-                src_idx = self._src_index.get(block_html)
-                if src_idx is None:
-                    src_idx = len(self._src_pool)
-                    self._src_pool.append(block_html)
-                    self._src_index[block_html] = src_idx
+                src_idx = self._source_index(line_data['func_info'])
+                if self.timeline_json is not None:
+                    self._src_lines[line_number] = src_idx
                 content_parts.append(f'<div class="expanded-content" id="{line_id}_content" data-src="{src_idx}" style="display: none;"></div>')
 
             yield ''.join(content_parts)
@@ -1369,7 +1328,7 @@ class HtmlGenerator:
         return read_asset(REPORT_CSS)
 
 
-def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None, base_url=None, module_url=None, kernel_src=None, use_list=False, verbose=False, fast_mode=False, highlight_code=False, path_prefix=None, module_src=None, module_srcs=None, script_args=None, enable_filter=False, parse_time=0, total_time=0, func_links=False, entry_offset=0, enable_fold=False, timeline_json=None, compare_json=None, source_provider=None):
+def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None, base_url=None, module_url=None, kernel_src=None, use_list=False, verbose=False, fast_mode=False, highlight_code=False, path_prefix=None, module_src=None, module_srcs=None, script_args=None, enable_filter=False, parse_time=0, total_time=0, func_links=False, entry_offset=0, enable_fold=False, timeline_json=None, compare_json=None, source_provider=None, omit_text=False):
     """Generate interactive HTML page. Wrapper for backward compatibility."""
     generator = HtmlGenerator(
         parsed_lines, vmlinux_path, faddr2line_path,
@@ -1381,7 +1340,7 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
         parse_time=parse_time, total_time=total_time,
         func_links=func_links, entry_offset=entry_offset,
         enable_fold=enable_fold, timeline_json=timeline_json, compare_json=compare_json,
-        source_provider=source_provider
+        source_provider=source_provider, omit_text=omit_text
     )
     return generator.generate()
 

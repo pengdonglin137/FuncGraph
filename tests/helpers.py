@@ -34,6 +34,19 @@ for a in "$@"; do
 done
 """
 
+FAKE_INLINE_FADDR2LINE = """#!/bin/sh
+for argument in "$@"; do
+  case "$argument" in
+    --*|*vmlinux*) ;;
+    *) printf '%s:\\n' "$argument"
+       printf 'inline_helper at %s/kernel/fake.c:2\\n' "$FAKE_SRC"
+       printf ' 1\\tint a;\\n>2<\\tint b;\\n 3\\tint c;\\n'
+       printf ' (inlined by) traced_outer at %s/kernel/fake.c:3\\n' "$FAKE_SRC"
+       printf ' 2\\tint b;\\n>3<\\tint c;\\n' ;;
+  esac
+done
+"""
+
 
 def fixture(name):
     return os.path.join(ROOT, 'ftrace.txt') if name == 'x86' else os.path.join(DATA, name + '.txt')
@@ -42,7 +55,7 @@ def fixture(name):
 class FakeKernel:
     """A temp dir with an empty vmlinux and kernel-src/scripts/faddr2line stub."""
 
-    def __init__(self):
+    def __init__(self, inline_source=False):
         self.dir = tempfile.mkdtemp(prefix='fgtest_')
         self.ksrc = os.path.join(self.dir, 'ksrc')
         os.makedirs(os.path.join(self.ksrc, 'scripts'))
@@ -51,7 +64,7 @@ class FakeKernel:
             f.write('int a;\nint b;\nint c;\n')
         tool = os.path.join(self.ksrc, 'scripts', 'faddr2line')
         with open(tool, 'w') as f:
-            f.write(FAKE_FADDR2LINE)
+            f.write(FAKE_INLINE_FADDR2LINE if inline_source else FAKE_FADDR2LINE)
         os.chmod(tool, 0o755)
         self.vmlinux = os.path.join(self.dir, 'vmlinux')
         with open(self.vmlinux, 'wb') as f:

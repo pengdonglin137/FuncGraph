@@ -112,6 +112,25 @@ class InstalledPackageTest(unittest.TestCase):
         locations = resolver.resolve_batch(['packaged_probe+0x0/0x1'], use_list=True)
         self.assertTrue(locations)
         self.assertIn('probe.c:', '\n'.join(locations.values()))
+        trace = Path(self.tmp.name, 'source-trace.txt')
+        trace.write_text('# tracer: function_graph\n'
+                         '1.000000001 |  0) probe-42 |  0.010 us |  packaged_probe(); '
+                         '/* <-packaged_probe+0x1/0x20 */\n')
+        output = trace.with_suffix('.html')
+        self.run_command(self.executable('funcgraph'), '--no-config', '--timeline', '--no-text-view',
+                         '--keep-source', '--fast', '--vmlinux', str(binary),
+                         '--kernel-src', self.tmp.name, '--output', str(output), str(trace))
+        report = output.read_text()
+        self.assertNotIn('id="L2"', report)
+        for name in ['fgSrc', 'fgSrcLines']:
+            match = re.search(r'<script type="application/json" id="' + name + r'">(.*?)</script>', report, re.S)
+            self.assertIsNotNone(match)
+            self.assertTrue(json.loads(match.group(1)))
+        source_block = json.loads(re.search(
+            r'<script type="application/json" id="fgSrc">(.*?)</script>', report, re.S).group(1))[0]
+        self.assertIn('probe.c', source_block)
+        if shutil.which('gawk'):
+            self.assertIn('source-line', source_block)
 
 
 if __name__ == '__main__':
