@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>FuncGraph: interactive reports for Linux function_graph traces</title>
-<meta name="description" content="FuncGraph turns Linux ftrace function_graph output into one self-contained HTML report: text view with source, timeline, error paths, critical sections, scheduling latency, compare.">
+<meta name="description" content="FuncGraph visualizes Linux ftrace and uftrace captures in self-contained HTML reports, including a Timeline with user-to-kernel boundaries and a Text view with source.">
 <style>
   :root { --fg: #1f2933; --muted: #5f6b7a; --line: #e3e7ed; --accent: #3b6fd8; --bg: #f6f8fb; }
   * { box-sizing: border-box; }
@@ -20,7 +20,7 @@
          color: var(--fg); text-decoration: none; font-weight: 600; font-size: 15px; }
   .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
   .btn:hover { filter: brightness(.96); }
-  .shot { display: block; width: 100%; margin: 28px 0 8px; border: 1px solid var(--line); border-radius: 8px;
+  .shot { display: block; width: 100%; height: auto; margin: 0 0 8px; border: 1px solid var(--line); border-radius: 8px;
           box-shadow: 0 6px 24px rgba(20, 30, 50, .08); }
   .cap { color: var(--muted); font-size: 14px; margin: 0 0 8px; }
   h2 { font-size: 22px; margin: 38px 0 10px; }
@@ -47,11 +47,12 @@
   <h1><span>FuncGraph</span></h1>
   <p class="lead" lang="en">Turns Linux ftrace <code>function_graph</code> output into one self-contained HTML report:
     a text view with resolved source, and a timeline that shows where the time went, error paths,
-    critical sections and scheduling delays.</p>
+    critical sections and scheduling delays. Import uftrace to follow calls from user space into the kernel.</p>
   <p class="lead" lang="zh">把 Linux ftrace 的 <code>function_graph</code> 输出转换成一个自包含的 HTML 报告：
-    带源码的文本视图，以及能看出时间花在哪里、错误从哪里来、关中断/关抢占区间和调度延迟的时间轴。</p>
+    带源码的文本视图，以及能看出时间花在哪里、错误从哪里来、关中断/关抢占区间和调度延迟的时间轴。导入 uftrace 后还能从用户态一路追到内核。</p>
   <div class="btns">
-    <a class="btn primary" href="sample.html"><span lang="en">Open the sample report</span><span lang="zh">打开示例报告</span></a>
+    <a class="btn primary" href="sample_mixed.html"><span lang="en">Open the mixed sample</span><span lang="zh">打开用户态 + 内核态示例</span></a>
+    <a class="btn" href="sample.html"><span lang="en">Open the kernel sample</span><span lang="zh">打开纯内核态示例</span></a>
     <a class="btn" href="https://github.com/pengdonglin137/FuncGraph">GitHub</a>
     <a class="btn" href="https://github.com/pengdonglin137/FuncGraph/blob/master/docs/guide.en.md" lang="en">User guide</a>
     <a class="btn" href="https://github.com/pengdonglin137/FuncGraph/blob/master/docs/guide.cn.md" lang="zh">使用指南</a>
@@ -59,11 +60,25 @@
 </div></header>
 
 <main class="wrap">
-  <a href="sample.html"><img class="shot" src="sample.png" alt="FuncGraph timeline of the sample trace"></a>
+  <section id="mixed-sample">
+    <h2 lang="en">User → kernel: follow a UDP send</h2>
+    <h2 lang="zh">从用户态到内核态：追踪一次 UDP 发送</h2>
+    <a href="sample_mixed.html"><img class="shot" src="sample_mixed.png" width="1600" height="900" alt="FuncGraph Timeline with a user-to-kernel divider in the sendto call stack"></a>
+    <p class="cap" lang="en">In this real QEMU <code>demo_io</code> recording, the Timeline follows <code>main → sendto → __x64_sys_sendto → … → loopback_xmit</code>.
+      The thin line marks the top edge of each linked kernel call. In Text, look for the underlined <code>K</code> beside the same call.</p>
+    <p class="cap" lang="zh">这份真实的 QEMU <code>demo_io</code> 记录，在 Timeline 中可以沿 <code>main → sendto → __x64_sys_sendto → … → loopback_xmit</code> 下探。
+      细线标在匹配的内核调用顶边；在 Text 中，同一个调用旁的 <code>K</code> 带有下划线。</p>
+  </section>
+
+  <section id="kernel-sample">
+  <h2 lang="en">Kernel-only: source and error paths</h2>
+  <h2 lang="zh">纯内核态：源码与错误路径</h2>
+  <a href="sample.html"><img class="shot" src="sample.png" alt="FuncGraph Timeline of the kernel-only sample"></a>
   <p class="cap" lang="en">The sample: one process reads and writes 4 KB and sends a UDP datagram to itself (QEMU x86_64, Linux 7.4-rc2; 485 recorded calls).
     Selected: <code>process_backlog</code>, 24.21 us in the loopback softirq receive path; source links are pinned to the matching upstream tag.</p>
   <p class="cap" lang="zh">示例：一个进程读写 4 KB 文件，再通过 loopback 给自己发一个 UDP 包（QEMU x86_64，Linux 7.4-rc2；485 次记录调用）。
     选中的是 loopback 软中断接收路径中的 <code>process_backlog</code>，耗时 24.21 us；源码链接固定到匹配的上游标签。</p>
+  </section>
 
   <h2 lang="en">What it shows</h2>
   <h2 lang="zh">能看到什么</h2>

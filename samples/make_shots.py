@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Regenerate sample.png and samples/sample_text.png from the current sample.html.
+"""Regenerate the screenshots from sample.html and sample_mixed.html.
 
     python3 samples/make_shots.py
 
-Requires Playwright and Chromium. Keeps the overview at 1841x951 with
-process_backlog selected, and the Text view at 1600x1000.
+Requires Playwright and Chromium. Captures the kernel overview and Text view,
+and the mixed Timeline around sendto with loopback_xmit selected.
 """
 import importlib.util
 from pathlib import Path
@@ -43,6 +43,16 @@ def main():
         page.locator('.line-container.expandable[data-func="udp_sendmsg"]').first.click()
         page.evaluate('window.scrollTo(0, 0)')
         save(page, ROOT / 'samples/sample_text.png')
+
+        page = shots.open_page(browser, str(ROOT / 'sample_mixed.html'), 'timeline', width=1600, height=900)
+        sendto = shots.find(page, 'sendto')
+        loopback = shots.find(page, 'loopback_xmit')
+        if min(sendto, loopback) < 0:
+            raise RuntimeError('sample_mixed.html is missing the recorded UDP path')
+        shots.zoom(page, sendto, pad=0.04, select=False)
+        page.evaluate('index => fgView("timeline").probe().select(index)', loopback)
+        page.locator('[data-context-list=stack] [data-space-boundary]').wait_for(state='visible')
+        save(page, ROOT / 'sample_mixed.png')
         browser.close()
 
 

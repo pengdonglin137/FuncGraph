@@ -496,6 +496,8 @@ marks each linked user → kernel transition over the kernel call's recorded
 span. The toolbar legend and call-stack labels explain the boundary; user code
 has its own Context color. Single-space reports have no divider. Use
 `space:user` or `space:kernel` in the shared Text/Timeline Filter.
+Try the [mixed sample](../sample_mixed.html) or see the
+[uftrace walkthrough](uftrace.md#mixed-sample-follow-sendto-into-the-kernel).
 
 ### 6.1 Layout
 

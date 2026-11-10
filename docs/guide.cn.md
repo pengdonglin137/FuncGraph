@@ -495,6 +495,7 @@ Text 的焦点与滚动分开处理：初始化、恢复选中或其他明确要
 该调用的实测时段。工具栏图例和调用栈标记解释两态的转换；默认 Context 配色下
 用户态有独立配色。单态报告无分界线。Text / Timeline 共用的 Filter 支持
 `space:user` 和 `space:kernel`。
+可打开[混合示例](../sample_mixed.html)实际体验，操作和重建步骤见 [uftrace 指南](uftrace.cn.md)。
 
 ### 6.1 布局
 

@@ -178,7 +178,7 @@ python3 -m venv "$download_dir/venv"
 
 ## 6. 常见问题与处理
 
-sample 更新走分支 CI，不依赖版本标签。只有共享检查**全部通过**（包括 native raw 构建和打包），Pages 才会部署；不能仅凭 Python 测试通过判断更新成功。raw 构建失败时，Pages 会跳过，继续提供上一次成功部署的 sample 和截图。应检查失败 job，源码问题需要提交并推送修复，再核实新 push 对应的 `pages` job 和线上文件。重跑旧提交不会包含后续修复；手动 `workflow_dispatch` 运行 CI 也不会部署 Pages。请将线上 `sample.html`、`sample.png`、`sample_text.png` 与实际部署提交里的文件比较，不要把刷新浏览器当作部署验收。
+sample 更新走分支 CI，不依赖版本标签。只有共享检查**全部通过**（包括 native raw 构建和打包），Pages 才会部署；不能仅凭 Python 测试通过判断更新成功。raw 构建失败时，Pages 会跳过，继续提供上一次成功部署的 sample 和截图。应检查失败 job，源码问题需要提交并推送修复，再核实新 push 对应的 `pages` job 和线上文件。重跑旧提交不会包含后续修复；手动 `workflow_dispatch` 运行 CI 也不会部署 Pages。请将线上 `sample.html`、`sample.png`、`sample_text.png`、`sample_mixed.html`、`sample_mixed.png` 与实际部署提交里的文件比较，不要把刷新浏览器当作部署验收。
 
 | 现象 | 原因与处理 |
 | --- | --- |

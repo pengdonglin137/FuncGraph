@@ -36,6 +36,8 @@ jobs:
           pip install playwright
           python -m playwright install --with-deps chromium
       - name: Run tests
+        env:
+          FG_SAMPLE_BROWSER_REQUIRED: ${{ matrix.browser && '1' || '0' }}
         run: tests/run.sh
 
   raw:

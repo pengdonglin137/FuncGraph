@@ -11,7 +11,7 @@ FuncGraph 支持可视化仅用户态、仅内核态和混合 uftrace 记录。�
 [![FuncGraph 可视化示例（点击打开示例报告）](sample.png)](https://pengdonglin137.github.io/FuncGraph/sample.html)
 
 
-> **在线试用**：[首页](https://pengdonglin137.github.io/FuncGraph/) · [示例报告](https://pengdonglin137.github.io/FuncGraph/sample.html)（在浏览器中直接打开，无需安装）。
+> **在线试用**：[首页](https://pengdonglin137.github.io/FuncGraph/) · [用户态 + 内核态](https://pengdonglin137.github.io/FuncGraph/sample_mixed.html) · [纯内核态](https://pengdonglin137.github.io/FuncGraph/sample.html)（在浏览器中直接打开，无需安装）。
 >
 > **详细使用指南**：[中文](docs/guide.cn.md) · [English](docs/guide.en.md)（采集选项、各视图字段与配色的含义、分析面板、对比、导出、常见问题）。设计文档：[docs/design.md](docs/design.md)。
 
@@ -72,6 +72,12 @@ FG_CONFIG=/dev/null python3 docs/img/make_shots.py
 ```
 
 示例于 2026 年 11 月 10 日重新采集。trace、QEMU 运行内核与宿主构建信息均为 `7.4.0-rc2`、`#3`（`Tue Nov 10 21:07:54 CST 2026`）。宿主源码 `/vol_1t/Qemu/linux` 没有已跟踪文件的修改，其上述提交与 GitHub 上独立核实的上游 `v7.4-rc2` 标签指向一致。内嵌源码读取该固定本地提交，外部 GitHub 链接固定到该标签，而非会变化的 `master`。本次标定为每个被跟踪子调用 143 ns、每次调用自身 77 ns。旧 `sample_io_slow.txt` 保留为 7.2.0+ 历史采集，用于 Compare 演示，不作为受控的跨版本性能基准。
+
+### 用户态 + 内核态混合示例
+
+[![混合时间轴：从用户态 sendto 进入内核](sample_mixed.png)](https://pengdonglin137.github.io/FuncGraph/sample_mixed.html)
+
+本地打开 [sample_mixed.html](sample_mixed.html)，也可以点截图在线查看。在 **Timeline** 选中 `__x64_sys_sendto`，调用顶边有细分界线，调用栈在同一位置分隔用户态和内核态；切换到 Text，同一入口旁的 `K` 带下划线。这份真实的 QEMU `demo_io` 示例有 5 处匹配的跨态边界。采集范围、保留字段和重建命令见 [uftrace 指南](docs/uftrace.cn.md)。
 
 ---
 
@@ -477,10 +483,12 @@ tests/                # 自测（tests/run.sh）和树莓派 4 采集的样例
 docs/design.md        # 设计文档
 site/index.html       # GitHub Pages 首页（由 .github/workflows/ci.yml 连同示例一起发布）
 .github/workflows/    # CI：在 Python 3.8 / 3.12 上跑测试，然后发布 Pages
-samples/              # 当前 7.4-rc2 示例、历史 7.2.0+ 对比 trace、demo_io.c、截图及 make_shots.py
+samples/              # 内核 trace、混合 uftrace JSONL、历史对比 trace、demo_io.c 和截图脚本
 docs/img/             # 使用指南的截图（make_shots.py 重新生成）
 sample.html           # samples/sample_io.txt 的报告（见“示例”一节）
 sample.png            # sample.html 的截图
+sample_mixed.html     # samples/sample_mixed.jsonl 的用户态 + 内核态报告
+sample_mixed.png      # sendto 附近的混合时间轴截图
 ftrace.txt            # 旧的 x86 示例 trace（测试使用）
 ```
 

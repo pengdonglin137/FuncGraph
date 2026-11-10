@@ -9,6 +9,34 @@ mixed** recordings without a required `vmlinux` or native Python dependency.
 Existing ftrace text and trace-cmd inputs still work. The state-preserving
 `fgcapture.sh --user` wrapper is not implemented.
 
+## Mixed sample: follow `sendto` into the kernel
+
+Open [sample_mixed.html](../sample_mixed.html) in your browser, or use the
+[GitHub Pages sample](https://pengdonglin137.github.io/FuncGraph/sample_mixed.html).
+Switch to **Timeline** (default **Context** colors) and select
+`__x64_sys_sendto`. Follow `main → sendto → __x64_sys_sendto → … → loopback_xmit`.
+The thin line over `__x64_sys_sendto` marks the boundary for that call only.
+The call stack separates user and kernel frames at the same point; Text uses
+an underlined `K` on the kernel entry. In the call stack, click `demo_io.c:22`
+to view the embedded source. Use the shared Filter with `space:user` or
+`space:kernel` to inspect either address space.
+
+The [checked-in JSONL](../samples/sample_mixed.jsonl) is a scoped extract from
+the x86_64 QEMU Linux `7.4.0-rc2` capture of [`demo_io.c`](../samples/demo_io.c)
+on November 11, 2026. It contains 15 user calls, 916 kernel calls and five
+linked transitions. The extract keeps the original call records (including
+addresses, parameters and raw return values), but not scheduler/perf events.
+No kernel debug image is used here; use the [kernel-only sample](../sample.html)
+for resolved kernel source and BTF-backed error paths. To rebuild the mixed
+report from the repository root (no uftrace executable or `vmlinux` needed):
+
+```bash
+python3 funcgraph.py --no-config --timeline --enable-fold --filter \
+    --user-src samples --report-mode single \
+    --output sample_mixed.html samples/sample_mixed.jsonl
+FG_CONFIG=/dev/null python3 samples/make_shots.py  # screenshots; needs Playwright + Chromium
+```
+
 ## Generate a report
 
 ```bash

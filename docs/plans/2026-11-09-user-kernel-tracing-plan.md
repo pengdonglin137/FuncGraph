@@ -116,7 +116,9 @@ refresh 和四份维护补丁（含 Pi 实测发现的 kallsyms 模块符号区�
 及 CI；真实采集通过独立 ring-page 解码核对，不用已读空的 cat trace 伪装同次基准。
 已交付 `--uftrace`、`--user-src`、F_USER、分界线、按态过滤及 Compare / 导出的态区分。
 原始 QEMU 和 Pi 记录各识别 5 处同线程跨态边界，保留 Pi 不完整帧。可视化路径不再
-经过 ftrace 文本解析器；同名函数不跨态归并。仍待 `fgcapture.sh --user`、分态开销标定、
+经过 ftrace 文本解析器；同名函数不跨态归并。已用真实 QEMU 截取记录生成
+`sample_mixed.html` 和截图，供离线浏览及 Pages 部署，原纯内核示例保留。CI 回归验证重建、
+三种采集模式和 Pages 路径。仍待 `fgcapture.sh --user`、分态开销标定、
 更细的耗时拆分，以及未验证的多会话 / TID 复用。详见 `docs/uftrace.cn.md`。
 
 | 阶段 | 内容 | 验收标准 |

@@ -8,6 +8,30 @@ FuncGraph 支持导入**仅用户态、仅内核态、混合**记录，不强制
 不需要原生 Python 扩展。现有 ftrace 文本和 trace-cmd 输入仍可使用。
 负责保护和恢复 tracefs 状态的 `fgcapture.sh --user` 包装尚未实现。
 
+## 混合示例：沿 `sendto` 进入内核
+
+用浏览器直接打开 [sample_mixed.html](../sample_mixed.html)，也可以打开
+[GitHub Pages 在线示例](https://pengdonglin137.github.io/FuncGraph/sample_mixed.html)。
+切到 **Timeline**，保留默认 **Context** 配色，点击 `__x64_sys_sendto`，沿
+`main → sendto → __x64_sys_sendto → … → loopback_xmit` 查看。`__x64_sys_sendto`
+顶边的细线只标出这次调用的跨态边界；调用栈在同一位置分隔两态，Text 在对应的内核入口旁显示
+带下划线的 `K`。调用栈里的 `demo_io.c:22` 可点击查看内嵌源码。两种视图均可用
+`space:user` 或 `space:kernel` 过滤。
+
+[仓库内的 JSONL](../samples/sample_mixed.jsonl) 取自 2026 年 11 月 11 日在 x86_64 QEMU
+Linux `7.4.0-rc2` 上对 [`demo_io.c`](../samples/demo_io.c) 的实际采集，包含 15 次用户态调用、
+916 次内核态调用和 5 处匹配的跨态边界。截取时保留了原始调用记录，包括地址、参数和原始
+返回值；没有纳入调度 / perf 事件。这个报告不使用内核调试镜像；若要看内核源码解析和 BTF
+校验的错误路径，可打开[纯内核态示例](../sample.html)。在仓库根目录重建混合报告无需 uftrace
+可执行文件或 `vmlinux`：
+
+```bash
+python3 funcgraph.py --no-config --timeline --enable-fold --filter \
+    --user-src samples --report-mode single \
+    --output sample_mixed.html samples/sample_mixed.jsonl
+FG_CONFIG=/dev/null python3 samples/make_shots.py  # 重建截图，需要 Playwright + Chromium
+```
+
 ## 生成报告
 
 ```bash

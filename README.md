@@ -12,7 +12,7 @@ Ordinary CLI output remains an offline single HTML file. For large reports, opt 
 
 FuncGraph converts `function_graph` ftrace output into an interactive, filterable HTML report for kernel developers and performance engineers. It is optimized for fast triage: source linking, high-speed address resolution, parameter and duration filtering, and keyboard-friendly call folding.
 
-> **Try it online**: [home page](https://pengdonglin137.github.io/FuncGraph/) · [sample report](https://pengdonglin137.github.io/FuncGraph/sample.html) (opens in the browser, no install).
+> **Try it online**: [home page](https://pengdonglin137.github.io/FuncGraph/) · [mixed user + kernel](https://pengdonglin137.github.io/FuncGraph/sample_mixed.html) · [kernel-only](https://pengdonglin137.github.io/FuncGraph/sample.html) (opens in the browser, no install).
 >
 > **User guide** (detailed: capture options, every field and color in the views, panels, compare, export, FAQ): [English](docs/guide.en.md) · [中文](docs/guide.cn.md). Design: [docs/design.md](docs/design.md).
 
@@ -69,6 +69,12 @@ FG_CONFIG=/dev/null python3 docs/img/make_shots.py
 ```
 
 The sample was recaptured on November 10, 2026. The trace, QEMU runtime and host build identify `7.4.0-rc2`, build `#3` (`Tue Nov 10 21:07:54 CST 2026`). The host source at `/vol_1t/Qemu/linux` has no tracked modifications; its commit above matches the peeled upstream `v7.4-rc2` tag, independently checked on GitHub. Embedded source uses that exact local commit, and external GitHub links are pinned to that tag, not moving `master`. Calibration recorded 143 ns per traced child and 77 ns per call. The older `sample_io_slow.txt` remains a historical 7.2.0+ capture for Compare examples, not a controlled cross-version performance baseline.
+
+### Mixed user + kernel sample
+
+[![Mixed Timeline: sendto from user space into the kernel](sample_mixed.png)](https://pengdonglin137.github.io/FuncGraph/sample_mixed.html)
+
+Open [sample_mixed.html](sample_mixed.html) locally or click the screenshot to open it online. In **Timeline**, select `__x64_sys_sendto` to see the thin boundary line and the matching separator in the call stack. The same entry has an underlined `K` in Text. This real QEMU `demo_io` example has five linked user → kernel transitions. See the [uftrace guide](docs/uftrace.md#mixed-sample-follow-sendto-into-the-kernel) for the raw fields, scope, and rebuild command.
 
 ---
 
@@ -476,12 +482,14 @@ assets/compare/       # Compare tab
 assets/views/         # Tab switching shared by the extra views
 tests/                # Self-tests (tests/run.sh) and fixtures from a Raspberry Pi 4
 docs/design.md        # Design document
-site/index.html       # GitHub Pages home page (published with the sample by .github/workflows/ci.yml)
+site/                 # GitHub Pages home page and staging script for both reports
 .github/workflows/    # CI: tests on Python 3.8 / 3.12, then Pages
-samples/              # Current 7.4-rc2 sample, historical 7.2.0+ Compare trace, demo_io.c, screenshots and make_shots.py
+samples/              # Kernel trace, mixed uftrace JSONL, historical Compare trace, demo_io.c and screenshot script
 docs/img/             # Guide screenshots (make_shots.py regenerates them)
 sample.html           # Report of samples/sample_io.txt (see Sample)
 sample.png            # Screenshot of sample.html
+sample_mixed.html     # Mixed user + kernel report from samples/sample_mixed.jsonl
+sample_mixed.png      # Mixed Timeline around sendto
 ftrace.txt            # Older x86 example trace (used by the tests)
 ```
 
