@@ -427,6 +427,8 @@
             font-family: 'SF Mono', Menlo, Consolas, 'DejaVu Sans Mono', 'Courier New', monospace;
             font-size: 12px;
         }
+        .trace-space, .trace-user-source { color: var(--text-muted); }
+        [data-boundary="user-kernel"] .trace-space { border-bottom: 1px solid currentColor; }
         .location-link {
             display: block;
             padding: 3px 5px;

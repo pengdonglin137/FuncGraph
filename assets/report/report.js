@@ -843,6 +843,11 @@
                 'hirq': 'data-hirq', 'preempt': 'data-preempt'
             };
 
+            if (field === 'space') {
+                const space = line.getAttribute('data-space');
+                return (space || (line.getAttribute('data-func') ? 'kernel' : '')) === value.toLowerCase();
+            }
+
             // func: simple function name match
             if (field === 'func') {
                 const funcAttr = line.getAttribute('data-func');
@@ -1210,6 +1215,8 @@
             if (fgData.ready('fgTextIndex')) data = fgData.read('fgTextIndex');
             else {
                 const rows = [];
+                const typed = root.hasAttribute('data-address-spaces');
+                const fields = typed ? [...fgTextModel.fields, 'space'] : fgTextModel.fields;
                 for (const line of lines) {
                     let source = null;
                     if (line.classList.contains('expandable')) {
@@ -1230,11 +1237,11 @@
                         text += range.toString();
                     }
                     rows.push([+line.getAttribute('data-line-number'), text,
-                        ...fgTextModel.fields.map(field => line.getAttribute('data-' + field)), source]);
+                        ...fields.map(field => line.getAttribute('data-' + field)), source]);
                     if (rows.length % 512 === 0) yield 'Reading complete Text rows: ' + rows.length + ' / ' + lines.length + '…';
                 }
                 rows.sort((left, right) => left[0] - right[0]);
-                data = { version: 2, fields: fgTextModel.fields, rows };
+                data = { version: typed ? 3 : 2, fields, rows };
             }
             const model = yield* fgTextModel.prepare(data);
             if (model.records.length !== lines.length) throw new Error('Text model does not cover mounted rows');
@@ -1371,7 +1378,7 @@
         }
 
         function* fgPrepareTextNavigation(lines, model = null) {
-            if (model?.version === 2) return yield* fgTextModel.prepareNavigation(model);
+            if (model?.version >= 2) return yield* fgTextModel.prepareNavigation(model);
             const order = [], expandable = [], hidden = [];
             for (const line of lines) {
                 const number = +line.getAttribute('data-line-number');

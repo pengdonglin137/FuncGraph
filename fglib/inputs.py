@@ -4,8 +4,10 @@ import gzip
 import heapq
 import io
 import lzma
+import os
 import re
 import shutil
+import subprocess
 import sys
 import tempfile
 
@@ -15,10 +17,41 @@ RE_TS = re.compile(r'^\s*(\d+)\.(\d{6,9}) \|')
 OPENERS = {'.gz': gzip.open, '.xz': lzma.open, '.lzma': lzma.open, '.bz2': bz2.open}
 
 
+class UftraceInput:
+    def __init__(self, stream):
+        from .uftrace import read_export
+        self.metadata, self.records = read_export(stream)
+
+    def build(self, enable_fold=False, include_text=True, **options):
+        from .uftrace import UftraceTimeline
+        return UftraceTimeline(self.metadata, self.records, **options).build(enable_fold=enable_fold, include_text=include_text)
+
+
+def read_uftrace_directory(directory, executable=None):
+    from .uftrace import UftraceInputError
+    with subprocess.Popen([executable or 'uftrace', 'dump', '--fgraph', '--srcline', '-d', os.path.abspath(directory)],
+                          stdout=subprocess.PIPE, text=True, encoding='utf-8') as process:
+        try:
+            trace = UftraceInput(process.stdout)
+        except BaseException:
+            if process.poll() is None:
+                process.kill()
+            raise
+        if process.wait():
+            raise UftraceInputError('uftrace dump failed; use a patched build (scripts/uftrace.sh build)')
+        return trace
+
+
 def _read_stream(stream, path, input_format, raw_instance, as_lines):
     prefix = stream.read(4096)
     stream.seek(0)
     binary = prefix.startswith(raw.MAGIC)
+    if input_format == 'uftrace' or (as_lines and input_format == 'auto' and prefix.lstrip().startswith(b'{') and
+                                    b'funcgraph.uftrace.v' in prefix):
+        if not as_lines:
+            raise ValueError('structured uftrace input cannot be read as ftrace text')
+        with io.TextIOWrapper(stream, encoding='utf-8') as text:
+            return UftraceInput(text)
     if input_format == 'raw' and not binary:
         raise raw.RawInputError('raw input must be a trace-cmd trace.dat container; '
                                 'bare trace_pipe_raw pages need event formats, symbols and clock metadata')
@@ -43,10 +76,12 @@ def _read_stream(stream, path, input_format, raw_instance, as_lines):
 
 
 def _read_input(path, input_format, raw_instance, as_lines):
-    if input_format not in ('auto', 'text', 'raw'):
+    if input_format not in ('auto', 'text', 'raw', 'uftrace'):
         raise ValueError('unknown input format: ' + input_format)
     if path == '-':
         if not hasattr(sys.stdin, 'buffer'):
+            if input_format == 'uftrace' and as_lines:
+                return UftraceInput(sys.stdin)
             if input_format == 'raw':
                 raise raw.RawInputError('raw stdin needs a binary input stream')
             content = sys.stdin.read()
@@ -100,10 +135,16 @@ def _chunks(lines):
 
 
 def read_lines(paths, input_format='auto', raw_instance=None):
-    """Return (lines, note). Several files are merged by absolute timestamp when all have one."""
+    """Return (lines or UftraceInput, note). Merge timed ftrace files by timestamp."""
     if len(paths) == 1:
         return _read_input(paths[0], input_format, raw_instance, as_lines=True), None
-    parts = [_chunks(_read_input(path, input_format, raw_instance, as_lines=True)) for path in paths]
+    parts = []
+    for path in paths:
+        lines = _read_input(path, input_format, raw_instance, as_lines=True)
+        if isinstance(lines, UftraceInput):
+            from .uftrace import UftraceInputError
+            raise UftraceInputError('use one uftrace recording or JSONL stream per report')
+        parts.append(_chunks(lines))
     head = max((p[0] for p in parts), key=len)     # per-CPU files repeat the header: keep one
     if not all(p[2] for p in parts):
         out = list(head)

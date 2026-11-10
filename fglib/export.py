@@ -12,7 +12,7 @@ JSON layout (durations in ns, times relative to the first event):
 import csv
 import json
 
-from .compare import function_stats
+from .compare import function_key, function_stats
 
 FATES = ['handled', 'user', 'escaped']
 SECTION_KINDS = ['irqs_off', 'preempt_off', 'bh_off']
@@ -34,16 +34,18 @@ def build(d, errno_map=None, trace_name=''):
         start.append(acc)
     name = lambda i: S[c['name'][i]] if i >= 0 else None  # noqa: E731
     task = lambda t: (T[t]['comm'], T[t]['pid'])          # noqa: E731
-    durs = {}
-    for i in range(n):
-        durs.setdefault(c['name'][i], []).append(c['dur'][i])
-    stats = function_stats(d)
+    by_space = 'uftrace' in d
     by_name = {}
-    for k, v in durs.items():
-        by_name[S[k]] = sorted(v)
-    functions = [{'name': nm, 'calls': st[0], 'total': st[1], 'self': st[2], 'max': st[3],
-                  'p50': _q(by_name[nm], .5), 'p90': _q(by_name[nm], .9), 'p99': _q(by_name[nm], .99), 'errors': st[4]}
-                 for nm, st in stats.items()]
+    for i in range(n):
+        by_name.setdefault(function_key(d, i, by_space), []).append(c['dur'][i])
+    functions = []
+    for key, st in function_stats(d, by_space=by_space).items():
+        durations = sorted(by_name[key])
+        row = {'name': key[1] if by_space else key, 'calls': st[0], 'total': st[1], 'self': st[2], 'max': st[3],
+               'p50': _q(durations, .5), 'p90': _q(durations, .9), 'p99': _q(durations, .99), 'errors': st[4]}
+        if by_space:
+            row['space'] = key[0]
+        functions.append(row)
     functions.sort(key=lambda r: -r['self'])
     errno_map = errno_map or {}
 
@@ -93,6 +95,8 @@ def build(d, errno_map=None, trace_name=''):
         'functions': functions, 'errors': errors, 'sections': sections, 'sched_latency': lat,
         'atomic_sleep': atomic, 'off_cpu': off,
     }
+    if by_space:
+        result['meta']['uftrace'] = d['uftrace']
     if 'tail_calls' in d:
         evidence = d['tail_calls']
         result['tail_calls'] = dict(evidence, pairs=[dict(pair, parent=S[pair['parent']], child=S[pair['child']],
@@ -105,6 +109,8 @@ def write(path, d, errno_map=None, trace_name=''):
     data = build(d, errno_map, trace_name)
     if path.endswith('.csv'):
         cols = ['name', 'calls', 'total', 'self', 'max', 'p50', 'p90', 'p99', 'errors']
+        if 'uftrace' in d:
+            cols.insert(1, 'space')
         with open(path, 'w', newline='') as f:
             w = csv.DictWriter(f, fieldnames=cols)
             w.writeheader()

@@ -491,6 +491,12 @@ New sidecar indexes carry the exact source-pool ID for every expandable row, inc
 
 ## 6. Timeline view
 
+For [uftrace recordings](uftrace.md) containing both address spaces, a thin line
+marks each linked user → kernel transition over the kernel call's recorded
+span. The toolbar legend and call-stack labels explain the boundary; user code
+has its own Context color. Single-space reports have no divider. Use
+`space:user` or `space:kernel` in the shared Text/Timeline Filter.
+
 ### 6.1 Layout
 
 ![tl_layout](img/tl_layout.png)

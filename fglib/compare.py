@@ -12,11 +12,17 @@ differences remain meaningful (see docs/design.md).
 from . import timeline
 
 
-def function_stats(data, adjusted=False):
+def function_key(data, index, by_space):
+    name = data['strings'][data['cols']['name'][index]]
+    if not by_space:
+        return name
+    return ('user' if data['cols']['flags'][index] & timeline.F_USER else 'kernel', name)
+
+
+def function_stats(data, adjusted=False, by_space=False):
     """data: TimelineBuilder.to_data() -> {name: [calls, incl, self, max, errors]}."""
     c = data['cols']
     n = data['n']
-    S = data['strings']
     dur = c['adj'] if adjusted and c.get('adj') else c['dur']
     parent = c['parent']
     self_t = list(dur)
@@ -31,7 +37,7 @@ def function_stats(data, adjusted=False):
         errs[ch[0]] = errs.get(ch[0], 0) + 1
     out = {}
     for i in range(n):
-        name = S[c['name'][i]]
+        name = function_key(data, i, by_space)
         st = out.get(name)
         if st is None:
             st = out[name] = [0, 0, 0, 0, 0]
@@ -52,18 +58,25 @@ def window(data):
 
 def _rows(a, b):
     rows = []
-    for name in set(a) | set(b):
-        rows.append([name] + a.get(name, [0, 0, 0, 0, 0]) + b.get(name, [0, 0, 0, 0, 0]))
+    for key in sorted(set(a) | set(b)):
+        name = key[1] if isinstance(key, tuple) else key
+        rows.append([name] + a.get(key, [0, 0, 0, 0, 0]) + b.get(key, [0, 0, 0, 0, 0]) +
+                    ([key[0]] if isinstance(key, tuple) else []))
     rows.sort(key=lambda r: -abs(r[8] - r[3]))     # default order: largest change of self time
     return rows
 
 
 def compare(cur_data, base_lines, rettypes=None, overhead=None, base_name='base', cur_name='current'):
     """overhead: applied to both traces (read from each trace's header when None)."""
-    base = timeline.build_timeline(base_lines, rettypes=rettypes, overhead=overhead).to_data()
-    rows = _rows(function_stats(base), function_stats(cur_data))
+    from .inputs import UftraceInput
+    if isinstance(base_lines, UftraceInput):
+        base = base_lines.build(rettypes=rettypes, overhead=overhead, include_text=False).to_data()
+    else:
+        base = timeline.build_timeline(base_lines, rettypes=rettypes, overhead=overhead).to_data()
+    by_space = 'uftrace' in base or 'uftrace' in cur_data
+    rows = _rows(function_stats(base, by_space=by_space), function_stats(cur_data, by_space=by_space))
     both_adj = bool(base['cols'].get('adj') and cur_data['cols'].get('adj'))
-    rows_adj = _rows(function_stats(base, True), function_stats(cur_data, True)) if both_adj else None
+    rows_adj = _rows(function_stats(base, True, by_space), function_stats(cur_data, True, by_space)) if both_adj else None
     return {
         'rows_adj': rows_adj,
         'overhead': [base.get('overhead'), cur_data.get('overhead')],

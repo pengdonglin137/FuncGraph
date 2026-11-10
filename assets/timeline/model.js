@@ -12,8 +12,11 @@ const FL = {
     GHOST: 1 << 24,    // synthetic untraced frame filling a depth gap (front-end only)
     CTX: 3, IRQOFF: 1 << 2, BHOFF: 1 << 3, RS_SHIFT: 4, PR_SHIFT: 7, MG_SHIFT: 11,
     LAT: 1 << 15, TRUNC: 1 << 16, ORPHAN: 1 << 17, EST: 1 << 18, MISMATCH: 1 << 19,
-    NULLRET: 1 << 20, LEAF: 1 << 21, CTXINF: 1 << 22
+    NULLRET: 1 << 20, LEAF: 1 << 21, CTXINF: 1 << 22, USER: 1 << 25, BOUNDARY: 1 << 26
 };
+const HAS_USER = D.uftrace?.spaces.includes('user');
+const HAS_KERNEL = !D.uftrace || D.uftrace.spaces.includes('kernel');
+const MIXED = HAS_USER && HAS_KERNEL;
 const CTX_NAMES = ['task', 'softirq', 'hardirq', 'NMI'];
 const RESCHED_NAMES = ['', 'need-resched (n)', 'need-resched + preempt (N)', 'preempt-resched (p)',
     'lazy (l)', 'lazy + preempt (L)', 'need + lazy (b)', 'need + lazy + preempt (B)'];
@@ -103,7 +106,7 @@ yield* (function* buildInline() {
             }
             runs.length = k - 1;
             const sid = synth.length;
-            synth.push([sTask[i], sStart[i], sEnd[i], ch[k][0], base + k, sFlags[i] & (FL.CTX | FL.CTXINF), sLine[i], p, ch, k]);
+            synth.push([sTask[i], sStart[i], sEnd[i], ch[k][0], base + k, sFlags[i] & (FL.CTX | FL.CTXINF | FL.USER), sLine[i], p, ch, k]);
             SYN.push({ k: k, chain: ch, kids: [i], p: p });
             runs.push({ key: key, sid: sid });
         }
@@ -162,6 +165,7 @@ function callerRelationText(index) {
 }
 function gapOf(i) { const p = i < N ? sParent[i] : -1; return p >= 0 ? sDepth[i] - sDepth[p] - 1 : 0; }
 (function buildGhosts() {
+    if (D.uftrace) return;
     const runs = new Map();   // parent -> open runs per missing level
     const gh = [];            // [task, start, end, name, depth, ld, ctxFlags, line, p]
     const meta = [];
@@ -184,7 +188,7 @@ function gapOf(i) { const p = i < N ? sParent[i] : -1; return p >= 0 ? sDepth[i]
             }
             r.length = L - 1;
             const sid = gh.length;
-            gh.push([sTask[i], sStart[i], sEnd[i], name, sDepth[p] + L, sLd[p] + L, sFlags[i] & (FL.CTX | FL.CTXINF), sLine[i], p]);
+            gh.push([sTask[i], sStart[i], sEnd[i], name, sDepth[p] + L, sLd[p] + L, sFlags[i] & (FL.CTX | FL.CTXINF | FL.USER), sLine[i], p]);
             meta.push({ ghost: true, kids: [i], p: p, level: L, gap: gap, name: name });
             r.push({ name: name, sid: sid });
         }
@@ -388,6 +392,10 @@ function fmtDur(ns) {
 }
 function fmtAbs(ns) {
     if (MODE !== 'abs') return '';
+    if (D.uftrace?.origin_ns) {
+        const time = BigInt(D.uftrace.origin_ns) + BigInt(Math.round(ns));
+        return (time / 1000000000n) + '.' + String(time % 1000000000n).padStart(9, '0');
+    }
     const t = D.t0 + ns;
     return Math.floor(t / 1e9) + '.' + String(Math.floor((t % 1e9) / 1e3)).padStart(6, '0');
 }
@@ -395,6 +403,8 @@ function esc(s) {
     return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
 function nameOf(i) { return S[sName[i]]; }
+function spaceOf(index) { return sFlags[index] & FL.USER ? 'user' : 'kernel'; }
+function userPosition(index) { return D.sources?.user_positions?.[D.sources?.user_lines?.[sLine[index]]]; }
 function retOf(i) { return sRet && sRet[i] >= 0 ? S[sRet[i]] : null; }
 function callerOf(i) { return sCaller && sCaller[i] >= 0 ? S[sCaller[i]] : null; }
 function argsOf(i) { return sArgs && sArgs[i] >= 0 ? S[sArgs[i]] : null; }
@@ -460,6 +470,8 @@ tlRoot.innerHTML = `
       <button data-v="cpu" title="CPU the call ran on">CPU</button>
       <button data-v="module" title="Kernel module">Module</button>
     </span></span>
+  ${MIXED ? '<span class="tl-group tl-space-key" aria-label="Address space legend"><span class="tl-space-user">User</span><span>Kernel</span>' +
+    (D.stats.user_kernel_boundaries ? '<span class="tl-space-edge" title="Boundary spans the recorded kernel call">User → kernel</span>' : '') + '</span>' : ''}
   <span class="tl-group"><span class="tl-label">Overlay</span>
     <button class="tl-chip" data-ov="err"><i class="dot" style="background:#d32f2f"></i>Errors</button>
     <button class="tl-chip" data-ov="irq"><i class="dot" style="background:repeating-linear-gradient(135deg,#555 0 2px,transparent 2px 4px)"></i>IRQs off</button>

@@ -160,16 +160,20 @@ function tipSlice(i) {
     h += row('start', fmtDur(sStart[i]) + (MODE === 'abs' ? ' &nbsp;(' + fmtAbs(sStart[i]) + ')' : ''));
     const t = TRACKS[sTask[i]];
     h += row('task', esc(trackLabel(t)) + (cpuOf(i) >= 0 ? ' &nbsp;CPU ' + cpuOf(i) : ''));
-    h += row('context', CTX_NAMES[f & FL.CTX] + (f & FL.CTXINF ? ' (inferred)' : '') + ctxFlagText(f));
+    if (D.uftrace) h += row('space', f & FL.BOUNDARY ? 'Kernel · entered from user' : f & FL.USER ? 'User' : 'Kernel');
+    if (!D.uftrace || f & FL.LAT) h += row('context', CTX_NAMES[f & FL.CTX] + (f & FL.CTXINF ? ' (inferred)' : '') + ctxFlagText(f));
     const r = retOf(i);
     if (r !== null) {
-        if (eRole[i] >= 0) h += row('return', esc(r) + ' ' + (errName(eErr[i]) || '') + ' — ' + errRoleText(i), 't-err');
-        else h += row('return', esc(r) + (f & FL.NULLRET ? ' (NULL)' : ''));
+        const field = D.uftrace ? 'raw return' : 'return';
+        if (eRole[i] >= 0) h += row(field, esc(r) + ' ' + (errName(eErr[i]) || '') + ' — ' + errRoleText(i), 't-err');
+        else h += row(field, esc(r) + (f & FL.NULLRET ? ' (NULL)' : ''));
     }
     const c = callerOf(i);
     if (c) h += row('caller', esc(c) + (f & FL.MISMATCH ? '<div class="tl-tail-note">' + esc(callerRelationText(i)) + '</div>' : ''));
     const csp = c ? callSitePos(i) : null;
     if (csp) h += row('source', esc(csp.at));
+    const userSource = f & FL.USER ? userPosition(i) : null;
+    if (userSource) h += row('source', esc(userSource[0] + ':' + userSource[1]));
     const il = inlineLine(i);
     if (il) h += row('inlined in', esc(il));
     const a = argsOf(i);

@@ -47,9 +47,9 @@ function detailSourceFields(position, basis) {
     return position ? { file: position[0], line: position[1], href: position[2] || '', sourceKind: basis } : {};
 }
 function detailRealRow(index, level, site) {
-    const position = D.sources && D.sources.functions && D.sources.functions[sName[index] + ':' + (sMod ? sMod[index] : -1)];
+    const position = sFlags[index] & FL.USER ? userPosition(index) : D.sources?.functions?.[sName[index] + ':' + (sMod ? sMod[index] : -1)];
     return { kind: 'traced', name: nameOf(index), index, owner: index, depth: sDepth[index], level,
-        ...detailSourceFields(site ? site.slice(1) : position, site ? 'call_site' : 'function_entry') };
+        ...detailSourceFields(site ? site.slice(1) : position, site ? 'call_site' : sFlags[index] & FL.USER ? 'recorded_user_source' : 'function_entry') };
 }
 function detailList(kind, title, count, createRows, status) {
     const list = { kind, title, count, createRows, status: status || 'complete', rows: [], visible: Math.min(DETAIL_PAGE, count) };
@@ -122,21 +122,28 @@ function detailRowsHtml(list, rows) {
         const suffix = list.kind === 'error' ? retOf(row.index) || '' : '';
         const title = row.name + (suffix ? ' — ' + suffix : '') + (row.kind === 'untraced' ? ' (not traced: skipped depth)' : '');
         const main = '<' + (traced ? 'button type="button"' : 'div') + ' class="tl-crumb tl-context-select' + (current ? ' cur' : '') + '"' + (traced ? ' data-slice="' + row.index + '"' : '') +
-            ' title="' + esc(title) + '"><span class="tl-context-value">' + esc(label) + '</span><span class="tl-context-text">' + esc(row.name) +
+            ' title="' + esc(title) + '"><span class="tl-context-value">' + esc(label) + '</span><span class="tl-context-text">' +
+            (traced && MIXED ? '<span class="tl-stack-space">' + (spaceOf(row.index) === 'user' ? 'U' : 'K') + '</span>' : '') + esc(row.name) +
             (traced && tailJumpOf(row.index) ? ' <span class="tl-tail-tag" title="' + esc(callerRelationText(row.index)) + '">⇢ tail jump</span>' : '') +
             (suffix ? ' <span class="d">' + esc(suffix) + '</span>' : '') + '</span></' + (traced ? 'button' : 'div') + '>';
         let source = '';
         if (row.kind !== 'outside') {
             const at = row.file ? row.file + ':' + row.line : 'Source unavailable';
-            const basis = row.file ? row.sourceKind === 'function_entry' ? 'Resolved function entry, not the calling line' : 'Call site inside this frame' : '';
+            const basis = row.file ? row.sourceKind === 'function_entry' ? 'Resolved function entry, not the calling line' :
+                row.sourceKind === 'recorded_user_source' ? 'Recorded user source position, not a call site' : 'Call site inside this frame' : '';
             const href = safeSourceUrl(row.href);
+            const embedded = traced && row.sourceKind === 'recorded_user_source' && callSiteBlock(row.index) !== null;
+            const tag = href ? 'a' : embedded ? 'button' : 'span';
             source = '<div class="tl-context-source">' +
-                '<' + (href ? 'a href="' + esc(href) + '" target="_blank" rel="noopener noreferrer"' : 'span') +
-                ' title="' + esc(at + (basis ? ' — ' + basis : '') + (row.file && !href ? ' — no source URL configured' : '')) + '">' +
+                '<' + tag + (href ? ' href="' + esc(href) + '" target="_blank" rel="noopener noreferrer"' :
+                    embedded ? ' type="button" class="tl-source-open" data-slice="' + row.index + '"' : '') +
+                ' title="' + esc(at + (basis ? ' — ' + basis : '') + (row.file && !href && !embedded ? ' — no source URL configured' : '')) + '">' +
                 (row.file ? '<span class="tl-source-file">' + esc(row.file) + '</span><span class="tl-source-line">:' + esc(row.line) + '</span>' : esc(at)) +
-                '</' + (href ? 'a' : 'span') + '></div>';
+                '</' + tag + '></div>';
         }
-        return '<div class="tl-context-row' + (traced ? '' : ' inl') + '" data-context-kind="' + row.kind + '">' + main + source + '</div>';
+        const boundary = list.kind === 'stack' && traced && (sFlags[row.index] & FL.BOUNDARY);
+        return '<div class="tl-context-row' + (traced ? '' : ' inl') + '" data-context-kind="' + row.kind + '"' +
+            (boundary ? ' data-space-boundary="user-kernel" title="User → kernel"' : '') + '>' + main + source + '</div>';
     }).join('');
 }
 function detailListHtml(kind) {
@@ -171,6 +178,7 @@ function exportDetailCsv(kind) {
         'outside_frame_count', 'duration_' + unit, 'self_' + unit, 'start_' + unit, 'end_' + unit, 'time_mode', 'duration_basis', 'position_basis',
         'selected_slice_index', 'chain_index', 'chain_origin_slice', 'chain_top_slice', 'chain_reported_frames', 'errno', 'fate', 'path_status',
         'source_kind', 'source_url', 'relationship', 'relationship_basis', 'tail_jump_sites', 'trace_binary_version_verified'];
+    if (D.uftrace) columns.push('space', 'address_space_boundary');
     function* rows() {
         let position = 0;
         for (const row of list.createRows()) {
@@ -190,7 +198,7 @@ function exportDetailCsv(kind) {
                 evidence ? 'tail_jump_evidence' : traced && sFlags[index] & FL.MISMATCH ? 'caller_mismatch_unresolved' : '',
                 evidence ? 'supplied_binary_static' : '',
                 evidence ? evidence.sites.map(site => site.symbol || site.address).join('; ') : '',
-                evidence ? 'false' : ''];
+                evidence ? 'false' : '', ...(D.uftrace ? [traced ? spaceOf(index) : '', traced && (sFlags[index] & FL.BOUNDARY) ? 'user_to_kernel' : ''] : [])];
         }
     }
     downloadTimelineCsv('funcgraph-context-' + kind + '-' + (MODE === 'count' ? 'count' : adjOn ? 'adjusted' : 'raw') + '.csv', columns, rows());
@@ -237,7 +245,9 @@ function showDetail(i) {
     if (i >= N) { if (isGhost(i)) showGhostDetail(i); else showInlineDetail(i); return; }
     const context = detailContextData(i);
     const f = sFlags[i], d = durOf(i), t = TRACKS[sTask[i]];
-    let pills = pill('ctx' + (f & FL.CTX), CTX_NAMES[f & FL.CTX] + (f & FL.CTXINF ? '?' : ''));
+    let pills = D.uftrace ? pill('mute', f & FL.USER ? 'User space' : 'Kernel space') : '';
+    if (!D.uftrace || f & FL.LAT) pills += pill('ctx' + (f & FL.CTX), CTX_NAMES[f & FL.CTX] + (f & FL.CTXINF ? '?' : ''));
+    if (f & FL.BOUNDARY) pills += pill('mute', 'User → kernel', 'Same thread and contained recorded interval; exact user call site is not known');
     if (f & FL.IRQOFF) pills += pill('warn', 'irqs off');
     if (f & FL.BHOFF) pills += pill('warn', 'BH off');
     if ((f >> FL.RS_SHIFT) & 7) pills += pill('warn', 'need-resched');
@@ -255,7 +265,8 @@ function showDetail(i) {
         '<a class="tl-link" data-dist="' + sName[i] + '">Duration distribution (H)</a>&nbsp;&nbsp;' +
         lineLink(sLine[i], 'Open in text view ↵') + '<button class="tl-close" title="Close (Esc)">×</button></div>';
     h += callNavigationHtml(i) + '<div class="tl-detail-body"><div class="tl-left"><div class="tl-kv">';
-    h += kv('duration', fmtDur(d) + (f & FL.EST ? ' (estimated)' : ''));
+    h += kv('duration', f & FL.ORPHAN && D.uftrace ? 'unknown · entry not recorded' :
+        fmtDur(d) + (f & FL.EST ? ' (estimated)' : f & FL.TRUNC && D.uftrace ? ' (incomplete span)' : ''));
     h += kv('self', fmtDur(sSelf[i]) + (d > 0 ? ' (' + (100 * sSelf[i] / d).toFixed(1) + '%)' : ''));
     h += kv('start', '+' + fmtDur(sStart[i]) + (MODE === 'abs' ? ' &nbsp;' + fmtAbs(sStart[i]) + ' s' : ''));
     h += kv('task', esc(trackLabel(t)) + (cpuOf(i) >= 0 ? ' &nbsp;on CPU ' + cpuOf(i) : ''));
@@ -267,10 +278,10 @@ function showDetail(i) {
         let rv = esc(r);
         if (eRole[i] >= 0) rv += ' ' + esc(errName(eErr[i])) + ' · ' + esc(errRoleText(i));
         else if (f & FL.NULLRET) rv += ' (NULL)';
-        h += kv('return', rv, eRole[i] >= 0 ? 'err' : '');
+        h += kv(D.uftrace ? 'raw return' : 'return', rv, eRole[i] >= 0 ? 'err' : '');
     }
     const c = callerOf(i);
-    if (c) h += kv('call site', esc(c) + '<span class="tl-cs-at"></span>' + (f & FL.MISMATCH ? '<div class="tl-context-note tl-tail-note">' + esc(callerRelationText(i)) + '</div>' : ''));
+    if (c) h += kv(D.uftrace ? 'caller address' : 'call site', esc(c) + '<span class="tl-cs-at"></span>' + (f & FL.MISMATCH ? '<div class="tl-context-note tl-tail-note">' + esc(callerRelationText(i)) + '</div>' : ''));
     const tailJump = tailJumpOf(i);
     if (tailJump) h += kv('tail jump', tailJump.sites.map(site => {
         const source = site.source;
@@ -280,10 +291,10 @@ function showDetail(i) {
             ' · ' + (url ? '<a class="tl-link" href="' + esc(url) + '" target="_blank" rel="noopener noreferrer">' + position + '</a>' : position) + '</div>';
     }).join('') + '<div class="tl-context-note tl-tail-note">Static sites in supplied binary; actual branch site not captured.</div>');
     const a = argsOf(i);
-    if (a) h += kv('args', esc(a));
+    if (a) h += kv(D.uftrace ? (f & FL.USER ? 'raw payload' : 'raw args') : 'args', esc(a));
     if (ATOMIC.has(i)) h += kv('context', 'called with ' + esc(atomicText(ATOMIC.get(i))) + ' (sleeping function in atomic context)', 'err');
     h += kv('trace lines', lineLink(sLine[i]) + (sEline && sEline[i] && sEline[i] !== sLine[i] ? ' → ' + lineLink(sEline[i]) : ''));
-    h += '</div><details class="tl-cs" open><summary class="tl-sec">Call site source</summary><div class="tl-cs-src"></div></details></div><div>';
+    h += '</div><details class="tl-cs" open><summary class="tl-sec">' + (f & FL.USER ? 'User source' : 'Call site source') + '</summary><div class="tl-cs-src"></div></details></div><div>';
     h += breakdownHtml(i);
     if (context.lists.has('error')) h += detailListHtml('error');
     h += detailListHtml('stack') + detailContextHint();
@@ -299,6 +310,7 @@ function callSiteBlock(i) {
 const csPosCache = new Map();
 function callSitePos(i) {
     if (isSyn(i)) return null;
+    if (D.uftrace) return null;
     const chain = D.sources?.callers?.[sCaller?.[i]];
     if (Array.isArray(chain)) {
         if (!chain.length) return null;
@@ -489,7 +501,7 @@ function rangeSummary() {
         sumCache.hits === textHits && sumCache.durations === sDur) return sumCache;
     const rs = range.s, re = range.e;
     const agg = new Map();
-    const ctxSelf = [0, 0, 0, 0];
+    const ctxSelf = [0, 0, 0, 0, 0];
     let offT = 0, nCalls = 0;
     const tracks = range.track !== null ? [TRACKS[range.track]] : ORDER;
     for (const t of tracks) {
@@ -507,7 +519,7 @@ function rangeSummary() {
             a.self += selfPart;
             if (durOf(i) > a.max) { a.max = durOf(i); a.ex = i; }
             if (eRole[i] === 0) a.err++;
-            ctxSelf[sFlags[i] & FL.CTX] += selfPart;
+            ctxSelf[sFlags[i] & FL.USER ? 4 : sFlags[i] & FL.CTX] += selfPart;
         }
         for (const r of t.off) if (r[2] > rs && r[1] < re) offT += Math.min(r[2], re) - Math.max(r[1], rs);
     }
@@ -532,7 +544,8 @@ function rangeRowsHtml(summary, start, end) {
     let html = '';
     for (let index = start; index < end; index++) {
         const [name, stats] = summary.rows[index];
-        html += '<tr data-name="' + esc(S[name]) + '"><td><span class="bar" style="width:' + (60 * stats.self / summary.maxv).toFixed(1) + 'px"></span>' + esc(S[name]) + '</td>' +
+        html += '<tr data-name="' + esc(S[name]) + '"><td><span class="bar" style="width:' + (60 * stats.self / summary.maxv).toFixed(1) + 'px"></span>' +
+            (MIXED ? '<span class="tl-stack-space">' + (spaceOf(stats.ex) === 'user' ? 'U' : 'K') + '</span>' : '') + esc(S[name]) + '</td>' +
             '<td>' + stats.calls + '</td><td>' + fmtDur(stats.self) + '</td><td>' + fmtDur(stats.incl) + '</td><td>' + fmtDur(stats.max) + '</td>' +
             '<td class="' + (stats.err ? 'err' : '') + '">' + (stats.err || '') + '</td></tr>';
     }
@@ -574,9 +587,11 @@ function exportRangeCsv() {
     const columns = ['function', 'calls', 'self_estimate_' + unit, 'inclusive_estimate_' + unit, 'max_call_' + unit,
         'error_origins_overlapping', 'range_start_' + unit, 'range_end_' + unit, 'scope', 'scope_off_cpu_' + unit,
         'time_mode', 'duration_basis', 'filter'];
+    if (D.uftrace) columns.push('space');
     function* rows() {
         for (const [name, stats] of summary.rows) yield [S[name], stats.calls, stats.self / scale, stats.incl / scale, stats.max / scale, stats.err,
-            range.s / scale, range.e / scale, scope, summary.offT / scale, MODE, basis, (window.fgFilterState || {}).text || ''];
+            range.s / scale, range.e / scale, scope, summary.offT / scale, MODE, basis, (window.fgFilterState || {}).text || '',
+            ...(D.uftrace ? [spaceOf(stats.ex)] : [])];
     }
     downloadTimelineCsv('funcgraph-range-' + (MODE === 'count' ? 'count' : adjOn ? 'adjusted' : 'raw') + '.csv', columns, rows());
 }
@@ -590,6 +605,7 @@ function showRangeSummary() {
     h += pill('mute', nCalls + ' calls');
     if (textHits) h += pill('warn', 'filtered');
     if (adjOn) h += pill('warn', 'overhead subtracted');
+    if (ctxSelf[4] > 0) h += pill('mute', 'user ' + fmtDur(ctxSelf[4]));
     for (let c = 0; c < 4; c++) if (ctxSelf[c] > 0) h += pill('ctx' + c, CTX_NAMES[c] + ' ' + fmtDur(ctxSelf[c]));
     if (offT > 0) h += pill('mute', 'off-CPU ' + fmtDur(offT));
     h += '<span class="tl-range-actions"><button class="tl-btn" data-act="range-csv"' + (rows.length ? '' : ' disabled') +
@@ -823,6 +839,12 @@ function refreshPanel() {
     const note = (html, info) => out.push('<span class="tl-note' + (info ? ' info' : '') + '">' + html + '</span>');
     if (MODE === 'compressed') note('No timestamps: slices are packed by duration and gaps are lost. Enable <code>options/funcgraph-abstime</code>.');
     else if (MODE === 'count') note('No timestamps or durations: the x axis shows call order only. Enable <code>funcgraph-abstime</code> and <code>funcgraph-duration</code>.');
+    if (D.uftrace) {
+        if (MIXED && !D.uftrace.aligned) note('Clock alignment is not verified. Address spaces are shown separately; do not compare times across them.');
+        if (D.stats.detached_kernel_roots) note(D.stats.detached_kernel_roots + ' overlapping kernel roots could not be linked; shown on an unjoined lane.', true);
+        if (HAS_KERNEL && !D.btf && c.retval) note('Kernel returns are raw bits; errno inference requires kernel BTF.', true);
+        if (HAS_KERNEL && !c.sched_events) note('No usable kernel sched_switch records; off-CPU periods are not inferred from user events.', true);
+    } else {
     if (!c.latency) note('No latency columns: context is inferred from IRQ/softirq entry function names. Enable <code>options/latency-format</code> for exact irqs-off / need-resched / hardirq / softirq / preempt flags.');
     if (!c.proc && !c.switch_markers) note('No task info: tracks are per CPU. Enable <code>options/funcgraph-proc</code>.');
     if (!c.retval) note('No return values: error paths need <code>options/funcgraph-retval</code>.');
@@ -831,10 +853,12 @@ function refreshPanel() {
     if (!c.retaddr) note('No call sites: enable <code>options/funcgraph-retaddr</code> to see where each call came from.', true);
     else if (!c.args && !c.retval_btf) note('Arguments are not printed while <code>funcgraph-retaddr</code> is on (kernel limitation, e.g. 6.18).', true);
     if (TIMED && !c.switch_markers && c.proc) note('No context-switch markers seen: off-CPU periods cannot be shown.', true);
+    }
     if (D.overhead) note('Tracing overhead estimate (' + esc(D.overhead.source) + '): ' + fmtDur(D.overhead.child) +
         ' per traced child call, ' + fmtDur(D.overhead.self) + ' per call. Toggle <b>Overhead</b> to subtract it; slice positions stay as measured.', true);
-    else if (TIMED) note('Durations include tracing overhead (measured 0.2 us per traced call on a QEMU x86_64 VM, 1.1 us on a Raspberry Pi 4). Capture with <code>fgcapture.sh --calibrate</code> to get a correction.', true);
-    if (c.latency && PBASE) note('Every line shows preempt depth ' + PBASE + ' or more: function_graph itself disables preemption while recording. ' +
+    else if (TIMED) note(D.uftrace ? 'Durations include tracing overhead; no per-address-space correction was recorded.' :
+        'Durations include tracing overhead (measured 0.2 us per traced call on a QEMU x86_64 VM, 1.1 us on a Raspberry Pi 4). Capture with <code>fgcapture.sh --calibrate</code> to get a correction.', true);
+    if (c.latency && PBASE && !D.uftrace) note('Every line shows preempt depth ' + PBASE + ' or more: function_graph itself disables preemption while recording. ' +
         'The timeline subtracts it (preempt off, sections, atomic sleeps, preempt overlay); the text view shows the raw digit, so use <code>preempt:&gt;' + PBASE + '</code> there.', true);
     if (D.lost.length) note(D.lost.length + ' "LOST EVENTS" record(s): some slices are incomplete (marked with dotted edges). Increase <code>buffer_size_kb</code>.');
     const st = D.stats;
@@ -867,6 +891,8 @@ elHelp.innerHTML = `
 <li><kbd>H</kbd>: duration distribution of the selected function · toolbar <b>Errors</b> / <b>Sched latency</b>: summaries</li>
 <li><kbd>Enter</kbd>: open in text view · <kbd>Alt</kbd>+click a text line: show it here</li></ul>
 <h4>Legend</h4><div class="tl-legend">
+${HAS_USER ? '<i style="background:#9bcdbf"></i><span>user space (Context color)</span>' : ''}
+${MIXED ? '<i style="background:currentColor;height:1px"></i><span>user → kernel boundary, only over a linked kernel call</span>' : ''}
 <i style="background:hsl(214,55%,70%)"></i><span>task context</span>
 <i style="background:hsl(152,62%,68%)"></i><span>softirq</span>
 <i style="background:hsl(30,62%,68%)"></i><span>hardirq</span>

@@ -1,6 +1,6 @@
 # 用户态到内核的全流程跟踪：计划
 
-> 状态：原生采集 / 导出基础已落地；FuncGraph 导入和可视化尚未实现。计划日期 2026-11-09；更新 2026-11-11。
+> 状态：原生采集 / 导出及三种输入的可视化已实现；安全采集包装和分态耗时标定待做。计划日期 2026-11-09；更新 2026-11-11。
 > 主方案：修改 [uftrace](https://github.com/namhyung/uftrace)（作为 submodule，补丁单独维护），一次 `uftrace record` 同时采集用户态和内核，内核部分带上 FuncGraph 需要的全部信息。
 > [magic-trace](https://github.com/janestreet/magic-trace) 依赖 Intel PT 硬件，不通用，暂不考虑；它的"环形缓冲 + 触发快照"思路放在 P4，用 ftrace 自己的机制实现。
 
@@ -99,7 +99,7 @@ uftrace 是 GPL-2.0。FuncGraph 只调用它的可执行文件、读取它的输
 
 ## 6. FuncGraph 侧的修改
 
-- **输入**：`funcgraph.py --uftrace DIR`，内部调用构建好的 `uftrace dump --fgraph`；也可以直接读取已经导出的文本文件。
+- **输入**：`funcgraph.py --uftrace DIR`，内部调用构建好的 `uftrace dump --fgraph --srcline`；也可以直接读取已经导出的 JSONL。
 - **用户态帧**：新增标志位 `F_USER`。`fglib/timeline.py` 的 `F_*` 和 `assets/timeline/model.js` 的 `FL` 一起改（见 design.md 6.7）。
 - **上下文配色**：增加 user 一种颜色，和 task/softirq/hardirq/NMI 并列。
 - **耗时拆分**：用户态帧拆成用户态自身代码、系统调用（内核）、被抢占或阻塞（off-CPU）。
@@ -114,8 +114,10 @@ refresh 和四份维护补丁（含 Pi 实测发现的 kallsyms 模块符号区�
 采用方案 B（版本化 JSONL），原始导出明确声明分流顺序和分地址空间深度，P2 导入器
 负责稳定合并及连续深度。已加入无 root 的跨字节序 / 字长 / 参数布局 / 损坏数据测试
 及 CI；真实采集通过独立 ring-page 解码核对，不用已读空的 cat trace 伪装同次基准。
-尚未交付 `--uftrace`、`--user-src`、F_USER / 分界线和 `fgcapture.sh --user`，
-P1 的端到端可视化验收与 P2 / P3 仍待完成。详见 `docs/uftrace.cn.md`。
+已交付 `--uftrace`、`--user-src`、F_USER、分界线、按态过滤及 Compare / 导出的态区分。
+原始 QEMU 和 Pi 记录各识别 5 处同线程跨态边界，保留 Pi 不完整帧。可视化路径不再
+经过 ftrace 文本解析器；同名函数不跨态归并。仍待 `fgcapture.sh --user`、分态开销标定、
+更细的耗时拆分，以及未验证的多会话 / TID 复用。详见 `docs/uftrace.cn.md`。
 
 | 阶段 | 内容 | 验收标准 |
 |---|---|---|

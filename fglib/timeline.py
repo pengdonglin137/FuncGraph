@@ -86,6 +86,8 @@ F_CALLER_MISMATCH = 1 << 19  # retaddr caller != parent slice
 F_NULL_RET = 1 << 20
 F_LEAF = 1 << 21
 F_CTX_INFERRED = 1 << 22
+F_USER = 1 << 25
+F_BOUNDARY = 1 << 26
 
 # Context inference without latency-format (name based, inherited by callees)
 RE_HARDIRQ_ROOT = re.compile(
@@ -202,17 +204,18 @@ class TimelineBuilder:
         self._cur_cpu = -1
 
     # -- helpers -----------------------------------------------------
-    def _s(self, text):
+    def _s(self, text, namespace=None):
         if text is None:
             return -1
-        i = self._str_idx.get(text)
+        key = (namespace, text) if namespace is not None else text
+        i = self._str_idx.get(key)
         if i is None:
             i = len(self.strings)
             self.strings.append(text)
-            self._str_idx[text] = i
+            self._str_idx[key] = i
         return i
 
-    def _task(self, pid, comm, cpu):
+    def _task(self, pid, comm, cpu, namespace=None):
         if pid is not None:
             if pid == 0:
                 key = ('idle', cpu)
@@ -224,31 +227,36 @@ class TimelineBuilder:
             key = ('cpu', cpu)
         else:
             key = ('all',)
+        original_key = key
+        if namespace is not None:
+            key = (namespace, key)
         t = self.tasks.get(key)
         if t is None:
-            if isinstance(key, tuple):
-                kind = {'idle': 1, 'cpu': 2, 'all': 3}[key[0]]
-                kc = key[1] if len(key) > 1 else None
+            if isinstance(original_key, tuple):
+                kind = {'idle': 1, 'cpu': 2, 'all': 3}[original_key[0]]
+                kc = original_key[1] if len(original_key) > 1 else None
                 kpid = 0 if kind == 1 else -1
                 kcomm = comm if comm else ('<idle>' if kind == 1 else ('CPU %d' % kc if kind == 2 else 'all'))
             else:
-                kind, kc, kpid, kcomm = 0, None, key, comm or ('pid %d' % key)
+                kind, kc, kpid, kcomm = 0, None, original_key, comm or ('pid %d' % original_key)
+            if namespace is not None:
+                kcomm += ' · ' + ('user' if namespace == 'user' else 'kernel, unjoined')
             t = _Task(key, len(self.task_list), kpid, kcomm, kind, kc)
             self.tasks[key] = t
             self.task_list.append(t)
-        elif comm and t.kind == 0 and comm != t.comm and not comm.startswith('<...'):
+        elif namespace is None and comm and t.kind == 0 and comm != t.comm and not comm.startswith('<...'):
             t.comm = comm
             if comm not in t.comms:
                 t.comms.append(comm)
         return t
 
-    def _new_slice(self, task, depth, start, end, name, module, line, flags, parent, ret, caller, args):
+    def _new_slice(self, task, depth, start, end, name, module, line, flags, parent, ret, caller, args, namespace=None):
         idx = len(self.s_task)
         self.s_task.append(task.tid)
         self.s_depth.append(depth)
         self.s_start.append(start)
         self.s_end.append(end)
-        self.s_name.append(self._s(name))
+        self.s_name.append(self._s(name, namespace))
         self.s_module.append(module)
         self.s_line.append(line)
         self.s_eline.append(0)
@@ -660,12 +668,15 @@ class TimelineBuilder:
         self.caps['switch_markers'] = True
         cpu = int(m.group(1)) if m.group(1) else None
         prev_pid, next_pid = int(m.group(3)), int(m.group(5))
-        prev = self._task(prev_pid, m.group(2).strip(), cpu)
-        nxt = self._task(next_pid, m.group(4).strip(), cpu)
+        self._switch(cpu, prev_pid, next_pid, m.group(2).strip(), m.group(4).strip())
+
+    def _switch(self, cpu, prev_pid, next_pid, prev_comm, next_comm, timestamp=None):
+        prev = self._task(prev_pid, prev_comm, cpu)
+        nxt = self._task(next_pid, next_comm, cpu)
         if cpu is not None:
             self.cpu_current[cpu] = nxt.key
         # Switch-out time: last timestamp of prev (on this CPU)
-        t_out = prev.last_ts
+        t_out = prev.last_ts if timestamp is None else timestamp
         if prev.kind == 0 and t_out is not None:
             # stack at switch-out explains why the task left the CPU
             names = [self.strings[self.s_name[f.idx]] for f in prev.stack]
@@ -949,7 +960,7 @@ class TimelineBuilder:
             names = [self.strings[self.s_name[k]] for k in members]
             if any(RE_SYSCALL.match(_strip_suffix(nm)) for nm in names):
                 fate = 1   # reaches user space
-            elif p < 0:
+            elif p < 0 or self.s_flags[p] & F_USER:
                 fate = 2   # leaves the traced window
             else:
                 fate = 0   # handled by the caller
@@ -977,7 +988,7 @@ class TimelineBuilder:
             self.err_rows.append([i, e, role, fate, 1 if verified[i] else 0, cid])
 
     # -- serialization --------------------------------------------------
-    def to_data(self):
+    def to_data(self, preserve_zero=False):
         n = len(self.s_task)
         timed = self.mode in ('abs', 'rel')
         # Time origin: the earliest timestamp of anything drawn, not only of the calls. Sched events
@@ -1038,7 +1049,8 @@ class TimelineBuilder:
             cols['adj'] = [max(0, d - child_ns * k - self_ns) for d, k in zip(cols['dur'], desc)]
         # sparse columns are dropped when empty
         for k in ('ret', 'caller', 'args', 'module', 'eline', 'cpu'):
-            if all(v in (-1, 0) for v in cols[k]):
+            empty = (0,) if k == 'eline' else (-1,) if preserve_zero else (-1, 0)
+            if all(v in empty for v in cols[k]):
                 cols[k] = None
         tasks = []
         for t in self.task_list:

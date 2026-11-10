@@ -115,7 +115,7 @@ window.fgViews.compare = { el: 'compareView', data: ['cmpData'], init: function 
         const col = COLS.find(column => column.k === sortKey) || COLS[2];
         let h = '';
         for (const r of matchingRows.slice(append ? renderedCount : 0, limit)) {
-            h += `<tr><td class="l" title="${esc(r[0])}">${esc(r[0])}${!r[1] ? ' <span class="cmp-tag new">new</span>' : !r[6] ? ' <span class="cmp-tag gone">gone</span>' : ''}</td>`;
+            h += `<tr><td class="l" title="${esc(r[0])}">${esc(r[0])}${r[11] ? ' <span class="cmp-tag">' + esc(r[11]) + '</span>' : ''}${!r[1] ? ' <span class="cmp-tag new">new</span>' : !r[6] ? ' <span class="cmp-tag gone">gone</span>' : ''}</td>`;
             for (const c of COLS.slice(1)) {
                 const b = val(c, r, 'b'), v = val(c, r, 'c'), d = v - b;
                 const p = pct(b, v);
@@ -168,6 +168,8 @@ window.fgViews.compare = { el: 'compareView', data: ['cmpData'], init: function 
     function exportCsv() {
         if (!applyQuery() || !matchingRows.length) return;
         const columns = COLS.slice(1), headings = ['function'];
+        const bySpace = D.rows[0]?.length > 11;
+        if (bySpace) headings.push('space');
         for (const column of columns) {
             const suffix = column.k + (column.time ? '_ns' : '');
             headings.push('base_' + suffix, 'current_' + suffix, 'delta_' + suffix);
@@ -176,6 +178,7 @@ window.fgViews.compare = { el: 'compareView', data: ['cmpData'], init: function 
         for (const row of matchingRows) {
             const name = /^[\s]*[=+\-@]|^[\t\r\n]/.test(row[0]) ? "'" + row[0] : row[0];
             const cells = [name];
+            if (bySpace) cells.push(row[11]);
             for (const column of columns) {
                 const base = val(column, row, 'b'), current = val(column, row, 'c');
                 cells.push(base, current, current - base);

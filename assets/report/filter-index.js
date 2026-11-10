@@ -5,19 +5,21 @@
     const models = new WeakMap();
     const foldModels = new WeakMap();
     class TextRecord {
-        constructor(row) { this.row = row; }
+        constructor(row, version) { this.row = row; this.version = version; }
         get textContent() { return this.row[1]; }
-        get source() { return this.row.length === fields.length + 3 ? this.row[fields.length + 2] : undefined; }
+        get source() { return this.version >= 2 ? this.row[this.row.length - 1] : undefined; }
         getAttribute(name) {
             if (name === 'data-line-number') return String(this.row[0]);
+            if (name === 'data-space') return this.version === 3 ? this.row[fields.length + 2] : null;
             const index = columns.get(name);
             return index === undefined ? null : this.row[index];
         }
         querySelector(selector) { return selector === '.line-content' ? this : null; }
     }
     function* prepare(data) {
-        if (!data || ![1, 2].includes(data.version) || !Array.isArray(data.fields) || !Array.isArray(data.rows) ||
-            data.fields.length !== fields.length || data.fields.some((field, index) => field !== fields[index])) {
+        const expected = data?.version === 3 ? [...fields, 'space'] : fields;
+        if (!data || ![1, 2, 3].includes(data.version) || !Array.isArray(data.fields) || !Array.isArray(data.rows) ||
+            data.fields.length !== expected.length || data.fields.some((field, index) => field !== expected[index])) {
             throw new Error('Unsupported Text filter index');
         }
         if (!models.has(data)) {
@@ -25,15 +27,15 @@
             let previous = 0;
             for (let index = 0; index < data.rows.length; index++) {
                 const row = data.rows[index];
-                const source = row?.[fields.length + 2];
-                if (!Array.isArray(row) || row.length !== fields.length + (data.version === 2 ? 3 : 2) ||
+                const source = row?.[expected.length + 2];
+                if (!Array.isArray(row) || row.length !== expected.length + (data.version >= 2 ? 3 : 2) ||
                     !Number.isSafeInteger(row[0]) || row[0] <= previous || typeof row[1] !== 'string' ||
-                    row.some((value, column) => column >= 2 && column < fields.length + 2 && value !== null && typeof value !== 'string') ||
-                    data.version === 2 && source !== null && (!Number.isSafeInteger(source) || source < 0)) {
+                    row.some((value, column) => column >= 2 && column < expected.length + 2 && value !== null && typeof value !== 'string') ||
+                    data.version >= 2 && source !== null && (!Number.isSafeInteger(source) || source < 0)) {
                     throw new Error('Invalid Text filter index row ' + (index + 1));
                 }
                 previous = row[0];
-                records.push(new TextRecord(row));
+                records.push(new TextRecord(row, data.version));
                 if (index % 1024 === 0) yield 'Checking full-trace filter index…';
             }
             models.set(data, { records, version: data.version });
@@ -186,7 +188,7 @@
         return result;
     }
     function* prepareNavigation(model) {
-        if (model.version !== 2) throw new Error('Text source metadata is unavailable');
+        if (model.version < 2) throw new Error('Text source metadata is unavailable');
         const order = [], expandable = [];
         for (const record of model.records) {
             order.push(record.row[0]);

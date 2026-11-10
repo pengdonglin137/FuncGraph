@@ -63,7 +63,7 @@ function baseColor(i) {
         case 'heat': key = 'h' + Math.min(19, Math.floor(19.99 * Math.log1p(sSelf[i]) / Math.log1p(maxSelf))); break;
         case 'cpu': key = 'c' + cpuOf(i); break;
         case 'module': key = 'm' + (sMod ? sMod[i] : -1); break;
-        default: key = sName[i] * 4 + c;
+        default: key = sName[i] * 8 + c + (f & FL.USER ? 4 : 0);
     }
     let col = colorCache.get(key);
     if (col) return col;
@@ -83,8 +83,8 @@ function baseColor(i) {
             else { h = 214; s = 14; l = dark ? 34 : 80; }
             break;
         default:
-            h = CTX_HUE[c] + ((hh % 13) - 6) * 2.4;
-            s = (c === 0 ? 46 : 58) + hh % 16;
+            h = (f & FL.USER ? 166 : CTX_HUE[c]) + ((hh % 13) - 6) * 2.4;
+            s = (f & FL.USER ? 28 : c === 0 ? 46 : 58) + hh % 16;
             l = dark ? 33 + (hh >> 7) % 11 : 67 + (hh >> 7) % 13;
     }
     col = hsl(h, s, l);
@@ -532,6 +532,10 @@ function drawSlice(i, x0, x1, y, h, labels) {
     if (dim) ctx.globalAlpha = 0.18;
     ctx.fillStyle = st[0];
     ctx.fillRect(cx0, y, ww, h);
+    if (f & FL.BOUNDARY) {
+        ctx.fillStyle = P.axis;
+        ctx.fillRect(cx0, Math.round(y * DPR) / DPR, w, Math.max(1, Math.round(DPR)) / DPR);
+    }
     if (ov.irq && (f & FL.IRQOFF) && w > 2) { ctx.fillStyle = hatch; ctx.fillRect(cx0, y, ww, h); }
     if (ov.preempt && w > 2) {
         const p = preemptOff(f);   // above the tracer's own level

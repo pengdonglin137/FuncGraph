@@ -4,18 +4,53 @@
 
 The optional native capture/export foundation is implemented and validated on
 x86_64 QEMU Linux **7.4.0-rc2** and Raspberry Pi 4 Linux
-**6.18.56-v8-MY_CUSTOM_KERNEL+**. The planned `funcgraph --uftrace`, mixed
-visualization, user sources and `fgcapture.sh --user` are **not available yet**.
-Existing kernel text/raw input remains unchanged. Do not pass JSONL to the
-function-graph text parser.
+**6.18.56-v8-MY_CUSTOM_KERNEL+**. FuncGraph imports **user-only, kernel-only and
+mixed** recordings without a required `vmlinux` or native Python dependency.
+Existing ftrace text and trace-cmd inputs still work. The state-preserving
+`fgcapture.sh --user` wrapper is not implemented.
 
-The visualization contract includes **user-only, kernel-only and mixed** inputs.
-Function address space must be explicit, never inferred from its name. Mixed
-views will mark real user→kernel subtree boundaries with a subtle, legible line,
-an address-space label and a legend. The boundary follows each subtree's actual
-time span/depth, not a fixed horizontal track division. Single-space reports
-must not invent missing frames, require unrelated source files, or draw redundant
-boundaries. This is an acceptance requirement, not a delivered UI feature.
+## Generate a report
+
+```bash
+funcgraph --uftrace CAPTURE --uftrace-bin build/uftrace-x86_64/bin/uftrace \
+    --timeline --enable-fold --filter --user-src samples --output mixed.html
+# Or import a saved export, with no uftrace executable needed:
+funcgraph capture.jsonl --timeline --enable-fold --filter --output mixed.html
+```
+
+The directory reader runs the patched executable (`uftrace` on `PATH` by
+default) with `dump --fgraph --srcline`. JSONL is detected from the stream
+header; `--input-format uftrace` selects it explicitly, including for stdin
+and compressed input. Use one recording or JSONL per report. `--compare BASE`
+accepts JSONL or a legacy trace file; Compare and `--export` group user and
+kernel names separately, even when their symbols have identical spelling.
+
+- **Mixed:** Timeline's default Context colors distinguish user code from
+  kernel execution. The thin line along a linked kernel root's top edge spans
+  exactly that recorded interval, at the depth where it occurred. Text uses
+  `U` / `K` and underlines the boundary tag; the call stack separates the two
+  spaces at the same transition. Single-space reports omit the divider.
+- **Matching:** pair native entry/exit by thread, address space, depth and
+  address, then link a complete kernel root only inside a recorded user call
+  of the same thread with a verified shared clock. This establishes temporal
+  containment, not the exact user instruction. It uses record timestamps, not
+  graph-internal counters. Unmatched calls remain visible; conflicting roots
+  use an unjoined lane. Missing or incompatible clock readbacks leave the
+  spaces separate with a warning; do not compare their times.
+- **Sources:** recorded user file:line positions are shown independently of
+  kernel source resolution. `--user-src DIR` embeds small excerpts for files
+  under that root; click the source position in the stack or expand its Text
+  row. No user locations are routed to a kernel repository. Use
+  `--no-text-view --keep-source` to keep excerpts without mounting Text.
+- **Filtering:** with `--filter`, use `space:user` or `space:kernel` in Text
+  or Timeline's shared Filter. Sidecar reports can apply this filter before
+  Text loads. CLI tree pre-filters are not supported on uftrace streams yet.
+- **Uncertainty:** missing entries/exits and losses are marked, not filled in
+  as measured calls. CPU for user calls remains unknown; raw user payloads
+  are not decoded. Kernel returns are shown as raw bits, with errno analysis
+  only for known BTF types. Kernel scheduler tracepoints drive scheduling
+  analysis; perf events do not produce duplicate intervals. The JSONL retains
+  native fields not projected into the report.
 
 ## Reproducible native build
 
@@ -67,7 +102,7 @@ build/uftrace-x86_64/bin/uftrace dump --fgraph --srcline -d CAPTURE > capture.js
 This exports JSONL, **not ftrace text**. The first record identifies
 `schema=funcgraph.uftrace.v1`, integer nanosecond timestamps,
 `order=streams`, and `depth_basis=address-space`. Each user task and kernel CPU
-retains its recorded ordering/native depth. The future importer must merge by
+retains its recorded ordering/native depth. The importer merges by
 integer timestamp, preserving tie order, and join kernel depth below the active
 user frame of the same task. It must leave kernel activity outside recorded user
 frames as roots. There is no implicit clock adjustment or synthetic completion.
@@ -123,7 +158,7 @@ the old `/vol_1t/raspi/linux` path does not exist on the currently reachable Pi.
 QEMU 7.4 exposes args and retaddr together. This must not be extrapolated to
 older kernels: the Pi 6.18 record layout/capabilities are validated separately.
 Native depth and CPU are preserved; no bounded-memory/global-sorting claim is
-made for the exporter or future importer.
+made for the exporter or importer.
 
 ## Validation
 

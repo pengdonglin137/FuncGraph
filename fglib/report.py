@@ -9,13 +9,15 @@ import threading
 import time
 import json
 from collections import defaultdict
+from pathlib import Path
+from itertools import islice
 
 from .assets import COMPARE_CSS, COMPARE_JS, REPORT_CSS, REPORT_DATA_JS, REPORT_FILTER_INDEX_JS, REPORT_JS, REPORT_TREE_CSS, TIMELINE_CSS, VIEWS_BOOT_JS, VIEWS_CSS, VIEWS_EARLY_JS, read_asset, timeline_script
 from .constants import APP_AUTHOR, APP_TITLE, APP_VERSION, ERROR_CODE_MAP, PROJECT_DIR
 from .inline import parse_chain, timeline_inline_map
 from .output import ReportSpool
 from .sources import rewrite as rewrite_sources
-from .highlight import highlight_ftrace_line
+from .highlight import highlight_c_code, highlight_ftrace_line
 from .resolver import call_faddr2line_batch, call_faddr2line_for_func_names, create_source_link, parse_list_output, parse_module_url
 from .util import build_source_url, clean_file_path, escape_html_preserve_spaces, find_module_path, format_args_info, get_environment_info, get_relative_path, remove_compiler_suffix, verbose_print
 
@@ -54,13 +56,15 @@ class HtmlGenerator:
                  module_src=None, module_srcs=None, script_args=None,
                  enable_filter=False, parse_time=0, total_time=0,
                  func_links=False, entry_offset=0, enable_fold=False,
-                 timeline_json=None, compare_json=None, source_provider=None, omit_text=False):
+                 timeline_json=None, compare_json=None, source_provider=None, omit_text=False, user_src=None):
         # Store all parameters as instance attributes
         self.parsed_lines = parsed_lines
+        self.address_spaces = bool(parsed_lines and parsed_lines[0].get('record_type') == 'metadata')
         self.timeline_json = timeline_json
         self.compare_json = compare_json
         self.source_provider = source_provider
         self.omit_text = omit_text
+        self.user_src = Path(user_src).resolve() if user_src else None
         self.text_index = None
         self.source_note = None
         self._src_pool = []
@@ -122,6 +126,19 @@ class HtmlGenerator:
                           '<span class="header-calls" title="Recorded function calls, before display filters; '
                           'excludes inline and untraced context frames. Not a count of unique functions or trace lines.">'
                           f'{self.timeline_json.get("n", 0):,} recorded calls</span>')
+        line_stats = f'<span>{total_lines} lines</span>'
+        source_stats = (f'<span class="header-sep">·</span>\n'
+                        f'                <span>{expandable_entries} expandable</span>\n'
+                        f'                <span class="header-sep">·</span>\n'
+                        f'                <span>{len(self.vmlinux_funcs)} kernel funcs</span>')
+        if self.address_spaces:
+            spaces = (self.timeline_json or {}).get('uftrace', {}).get('spaces', [])
+            scope = {'kernel': 'Kernel space', 'user': 'User space', 'kernel,user': 'User + kernel'}.get(','.join(spaces), 'uftrace')
+            source_stats = ''
+            if (self.timeline_json or {}).get('no_text'):
+                line_stats = f'<span>{scope}</span>'
+            else:
+                source_stats = f'<span class="header-sep">·</span> <span>{scope}</span>'
 
         # 生成信息面板内容
         info_items = format_args_info(self.script_args)
@@ -193,12 +210,9 @@ class HtmlGenerator:
             <span class="header-version">v{APP_VERSION}</span>
             <span class="header-sep">·</span>
             <span class="header-stats">
-                <span>{total_lines} lines</span>
+                {line_stats}
                 {call_stats}
-                <span class="header-sep">·</span>
-                <span>{expandable_entries} expandable</span>
-                <span class="header-sep">·</span>
-                <span>{len(self.vmlinux_funcs)} kernel funcs</span>
+                {source_stats}
                 <span id="visibleLinesContainer" style="display: none;">
                     <span class="header-sep">·</span>
                     <span>Filtered: <span id="summaryVisibleLines">{total_lines}</span></span>
@@ -243,6 +257,8 @@ class HtmlGenerator:
 
         def section(name, fragment):
             fragment = fragment.replace('{INFO_CONTENT_PLACEHOLDER}', info_content_html)
+            if self.address_spaces:
+                fragment = fragment.replace('<div id="content">', '<div id="content" data-address-spaces>')
             if self.filter_html:
                 fragment = fragment.replace('<div id="filterPlaceholder"></div>', self.filter_html)
             return name, fragment
@@ -393,19 +409,23 @@ class HtmlGenerator:
 
     def _attach_timeline_sources(self):
         timeline = self.timeline_json
-        if timeline is None or 'sources' in timeline:
+        if timeline is None or ('sources' in timeline and 'uftrace' not in timeline):
             return
         columns, strings = timeline['cols'], timeline['strings']
-        functions, callers = {}, {}
+        sources = timeline.get('sources', {})
+        functions, callers = sources.get('functions', {}), sources.get('callers', {})
         modules = columns.get('module')
-        names = set(zip(columns['name'], modules)) if modules else {(name, -1) for name in columns['name']}
+        from .timeline import F_USER
+        flags = columns.get('flags') if 'uftrace' in timeline else None
+        names = {(name, modules[index] if modules else -1) for index, name in enumerate(columns['name'])
+                 if flags is None or not flags[index] & F_USER}
         for name, module_index in sorted(names):
             position = self.func_name_results.get(strings[name])
             if position and position[0] != '??' and position[0] and re.fullmatch(r'[1-9][0-9]*', str(position[1])):
                 module = strings[module_index] if module_index >= 0 else None
                 functions[f'{name}:{module_index}'] = self._timeline_position(*position, module)
         for caller in sorted(set(columns.get('caller') or [])):
-            if caller < 0:
+            if caller < 0 or timeline.get('uftrace'):
                 continue
             address = strings[caller]
             locations = self.func_locations_map.get(self._adjust_func_info(address, remove_suffix=False))
@@ -418,7 +438,7 @@ class HtmlGenerator:
             if chain and all(frame[2] > 0 and frame[1] != '??' for frame in chain):
                 callers[str(caller)] = [[frame[0]] + self._timeline_position(frame[1], frame[2], module) for frame in chain]
         if functions or callers:
-            timeline['sources'] = {'functions': functions, 'callers': callers}
+            timeline['sources'] = dict(sources, functions=functions, callers=callers)
 
     def _attach_tail_sources(self):
         if self.timeline_json and self.timeline_json.get('tail_calls'):
@@ -467,6 +487,8 @@ class HtmlGenerator:
             module_paths = {}     # 模块名 -> 模块文件路径
 
             for line_data in self.parsed_lines:
+                if line_data.get('space') == 'user':
+                    continue
                 raw_func_name = line_data.get('raw_func_name')
                 module_name = line_data.get('module_name')
 
@@ -975,7 +997,7 @@ class HtmlGenerator:
             # 将解析结果存储到 parsed_lines 中
             for line_data in self.parsed_lines:
                 raw_func_name = line_data.get('raw_func_name')
-                if raw_func_name and raw_func_name in func_name_results:
+                if line_data.get('space') != 'user' and raw_func_name and raw_func_name in func_name_results:
                     line_data['func_name_info'] = func_name_results[raw_func_name]
         self.func_name_results = func_name_results
         self.filter_html = filter_html
@@ -1183,6 +1205,54 @@ class HtmlGenerator:
         self._src_calls[func_info] = source_index
         return source_index
 
+    def _user_source_index(self, position):
+        if position in self._src_calls:
+            return self._src_calls[position]
+        file, line = position
+        result = None
+        if self.user_src is not None:
+            try:
+                target = (self.user_src / file).resolve()
+                if self.user_src in target.parents and target.is_file() and target.stat().st_size <= 4 * 1024 * 1024:
+                    first = max(1, line - 5)
+                    with target.open(encoding='utf-8', errors='replace') as stream:
+                        excerpt = list(islice(stream, first - 1, line + 5))
+                    if len(excerpt) > line - first:
+                        parts = [f'<div class="location-link">{html.escape(file)}:{line} · recorded user source</div>']
+                        for number, code in enumerate(excerpt, first):
+                            code = code.rstrip('\r\n')
+                            code = highlight_c_code(code) if self.highlight_code else html.escape(code)
+                            classes = 'source-line current-line' if number == line else 'source-line'
+                            parts.append(f'<div class="{classes}">{number:>6}  {code}</div>')
+                        result = len(self._src_pool)
+                        self._src_pool.append(''.join(parts))
+            except (OSError, ValueError, RuntimeError):
+                pass
+        self._src_calls[position] = result
+        return result
+
+    @staticmethod
+    def _uftrace_markup(line, raw_line):
+        fields = raw_line.split(' | ', 4)
+        if len(fields) != 5:
+            return html.escape(raw_line)
+        head = [html.escape(field) for field in fields[:4]]
+        if fields[3] in ('U', 'K'):
+            label = 'User → kernel' if line.boundary else 'User space' if line.space == 'user' else 'Kernel space'
+            head[-1] = f'<span class="trace-space" title="{label}" aria-label="{label}">{head[-1]}</span>'
+        body = fields[4]
+        indent = body[:len(body) - len(body.lstrip(' '))]
+        body = body[len(indent):]
+        if line.raw_func_name:
+            name = html.escape(line.raw_func_name)
+            rest = html.escape(body[len(line.raw_func_name):]).replace('{', '<span class="hl-symbol">{</span>', 1)
+            body = f'<span class="hl-func">{name}</span>' + rest
+        elif body.startswith('}'):
+            body = '<span class="hl-symbol">}</span><span class="hl-comment">' + html.escape(body[1:]) + '</span>'
+        else:
+            body = html.escape(body)
+        return ' | '.join(head) + ' | ' + indent + body
+
     @staticmethod
     def _fold_line_html(text, fold_type, func_name):
         opening = r'<span class="hl-symbol">}' if fold_type == 'exit' else r'(?:<span class="hl-func">|<a class="func-name-link")'
@@ -1223,8 +1293,12 @@ class HtmlGenerator:
                 elif line.get('fold_type') == 'exit':
                     fold_ends[line.get('fold_id')] = index + 1
         for idx, line_data in enumerate(self.parsed_lines):
+            position = line_data.get('source')
+            user_src_idx = self._user_source_index(position) if position else None
             if self.omit_text:
-                if line_data['expandable'] and line_data['func_info']:
+                if user_src_idx is not None:
+                    self._src_lines[idx + 1] = user_src_idx
+                elif line_data['expandable'] and line_data['func_info']:
                     self._src_lines[idx + 1] = self._source_index(line_data['func_info'])
                 if not line_data['raw_line'].startswith('#') or header_count >= 200:
                     continue
@@ -1236,9 +1310,10 @@ class HtmlGenerator:
 
             # 处理原始行：去除编译器优化后缀，用于显示
             raw_line = line_data["raw_line"]
+            structured = line_data.get('record_type') is not None
 
             # 优先处理函数调用名称（func_name）- 适用于可展开和不可展开的行
-            if line_data.get('raw_func_name'):
+            if line_data.get('raw_func_name') and not structured:
                 raw_func_name = line_data['raw_func_name']
                 display_name = line_data.get('display_func_name', raw_func_name)
 
@@ -1294,17 +1369,18 @@ class HtmlGenerator:
                 return f'___HTML_LINK_{idx}___'
 
             # 临时替换 HTML 链接为占位符
-            raw_line_with_placeholders = re.sub(r'<a class="func-name-link"[^>]*>.*?</a>', save_html_link, raw_line)
+            raw_line_with_placeholders = raw_line if structured else re.sub(r'<a class="func-name-link"[^>]*>.*?</a>', save_html_link, raw_line)
 
             # 应用语法高亮（会转义 HTML）
-            escaped_line = highlight_ftrace_line(raw_line_with_placeholders)
+            escaped_line = (self._uftrace_markup(line_data, raw_line) if structured
+                            else highlight_ftrace_line(raw_line_with_placeholders))
 
             # 恢复 HTML 链接
             for idx, link in enumerate(html_links):
                 escaped_line = escaped_line.replace(f'___HTML_LINK_{idx}___', link)
 
             # 检查是否可展开
-            is_expandable = line_data['expandable'] and line_data['func_info']
+            is_expandable = user_src_idx is not None or (line_data['expandable'] and line_data['func_info'])
             expandable_class = "expandable" if is_expandable else ""
 
             # 获取折叠信息
@@ -1325,11 +1401,13 @@ class HtmlGenerator:
                     fold_class = "fold-inner"
                 escaped_line = self._fold_line_html(escaped_line, fold_type,
                                                    line_data.get('display_func_name'))
+            if position:
+                escaped_line += '  <span class="trace-user-source">' + html.escape(f'{position[0]}:{position[1]}') + '</span>'
 
             duration_raw = line_data.get('duration_raw')  # 原始耗时字符串
             attributes = self._text_attributes(line_data, raw_line, fold_ends, fold_starts)
             data_attrs = ''.join(f' data-{name}="{html.escape(value, quote=True)}"' for name, value in attributes.items())
-            src_idx = self._source_index(line_data['func_info']) if is_expandable else None
+            src_idx = user_src_idx if position else self._source_index(line_data['func_info']) if is_expandable else None
             if self.text_index is not None:
                 self.text_index.append(line_number, attributes, escaped_line, source=src_idx)
 
@@ -1366,6 +1444,10 @@ class HtmlGenerator:
 
     def _text_attributes(self, line, raw_line, fold_ends, fold_starts):
         attributes = {name: str(line.get(name)) if line.get(name) is not None else '' for name in ('cpu', 'pid', 'comm')}
+        if line.get('space') is not None:
+            attributes['space'] = line.space
+        if line.get('boundary'):
+            attributes['boundary'] = 'user-kernel'
         fold_id, fold_type = line.get('fold_id'), line.get('fold_type')
         ret_value = line.get('ret_value')
         if self.enable_fold and fold_id is not None and fold_type in ('entry', 'exit', 'inner'):

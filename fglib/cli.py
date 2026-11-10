@@ -15,10 +15,11 @@ import lzma
 from . import config, inputs, prefilter
 from .parser import parse_ftrace_file
 from .report import write_html
+from .uftrace import UftraceInputError
 from .util import SOURCE_BROWSERS, check_gawk_available, find_module_path, source_browser_url, verbose_print
 
 
-def build_compare_data(args, raw_lines, parsed_lines, timeline_json, vmlinux_path, module_dirs):
+def build_compare_data(args, parsed_lines, timeline_json, vmlinux_path, module_dirs):
     """Compare tab data: per-function statistics of --compare BASE vs. this trace."""
     from . import compare, timeline as tlmod
     t0 = time.time()
@@ -26,6 +27,8 @@ def build_compare_data(args, raw_lines, parsed_lines, timeline_json, vmlinux_pat
     pre = prefilter.Filter(pids=args.pid, comms=args.comm, cpus=args.cpu, time_range=args.time_range,
                            graph=args.graph, notrace=args.notrace)
     if pre.active():
+        if isinstance(base_lines, inputs.UftraceInput):
+            raise UftraceInputError('CLI pre-filters are not supported for uftrace; use the report filters')
         base_lines, _ = prefilter.apply(base_lines, pre)     # same filter on both sides
     rettypes = load_rettypes(parsed_lines, vmlinux_path, module_dirs, args)
     if timeline_json is not None:
@@ -78,15 +81,18 @@ def load_rettypes(parsed_lines, vmlinux_path, module_dirs, args):
     return rettypes
 
 
-def build_timeline_data(parsed_lines, vmlinux_path, module_dirs, args):
+def build_timeline_data(parsed_lines, vmlinux_path, module_dirs, args, structured_data=None):
     """Build the Timeline tab data set. Returns a JSON-serializable dict or None on failure."""
     from . import timeline as tlmod
     t0 = time.time()
-    rettypes = load_rettypes(parsed_lines, vmlinux_path, module_dirs, args)
-    lines = [l.raw_line for l in parsed_lines]
-    builder = tlmod.build_timeline(lines, rettypes=rettypes, errno_map=ERROR_CODE_MAP, verbose=args.verbose,
-                                   overhead=parse_overhead(args.overhead))
-    data = builder.to_data()
+    if structured_data is None:
+        rettypes = load_rettypes(parsed_lines, vmlinux_path, module_dirs, args)
+        lines = [l.raw_line for l in parsed_lines]
+        builder = tlmod.build_timeline(lines, rettypes=rettypes, errno_map=ERROR_CODE_MAP, verbose=args.verbose,
+                                       overhead=parse_overhead(args.overhead))
+        data = builder.to_data()
+    else:
+        data = structured_data
     if args.tail_calls:
         from . import tailcalls
         data['tail_calls'] = tailcalls.analyze(data, vmlinux_path)
@@ -106,12 +112,15 @@ def build_timeline_data(parsed_lines, vmlinux_path, module_dirs, args):
 
 def build_parser():
     """Command line options."""
-    parser = argparse.ArgumentParser(description='Convert ftrace output to interactive HTML')
-    parser.add_argument('ftrace_file', nargs='+',
+    parser = argparse.ArgumentParser(description='Convert ftrace or uftrace output to interactive HTML')
+    parser.add_argument('ftrace_file', nargs='*',
                         help="ftrace output file(s); '-' reads stdin, .gz/.xz/.bz2 are decompressed, "
                              'several files are merged by timestamp')
-    parser.add_argument('--input-format', choices=('auto', 'text', 'raw'), default='auto',
-                        help='Primary input format: auto-detect text or binary trace-cmd trace.dat (default: auto)')
+    parser.add_argument('--input-format', choices=('auto', 'text', 'raw', 'uftrace'), default='auto',
+                        help='Primary input format: auto-detect ftrace text, trace-cmd trace.dat or uftrace JSONL')
+    parser.add_argument('--uftrace', metavar='DIR', help='Read a recording directory using patched uftrace dump --fgraph')
+    parser.add_argument('--uftrace-bin', metavar='PATH', help='Patched uftrace executable (default: uftrace on PATH)')
+    parser.add_argument('--user-src', metavar='DIR', help='Embed recorded user source from this local source root')
     parser.add_argument('--raw-instance', metavar='NAME',
                         help='Select this named trace-cmd buffer instead of the top-level buffer (also for --compare)')
     parser.add_argument('--config', metavar='FILE',
@@ -212,6 +221,15 @@ def build_parser():
 
 def validate_args(args):
     """Check paths/URLs; exits on fatal errors, warns otherwise."""
+    if bool(args.uftrace) == bool(args.ftrace_file):
+        print('Error: supply trace file(s) or --uftrace DIR, not both', file=sys.stderr)
+        sys.exit(1)
+    if args.uftrace and (not os.path.isdir(args.uftrace) or args.input_format not in ('auto', 'uftrace')):
+        print('Error: --uftrace needs an existing recording directory and auto or uftrace input format', file=sys.stderr)
+        sys.exit(1)
+    if args.user_src and not os.path.isdir(args.user_src):
+        print('Error: --user-src needs an existing source directory', file=sys.stderr)
+        sys.exit(1)
     if args.report_mode not in ('single', 'sidecar', 'auto'):
         print('Error: report mode must be single, sidecar or auto', file=sys.stderr)
         sys.exit(1)
@@ -420,6 +438,8 @@ def find_faddr2line(args):
 
 
 def input_name(args):
+    if args.uftrace:
+        return os.path.normpath(args.uftrace)
     names = ['stdin' if p == '-' else p for p in args.ftrace_file]
     return names[0] if len(names) == 1 else names[0] + f' (+{len(names) - 1})'
 
@@ -476,7 +496,7 @@ def main():
     else:
         faddr2line_path = vmlinux_path = None
         cross_compile, llvm, util_prefix, util_suffix = os.environ.get('CROSS_COMPILE', ''), os.environ.get('LLVM', ''), '', ''
-        print("Note: no --vmlinux given: source locations, source links and BTF checks are skipped")
+        print("Note: no --vmlinux given: kernel source resolution and vmlinux BTF are skipped")
 
     # 处理内核源码路径（单个）
     kernel_src_abs = os.path.abspath(args.kernel_src) if args.kernel_src else None
@@ -511,20 +531,38 @@ def main():
     # 解析ftrace文件
     start_time = time.time()
     try:
-        raw_lines, note = inputs.read_lines(args.ftrace_file, args.input_format, args.raw_instance)
-    except (OSError, EOFError, lzma.LZMAError, inputs.raw.RawInputError) as e:
+        if args.uftrace:
+            raw_lines, note = inputs.read_uftrace_directory(args.uftrace, args.uftrace_bin), None
+        else:
+            raw_lines, note = inputs.read_lines(args.ftrace_file, args.input_format, args.raw_instance)
+    except (OSError, EOFError, lzma.LZMAError, inputs.raw.RawInputError, UftraceInputError, UnicodeError) as e:
         print(f"Error: cannot read trace input: {e}", file=sys.stderr)
         sys.exit(1)
     if note:
         print(f"Input: {note}")
     pre = prefilter.Filter(pids=args.pid, comms=args.comm, cpus=args.cpu, time_range=args.time_range,
                            graph=args.graph, notrace=args.notrace)
-    if pre.active():
-        raw_lines, st = prefilter.apply(raw_lines, pre)
-        print(f"Pre-filter ({pre.describe()}): kept {st['out']} of {st['in']} lines")
-        if not any(l and not l.startswith('#') for l in raw_lines):
-            print("Warning: the pre-filter kept no trace lines (check --pid/--comm/--graph/--time-range)", file=sys.stderr)
-    parsed_lines = parse_ftrace_file(input_name(args), args.verbose, args.enable_fold, lines=raw_lines)
+    structured_data = None
+    if isinstance(raw_lines, inputs.UftraceInput):
+        if pre.active():
+            print('Error: CLI pre-filters are not supported for uftrace; use the report filters', file=sys.stderr)
+            sys.exit(1)
+        builder = raw_lines.build(enable_fold=args.enable_fold, verbose=args.verbose, errno_map=ERROR_CODE_MAP,
+                                  include_text=not args.no_text_view or args.keep_source,
+                                  rettypes=load_rettypes([], vmlinux_path, module_dirs, args),
+                                  overhead=parse_overhead(args.overhead))
+        parsed_lines = builder.parsed
+        structured_data = builder.to_data()
+        if builder.mixed and not builder.aligned:
+            print('Warning: uftrace clocks are not verified as shared; showing unjoined address spaces', file=sys.stderr)
+        del builder, raw_lines
+    else:
+        if pre.active():
+            raw_lines, st = prefilter.apply(raw_lines, pre)
+            print(f"Pre-filter ({pre.describe()}): kept {st['out']} of {st['in']} lines")
+            if not any(line and not line.startswith('#') for line in raw_lines):
+                print("Warning: the pre-filter kept no trace lines (check --pid/--comm/--graph/--time-range)", file=sys.stderr)
+        parsed_lines = parse_ftrace_file(input_name(args), args.verbose, args.enable_fold, lines=raw_lines)
     parse_time = time.time() - start_time
     verbose_print(f"File parsing completed in {parse_time:.2f} seconds", args.verbose)
 
@@ -535,11 +573,11 @@ def main():
     # 构建时间轴数据（可选）
     timeline_json = None
     if args.timeline:
-        timeline_json = build_timeline_data(parsed_lines, vmlinux_path, module_dirs, args)
+        timeline_json = build_timeline_data(parsed_lines, vmlinux_path, module_dirs, args, structured_data)
 
     if args.export:
         from . import export, timeline as tlmod
-        data = timeline_json or tlmod.build_timeline([l.raw_line for l in parsed_lines],
+        data = timeline_json or structured_data or tlmod.build_timeline([l.raw_line for l in parsed_lines],
                                                      rettypes=load_rettypes(parsed_lines, vmlinux_path, module_dirs, args),
                                                      errno_map=ERROR_CODE_MAP,
                                                      overhead=parse_overhead(args.overhead)).to_data()
@@ -550,8 +588,8 @@ def main():
     compare_json = None
     if args.compare:
         try:
-            compare_json = build_compare_data(args, raw_lines, parsed_lines, timeline_json, vmlinux_path, module_dirs)
-        except (OSError, EOFError, lzma.LZMAError, inputs.raw.RawInputError) as error:
+            compare_json = build_compare_data(args, parsed_lines, timeline_json or structured_data, vmlinux_path, module_dirs)
+        except (OSError, EOFError, lzma.LZMAError, inputs.raw.RawInputError, UftraceInputError, UnicodeError) as error:
             print(f"Error: cannot read comparison input: {error}", file=sys.stderr)
             sys.exit(1)
 
@@ -594,6 +632,7 @@ def main():
             report_mode=args.report_mode,
             sidecar_threshold=args.sidecar_threshold,
             omit_text=args.no_text_view and args.keep_source,
+            user_src=args.user_src,
             module_dirs=module_dirs,  # 传递原始模块目录列表（用于auto-search）
             base_url=args.base_url,
             module_url=args.module_url,  # 传递模块URL

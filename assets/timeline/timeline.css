@@ -24,6 +24,14 @@
 }
 .tl-group { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px; min-width: 0; max-width: 100%; }
 .tl-label { color: var(--text-muted); font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
+.tl-space-key { gap: 9px; color: var(--text-muted); font-size: 11px; white-space: nowrap; }
+.tl-space-key span::before { content: ''; display: inline-block; width: 9px; height: 7px; border-radius: 2px; margin-right: 4px; background: #9bb9e6; }
+.tl-space-key .tl-space-user::before { background: #9bcdbf; }
+.tl-space-key .tl-space-edge::before { height: 1px; vertical-align: middle; background: currentColor; }
+.tl-stack-space { color: var(--text-muted); font-size: 10px; margin-inline-end: 6px; }
+.tl-context-row[data-space-boundary] { border-top: 1px solid var(--tree-guide); }
+.tl-context-source .tl-source-open { display: inline-flex; min-width: 0; border: 0; padding: 0; background: none; color: var(--link-color); cursor: pointer; font: inherit; }
+.tl-source-open:hover { text-decoration: underline; }
 .tl-seg {
     display: inline-flex;
     flex-wrap: wrap;

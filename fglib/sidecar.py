@@ -141,7 +141,7 @@ def write_sidecar(path, generator, byte_limit=None):
             resources = {}
             index_path = resources_directory / 'text-index.json'
             with index_path.open('xb') if deferred else nullcontext() as index_stream:
-                index = TextIndexWriter(index_stream) if deferred else None
+                index = TextIndexWriter(index_stream, include_space='uftrace' in generator.timeline_json) if deferred else None
                 generator.text_index = index
                 try:
                     spool.write_sections(generator.iter_sections())
@@ -191,7 +191,7 @@ def write_sidecar(path, generator, byte_limit=None):
                             stream.write(b'    <script type="application/json" id="fgSourceChunks">' + source_catalog + b'</script>\n')
                         if deferred and section.name == 'chrome':
                             _copy(spool, section, stream, (
-                                (b'<div id="content">', b'<div id="content" data-fg-text="true" data-fg-text-index="true">'),
+                                (b'<div id="content"', b'<div id="content" data-fg-text="true" data-fg-text-index="true"'),
                                 (b'data-default-view="text"', b'data-default-view="timeline" data-deferred-text="true"'),
                             ))
                         else:

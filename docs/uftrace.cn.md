@@ -4,16 +4,41 @@
 
 可选的原生采集 / 导出基础已实现，在 QEMU x86_64 Linux **7.4.0-rc2** 和
 树莓派 4 Linux **6.18.56-v8-MY_CUSTOM_KERNEL+** 上完成实验。
-`funcgraph --uftrace`、混合可视化、用户态源码和 `fgcapture.sh --user`
-**尚未提供**。现有内核 text/raw 输入不变；不要将 JSONL 当作 function_graph
-文本交给现有解析器。
+FuncGraph 支持导入**仅用户态、仅内核态、混合**记录，不强制提供 `vmlinux`，
+不需要原生 Python 扩展。现有 ftrace 文本和 trace-cmd 输入仍可使用。
+负责保护和恢复 tracefs 状态的 `fgcapture.sh --user` 包装尚未实现。
 
-可视化的统一验收范围是：**仅用户态、仅内核态、两者混合**。地址空间必须来自
-输入的明确标记，不能靠函数名推断。混合视图在真实的用户态→内核态子树入口
-增加细而清晰的分界线，同时提供态标签和图例；线段仅覆盖该子树的实际时间范围，
-深度随调用关系变化，不把整条轨道固定分成两半。单态数据不制造另一态的缺失帧，
-不要求无关的 vmlinux / 源码，也不显示多余分界。这是待实现的 UI 验收条件，
-不是已经交付的界面功能。
+## 生成报告
+
+```bash
+funcgraph --uftrace CAPTURE --uftrace-bin build/uftrace-x86_64/bin/uftrace \
+    --timeline --enable-fold --filter --user-src samples --output mixed.html
+# 或读取已经导出的文件，不需要 uftrace 可执行文件：
+funcgraph capture.jsonl --timeline --enable-fold --filter --output mixed.html
+```
+
+目录输入调用带补丁的 uftrace（默认从 `PATH` 查找），执行 `dump --fgraph --srcline`。
+JSONL 按头部自动识别，也可用 `--input-format uftrace` 显式指定，支持 stdin 和压缩输入。
+一份报告读取一份记录目录或 JSONL。`--compare BASE` 支持 JSONL 或旧格式 trace；
+Compare 与 `--export` 分开统计用户态、内核态的同名函数。
+
+- **混合展示**：Timeline 默认 Context 配色区分两态。分界线画在匹配的内核根调用
+  顶边，长度就是该调用的记录时段，深度随实际调用关系变化，不横贯整条轨道。
+  Text 用 `U` / `K` 标记，分界处加下划线，调用栈也标出转换。单态报告不画分界线。
+- **匹配规则**：按线程、地址空间、原生深度及地址配对进出记录；只在核实共用时钟、
+  同线程且完整的内核根调用落在记录的用户调用内时合并。这证明时间上的包含关系，
+  不证明用户态具体哪条指令进入内核。排序和匹配不使用内核图内部计时器。没有匹配
+  的调用保留；时间范围冲突的根调用放在独立轨道。时钟无法核实或不一致时分开展示
+  并提示，不应跨态对比时间。
+- **源码**：展示记录中已有的用户态文件和行号，不借用内核源码链接。`--user-src DIR`
+  从目录内已有文件嵌入源码片段，可点击调用栈位置或展开 Text 行查看。使用
+  `--no-text-view --keep-source` 可省略 Text DOM，但保留片段。
+- **过滤**：启用 `--filter` 后，Text 与 Timeline 共用的 Filter 支持 `space:user` 和
+  `space:kernel`；sidecar 报告不必先加载 Text。命令行的调用树预过滤暂不适用于 uftrace。
+- **数据缺口**：缺失进出记录或丢失事件会标记，不补造实测帧。用户态 CPU 未知，
+  用户态原始 payload 不解码；内核返回值展示原始比特，只在 BTF 类型已知时做 errno
+  分析。调度分析使用内核 tracepoint，不与 perf 事件重复计入。未投影到报告中的原生
+  字段仍保留在 JSONL 中。
 
 ## 可复现构建
 

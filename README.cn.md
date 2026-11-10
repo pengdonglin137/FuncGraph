@@ -1,6 +1,6 @@
 # FuncGraph - 专业 Linux ftrace 可视化工具
 
-用户态 / 内核态全流程跟踪：可选的固定版本 uftrace 采集 / 导出基础已落地，FuncGraph 导入和混合可视化仍在实现中，详见[状态、构建与格式约定](docs/uftrace.cn.md)。
+FuncGraph 支持可视化仅用户态、仅内核态和混合 uftrace 记录。混合报告在时间轴标记每处匹配的用户态 → 内核态分界。详见 [uftrace 构建与报告指南](docs/uftrace.cn.md)。
 
 **raw 输入**：`funcgraph trace.dat --timeline --output trace.html` 支持带元数据的 trace-cmd 二进制容器，需要可选原生库和本机 C 编译器。支持压缩/stdin、纳秒时间戳和 `--raw-instance NAME`；不支持独立 `trace_pipe_raw` 裸页。文本模式不新增依赖。详见 [raw 使用与构建文档](docs/raw-input.cn.md)。
 
