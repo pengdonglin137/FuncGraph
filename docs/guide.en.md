@@ -375,6 +375,7 @@ The format of return values depends on the kernel:
 With `--enable-fold` every `func() {` line has a ▶ icon:
 
 - Click ▶ to fold/unfold the block; Shift+click folds/unfolds recursively.
+- Folding a parent hides every descendant call and its open source panel, without affecting other call trees or the parent's own source panel. Reopening the parent restores source panels only for visible calls and preserves each child's folded/unfolded state; this also works after reloading the report and in task-grouped order.
 - Keys `1`–`9`: show only calls up to depth N; `0`: unfold everything.
 - A folded entry line shows a summary: number of child calls, total time, return value.
 - Folding state is kept in the browser's localStorage, per report.

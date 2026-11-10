@@ -417,6 +417,109 @@ class BrowserSmokeTest(unittest.TestCase):
             return Array.from(n).every(x => x.style.display === 'none') && n.length > 0; }""")
         self.assertTrue(hidden)
 
+    def nested_fold_rows(self):
+        return self.ev("""() => {
+            const grandchild = [...document.querySelectorAll('.fold-entry.expandable')].find(entry =>
+                entry.dataset.foldAncestors?.split(' ').length === 2);
+            const ancestors = grandchild.dataset.foldAncestors.split(' ');
+            const entries = ancestors.map(foldId => document.querySelector(
+                '[data-fold-id="' + foldId + '"][data-fold-type="entry"]'));
+            entries.push(grandchild);
+            const outside = [...document.querySelectorAll('.line-container.expandable')].find(entry =>
+                entry.dataset.foldId !== ancestors[0] &&
+                !(entry.dataset.foldAncestors || '').split(' ').includes(ancestors[0]));
+            return [...entries, outside].map(entry => ({
+                row: entry.id, line: entry.dataset.lineId, fold: entry.dataset.foldId
+            }));
+        }""")
+
+    def expand_fold_source(self, entry):
+        self.page.locator('#' + entry['row'] + ' .line-content').click()
+        self.page.locator('#' + entry['line'] + '_content').wait_for(state='visible')
+
+    def test_fold_hides_expanded_descendant_sources(self):
+        for grouped in [False, True]:
+            with self.subTest(grouped=grouped):
+                self.ev('localStorage.clear()')
+                self.page.reload(wait_until='load')
+                if grouped:
+                    self.page.click('#textOrderBtn')
+                parent, child, grandchild, outside = self.nested_fold_rows()
+                for entry in [parent, child, grandchild, outside]:
+                    self.expand_fold_source(entry)
+                self.page.locator('#' + parent['row'] + ' .fold-icon').click()
+                for entry in [child, grandchild]:
+                    self.assertFalse(self.page.locator('#' + entry['row']).is_visible())
+                    self.assertFalse(self.page.locator('#' + entry['line'] + '_content').is_visible())
+                for entry in [parent, outside]:
+                    self.assertTrue(self.page.locator('#' + entry['row']).is_visible())
+                    self.assertTrue(self.page.locator('#' + entry['line'] + '_content').is_visible())
+                self.page.locator('#' + parent['row'] + ' .fold-icon').click()
+                for entry in [parent, child, grandchild, outside]:
+                    self.assertTrue(self.page.locator('#' + entry['line'] + '_content').is_visible())
+                    self.page.locator('#' + entry['row'] + ' .line-content').click()
+                    self.page.locator('#' + entry['line'] + '_content').wait_for(state='hidden')
+
+    def test_fold_keeps_nested_child_closed_when_parent_reopens(self):
+        parent, child, grandchild, outside = self.nested_fold_rows()
+        self.expand_fold_source(grandchild)
+        self.page.locator('#' + child['row'] + ' .fold-icon').click()
+        self.assertFalse(self.page.locator('#' + grandchild['line'] + '_content').is_visible())
+        self.page.locator('#' + parent['row'] + ' .fold-icon').click()
+        self.page.locator('#' + parent['row'] + ' .fold-icon').click()
+        self.assertTrue(self.page.locator('#' + child['row']).is_visible())
+        self.assertFalse(self.page.locator('#' + grandchild['row']).is_visible())
+        self.assertFalse(self.page.locator('#' + grandchild['line'] + '_content').is_visible())
+        self.page.locator('#' + child['row'] + ' .fold-icon').click()
+        self.assertTrue(self.page.locator('#' + grandchild['row']).is_visible())
+        self.assertTrue(self.page.locator('#' + grandchild['line'] + '_content').is_visible())
+
+    def test_parent_fold_cancels_pending_descendant_source_click(self):
+        parent, child, grandchild, outside = self.nested_fold_rows()
+        self.page.locator('#' + grandchild['row'] + ' .line-content').click()
+        self.ev('toggleFold(' + repr(parent['fold']) + ')')
+        self.page.wait_for_function('clickTimer === null')
+        self.assertFalse(self.page.locator('#' + grandchild['row']).is_visible())
+        self.assertFalse(self.page.locator('#' + grandchild['line'] + '_content').is_visible())
+
+    def test_fold_restores_hidden_sources_after_reload(self):
+        parent, child, grandchild, outside = self.nested_fold_rows()
+        for entry in [parent, child, grandchild, outside]:
+            self.expand_fold_source(entry)
+        icon = self.page.locator('#' + parent['row'] + ' .fold-icon')
+        icon.press('Enter')
+        self.ev('flushExpandedState()')
+        self.page.reload(wait_until='load')
+        self.assertTrue(self.page.locator('#' + parent['row'] + '.folded').is_visible())
+        for entry in [child, grandchild]:
+            self.assertFalse(self.page.locator('#' + entry['row']).is_visible())
+            source = self.page.locator('#' + entry['line'] + '_content')
+            self.assertFalse(source.is_visible())
+            self.assertEqual(source.inner_html(), '')
+        self.assertTrue(self.page.locator('#' + outside['line'] + '_content').is_visible())
+        self.page.locator('#' + parent['row'] + ' .fold-icon').press('Space')
+        for entry in [child, grandchild]:
+            self.assertTrue(self.page.locator('#' + entry['row']).is_visible())
+            self.assertTrue(self.page.locator('#' + entry['line'] + '_content').is_visible())
+
+    def test_recursive_and_depth_folds_do_not_reveal_hidden_children(self):
+        parent, child, grandchild, outside = self.nested_fold_rows()
+        self.expand_fold_source(grandchild)
+        self.page.locator('#' + parent['row'] + ' .fold-icon').click(modifiers=['Shift'])
+        self.assertFalse(self.page.locator('#' + grandchild['line'] + '_content').is_visible())
+        self.ev('foldToDepth(1)')
+        self.assertTrue(self.page.locator('#' + child['row']).is_visible())
+        self.assertFalse(self.page.locator('#' + grandchild['row']).is_visible())
+        self.assertFalse(self.page.locator('#' + grandchild['line'] + '_content').is_visible())
+        self.ev('unfoldAllBlocks()')
+        self.assertTrue(self.page.locator('#' + grandchild['row']).is_visible())
+        self.assertTrue(self.page.locator('#' + grandchild['line'] + '_content').is_visible())
+        self.page.locator('#' + parent['row'] + ' .fold-icon').click(modifiers=['Shift'])
+        self.ev('toggleFoldRecursive(' + repr(child['fold']) + ')')
+        self.assertFalse(self.page.locator('#' + child['row']).is_visible())
+        self.assertFalse(self.page.locator('#' + grandchild['row']).is_visible())
+        self.assertFalse(self.page.locator('#' + grandchild['line'] + '_content').is_visible())
+
     def open_timeline(self):
         self.page.click('.view-tab[data-view=timeline]')
         self.page.wait_for_timeout(400)

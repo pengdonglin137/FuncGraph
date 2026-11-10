@@ -260,11 +260,13 @@
             for (const [lineId, isExpanded] of Object.entries(expandedLines)) {
                 if (isExpanded) {
                     const content = document.getElementById(lineId + '_content');
-                    const btn = document.querySelector('#' + lineId + '_container .expand-btn');
-                    const container = document.getElementById(lineId + '_container');
+                    const container = content && content.previousElementSibling;
+                    const btn = container && container.querySelector('.expand-btn');
 
                     if (content && btn && container) {
-                        fgFill(content); content.style.display = 'block';
+                        if (container.style.display !== 'none') {
+                            fgFill(content); content.style.display = 'block';
+                        }
                         if (btn) btn.textContent = '-';
                         container.classList.add('selected');
                     }
@@ -276,7 +278,7 @@
         // Restore all folded states on page load — uses _setFolded for consistency
         function restoreFoldedState() {
             for (const [foldId, isFolded] of Object.entries(foldedBlocks)) {
-                if (isFolded) _setFolded(foldId, true);
+                if (isFolded) _setFolded(foldId, true, true);
             }
         }
 
@@ -1452,9 +1454,9 @@
         // 切换展开/收起状态 - 只影响当前行，不滚动
         // 切换折叠状态
         // Core fold/unfold logic — does NOT write localStorage (P3 optimization)
-        function _setFolded(foldId, shouldFold) {
+        function _setFolded(foldId, shouldFold, restore) {
             const isFolded = foldedBlocks[foldId] === true;
-            if (shouldFold === isFolded) return; // no-op
+            if (shouldFold === isFolded && !restore) return; // no-op
 
             // P1: single DOM query for all related lines
             const lines = document.querySelectorAll('[data-fold-id="' + foldId + '"], [data-fold-ancestors~="' + foldId + '"]');
@@ -1469,13 +1471,6 @@
             if (shouldFold) {
                 // Collapse
                 foldedBlocks[foldId] = true;
-                lines.forEach(line => {
-                    const type = line.getAttribute('data-fold-type');
-                    const thisId = line.getAttribute('data-fold-id');
-                    if (!(type === 'entry' && thisId === foldId)) {
-                        line.style.display = 'none';
-                    }
-                });
                 if (entryEl) {
                     entryEl.classList.add('folded');
                     const icon = entryEl.querySelector('.fold-icon');
@@ -1486,29 +1481,30 @@
                 // Expand
                 delete foldedBlocks[foldId];
                 removeFoldSummary(foldId);
-                lines.forEach(line => { line.style.display = ''; });
                 if (entryEl) {
                     entryEl.classList.remove('folded');
                     const icon = entryEl.querySelector('.fold-icon');
                     if (icon) icon.classList.add('expanded');
                 }
-                // P2: only restore child folds (not all foldedBlocks)
-                _restoreChildFolds(foldId);
             }
-        }
 
-        // P2: restore only folds that are children of the given foldId
-        function _restoreChildFolds(parentFoldId) {
-            for (const childId of Object.keys(foldedBlocks)) {
-                if (!foldedBlocks[childId]) continue;
-                // Check if childId's entry has parentFoldId in its ancestors
-                const childEntry = document.querySelector('[data-fold-id="' + childId + '"][data-fold-type="entry"]');
-                if (!childEntry) continue;
-                const ancestors = childEntry.getAttribute('data-fold-ancestors') || '';
-                if (ancestors.split(' ').includes(parentFoldId)) {
-                    _setFolded(childId, true);
+            lines.forEach(line => {
+                const ancestors = (line.getAttribute('data-fold-ancestors') || '').split(' ');
+                const ownFold = line.getAttribute('data-fold-id');
+                const hidden = (line.getAttribute('data-fold-type') !== 'entry' && foldedBlocks[ownFold] === true) ||
+                    ancestors.some(ancestor => foldedBlocks[ancestor] === true);
+                line.style.display = hidden ? 'none' : '';
+                const lineId = line.getAttribute('data-line-id');
+                const content = document.getElementById(lineId + '_content');
+                if (content) {
+                    if (!hidden && expandedLines[lineId]) {
+                        fgFill(content);
+                        content.style.display = 'block';
+                    } else {
+                        content.style.display = 'none';
+                    }
                 }
-            }
+            });
         }
 
         // Public API: toggle a single fold block + save state
@@ -1526,6 +1522,7 @@
             const content = document.getElementById(lineId + '_content');
             const btn = document.querySelector('[data-line-id="' + lineId + '"] .expand-btn');
             const container = document.querySelector('[data-line-id="' + lineId + '"]');
+            if (container.style.display === 'none') return;
 
             // 使用getComputedStyle获取计算后的显示状态
             const computedStyle = window.getComputedStyle(content);
