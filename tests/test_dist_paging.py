@@ -98,6 +98,143 @@ class DistributionPagingTest(unittest.TestCase):
     def rows(self):
         return list(csv.DictReader(io.StringIO(self.export().decode('utf-8-sig'))))
 
+    def statistics(self):
+        return self.page.locator('.an-dist .tl-kv').evaluate('''element =>
+            Object.fromEntries([...element.querySelectorAll('.k')].map(label =>
+                [label.textContent, label.nextElementSibling.textContent]))''')
+
+    def visible_calls(self):
+        return self.page.evaluate('''() => {
+            const panel = document.querySelector('.tl-detail').getBoundingClientRect();
+            const pager = document.querySelector('.an-dist-pager').getBoundingClientRect();
+            const header = document.querySelector('.an-dist-head').getBoundingClientRect();
+            return [...document.querySelectorAll('.an-list tr')].filter(row => {
+                const bounds = row.getBoundingClientRect();
+                return bounds.top >= Math.max(panel.top, header.bottom) && bounds.bottom <= Math.min(panel.bottom, pager.top);
+            }).length;
+        }''')
+
+    def test_histogram_disclosure_keeps_page_rows_statistics_csv_and_keyboard_focus(self):
+        self.open_report()
+        self.next()
+        before = self.ids(), self.statistics(), self.export()
+        navigation = self.page.evaluate("() => { const model = fgView('timeline').probe(); return [model.sel(), model.view()]; }")
+        split = self.page.evaluate("localStorage.getItem('fgTl.detailFrac')")
+        first = self.page.locator('.an-list [data-slice]').first.element_handle()
+        button = self.page.get_by_role('button', name='Histogram', exact=True)
+        self.assertEqual(button.get_attribute('aria-controls'), 'tl-dist-histogram')
+        self.assertEqual(button.get_attribute('aria-expanded'), 'true')
+        button.press('Enter')
+        self.assertEqual(button.get_attribute('aria-expanded'), 'false')
+        self.assertFalse(self.page.locator('.an-hist').is_visible())
+        self.assertTrue(first.evaluate('element => element.isConnected'))
+        self.assertEqual((self.ids(), self.statistics(), self.export()), before)
+        self.assertEqual(self.page.evaluate("() => { const model = fgView('timeline').probe(); return [model.sel(), model.view()]; }"), navigation)
+        self.assertEqual(self.page.evaluate("localStorage.getItem('fgTl.detailFrac')"), split)
+        button.press('Space')
+        self.assertTrue(button.evaluate('element => element === document.activeElement'))
+        self.assertTrue(self.page.locator('.an-hist').is_visible())
+        self.assertEqual((self.ids(), self.statistics(), self.export()), before)
+        self.assertEqual(self.page.evaluate("() => { const model = fgView('timeline').probe(); return [model.sel(), model.view()]; }"), navigation)
+
+    def test_histogram_choice_survives_population_changes_reopening_but_not_report_reload(self):
+        def update(data):
+            data['strings'] += ['second_function', 'second_caller']
+            data['cols']['name'][-1] = 2
+            data['cols']['caller'] = [1] * 120 + [3] * 85
+            data['cols']['adj'] = [duration / 2 for duration in data['cols']['dur']]
+        self.open_report(update=update)
+        self.page.locator('[data-act=dist-histogram]').click()
+        self.page.locator('tr[data-site] button').first.click()
+        self.page.locator('[data-act=dist-next]').click()
+        self.page.evaluate("fgNotifyFilter('subset', new Set(Array.from({length: 100}, (_, index) => index + 1)))")
+        self.page.locator('[data-act=adj]').click()
+        self.assertEqual(self.page.locator('[data-act=dist-histogram]').get_attribute('aria-expanded'), 'false')
+        self.page.locator('.an-dist-head .tl-close').click()
+        self.page.evaluate("() => { const model = fgView('timeline').probe(); model.dist(model.sName[0]); }")
+        self.assertFalse(self.page.locator('.an-hist').is_visible())
+        self.page.evaluate("() => { const model = fgView('timeline').probe(); model.dist(model.S.indexOf('second_function')); }")
+        self.assertFalse(self.page.locator('.an-hist').is_visible())
+        self.assertEqual(self.status(), 'No matching calls')
+        self.open_report()
+        self.assertEqual(self.page.locator('[data-act=dist-histogram]').get_attribute('aria-expanded'), 'true')
+
+    def test_closed_histogram_skips_canvas_work_and_redraws_at_current_size_when_reopened(self):
+        self.open_report()
+        self.page.locator('[data-act=dist-histogram]').click()
+        self.page.evaluate('''async () => {
+            await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+            const original = HTMLCanvasElement.prototype.getContext;
+            window.distCanvasCalls = 0;
+            HTMLCanvasElement.prototype.getContext = function(...parameters) {
+                if (this.classList.contains('an-hist')) window.distCanvasCalls++;
+                return original.apply(this, parameters);
+            };
+        }''')
+        self.page.set_viewport_size({'width': 1260, 'height': 800})
+        self.page.evaluate("document.documentElement.setAttribute('data-theme', 'dark')")
+        self.page.locator('[data-act=dist-bucket]').select_option(self.page.locator('[data-act=dist-bucket] option').last.get_attribute('value'))
+        self.page.evaluate('async () => { await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))); }')
+        self.assertEqual(self.page.evaluate('window.distCanvasCalls'), 0)
+        bucket = self.page.locator('[data-act=dist-bucket]').input_value()
+        self.page.locator('[data-act=dist-histogram]').press('Enter')
+        self.page.wait_for_function('''() => {
+            const canvas = document.querySelector('.an-hist');
+            return window.distCanvasCalls > 0 && canvas.width === Math.round(canvas.parentElement.clientWidth * devicePixelRatio);
+        }''')
+        self.assertEqual(self.page.locator('[data-act=dist-bucket]').input_value(), bucket)
+
+    def test_compact_histogram_keeps_real_call_rows_visible_in_touch_reports(self):
+        self.context.close()
+        for theme in ('light', 'dark'):
+            for sidecar in (False, True):
+                context = self.browser.new_context(viewport={'width': 390, 'height': 844}, has_touch=True, is_mobile=True)
+                self.addCleanup(context.close)
+                self.page = context.new_page()
+                self.page.on('pageerror', lambda error: self.errors.append(str(error)))
+                self.page.add_init_script(f"localStorage.setItem('theme', '{theme}')")
+                self.open_report(sidecar=sidecar)
+                expected = self.statistics(), self.export()
+                self.page.locator('[data-act=dist-histogram]').tap()
+                for width, height in ((390, 844), (844, 390)):
+                    with self.subTest(theme=theme, sidecar=sidecar, width=width):
+                        self.page.set_viewport_size({'width': width, 'height': height})
+                        if height < 480:
+                            self.page.locator('[data-detail-expand]').tap()
+                        self.page.evaluate("document.querySelector('.tl-detail').scrollTop = 0")
+                        self.assertGreaterEqual(self.visible_calls(), 1)
+                        self.assertEqual((self.statistics(), self.export()), expected)
+                        self.assertEqual(self.page.get_by_label('Duration bucket', exact=True).count(), 1)
+                        self.assertGreaterEqual(self.page.locator('[data-act=dist-histogram]').bounding_box()['height'], 44)
+                        self.assertLessEqual(self.page.evaluate('document.documentElement.scrollWidth'), width)
+                context.close()
+
+    def test_empty_compact_distribution_never_invents_statistics_or_enables_export(self):
+        self.open_report()
+        self.page.locator('[data-act=dist-histogram]').click()
+        self.page.evaluate("fgNotifyFilter('empty', new Set())")
+        self.assertEqual(set(self.statistics().values()), {'—'})
+        self.assertEqual(self.ids(), [])
+        self.assertEqual(self.status(), 'No matching calls')
+        self.assertTrue(self.page.locator('[data-act=dist-csv]').is_disabled())
+        self.page.locator('[data-act=dist-histogram]').press('Space')
+        self.assertTrue(self.page.locator('.an-hist').is_visible())
+        self.assertTrue(self.page.locator('[data-act=dist-bucket]').is_disabled())
+
+    def test_narrow_compact_statistics_and_long_names_do_not_overflow(self):
+        def update(data):
+            data['strings'][0] = 'very_long_function_' * 12
+            data['cols']['dur'] = [10 ** 12 + index for index in range(205)]
+        self.page.set_viewport_size({'width': 320, 'height': 844})
+        self.open_report(update=update)
+        expected = self.statistics()
+        self.page.locator('[data-act=dist-histogram]').click()
+        self.assertEqual(self.statistics(), expected)
+        self.assertLessEqual(self.page.evaluate('document.documentElement.scrollWidth'), 320)
+        button = self.page.locator('[data-act=dist-histogram]').bounding_box()
+        self.assertGreaterEqual(button['x'], 0)
+        self.assertLessEqual(button['x'] + button['width'], 320)
+
     def test_page_boundaries_and_native_keyboard_endpoint_focus(self):
         for count in (1, 50, 51, 103):
             with self.subTest(count=count):

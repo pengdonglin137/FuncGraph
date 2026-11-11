@@ -374,6 +374,8 @@ uftrace 的原生导出为内核入口增加可选 `retaddr_symbol`：仅解析�
 
 `analysis.js` 的 `distView.page` 以每页 50 次调用替换耗时列表 tbody；翻页复用已按耗时/原始索引排序的函数或调用点总体，不重新聚合、排序或改变分位数/柱子口径。普通刷新与重开保留页码，换总体、柱子或 Overhead 时回到首页；翻页和无总体变化的刷新保留可用控件焦点。分页条限制在调用列表 section 内，后面的 Slow vs fast 与 By call site 不被覆盖；CSV 仍遍历完整当前调用范围。该限制不覆盖调用点表、对比表或全量模型，详见[耗时调用分页记录](performance-duration-calls.md)。
 
+同一 Timeline 实例的 `distHistogramOpen` 仅保存直方图展示偏好，默认开启，不写 localStorage。标题的原生 disclosure 按钮只切换图表的 hidden 状态及六项统计的紧凑排版，不重建调用 tbody、重新聚合或改变页码/区间；后续过滤、Overhead、函数和调用点切换仍照常更新完整总体。收起时不安排图表绘制，展开后按当前尺寸、主题和区间重画。手机紧凑布局把重复区间标签与排序提示留在无障碍文本中，让选择器、导出和分页少换行；标题信息与动作分组，六项统计仍完整显示。极短横屏继续使用已有详情扩展，不暗改用户保存的分隔位置。
+
 ### 任务导航与完整时间范围
 
 任务导航（`analysis.js` 的 `taskData/taskOrder/showTasks`）懒构建全体 `TRACKS` 的身份事实：真实切片、runs、offcpu、wakeups、resched、irqoff 与 sections 的计数/几何边界及 CPU 集合，错误计数含 minor 源头，不纳入合成帧。原始事实独立于过滤、Overhead 和 Inline；过滤匹配数按 `textHits` 身份另缓存，查询/排序只处理任务，不重扫调用。当前每页最多 100 行，前后翻页仅替换 tbody，普通刷新与重开保留页码，新条件重置首页；分页条在正常高度面板底部固定，极短面板的标题与分页条恢复普通滚动。分页与全量 CSV 共用同一排序结果，导出不受当前页限制；query 使用字面匹配，名称转义、CSV 复用公式防护。时间列区分实测、压缩和调用顺序口径，跨度含空隙、不是 CPU 用量；开放等待按 `OPEN_OFF` 保留未知恢复和下界身份。下表保留旧追加式 Tasks 的容量基准，当前分页的对照实测与边界见[任务分页性能记录](performance-tasks.md)。

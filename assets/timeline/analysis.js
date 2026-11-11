@@ -446,7 +446,7 @@ function showErrors() {
 }
 
 // ---- 2. duration distribution of one function ----
-let distCache = null, distView = null, distFrame = 0;
+let distCache = null, distView = null, distFrame = 0, distHistogramOpen = true;
 const DIST_PAGE = 50, DIST_SITE_PAGE = 12;
 function distQuantile(ids, fraction) {
     return ids.length ? durOf(ids[ids.length - 1 - Math.round(fraction * (ids.length - 1))]) : 0;
@@ -516,18 +516,20 @@ function showDist(nameIdx) {
     AN.distIds = ids;
     const quantile = fraction => distQuantile(ids, fraction);
     const statistic = value => ids.length ? fmtDur(value) : '—';
-    let h = '<div class="tl-detail-head an-dist-head"><span class="tl-detail-title" title="' + esc(S[nameIdx]) + '">' + esc(S[nameIdx]) + '</span>' +
+    let h = '<div class="tl-detail-head an-dist-head"><div class="an-dist-heading"><span class="tl-detail-title" title="' + esc(S[nameIdx]) + '">' + esc(S[nameIdx]) + '</span>' +
         pill('mute', ids.length + ' calls') + pill('mute', 'total ' + fmtDur(population.total)) + (textHits ? pill('warn', 'filtered') : '') +
         (adjOn ? pill('warn', 'overhead subtracted') : '') + (AN.site !== null ? '<span class="tl-pill warn" title="' + esc(AN.site) + '">from ' + esc(AN.site) + '</span>' : '') +
-        '<span class="an-dist-actions">' + (AN.site !== null ? '<button class="tl-btn" data-act="dist-reset-site">All call sites</button>' : '') +
+        '</div><span class="an-dist-actions">' + (AN.site !== null ? '<button class="tl-btn" data-act="dist-reset-site">All call sites</button>' : '') +
+        '<button class="tl-btn" type="button" data-act="dist-histogram" aria-label="Histogram" aria-controls="tl-dist-histogram" aria-expanded="' + distHistogramOpen +
+        '" title="' + (distHistogramOpen ? 'Hide histogram; keep all statistics and calls' : 'Show histogram for the full statistical population') + '">Histogram</button>' +
         '<button class="tl-close" title="Close (Esc)">×</button></span></div>';
-    h += '<div class="an-dist"><div class="tl-kv">' +
+    h += '<div class="an-dist' + (distHistogramOpen ? '' : ' an-dist-compact') + '"><div class="tl-kv">' +
         kv('min', statistic(quantile(0))) + kv('p50', statistic(quantile(0.5))) + kv('p90', statistic(quantile(0.9))) + kv('p99', statistic(quantile(0.99))) +
         kv('max', statistic(quantile(1))) + kv('mean', statistic(ids.length ? population.total / ids.length : 0)) +
-        '</div><div class="an-hist-wrap"><canvas class="an-hist" height="120" role="img" aria-label="Duration histogram; use the duration bucket menu to filter calls"></canvas>' +
+        '</div><div class="an-hist-wrap" id="tl-dist-histogram"' + (distHistogramOpen ? '' : ' hidden') + '><canvas class="an-hist" height="120" role="img" aria-label="Duration histogram; use the duration bucket menu to filter calls"></canvas>' +
         '<div class="an-hint">Log-scale buckets; click a bar or choose a duration bucket to filter the call list and export, not these statistics.</div></div></div>';
     if (!ids.length) h += '<div class="an-hint">No calls match this function' + (AN.site !== null ? ' and call site' : '') + ' with the current filter.</div>';
-    h += '<section class="an-dist-call-browser" aria-label="Duration calls"><div class="an-dist-tools"><label>Duration bucket <select data-act="dist-bucket"' + (ids.length ? '' : ' disabled') + '><option value="-1">All durations</option>';
+    h += '<section class="an-dist-call-browser" aria-label="Duration calls"><div class="an-dist-tools"><label><span>Duration bucket</span> <select data-act="dist-bucket" aria-label="Duration bucket"' + (ids.length ? '' : ' disabled') + '><option value="-1">All durations</option>';
     distView.histogram.buckets.forEach((bucket, index) => {
         if (bucket.ids.length) h += '<option value="' + index + '">' + esc(distBucketLabel(index)) + '</option>';
     });
@@ -555,12 +557,23 @@ function slowRows(list, p50) {
         `<td style="text-align:left">${esc(callerOf(i) || (sParent[i] >= 0 ? nameOf(sParent[i]) : ''))}</td>` +
         `<td>${p50 ? (durOf(i) / p50).toFixed(1) : ''}</td></tr>`).join('');
 }
+function toggleDistHistogram() {
+    distHistogramOpen = !distHistogramOpen;
+    elDetail.querySelector('.an-dist').classList.toggle('an-dist-compact', !distHistogramOpen);
+    elDetail.querySelector('.an-hist-wrap').hidden = !distHistogramOpen;
+    const button = elDetail.querySelector('[data-act=dist-histogram]');
+    button.setAttribute('aria-expanded', String(distHistogramOpen));
+    button.title = distHistogramOpen ? 'Hide histogram; keep all statistics and calls' : 'Show histogram for the full statistical population';
+    elDetail.scrollTop = 0;
+    scheduleDistHistogram();
+}
 function updateDistControls() {
     const ids = distCallIds(), start = distView.page * DIST_PAGE, end = Math.min(start + DIST_PAGE, ids.length);
     const previous = elDetail.querySelector('[data-act=dist-prev]'), next = elDetail.querySelector('[data-act=dist-next]');
     const focused = document.activeElement;
-    elDetail.querySelector('.an-dist-count').textContent = ids.length ?
-        'Calls ' + (start + 1) + '–' + end + ' of ' + ids.length + ' (slowest first)' : 'No matching calls';
+    const count = elDetail.querySelector('.an-dist-count');
+    count.textContent = ids.length ? 'Calls ' + (start + 1) + '–' + end + ' of ' + ids.length : 'No matching calls';
+    if (ids.length) count.insertAdjacentHTML('beforeend', '<span class="an-dist-order"> (slowest first)</span>');
     previous.disabled = distView.page === 0;
     next.disabled = end >= ids.length;
     if (focused === next && next.disabled && !previous.disabled) previous.focus({ preventScroll: true });
@@ -590,10 +603,10 @@ function changeDistPage(direction) {
     updateDistControls();
 }
 function scheduleDistHistogram() {
-    if (distFrame || AN.kind !== 'dist' || !elDetail.classList.contains('show') || window.fgCurrentView() !== 'timeline') return;
+    if (distFrame || !distHistogramOpen || AN.kind !== 'dist' || !elDetail.classList.contains('show') || window.fgCurrentView() !== 'timeline') return;
     distFrame = requestAnimationFrame(() => {
         distFrame = 0;
-        if (AN.kind === 'dist' && elDetail.classList.contains('show') && window.fgCurrentView() === 'timeline') drawDistHistogram();
+        if (distHistogramOpen && AN.kind === 'dist' && elDetail.classList.contains('show') && window.fgCurrentView() === 'timeline') drawDistHistogram();
     });
 }
 function drawDistHistogram() {
@@ -667,6 +680,7 @@ elDetail.addEventListener('click', event => {
     if (!button || AN.kind !== 'dist') return;
     const action = button.dataset.act;
     if (action === 'dist-next' || action === 'dist-prev') changeDistPage(action === 'dist-next' ? 1 : -1);
+    else if (action === 'dist-histogram') toggleDistHistogram();
     else if (action === 'dist-reset-bucket') selectDistBucket(-1);
     else if (action === 'dist-reset-site') { AN.site = null; showDist(AN.func); }
     else if (action === 'dist-csv') exportDistCsv();

@@ -414,9 +414,17 @@ table.tl-sum td.err { color: #c62828; }
 .an-slowfast-table td:last-child { white-space: nowrap; }
 .an-slowfast-table th[aria-sort="ascending"] .tl-sum-sort, .an-slowfast-table th[aria-sort="descending"] .tl-sum-sort { text-decoration: underline; text-underline-offset: 3px; }
 .an-dist { display: grid; grid-template-columns: minmax(0, 200px) minmax(0, 1fr); gap: 8px 24px; padding: 10px 12px 4px; }
+.an-dist.an-dist-compact { display: block; padding-block: 4px; }
+.an-dist-compact .tl-kv { grid-template-columns: repeat(12, minmax(0, max-content)); gap: 4px 12px; font-variant-numeric: tabular-nums; }
+.an-dist-compact .tl-kv .k::after { content: ':'; }
+.an-dist-compact ~ .an-dist-call-browser :is(.an-dist-tools, .an-dist-pager) { padding-block: 4px; }
+.an-hist-wrap[hidden] { display: none; }
+.an-dist-head [data-act="dist-histogram"]::before { content: '▾'; opacity: 0.55; margin-right: 5px; }
+.an-dist-head [data-act="dist-histogram"][aria-expanded="false"]::before { content: '▸'; }
 .an-dist-head { flex-wrap: wrap; z-index: 2; left: 0; }
+.an-dist-heading { display: flex; flex: 1; flex-wrap: wrap; align-items: center; gap: 8px; min-width: 0; }
 .an-dist-head .tl-detail-title { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; max-width: 100%; }
-.an-dist-head .tl-pill { box-sizing: border-box; max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.an-dist-head .tl-pill { box-sizing: border-box; max-width: min(240px, 100%); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .an-dist-actions { display: flex; align-items: center; gap: 8px; margin-left: auto; flex-shrink: 0; }
 .an-dist-pager { position: sticky; bottom: 0; left: 0; z-index: 1; display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 8px; padding: 6px 12px; color: var(--text-muted); background: var(--container-bg); border-top: 1px solid var(--border-color); }
 .an-dist-count { font-variant-numeric: tabular-nums; }
@@ -425,6 +433,9 @@ table.tl-sum td.err { color: #c62828; }
 .an-dist-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 6px 12px; color: var(--text-muted); }
 .an-dist-tools label { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; min-width: 0; max-width: 100%; }
 .an-dist-tools select { max-width: 100%; color: var(--text-color); background: var(--container-bg); border: 1px solid var(--border-color); border-radius: 4px; padding: 3px; }
+@media (max-width: 700px) {
+    .an-dist-compact .tl-kv { grid-template-columns: repeat(6, minmax(0, max-content)); }
+}
 .an-hist-wrap { min-width: 0; }
 .an-hist { width: 100%; cursor: pointer; display: block; }
 .an-site-btn { font: inherit; color: var(--link-color); background: none; border: none; padding: 0; text-align: left; white-space: normal; overflow-wrap: anywhere; cursor: pointer; }
@@ -504,8 +515,13 @@ table.tl-sum td.err { color: #c62828; }
 .tl-compact .an-task-head .tl-btn, .tl-compact .an-task-footer .tl-btn, .tl-compact [data-task-show],
 .tl-compact .an-task-tools :is(input[type=search], select) { min-height: 44px; }
 .tl-compact .an-task-tools input[type=search] { font-size: 16px; }
-.tl-compact .an-dist-pager .tl-btn, .tl-compact .an-dist-tools :is(.tl-btn, select) { min-height: 44px; }
+.tl-compact .an-dist-pager .tl-btn, .tl-compact .an-dist-head [data-act="dist-histogram"], .tl-compact .an-dist-tools :is(.tl-btn, select) { min-height: 44px; }
 .tl-compact .an-dist-tools select { font-size: 16px; }
+.tl-compact .an-dist-heading { gap: 4px 8px; }
+.tl-compact .an-dist-heading .tl-detail-title { flex-basis: 100%; }
+.tl-compact .an-dist-order, .tl-compact .an-dist-compact ~ .an-dist-call-browser .an-dist-tools label > span { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; }
+.tl-compact .an-dist-compact ~ .an-dist-call-browser .an-dist-tools label { flex: 1 1 140px; }
+.tl-compact .an-dist-compact ~ .an-dist-call-browser .an-dist-tools select { width: 100%; }
 .tl-compact .an-task-filter-toggle { display: inline-block; }
 .tl-compact .an-task-tools:not(.open) { display: none; }
 .tl-compact .tl-slice-head { box-sizing: border-box; min-height: 44px; padding-inline-end: 52px; gap: 4px 8px; }

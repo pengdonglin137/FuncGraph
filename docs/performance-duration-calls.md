@@ -53,7 +53,8 @@ is not a new capture. Startup, CSV cost and peak memory are not measured.
 
 ## Measured result
 
-Chromium `145.0.7632.6`, a 1500 × 900 viewport, 5,000 synthetic calls and three
+The paging comparison committed as `a7ea8256f3b7` uses Chromium `145.0.7632.6`,
+a 1500 × 900 viewport, 5,000 synthetic calls and three
 alternating before/after rounds. Both templates have identical Timeline models
 apart from generation time. These are medians, not latency guarantees.
 
@@ -101,6 +102,8 @@ or comparison tables.
 
 ## Validation
 
+The paging change (`a7ea8256f3b7`) was validated as follows:
+
 - Ten dedicated browser tests cover 1/50/51/103-call boundaries, every identity
   in 5,207 calls, stable tie order without sorting during paging, native keyboard
   endpoint focus, bucket/site/shared filters, empty populations, refresh/reopen,
@@ -119,6 +122,55 @@ or comparison tables.
   `containIntrinsicBlockSize` includes the `auto` prefix. This is not an
   all-green full audit. That Text test and its associated source/index changes
   are neither modified nor included in this duration-call change.
+
+## Compact histogram follow-up
+
+The paging change exposed a cramped-layout limitation: the Pi4 distribution's
+default 275px desktop and 270px touch-portrait panes showed no complete call
+rows at scroll position zero. A header **Histogram** button now lets the user
+collapse just the chart and arrange all six statistics compactly, rather than
+automatically hiding evidence or changing the saved pane height. The chart is
+still open by default. Its explicit `aria-expanded` / `aria-controls` state and
+native Enter/Space behavior remain available in both themes and report modes.
+
+The choice is held only by this Timeline instance: refreshing the analysis,
+changing filters/function/call site/Overhead, closing/reopening or switching
+views retains it; reloading the report resets it. Toggling does not replace call
+rows, sort/aggregate again, change the current page or bucket, select a call,
+alter the measured view range, export scope or stored `fgTl.detailFrac`.
+Collapsing does not stop normal population preparation for filters; it only
+avoids scheduling histogram painting. Reopening redraws at the current size,
+theme and bucket. This is not an out-of-core or whole-trace performance claim.
+
+The six statistics, full CSV bytes and model data were compared with the old
+reports for the same 24 Pi4/mixed configurations. In the compact view, both
+representative functions show at least six complete call rows on desktop and two in
+portrait, without changing the default pane height. Short 844 × 390 landscape
+uses the existing explicit detail expansion and then shows one complete call
+row; that landscape result is **not** a same-height comparison with the old 67px
+unexpanded pane. All matching calls remain reachable with the native pager.
+No document-wide horizontal overflow or page errors were observed.
+
+![Compact duration distribution](img/an_dist_compact.png)
+
+The compact screenshot is a native crop of the real Pi4 report at the default
+275px pane height. The expanded `an_dist.png` remains a manually enlarged pane;
+neither screenshot is a new capture or a reconstructed drawing.
+
+Six follow-up tests extend the dedicated duration suite to 16 tests. They cover
+native disclosure focus and retained DOM/navigation/CSV, report-local lifetime,
+hidden-canvas paint avoidance and current-size redraw, compact touch layouts in
+both delivery modes/themes, empty populations and 320px long-name/value layouts.
+All 86 focused distribution/cohort/task/lifecycle/detail tests pass; an exported
+parent-plus-change tree without the pending Text work independently passes all
+16 duration tests and 15 existing distribution/cohort regressions. The 24 real
+report checks also switch to Text and back, preserving the collapsed state,
+call page, statistics and complete CSV.
+
+The required-native full worktree audit now runs 903 tests: 899 pass, three skip
+and the same preserved, uncommitted Text computed-style assertion described
+above fails. This follow-up does not fix or include that unrelated Text work,
+and the full audit is not described as all-green.
 
 ## Remaining limits
 
