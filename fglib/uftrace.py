@@ -391,7 +391,7 @@ class UftraceTimeline(TimelineBuilder):
             return
         counts = {}
         for index, flags in enumerate(self.s_flags):
-            if flags & (F_USER | F_ORPHAN):
+            if flags & F_USER:
                 continue
             values = self.records[self.s_line[index] - 3].get('args')
             name = self.s_name[index]

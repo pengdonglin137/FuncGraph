@@ -184,6 +184,46 @@ class KernelArgumentNamesTest(unittest.TestCase):
                 self.assertEqual(bool(data['cols']['flags'][index] & timeline.F_NULL_RET), null)
                 self.assertEqual(data['strings'][data['cols']['ret'][index]], raw)
 
+    def test_orphan_return_has_type_information_without_inventing_an_entry(self):
+        source = BtfBuilder()
+        arguments(source, 'inner', [('value', 's32')], 's32')
+        database = btf.ReturnTypeDB()
+        database.add(btf.BtfInfo(source.blob(), word_size=8))
+        record = call('exit', 'kernel', 100, 0, 'inner', 4, retval='0xdeadbeefffffffea')
+        builder = inputs.UftraceInput(io.StringIO(stream([record]))).build(rettypes=database)
+        data = builder.to_data()
+        self.assertEqual(builder._formatted_return(0), '-22')
+        self.assertEqual(data['stats']['orphans'], 1)
+        self.assertTrue(data['cols']['flags'][0] & timeline.F_ORPHAN)
+        self.assertEqual(data['strings'][data['cols']['ret'][0]], record['retval'])
+
+    def test_split_btf_inherits_scalar_width_and_target_pointer_width(self):
+        source = BtfBuilder()
+        scalar = source.int_('signed short', 2, signed=True)
+        pointer = source.add(None, btf.KIND_PTR, 0, scalar)
+        base = btf.BtfInfo(source.blob(), word_size=4)
+        module = BtfBuilder(base)
+        proto = module.add(None, btf.KIND_FUNC_PROTO, 2, scalar,
+                           struct.pack('<IIII', module.s('value'), scalar, module.s('address'), pointer))
+        module.add('inner', btf.KIND_FUNC, 0, proto)
+        database = btf.ReturnTypeDB()
+        database.add(btf.BtfInfo(module.blob(), base=base))
+        self.assertEqual(database.function_types('inner'),
+                         {'args': [('sint', 16), ('ptr', 32)], 'argc': 2, 'ret': ('sint', 16)})
+
+    def test_big_endian_btf_widths_match_little_endian_metadata(self):
+        source = BtfBuilder()
+        arguments(source, 'inner', [('signed', 's8'), ('unsigned', 'u16'), ('address', 'ptr')], 's32')
+        blob = source.blob()
+        header = struct.pack('>HBBIIIII', *struct.unpack('<HBBIIIII', blob[:24]))
+        types = b''.join(source.types[offset:offset + 4][::-1] for offset in range(0, len(source.types), 4))
+        databases = []
+        for encoded in (blob, header + types + source.strs):
+            database = btf.ReturnTypeDB()
+            database.add(btf.BtfInfo(encoded, word_size=8))
+            databases.append(database)
+        self.assertEqual(databases[0].function_types('inner'), databases[1].function_types('inner'))
+
     def test_unknown_abi_aggregate_float_varargs_and_clone_do_not_shift_names(self):
         for fields, word_size, expected in [
                 ((('fd', 'int'), ('length', 'wide'), ('flags', 'int')), None, ('fd',)),
