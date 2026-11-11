@@ -4965,6 +4965,80 @@ class BrowserSmokeTest(unittest.TestCase):
         result = self.ev('measureWakeups(31000, 31150)')
         self.assertEqual(result['ends'], [40000] + [31000 + index * 10 for index in range(16)])
 
+    def test_dense_wakeups_keep_track_direction_and_hover_past_curve_limit(self):
+        wakes = [[0, 20000, 1, 0, -1, -1]] * 405 + [[0, 22000, 1, 0, -1, -1]]
+        wakes += [[2, 22000, 1, 0, -1, -1]] * 25 + [[2, 22000, 0, 0, -1, -1]] * 25
+        wakes += [[0, 83000, 1, 0, -1, 0]]
+        self.open_range_data(['first', 'middle', 'last'], starts=[0, 0, 0], durations=[100000, 6000, 4000],
+                             columns={'task': [0, 1, 2]}, extra=dict(wakeups=wakes,
+                                 offcpu=[[1, 82000, 86000, 0, 0, 1, 0, 0, 0, -1]],
+                                 tasks=[dict(pid=index + 1, comm=name, kind=0, cpu=0)
+                                        for index, name in enumerate(['first', 'middle', 'last'])]))
+        self.ev('''() => {
+            const ctx = document.querySelector('.tl-canvas').getContext('2d');
+            const begin = ctx.beginPath, move = ctx.moveTo, line = ctx.lineTo;
+            const curve = ctx.bezierCurveTo, text = ctx.fillText;
+            ctx.beginPath = function () {
+                if (this.globalAlpha > 0.5 && this.globalAlpha < 0.6) window.wakePaint.batches++;
+                return begin.apply(this, arguments);
+            };
+            ctx.moveTo = function (x, y) {
+                if (this.globalAlpha > 0.5 && this.globalAlpha < 0.6) window.wakePaint.heads.push([x, y]);
+                return move.apply(this, arguments);
+            };
+            ctx.lineTo = function (x, y) {
+                if (this.globalAlpha > 0.5 && this.globalAlpha < 0.6) {
+                    const head = window.wakePaint.heads.at(-1);
+                    if (head.length === 2) head.push(Math.sign(head[1] - y));
+                }
+                return line.apply(this, arguments);
+            };
+            ctx.bezierCurveTo = function (...args) {
+                window.wakePaint.curves.push({x: args[4], y: args[5], color: this.strokeStyle});
+                return curve.apply(this, args);
+            };
+            ctx.fillText = function (label, ...args) {
+                if (label.includes('wakeups bunched')) window.wakePaint.label = label;
+                return text.call(this, label, ...args);
+            };
+            window.wakePaint = {heads: [], batches: 0, curves: [], label: ''};
+            window.readWakePaint = async () => {
+                await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+                const width = document.querySelector('.tl-canvas').clientWidth;
+                window.wakePaint = {heads: [], batches: 0, curves: [], label: '', width};
+                fgView('timeline').draw();
+                await new Promise(requestAnimationFrame);
+                return window.wakePaint;
+            };
+        }''')
+        paint = self.ev('readWakePaint()')
+        self.assertEqual(paint['curves'], [])
+        self.assertEqual(paint['batches'], 1)
+        self.assertEqual(len(paint['heads']), 5)
+        self.assertIn(f'{len(wakes)} of {len(wakes)} wakeups bunched', paint['label'])
+        _, shared_x, _ = sorted({head[0] for head in paint['heads']})
+        shared = [head for head in paint['heads'] if head[0] == shared_x]
+        self.assertEqual(len(shared), 3)
+        top_row, middle_row = sorted({head[1] for head in shared})
+        self.assertEqual({head[2] for head in shared if head[1] == top_row}, {-1})
+        self.assertEqual({head[2] for head in shared if head[1] == middle_row}, {-1, 1})
+
+        self.ev("fgView('timeline').probe().select(0)")
+        paint = self.ev('readWakePaint()')
+        self.assertEqual(len(paint['curves']), 400)
+        head_positions = {head[0] for head in paint['heads']}
+        self.assertEqual(len(head_positions), 3)
+        for fraction, position in zip([0.20, 0.22, 0.86], sorted(head_positions)):
+            self.assertAlmostEqual(position, fraction * paint['width'], delta=2)
+        self.assertIn('400 full arrows', paint['label'])
+        point = self.ev("(() => { const model = fgView('timeline').probe(); return model.offXY(model.TRACKS[1].off[0]); })()")
+        self.page.mouse.move(*point)
+        paint = self.ev('readWakePaint()')
+        self.assertEqual(len(paint['curves']), 400)
+        self.assertEqual(paint['curves'][-1]['color'], '#0b7a6b')
+        self.assertAlmostEqual(paint['curves'][-1]['x'], 0.86 * paint['width'], delta=1)
+        self.assertFalse(any(abs(head[0] - 0.86 * paint['width']) <= 2 for head in paint['heads']))
+
     def test_range_summary_and_theme(self):
         self.open_timeline()
         box = self.page.query_selector('.tl-canvas').bounding_box()

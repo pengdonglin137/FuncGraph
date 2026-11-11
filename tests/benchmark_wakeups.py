@@ -31,7 +31,7 @@ def fixture(report, destination, count):
                            encoding='utf-8')
 
 
-def measure(browser, report, count, frames):
+def measure(browser, report, count, frames, overview):
     page = browser.new_page(viewport={'width': 1500, 'height': 900})
     page.set_default_timeout(60000)
     errors = []
@@ -39,16 +39,18 @@ def measure(browser, report, count, frames):
     try:
         page.goto(report.as_uri())
         page.evaluate("async () => { await fgSwitchView('timeline'); }")
-        results = page.evaluate('''async ({count, frames}) => {
+        results = page.evaluate('''async ({count, frames, overview}) => {
             const api = fgView('timeline'), probe = api.probe();
             if (probe.N !== 2) throw new Error('Wakeup fixture was not loaded');
             const raf = window.requestAnimationFrame;
             const settle = () => new Promise(resolve => raf(() => raf(resolve)));
             const results = {narrow: [], dense: []};
+            const windows = [['narrow', 3500], ['dense', 700000]];
+            if (overview) { results.overview = []; windows.push(['overview', count * 1000]); }
             await settle();
-            for (const [mode, span] of [['narrow', 3500], ['dense', 700000]]) {
+            for (const [mode, span] of windows) {
                 for (let index = 0; index < frames + 5; index++) {
-                    const start = Math.floor(count / 2) * 1000 + index * 1000;
+                    const start = mode === 'overview' ? 0 : Math.floor(count / 2) * 1000 + index * 1000;
                     const duration = await new Promise((resolve, reject) => {
                         let scheduled = false;
                         window.requestAnimationFrame = callback => {
@@ -67,7 +69,7 @@ def measure(browser, report, count, frames):
                 }
             }
             return results;
-        }''', dict(count=count, frames=frames))
+        }''', dict(count=count, frames=frames, overview=overview))
         if errors:
             raise RuntimeError('; '.join(errors))
         return results
@@ -81,6 +83,7 @@ def main():
     parser.add_argument('--wakeups', type=int, default=500_000)
     parser.add_argument('--frames', type=int, default=20)
     parser.add_argument('--rounds', type=int, default=3)
+    parser.add_argument('--overview', action='store_true', help='also time redraws with all wakeups in view')
     parser.add_argument('--output', type=Path, required=True)
     args = parser.parse_args()
     if args.wakeups < 10_000 or args.rounds < 1 or not 1 <= args.frames <= args.wakeups // 4:
@@ -93,7 +96,7 @@ def main():
             fixture(source, destination, args.wakeups)
         for iteration in range(args.rounds):
             for source, destination in reports if iteration % 2 == 0 else reversed(reports):
-                samples = measure(browser, destination, args.wakeups, args.frames)
+                samples = measure(browser, destination, args.wakeups, args.frames, args.overview)
                 output['runs'].append(dict(report=str(source), round=iteration + 1, samples_ms=samples))
                 args.output.write_text(json.dumps(output, indent=2) + '\n', encoding='utf-8')
                 print(source, {mode: round(median(times), 3) for mode, times in samples.items()}, flush=True)

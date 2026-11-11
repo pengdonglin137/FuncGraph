@@ -418,9 +418,61 @@ function trackAnchorY(tid, slice, sy) {
     if (slice >= 0 && !t.collapsed) return t.y - sy + HDR + rowOf(slice) * ROW + ROW / 2;
     return t.y - sy + HDR / 2;
 }
-const WAKE_MAX = 15;   // above this many visible arrows only the focused ones get their full curve
+const WAKE_MAX = 15;
+const WAKE_CURVE_LIMIT = 400;
+const WAKE_BUCKET_WIDTH = 4;
+function wakeHead(x, y, direction) {
+    ctx.moveTo(x, y); ctx.lineTo(x - 3, y - 4 * direction); ctx.lineTo(x + 3, y - 4 * direction); ctx.closePath();
+}
+function wakeCurve(off, startX, sourceY, endX, targetY, color) {
+    const hot = hovOff && off === hovOff;
+    ctx.fillStyle = ctx.strokeStyle = hot ? '#0b7a6b' : color;
+    ctx.lineWidth = hot ? 2 : 1.3;
+    ctx.beginPath(); ctx.arc(startX, sourceY, 2.5, 0, 6.3); ctx.fill();
+    ctx.beginPath(); ctx.moveTo(startX, sourceY);
+    const midpoint = (startX + endX) / 2;
+    ctx.bezierCurveTo(midpoint, sourceY, midpoint, targetY, endX, targetY);
+    ctx.stroke();
+    const direction = targetY >= sourceY ? 1 : -1;
+    ctx.beginPath(); ctx.moveTo(endX, targetY); ctx.lineTo(endX - 5, targetY - 4 * direction);
+    ctx.lineTo(endX + 1, targetY - 6 * direction); ctx.closePath(); ctx.fill();
+}
 function drawWakeups(vs, ve, k, sy) {
-    const vis = [];
+    const focus = new Set();
+    if (sel >= 0) focus.add(sTask[sel]);
+    if (hov >= 0) focus.add(sTask[hov]);
+    if (hovOff) focus.add(hovOff[0]);
+    if (range && range.track !== null) focus.add(range.track);
+    const priorityWake = hovOff && WAKE_OF_OFF.get(OFF_IDX.get(hovOff));
+    const small = [], curves = [], heads = new Map();
+    const columns = Math.ceil(W / WAKE_BUCKET_WIDTH);
+    let count = 0, priority = null, limited = false;
+    function bucket(sourceY, endX, targetY) {
+        if (!columns || endX < -3 || endX > W + 3 || targetY < -4 || targetY > H + 4) return;
+        let row = heads.get(targetY);
+        if (!row) heads.set(targetY, row = new Uint8Array(columns));
+        const column = Math.max(0, Math.min(columns - 1, Math.floor(endX / WAKE_BUCKET_WIDTH)));
+        row[column] |= targetY >= sourceY ? 1 : 2;
+    }
+    function dense(wake, off, startX, sourceY, endX, targetY) {
+        if (wake === priorityWake) {
+            priority = [off, startX, sourceY, endX, targetY];
+            if (curves.length === WAKE_CURVE_LIMIT) {
+                const dropped = curves.pop();
+                bucket(dropped[2], dropped[3], dropped[4]);
+                limited = true;
+            }
+        } else if (focus.has(wake[0]) || focus.has(wake[2])) {
+            if (curves.length < WAKE_CURVE_LIMIT - (priority ? 1 : 0)) {
+                curves.push([off, startX, sourceY, endX, targetY]);
+            } else {
+                bucket(sourceY, endX, targetY);
+                limited = true;
+            }
+        } else {
+            bucket(sourceY, endX, targetY);
+        }
+    }
     for (let block = 0, start = 0; block < WAKE_BOUNDS.length; block += 2, start += WAKE_BLOCK_SIZE) {
         if (WAKE_BOUNDS[block] > ve || WAKE_BOUNDS[block + 1] < vs) continue;
         const stop = Math.min(start + WAKE_BLOCK_SIZE, WAKES.length);
@@ -433,46 +485,59 @@ function drawWakeups(vs, ve, k, sy) {
             if (y0 === null || !target || target.hidden || target.h === 0) continue;
             const y1 = off && !target.collapsed ? target.y - sy + HDR + offRow(off) * ROW + ROW / 2 : target.y - sy + HDR / 2;
             if ((y0 < 0 && y1 < 0) || (y0 > H && y1 > H)) continue;
-            vis.push([wake, off, (wake[1] - vs) * k, y0, (resume - vs) * k, y1]);
+            const startX = (wake[1] - vs) * k, endX = (resume - vs) * k;
+            count++;
+            if (count <= WAKE_MAX) small.push([wake, off, startX, y0, endX, y1]);
+            else {
+                if (count === WAKE_MAX + 1) {
+                    for (const entry of small) dense(...entry);
+                    small.length = 0;
+                }
+                dense(wake, off, startX, y0, endX, y1);
+            }
         }
     }
-    if (!vis.length) return;
-    const allCrowded = vis.length > WAKE_MAX;
-    const crowded = allCrowded ? null : vis.map((entry, index) => vis.some((other, candidate) =>
-        index !== candidate && other[4] >= entry[4] - 12 && other[4] <= entry[4] + 12));
-    const crowdedCount = allCrowded ? vis.length : crowded.filter(Boolean).length;
-    const focus = new Set();
-    if (sel >= 0) focus.add(sTask[sel]);
-    if (hov >= 0) focus.add(sTask[hov]);
-    if (hovOff) focus.add(hovOff[0]);
-    if (range && range.track !== null) focus.add(range.track);
+    if (!count) return;
     const col = dark ? 'rgba(52,211,190,.75)' : 'rgba(15,157,138,.7)';
-    let drawn = 0;
-    for (let q = 0; q < vis.length; q++) {
-        const [w, off, x0, y0, x1, y1] = vis[q];
-        const hot = hovOff && off === hovOff;
-        const full = (!allCrowded && !crowded[q]) || hot || focus.has(w[0]) || focus.has(w[2]);
-        ctx.fillStyle = ctx.strokeStyle = hot ? '#0b7a6b' : col;
-        const dir = y1 >= y0 ? 1 : -1;
-        if (!full) {
-            // dense: only a small head where the woken task resumes
+    let crowdedCount = 0;
+    if (count > WAKE_MAX) {
+        crowdedCount = count;
+        if (heads.size) {
+            ctx.fillStyle = col;
             ctx.globalAlpha = 0.55;
-            ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x1 - 3, y1 - 4 * dir); ctx.lineTo(x1 + 3, y1 - 4 * dir); ctx.closePath(); ctx.fill();
+            ctx.beginPath();
+            for (const [targetY, row] of heads) for (let column = 0; column < row.length; column++) {
+                const flags = row[column];
+                if (!flags) continue;
+                const endX = Math.min(W, (column + 0.5) * WAKE_BUCKET_WIDTH);
+                if (flags & 1) wakeHead(endX, targetY, 1);
+                if (flags & 2) wakeHead(endX, targetY, -1);
+            }
+            ctx.fill();
             ctx.globalAlpha = 1;
-            continue;
         }
-        if (++drawn > 400) break;
-        ctx.lineWidth = hot ? 2 : 1.3;
-        ctx.beginPath(); ctx.arc(x0, y0, 2.5, 0, 6.3); ctx.fill();
-        ctx.beginPath(); ctx.moveTo(x0, y0);
-        const mx = (x0 + x1) / 2;
-        ctx.bezierCurveTo(mx, y0, mx, y1, x1, y1);
-        ctx.stroke();
-        ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x1 - 5, y1 - 4 * dir); ctx.lineTo(x1 + 1, y1 - 6 * dir); ctx.closePath(); ctx.fill();
+        for (const curve of curves) wakeCurve(...curve, col);
+        if (priority) wakeCurve(...priority, col);
+    } else {
+        for (let index = 0; index < small.length; index++) {
+            const [wake, off, startX, sourceY, endX, targetY] = small[index];
+            const crowded = small.some((other, candidate) => candidate !== index &&
+                other[4] >= endX - 12 && other[4] <= endX + 12);
+            if (crowded) crowdedCount++;
+            if (!crowded || wake === priorityWake || (hovOff && off === hovOff) || focus.has(wake[0]) || focus.has(wake[2])) {
+                wakeCurve(off, startX, sourceY, endX, targetY, col);
+            } else {
+                ctx.fillStyle = col;
+                ctx.globalAlpha = 0.55;
+                ctx.beginPath(); wakeHead(endX, targetY, targetY >= sourceY ? 1 : -1); ctx.fill();
+                ctx.globalAlpha = 1;
+            }
+        }
     }
     if (crowdedCount) {
-        const summary = crowdedCount + ' of ' + vis.length + ' wakeups bunched';
-        const hint = focus.size ? ' · arrows for the focused task' : ' · hover or select a task to see its arrows, zoom in for all';
+        const summary = crowdedCount + ' of ' + count + ' wakeups bunched';
+        const hint = limited ? ' · ' + WAKE_CURVE_LIMIT + ' full arrows, zoom in for more' : focus.size ?
+            ' · arrows for the focused task' : ' · hover or select a task to see its arrows, zoom in for all';
         ctx.font = FONT_S;
         const available = W - 20;
         if (available > 0) {
