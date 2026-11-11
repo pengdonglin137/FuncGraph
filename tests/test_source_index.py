@@ -1,4 +1,6 @@
 import copy
+import contextlib
+import io
 import os
 from pathlib import Path
 import re
@@ -10,6 +12,7 @@ from unittest import mock
 
 import helpers
 from fglib.cli import build_parser
+from fglib import cli
 from fglib.report import HtmlGenerator
 from fglib.util import format_args_info
 
@@ -139,20 +142,36 @@ class SourceBlockTest(unittest.TestCase):
         self.assertEqual(len(generator._src_pool), 2)
 
     def test_structured_locations_preserve_url_module_fallback_and_escaping(self):
-        for module_url, base_url in [('https://module.example/src', 'https://kernel.example/src'),
-                                     (None, None)]:
-            with self.subTest(module_url=module_url):
-                generator = HtmlGenerator([], None, None, base_url=base_url, kernel_src='/source')
-                generator.combined_module_url_map = {'demo': module_url}
-                selector = 'caller+0x1/0x20 [demo]'
-                key = generator._adjust_func_info(selector, remove_suffix=False)
-                generator.func_locations_map[key] = {key: [
-                    {'func': 'inline<&>', 'file': '/source/kernel/fake.c', 'line': 2, 'inlined': True}]}
-                before = copy.deepcopy(generator.func_locations_map)
-                block = generator._src_pool[generator._source_index(selector)]
-                self.assertIn('(inlined)&nbsp;inline&lt;&amp;&gt;&nbsp;at&nbsp;kernel/fake.c:2', block)
-                if module_url:
-                    self.assertIn('href="https://module.example/src/kernel/fake.c#L2"', block)
-                else:
-                    self.assertTrue(block.startswith('<div class="location-link">'))
-                self.assertEqual(generator.func_locations_map, before)
+        for nested in [False, True]:
+            for module_url, base_url in [('https://module.example/src', 'https://kernel.example/src'),
+                                         (None, None)]:
+                with self.subTest(module_url=module_url, nested=nested):
+                    generator = HtmlGenerator([], None, None, base_url=base_url, kernel_src='/source')
+                    generator.combined_module_url_map = {'demo': module_url}
+                    selector = 'caller+0x1/0x20 [demo]'
+                    key = generator._adjust_func_info(selector, remove_suffix=False)
+                    locations = [{'func': 'inline<&>', 'file': '/source/kernel/fake.c',
+                                  'line': 2, 'inlined': True}]
+                    generator.func_locations_map[key] = {key: locations} if nested else locations
+                    before = copy.deepcopy(generator.func_locations_map)
+                    block = generator._src_pool[generator._source_index(selector)]
+                    self.assertIn('(inlined)&nbsp;inline&lt;&amp;&gt;&nbsp;at&nbsp;kernel/fake.c:2', block)
+                    if module_url:
+                        self.assertIn('href="https://module.example/src/kernel/fake.c#L2"', block)
+                    else:
+                        self.assertTrue(block.startswith('<div class="location-link">'))
+                    self.assertEqual(generator.func_locations_map, before)
+
+    def test_fast_source_listing_is_independent_of_gawk(self):
+        for fast, gawk in [(False, False), (False, True), (True, False), (True, True)]:
+            with self.subTest(fast=fast, gawk=gawk):
+                arguments = ['funcgraph', '--no-config', '--no-btf', helpers.fixture('pi4_full')]
+                if fast:
+                    arguments.append('--fast')
+                output = mock.Mock(byte_count=0, mode='single')
+                with mock.patch.object(sys, 'argv', arguments), \
+                        mock.patch('fglib.cli.check_gawk_available', return_value=gawk), \
+                        mock.patch('fglib.cli.write_html', return_value=(output, 0, 0)) as write, \
+                        contextlib.redirect_stdout(io.StringIO()):
+                    cli.main()
+                self.assertEqual(write.call_args.kwargs['use_list'], fast or gawk)

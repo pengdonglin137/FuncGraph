@@ -56,6 +56,10 @@ Nothing to install: run `funcgraph.py` from the repository.
 | Pygments | C syntax highlighting with `--highlight-code` | optional |
 | git | reading a given revision with `--source-rev` | optional |
 
+`--fast` reads source snippets in Python and needs no `gawk` to display code lines.
+The native kernel `faddr2line` fallback still shows resolved locations and links
+when `gawk` is unavailable.
+
 For cross-compiled kernels set the toolchain the same way as for the kernel's `scripts/faddr2line`:
 
 ```bash

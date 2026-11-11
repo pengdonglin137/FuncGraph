@@ -481,7 +481,7 @@ def main():
 
     # 检查gawk可用性并决定是否使用--list选项
     gawk_available = check_gawk_available()
-    use_list = gawk_available
+    use_list = args.fast or gawk_available
     
     if args.verbose:
         print("[INFO] Verbose mode enabled", file=sys.stderr)

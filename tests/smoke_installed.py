@@ -327,8 +327,7 @@ class InstalledPackageTest(unittest.TestCase):
         source_block = json.loads(re.search(
             r'<script type="application/json" id="fgSrc">(.*?)</script>', report, re.S).group(1))[0]
         self.assertIn('probe.c', source_block)
-        if shutil.which('gawk'):
-            self.assertIn('source-line', source_block)
+        self.assertIn('source-line', source_block)
         sidecar = Path(self.tmp.name, 'resolved-sidecar')
         self.run_command(self.executable('funcgraph'), '--no-config', '--timeline', '--fast',
                          '--vmlinux', str(binary), '--kernel-src', self.tmp.name,

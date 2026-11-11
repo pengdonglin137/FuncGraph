@@ -1156,6 +1156,8 @@ class HtmlGenerator:
         func_info_for_call = self._adjust_func_info(func_info, remove_suffix=False)
         func_info_for_display = self._adjust_func_info(func_info, remove_suffix=True)
         locations = self.func_locations_map.get(func_info_for_call, {})
+        if isinstance(locations, dict):
+            locations = locations.get(func_info_for_call)
         content_parts = []
         if locations:
             module_match = re.search(r'\[(.*?)\]', func_info_for_call)
@@ -1165,9 +1167,8 @@ class HtmlGenerator:
                     return_addr_module_name, self.default_module_url or self.base_url)
             else:
                 current_base_url = self.base_url
-            if isinstance(locations, dict) and 'func' in str(next(iter(locations.values()), {})):
-                loc_list = locations.get(func_info_for_call, [])
-                for loc in loc_list:
+            if isinstance(locations, list):
+                for loc in locations:
                     file_path = clean_file_path(loc['file'], self.kernel_src, self.path_prefix)
                     clean_path = self._extract_file_path(file_path, self.kernel_src, self.path_prefix)
                     line_num = loc.get('line')
