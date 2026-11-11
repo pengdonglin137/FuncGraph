@@ -228,9 +228,13 @@ body.tl-max.tl-active { padding: 2px; }
 .tl-process-link:focus-visible { outline: 2px solid var(--link-color); outline-offset: 2px; }
 .tl-slice-head { flex-wrap: wrap; left: 0; z-index: 2; }
 .tl-slice-head .tl-detail-title { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; max-width: 100%; }
-.tl-range-head { flex-wrap: wrap; z-index: 2; }
+.tl-range-head { flex-wrap: wrap; left: 0; z-index: 2; }
 .tl-range-actions { display: flex; align-items: center; gap: 8px; margin-left: auto; flex-shrink: 0; }
-.tl-range-footer { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; padding: 8px 12px; color: var(--text-muted); }
+.tl-range-footer { position: sticky; bottom: 0; left: 0; z-index: 1; display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 8px; padding: 6px 12px; color: var(--text-muted); background: var(--container-bg); border-top: 1px solid var(--border-color); }
+.tl-range-pages { display: flex; gap: 8px; }
+.tl-detail-short .tl-range-head, .tl-compact .tl-range-head { top: auto; }
+.tl-detail-short .tl-range-footer { bottom: auto; }
+.tl-detail-short .tl-range-table th { position: static; }
 .tl-range-table td:first-child { white-space: normal; overflow-wrap: anywhere; min-width: 140px; }
 .tl-sum-sort { color: inherit; background: none; border: none; padding: 0; font: inherit; cursor: pointer; }
 .tl-range-table th[aria-sort="ascending"] .tl-sum-sort, .tl-range-table th[aria-sort="descending"] .tl-sum-sort { text-decoration: underline; text-underline-offset: 3px; }
@@ -517,6 +521,7 @@ table.tl-sum td.err { color: #c62828; }
 .tl-compact .an-task-tools input[type=search] { font-size: 16px; }
 .tl-compact .an-dist-pager .tl-btn, .tl-compact .an-dist-head [data-act="dist-histogram"], .tl-compact .an-dist-tools :is(.tl-btn, select) { min-height: 44px; }
 .tl-compact .an-dist-tools select { font-size: 16px; }
+.tl-compact .tl-range-actions .tl-btn, .tl-compact .tl-range-footer .tl-btn, .tl-compact .tl-range-table .tl-sum-sort { min-height: 44px; }
 .tl-compact .an-dist-heading { gap: 4px 8px; }
 .tl-compact .an-dist-heading .tl-detail-title { flex-basis: 100%; }
 .tl-compact .an-dist-order, .tl-compact .an-dist-compact ~ .an-dist-call-browser .an-dist-tools label > span { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; }

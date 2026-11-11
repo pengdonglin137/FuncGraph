@@ -2904,9 +2904,9 @@ class BrowserSmokeTest(unittest.TestCase):
         self.ev("fgView('timeline').probe().range(0, 650000)")
         self.assertEqual(self.page.locator('.tl-range-table tbody tr[data-name]').count(), 300)
         first = self.page.locator('.tl-range-table tbody tr').first.element_handle()
-        self.page.locator('[data-act=range-more]').click()
-        self.assertTrue(first.evaluate('(node) => node.isConnected'))
-        self.assertEqual(self.page.locator('.tl-range-table tbody tr[data-name]').count(), 600)
+        self.page.locator('[data-act=range-next]').click()
+        self.assertFalse(first.evaluate('(node) => node.isConnected'))
+        self.assertEqual(self.page.locator('.tl-range-table tbody tr[data-name]').count(), 300)
         self.ev("""() => {
             const originalSet = Map.prototype.set;
             window.rangeAggregationWrites = 0;
@@ -2919,10 +2919,12 @@ class BrowserSmokeTest(unittest.TestCase):
         self.assertEqual(self.ev('window.rangeAggregationWrites'), 0)
         self.assertEqual(self.page.locator('.tl-range-table tbody tr[data-name]').count(), 300)
         self.assertEqual(self.page.locator('.tl-range-table th[data-sort=name]').get_attribute('aria-sort'), 'ascending')
-        self.page.locator('[data-act=range-more]').click()
-        self.page.locator('[data-act=range-more]').click()
-        self.assertEqual(self.page.locator('.tl-range-table tbody tr[data-name]').count(), 650)
-        self.assertTrue(self.page.locator('[data-act=range-more]').is_disabled())
+        self.page.locator('[data-act=range-next]').click()
+        self.page.locator('[data-act=range-next]').click()
+        self.assertEqual(self.page.locator('.tl-range-table tbody tr[data-name]').count(), 50)
+        self.assertTrue(self.page.locator('[data-act=range-next]').is_disabled())
+        self.page.locator('[data-act=range-prev]').click()
+        self.assertEqual(self.page.locator('.tl-range-table tbody tr').first.get_attribute('data-name'), 'function_0300')
         self.ev("fgNotifyFilter('one call', new Set([650]))")
         self.assertEqual(self.page.locator('.tl-range-table tbody tr[data-name]').count(), 1)
         self.assertEqual(self.page.locator('.tl-range-table tbody tr').first.get_attribute('data-name'), 'function_0649')
@@ -3172,7 +3174,9 @@ class BrowserSmokeTest(unittest.TestCase):
                 self.assertTrue(self.ev("""() => {
                     const head = document.querySelector('.tl-range-head');
                     const header = document.querySelector('.tl-range-table th');
-                    return parseInt(header.style.top, 10) === head.offsetHeight;
+                    const style = getComputedStyle(head);
+                    const pinned = style.position === 'sticky' && style.top !== 'auto' ? head.offsetHeight : 0;
+                    return parseInt(header.style.top, 10) === pinned;
                 }"""))
         self.page.click('.tl-close')
         self.assertFalse(self.page.locator('.tl-detail.show').count())

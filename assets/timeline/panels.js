@@ -655,7 +655,8 @@ elDetail.addEventListener('click', ev => {
     if (s) { select(+s.dataset.slice, { reveal: true }); return; }
     if (ev.target.closest('.tl-close')) { range = null; select(-1); return; }
     if (ev.target.closest('[data-act=range-csv]')) { exportRangeCsv(); return; }
-    if (ev.target.closest('[data-act=range-more]')) { appendRangeRows(); return; }
+    const rangePage = ev.target.closest('[data-range-page]');
+    if (rangePage) { changeRangePage(+rangePage.dataset.rangePage); return; }
     const th = ev.target.closest('th[data-sort]');
     if (th) {
         sumSort = th.dataset.sort; showRangeSummary();
@@ -701,7 +702,7 @@ function rangeSummary() {
     let maxv = 0;
     for (const row of rows) maxv = Math.max(maxv, row[1].self);
     sumCache = { start: rs, end: re, track: range.track, hits: textHits, durations: sDur,
-        rows, ctxSelf, offT, nCalls, maxv: maxv || 1, sort: null, visible: 0 };
+        rows, ctxSelf, offT, nCalls, maxv: maxv || 1, sort: null, page: 0 };
     return sumCache;
 }
 function sortedRangeSummary() {
@@ -710,7 +711,7 @@ function sortedRangeSummary() {
         summary.rows.sort((left, right) => sumSort === 'name' ?
             (S[left[0]] < S[right[0]] ? -1 : S[left[0]] > S[right[0]] ? 1 : 0) : right[1][sumSort] - left[1][sumSort]);
         summary.sort = sumSort;
-        summary.visible = Math.min(SUM_PAGE, summary.rows.length);
+        summary.page = 0;
     }
     return summary;
 }
@@ -725,13 +726,28 @@ function rangeRowsHtml(summary, start, end) {
     }
     return html;
 }
-function appendRangeRows() {
+function updateRangeControls(summary) {
+    const start = summary.page * SUM_PAGE, end = Math.min(start + SUM_PAGE, summary.rows.length);
+    elDetail.querySelector('.tl-range-footer [role=status]').textContent =
+        'Showing ' + (summary.rows.length ? start + 1 + '–' + end : '0') + ' of ' + summary.rows.length + ' functions';
+    const previous = elDetail.querySelector('[data-act=range-prev]'), next = elDetail.querySelector('[data-act=range-next]');
+    if (!previous || !next) return;
+    const focused = document.activeElement;
+    previous.disabled = summary.page === 0;
+    next.disabled = end >= summary.rows.length;
+    if (focused === next && next.disabled && !previous.disabled) previous.focus({ preventScroll: true });
+    else if (focused === previous && previous.disabled && !next.disabled) next.focus({ preventScroll: true });
+}
+function changeRangePage(direction) {
     if (!range || AN.kind !== 'range') return;
-    const summary = sortedRangeSummary(), start = summary.visible;
-    summary.visible = Math.min(start + SUM_PAGE, summary.rows.length);
-    elDetail.querySelector('.tl-range-table tbody').insertAdjacentHTML('beforeend', rangeRowsHtml(summary, start, summary.visible));
-    elDetail.querySelector('.tl-range-footer [role=status]').textContent = 'Showing ' + summary.visible + ' of ' + summary.rows.length + ' functions';
-    elDetail.querySelector('[data-act=range-more]').disabled = summary.visible >= summary.rows.length;
+    const summary = sortedRangeSummary(), last = Math.max(0, Math.ceil(summary.rows.length / SUM_PAGE) - 1);
+    summary.page = Math.max(0, Math.min(last, summary.page + direction));
+    const table = elDetail.querySelector('.tl-range-table'), head = elDetail.querySelector('.tl-range-head');
+    const style = getComputedStyle(head), pinned = style.position === 'sticky' && style.top !== 'auto' ? head.offsetHeight : 0;
+    elDetail.scrollTop += table.getBoundingClientRect().top - elDetail.getBoundingClientRect().top - pinned;
+    const start = summary.page * SUM_PAGE;
+    table.querySelector('tbody').innerHTML = rangeRowsHtml(summary, start, Math.min(start + SUM_PAGE, summary.rows.length));
+    updateRangeControls(summary);
 }
 function downloadTimelineCsv(filename, columns, rows) {
     const cell = value => {
@@ -789,14 +805,18 @@ function showRangeSummary() {
         h += '<th data-sort="' + key + '" aria-sort="' + (key === sumSort ? (key === 'name' ? 'ascending' : 'descending') : 'none') +
             '"><button class="tl-sum-sort">' + label + '</button></th>';
     }
-    h += '</tr></thead><tbody>' + rangeRowsHtml(summary, 0, summary.visible);
+    const start = summary.page * SUM_PAGE;
+    h += '</tr></thead><tbody>' + rangeRowsHtml(summary, start, Math.min(start + SUM_PAGE, rows.length));
     if (!rows.length) h += '<tr><td colspan="6">No calls overlap this range' + (textHits ? ' with the current filter' : '') + '.</td></tr>';
-    h += '</tbody></table><div class="tl-range-footer"><span role="status">Showing ' + summary.visible + ' of ' + rows.length + ' functions</span>';
-    if (rows.length > SUM_PAGE) h += '<button class="tl-btn" data-act="range-more"' + (summary.visible >= rows.length ? ' disabled' : '') + '>Load more</button>';
+    h += '</tbody></table><div class="tl-range-footer"><span role="status" aria-live="polite" aria-atomic="true"></span>';
+    if (rows.length > SUM_PAGE) h += '<span class="tl-range-pages"><button class="tl-btn" type="button" data-act="range-prev" data-range-page="-1" ' +
+        'aria-label="Previous page of functions">Previous</button><button class="tl-btn" type="button" data-act="range-next" data-range-page="1" ' +
+        'aria-label="Next page of functions">Next</button></span>';
     h += '</div><div class="an-hint">Self and inclusive are proportional overlap estimates. Calls start in [range start, range end); ' +
         'max uses whole-call duration; errors count overlapping origins. Off-CPU covers the selected tracks, independent of the filter.</div>';
     setSelection(-1);
     openDetail(h);
+    updateRangeControls(summary);
     draw();
 }
 
@@ -1064,6 +1084,7 @@ elHelp.innerHTML = `
 <li>Wheel: scroll tracks · click track header: collapse</li>
 <li><kbd>0</kbd> fit all · <kbd>F</kbd> zoom to selection · double-click: zoom to slice</li>
 <li><kbd>Shift</kbd>+drag: summarize a range in this track (<kbd>Shift</kbd>+<kbd>Alt</kbd>: all tracks)</li></ul>
+<p>Range summaries use <b>Previous / Next</b> for 300-function pages. Sorting or changing the range, shared filter or Overhead resets the page; <b>Export CSV</b> includes every function in that scope.</p>
 <h4>Touch</h4><ul>
 <li>Tap a call or track header. Swipe horizontally on the tracks to pan; swipe vertically to scroll.</li>
 <li>Pinch the tracks to zoom around your fingers, or use <b>−</b>, <b>+</b> and <b>Fit</b> on touch devices.</li>
