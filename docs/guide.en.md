@@ -195,6 +195,12 @@ Use `--source-browser github --source-browser-rev v7.4-rc2` for version-pinned G
 
 **Source origin** (default: the local files faddr2line finds)
 
+Source paths are literal filenames: spaces, Unicode, colons, `#`, `?` and `%`
+are encoded in outgoing links while displayed paths stay readable and line
+anchors remain separate. Do not pre-encode DWARF paths: a filename containing
+`%2F` means those literal characters, not a directory separator. Existing
+encoding in a custom base URL is preserved.
+
 | Option | Meaning |
 |---|---|
 | `--source-rev REV` | read files of this revision from the `--kernel-src` git repository (`git show REV:path`), useful when the work tree is on another branch |
@@ -205,6 +211,11 @@ Use `--source-browser github --source-browser-rev v7.4-rc2` for version-pinned G
 --source-url 'https://raw.githubusercontent.com/torvalds/linux/{rev}/{path}' --source-rev v6.18
 --source-url 'https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git/plain/{path}?h={rev}' --source-rev v6.18.5
 ```
+
+`--source-url` encodes only the substituted `{path}` and `{rev}`, preserving the
+template's own query syntax and existing escapes. Path slashes remain directory
+separators; revisions are encoded as one URL component. Filename characters such
+as `#`, `?` and `%` cannot truncate a download URL or alias another file's cache.
 
 With either origin the tool checks whether the source matches the vmlinux and reports the result on the console and in the ⓘ info panel, e.g. `90% match the function names`. The check: in an inline chain, the line of an outer frame is where the inner function is called, so the inner function's name must appear on that line. Measured: 86–94% for the right version, 26–59% for a wrong one. Below 75% a warning says "probably a different version than the vmlinux": line numbers may not match.
 

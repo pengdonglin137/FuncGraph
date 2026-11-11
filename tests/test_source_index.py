@@ -107,6 +107,25 @@ class TimelineSourceTest(unittest.TestCase):
 
 
 class SourceBlockTest(unittest.TestCase):
+    def test_explicit_lines_keep_numeric_colons_in_literal_filenames(self):
+        for path in ['kernel/version:123/helper.c', 'kernel/literal.c:123']:
+            with self.subTest(path=path):
+                generator = HtmlGenerator([], None, None, kernel_src='/tree', base_url='https://example.org/src')
+                selector = 'caller+0x1/0x20'
+                key = generator._adjust_func_info(selector, remove_suffix=False)
+                generator.func_locations_map[key] = [{'func': 'caller', 'file': '/tree/' + path, 'line': 27}]
+                block = generator._src_pool[generator._source_index(selector)]
+                self.assertIn('src/' + path.replace(':', '%3A') + '#L27', block)
+                self.assertIn(path + ':27', block)
+
+    def test_legacy_combined_positions_parse_only_a_trailing_line_not_directory_digits(self):
+        generator = HtmlGenerator([], None, None, kernel_src='/tree', base_url='https://example.org/src')
+        position = '/tree/kernel/version:123/helper.c:27 (discriminator 4)'
+        self.assertEqual(generator._extract_line_number(position, '/tree'), 27)
+        self.assertEqual(generator._extract_file_path(position, '/tree'), 'kernel/version:123/helper.c')
+        self.assertIsNone(generator._extract_line_number('/tree/kernel/version:123/helper.c', '/tree'))
+        self.assertIsNone(generator._extract_line_number('/tree/kernel/helper.c:invalid', '/tree'))
+
     def test_kernel_entry_excerpt_rejects_unresolved_missing_and_out_of_root_sources(self):
         from fglib.uftrace import UftraceLine
 

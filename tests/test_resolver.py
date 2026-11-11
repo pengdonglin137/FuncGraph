@@ -68,7 +68,7 @@ class ResolverOutputTest(unittest.TestCase):
                 self.assertEqual(parse_chain(positions), expected)
         block = AddressResolver.parse_list_output(output, base_url='https://example.org/src',
                                                   kernel_src='/build with spaces')
-        self.assertIn('href="https://example.org/src/version:123/include/helper.c#L27"', block)
+        self.assertIn('href="https://example.org/src/version%3A123/include/helper.c#L27"', block)
         self.assertNotIn('#L123', block)
 
 

@@ -161,11 +161,12 @@ def build_source_url(base_url, relative_path, line_no):
 
     # 使用#还是#L
     line_anchor = '#' if is_opengrok else '#L'
+    encoded_path = quote(relative_path, safe='/')
 
     if base_url.endswith('/'):
-        return f"{base_url}{relative_path}{line_anchor}{line_no}"
+        return f"{base_url}{encoded_path}{line_anchor}{line_no}"
     else:
-        return f"{base_url}/{relative_path}{line_anchor}{line_no}"
+        return f"{base_url}/{encoded_path}{line_anchor}{line_no}"
 
 
 def clean_file_path(file_path, kernel_src=None, path_prefix=None, module_src=None):

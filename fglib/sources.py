@@ -20,9 +20,10 @@ import re
 import subprocess
 import urllib.error
 import urllib.request
+from urllib.parse import quote
 from concurrent.futures import ThreadPoolExecutor
 
-RE_POS = re.compile(r'^(\s*(?:\(inlined by\)\s+)?)([A-Za-z_$][\w.$]*) at (\S+?):(\d+)(.*)$')
+RE_POS = re.compile(r'^(\s*(?:\(inlined by\)\s+)?)([A-Za-z_$][\w.$]*) at (.+):([0-9]+)(?:\s+\(discriminator [0-9]+\))?\s*$')
 RE_HEAD = re.compile(r'^\S+\+0x[0-9a-fA-F]+/0x[0-9a-fA-F]+(?: \[[\w-]+\])?:$')
 TOP_DIRS = ('arch', 'block', 'certs', 'crypto', 'drivers', 'fs', 'include', 'init', 'io_uring', 'ipc',
             'kernel', 'lib', 'mm', 'net', 'rust', 'samples', 'scripts', 'security', 'sound', 'tools',
@@ -113,7 +114,7 @@ class UrlProvider(Provider):
         return self.template.replace('{rev}', self.rev or '{rev}')
 
     def url(self, path):
-        return self.template.replace('{rev}', self.rev or '').replace('{path}', path)
+        return self.template.replace('{rev}', quote(self.rev or '', safe='')).replace('{path}', quote(path, safe='/'))
 
     def _fetch(self, path):
         url = self.url(path)

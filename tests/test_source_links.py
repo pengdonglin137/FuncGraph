@@ -1,12 +1,15 @@
 """Built-in online browsers, revision selection, precedence and report links."""
 import contextlib
+from html.parser import HTMLParser
 import io
 import os
 import tempfile
 import unittest
+from urllib.parse import unquote, urlsplit
 
 import helpers
 from fglib.cli import parse_args
+from fglib.resolver import create_source_link
 from fglib.util import build_source_url, source_browser_url
 
 
@@ -41,6 +44,35 @@ class SourceBrowserTest(unittest.TestCase):
     def test_custom_opengrok_anchor_is_unchanged(self):
         self.assertEqual(build_source_url('https://opengrok.test/xref/linux/', 'kernel/fake.c', 2),
                          'https://opengrok.test/xref/linux/kernel/fake.c#2')
+
+    def test_source_names_are_literal_url_paths_not_queries_fragments_or_escapes(self):
+        path = 'drivers/space dir:123/percent%2F-#?&"雪.c'
+        encoded = 'drivers/space%20dir%3A123/percent%252F-%23%3F%26%22%E9%9B%AA.c'
+        for base, anchor in [(source_browser_url('github', 'topic/fix'), 'L42'),
+                             (source_browser_url('elixir', 'v7.2'), 'L42'),
+                             ('https://opengrok.test/xref/custom/', '42')]:
+            with self.subTest(base=base):
+                result = build_source_url(base, path, 42)
+                self.assertEqual(result, base.rstrip('/') + '/' + encoded + '#' + anchor)
+                parsed = urlsplit(result)
+                self.assertEqual(parsed.query, '')
+                self.assertEqual(parsed.fragment, anchor)
+                self.assertTrue(unquote(parsed.path).endswith('/' + path))
+
+    def test_function_link_title_cannot_turn_source_names_into_attributes(self):
+        class Links(HTMLParser):
+            def handle_starttag(self, tag, attrs):
+                if tag == 'a':
+                    self.attributes = dict(attrs)
+
+        path = 'drivers/a" onmouseover="bad()" data-other="file.c'
+        parser = Links()
+        parser.feed(create_source_link('/tree/' + path, 42, 'work',
+                                       'https://example.org/src', '/tree', None))
+        self.assertEqual(set(parser.attributes), {'class', 'href', 'target', 'title', 'onclick'})
+        self.assertEqual(parser.attributes['title'], 'Click to open ' + path + ':42')
+        self.assertEqual(urlsplit(parser.attributes['href']).fragment, 'L42')
+        self.assertEqual(unquote(urlsplit(parser.attributes['href']).path), '/src/' + path)
 
 
 class SourceBrowserCliTest(unittest.TestCase):
@@ -98,6 +130,45 @@ class SourceBrowserCliTest(unittest.TestCase):
 
 
 class SourceBrowserReportTest(unittest.TestCase):
+    def test_literal_source_names_match_across_function_links_source_blocks_and_timeline(self):
+        class Links(HTMLParser):
+            def __init__(self):
+                super().__init__()
+                self.links = []
+
+            def handle_starttag(self, tag, attrs):
+                if tag == 'a':
+                    self.links.append(dict(attrs))
+
+        path = 'kernel/space dir/version:123/percent%2F-#?&"雪.c'
+        for listing in [False, True]:
+            with self.subTest(listing=listing):
+                kernel = helpers.FakeKernel(inline_source=True, listing=listing, source_file=path)
+                self.addCleanup(kernel.close)
+                report, _ = kernel.run(helpers.fixture('vm72_full'), '--no-config', '--no-btf',
+                                       '--timeline', '--enable-fold', '--func-links',
+                                       '--base-url', 'https://example.org/src')
+                functions = Links()
+                functions.feed(report)
+                links = [link for link in functions.links if link.get('class') == 'func-name-link']
+                self.assertGreater(len(links), 0)
+                pool = Links()
+                pool.feed(''.join(helpers.json_script(report, 'fgSrc')))
+                self.assertGreater(len(pool.links), 0)
+                for link in links + pool.links:
+                    parsed = urlsplit(link['href'])
+                    self.assertEqual(unquote(parsed.path), '/src/' + path)
+                    self.assertEqual(parsed.query, '')
+                    self.assertIn(parsed.fragment, ['L2', 'L3'])
+                timeline = helpers.json_script(report, 'tlData')
+                positions = list(timeline['sources']['functions'].values())
+                positions += [frame[1:] for chain in timeline['sources']['callers'].values() for frame in chain]
+                self.assertGreater(len(positions), 0)
+                for source_path, number, url in positions:
+                    self.assertEqual(source_path, path)
+                    self.assertEqual(unquote(urlsplit(url).path), '/src/' + path)
+                    self.assertEqual(urlsplit(url).fragment, 'L' + str(number))
+
     def test_text_and_timeline_share_selected_links(self):
         kernel = helpers.FakeKernel(inline_source=True)
         self.addCleanup(kernel.close)

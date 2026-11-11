@@ -29,7 +29,7 @@ FAKE_FADDR2LINE = """#!/bin/sh
 for a in "$@"; do
   case "$a" in
     --*|*vmlinux*) ;;
-    *) echo "$a:"; echo "${a%%+*} at $FAKE_SRC/kernel/fake.c:2" ;;
+    *) echo "$a:"; echo "${a%%+*} at $FAKE_SRC/$FAKE_SOURCE_FILE:2" ;;
   esac
 done
 """
@@ -43,9 +43,9 @@ for argument in "$@"; do
   case "$argument" in
     --*|*vmlinux*) ;;
     *) printf '%s:\\n' "$argument"
-       printf 'inline_helper at %s/kernel/fake.c:2\\n' "$FAKE_SRC"
+       printf 'inline_helper at %s/%s:2\\n' "$FAKE_SRC" "$FAKE_SOURCE_FILE"
        if "$listed"; then printf ' 1\\tint a;\\n>2<\\tint b;\\n 3\\tint c;\\n'; fi
-       printf ' (inlined by) traced_outer at %s/kernel/fake.c:3\\n' "$FAKE_SRC"
+       printf ' (inlined by) traced_outer at %s/%s:3\\n' "$FAKE_SRC" "$FAKE_SOURCE_FILE"
        if "$listed"; then printf ' 2\\tint b;\\n>3<\\tint c;\\n'; fi ;;
   esac
 done
@@ -59,12 +59,14 @@ def fixture(name):
 class FakeKernel:
     """A fake kernel with optional listed-source resolver/capability stubs."""
 
-    def __init__(self, inline_source=False, listing=True):
+    def __init__(self, inline_source=False, listing=True, source_file='kernel/fake.c'):
         self.dir = tempfile.mkdtemp(prefix='fgtest_')
         self.ksrc = os.path.join(self.dir, 'ksrc')
         os.makedirs(os.path.join(self.ksrc, 'scripts'))
-        os.makedirs(os.path.join(self.ksrc, 'kernel'))
-        with open(os.path.join(self.ksrc, 'kernel', 'fake.c'), 'w') as f:
+        self.source_file = source_file
+        source_path = os.path.join(self.ksrc, source_file)
+        os.makedirs(os.path.dirname(source_path), exist_ok=True)
+        with open(source_path, 'w') as f:
             f.write('int a;\nint b;\nint c;\n')
         tool = os.path.join(self.ksrc, 'scripts', 'faddr2line')
         with open(tool, 'w') as f:
@@ -84,7 +86,7 @@ class FakeKernel:
         out = os.path.join(self.dir, out)
         cmd = [sys.executable, os.path.join(ROOT, 'funcgraph.py'), '--vmlinux', self.vmlinux,
                '--kernel-src', self.ksrc, '--output', out] + list(opts) + [trace]
-        env = dict(os.environ, FAKE_SRC=self.ksrc)
+        env = dict(os.environ, FAKE_SRC=self.ksrc, FAKE_SOURCE_FILE=self.source_file)
         env['PATH'] = os.path.join(self.ksrc, 'scripts') + os.pathsep + env.get('PATH', '')
         env.pop('CROSS_COMPILE', None)
         p = subprocess.run(cmd, capture_output=True, text=True, env=env, timeout=600)

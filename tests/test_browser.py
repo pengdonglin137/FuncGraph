@@ -4,6 +4,7 @@ import csv
 from itertools import product
 import os
 import unittest
+from urllib.parse import unquote, urlsplit
 
 import helpers
 
@@ -3918,6 +3919,57 @@ class BrowserSmokeTest(unittest.TestCase):
             self.page.locator('.tl-tip').wait_for(state='visible')
             self.assertIn(target['source'], self.page.locator('.tl-tip').inner_text())
         self.assertEqual(self.ev('legacySourceReads'), 1)
+
+    def test_special_source_names_open_exact_paths_and_lines_from_text_and_call_stack(self):
+        path = 'kernel/space dir/version:123/percent%2F-#?&"雪.c'
+        requests = []
+
+        def serve(route):
+            requests.append(route.request.url)
+            route.fulfill(content_type='text/html', body='<!doctype html><title>Source fixture</title>')
+
+        def open_source(link):
+            expected = link.get_attribute('href')
+            with self.page.expect_popup() as opened:
+                link.click()
+            popup = opened.value
+            try:
+                popup.wait_for_load_state('domcontentloaded')
+                self.assertEqual(popup.url, expected)
+                parsed = urlsplit(popup.url)
+                self.assertEqual(unquote(parsed.path), '/src/' + path)
+                self.assertEqual(parsed.query, '')
+                self.assertIn(parsed.fragment, ['L2', 'L3'])
+            finally:
+                popup.close()
+
+        self.page.context.route('https://source.test/**', serve)
+        try:
+            for listing in [False, True]:
+                with self.subTest(listing=listing):
+                    kernel = helpers.FakeKernel(inline_source=True, listing=listing, source_file=path)
+                    self.addCleanup(kernel.close)
+                    kernel.run(helpers.fixture('pi4_full'), '--no-config', '--no-btf', '--timeline',
+                               '--func-links', '--base-url', 'https://source.test/src')
+                    self.page.goto('file://' + kernel.dir + '/out.html', wait_until='load')
+                    self.ev("fgSwitchView('text')")
+                    function = self.page.locator('.func-name-link').first
+                    self.assertEqual(function.get_attribute('title'), 'Click to open ' + path + ':2')
+                    self.assertIsNone(function.get_attribute('onmouseover'))
+                    open_source(function)
+                    self.ev("fgSwitchView('timeline')")
+                    self.ev("""() => {
+                        const data = fgData.read('tlData');
+                        const index = data.cols.caller.findIndex(caller => data.inline[caller]?.length === 2);
+                        fgView('timeline').probe().select(index);
+                    }""")
+                    stack = self.page.locator('[data-context-list=stack] .tl-context-source a').first
+                    self.assertIn(path, stack.text_content())
+                    open_source(stack)
+            self.assertEqual(len(requests), 4)
+            self.assertTrue(all(unquote(urlsplit(url).path) == '/src/' + path for url in requests))
+        finally:
+            self.page.context.unroute('https://source.test/**', serve)
 
     def test_plain_source_mode_keeps_clickable_inline_call_stack_without_code_snippets(self):
         kernel = helpers.FakeKernel(inline_source=True, listing=False)

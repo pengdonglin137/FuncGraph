@@ -730,9 +730,10 @@ def create_source_link(source_file, line_num, display_name, base_url, kernel_src
     # 生成链接
     escaped_display_name = escape_html_preserve_spaces(display_name)
     escaped_url = html.escape(url)
+    escaped_title = html.escape(f"Click to open {relative_path}:{line_num}")
 
     # 添加 onclick="event.stopPropagation()" 防止事件冒泡到父元素
-    return f'<a class="func-name-link" href="{escaped_url}" target="_blank" title="Click to open {relative_path}:{line_num}" onclick="event.stopPropagation()">{escaped_display_name}</a>'
+    return f'<a class="func-name-link" href="{escaped_url}" target="_blank" title="{escaped_title}" onclick="event.stopPropagation()">{escaped_display_name}</a>'
 
 
 def _call_faddr2line_for_functions(faddr2line_path, target_path, func_names, path_prefix, module_srcs, entry_offset, verbose):

@@ -194,6 +194,10 @@ python3 funcgraph.py --timeline --pid 1234 --graph vfs_read --vmlinux vmlinux --
 
 **源码来源**（默认读取 faddr2line 能找到的本地文件）
 
+源码路径按原始文件名处理：空格、中文、冒号、`#`、`?` 和 `%` 在生成网页链接时自动编码，
+页面中仍显示原路径，行号锚点保持独立。不要预先编码 DWARF 路径；例如文件名中的 `%2F`
+表示字面字符，不会被当成目录分隔符。自定义基础 URL 中已有的编码不重复编码。
+
 | 参数 | 含义 |
 |---|---|
 | `--source-rev REV` | 从 `--kernel-src` 这个 git 仓库读取指定版本的文件（`git show REV:path`）。本地工作区已切到其他分支时使用 |
@@ -204,6 +208,10 @@ python3 funcgraph.py --timeline --pid 1234 --graph vfs_read --vmlinux vmlinux --
 --source-url 'https://raw.githubusercontent.com/torvalds/linux/{rev}/{path}' --source-rev v6.18
 --source-url 'https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git/plain/{path}?h={rev}' --source-rev v6.18.5
 ```
+
+`--source-url` 只编码替换进去的 `{path}` 与 `{rev}`，保留模板本身的查询参数和已有编码；
+路径中的 `/` 保持目录分隔含义，版本值按单个 URL 组成部分编码。文件名里的 `#`、`?` 或 `%`
+不会截断下载地址或与其他文件共用错误的缓存。
 
 使用这两种来源时，工具会检查源码版本是否和 vmlinux 一致，结果显示在命令行输出和报告的 ⓘ 信息面板里，例如 `90% match the function names`。检查方法：内联链里外层帧的那一行应当调用了内层函数，所以内层函数名应该出现在那一行。版本正确时实测匹配率是 86% 到 94%，错误时是 26% 到 59%。低于 75% 时会警告"probably a different version than the vmlinux"，这时源码行号可能对不上。
 

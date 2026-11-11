@@ -1094,19 +1094,10 @@ class HtmlGenerator:
         # 首先清理字符串
 
         # 尝试从原始字符串提取行号
-        line_match = re.search(r':(\d+)(?:\s|$)', location_str)
+        line_match = re.search(r':([0-9]+)(?:\s+\((?:discriminator [0-9]+|inlined)\))?\s*$', location_str)
         if line_match:
             try:
                 return int(line_match.group(1))
-            except (ValueError, IndexError):
-                pass
-
-        # 如果上述方法失败，尝试其他方法
-        # 查找冒号后的数字
-        match = re.search(r':(\d+)', location_str)
-        if match:
-            try:
-                return int(match.group(1))
             except (ValueError, IndexError):
                 pass
 
@@ -1123,7 +1114,7 @@ class HtmlGenerator:
 
         # 如果还有冒号和数字，去除它们
         # 匹配文件路径:行号格式
-        file_match = re.match(r'^(.*?):\d+', cleaned)
+        file_match = re.match(r'^(.*):[0-9]+(?:\s+\((?:discriminator [0-9]+|inlined)\))?\s*$', cleaned)
         if file_match:
             return file_match.group(1)
 
@@ -1170,9 +1161,10 @@ class HtmlGenerator:
             if isinstance(locations, list):
                 for loc in locations:
                     file_path = clean_file_path(loc['file'], self.kernel_src, self.path_prefix)
-                    clean_path = self._extract_file_path(file_path, self.kernel_src, self.path_prefix)
                     line_num = loc.get('line')
+                    clean_path = file_path
                     if line_num is None:
+                        clean_path = self._extract_file_path(file_path, self.kernel_src, self.path_prefix)
                         line_num = self._extract_line_number(file_path, self.kernel_src, self.path_prefix)
                     if clean_path and line_num is not None:
                         if current_base_url:
