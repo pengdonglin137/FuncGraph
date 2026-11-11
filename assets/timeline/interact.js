@@ -173,12 +173,14 @@ function tipSlice(i) {
     if (c) h += row('caller', esc(c) + (f & FL.MISMATCH ? '<div class="tl-tail-note">' + esc(callerRelationText(i)) + '</div>' : ''));
     const csp = c ? callSitePos(i) : null;
     if (csp) h += row('source', esc(csp.at));
-    const userSource = f & FL.USER ? userPosition(i) : null;
-    if (userSource) h += row('source', esc(userSource[0] + ':' + userSource[1]));
+    const userSite = f & FL.USER ? userCallSite(i) : null;
+    const userSource = f & FL.USER ? userSite || userPosition(i) : null;
+    if (userSource) h += row(userSite ? 'call site' : 'function entry', esc(userSource[0] + ':' + userSource[1]));
     const il = inlineLine(i);
     if (il) h += row('inlined in', esc(il));
     const a = argsOf(i);
-    if (a) h += row('args', esc(a.length > 180 ? a.slice(0, 180) + '…' : a));
+    const namedArgs = namedArgsOf(i) || a;
+    if (namedArgs) h += row('args', esc(namedArgs.length > 180 ? namedArgs.slice(0, 180) + '…' : namedArgs));
     if (f & FL.TRUNC) h += '<div class="t-warn">exit not captured (trace window ended or events lost)</div>';
     if (f & FL.ORPHAN) h += '<div class="t-warn">entry not captured (started before trace window)</div>';
     return h;

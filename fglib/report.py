@@ -1140,8 +1140,9 @@ class HtmlGenerator:
         self._src_calls[func_info] = source_index
         return source_index
 
-    def _user_source_index(self, position):
-        return self._position_source_index(position, self.user_src, 'recorded user source')
+    def _user_source_index(self, position, basis=None):
+        label = basis if basis and basis.startswith('user call site') else 'recorded user source · function entry (not call site)'
+        return self._position_source_index(position, self.user_src, label)
 
     def _kernel_source_index(self, line):
         position = line.get('func_name_info')
@@ -1264,7 +1265,7 @@ class HtmlGenerator:
                     line_data.get('space') == 'kernel' and line_data['expandable'] and line_data['func_info']) else []
             position_src_idx = (self._source_index(line_data['func_info']) if call_chain and
                                 all(frame[1] != '??' and frame[2] > 0 for frame in call_chain) else
-                                self._user_source_index(position) if position else self._kernel_source_index(line_data))
+                                self._user_source_index(position, line_data.get('source_kind')) if position else self._kernel_source_index(line_data))
             if self.omit_text:
                 if position_src_idx is not None:
                     self._src_lines[idx + 1] = position_src_idx

@@ -181,6 +181,32 @@ kernel names separately, even when their symbols have identical spelling.
   JSONL is still supported; re-export its original capture with the updated patched
   executable to obtain symbol metadata. Supplying only an arbitrary vmlinux does
   not authorize guessing raw addresses.
+- **User call sites:** `recorded address` identifies the callee, not the instruction
+  that called it. Add `-T '.@callsite' --srcline` when recording, for example:
+
+  ```bash
+  fguftrace record --srcline -T '.@callsite' -d capture.data ./app
+  funcgraph --uftrace capture.data --user-src "$PWD" --timeline --enable-fold --output report.html
+  ```
+
+  The updated patched exporter preserves the event bytes and return PC, resolving
+  `PC - 1` with the recorded session's module maps and matching debug images.
+  An event is paired only with the next user record of the same thread when that
+  record is an entry exactly one ns later. Loss or mismatches never invent a site.
+  Text and details prefer **User call site source**. A stack's parent row uses
+  the child's site only when the captured caller symbol matches that parent.
+  Otherwise the explicitly labeled function-entry fallback and original addresses
+  remain. Re-record old captures without call-site events: regenerating HTML cannot
+  recover a caller PC that was never recorded.
+- **Kernel argument names:** matching `--vmlinux` or `--btf` supplies names for
+  **args (BTF)** and Text as `name=raw_value`, retaining the original values in
+  expandable **Raw argument slots**. This reuses BTF without another DWARF lookup
+  or pointer dereference. Only an ABI-safe integer/pointer parameter prefix is
+  named. Aggregates, floating-point arguments, variadic tails, conflicting
+  prototypes, argument-rewriting compiler clones and wide integers of unknown
+  word size are not guessed; remaining slots use `slotN`, not invented argument
+  names. Without BTF the existing **raw args** remains. User scalar values still
+  follow their captured specifications and never borrow kernel parameter names.
 - **Filtering:** with `--filter`, use `space:user` or `space:kernel` in Text
   or Timeline's shared Filter. Sidecar reports can apply this filter before
   Text loads. CLI tree pre-filters are not supported on uftrace streams yet.

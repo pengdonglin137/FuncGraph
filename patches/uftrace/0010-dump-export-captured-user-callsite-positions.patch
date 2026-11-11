@@ -1,0 +1,90 @@
+From d48072afa9e356f10820d15a0fe0b87bb5ccda35 Mon Sep 17 00:00:00 2001
+From: pengdonglin <pengdonglin@xiaomi.com>
+Date: Wed, 11 Nov 2026 20:22:58 +0800
+Subject: [PATCH 10/10] dump: export captured user callsite PCs and exact
+ source positions
+
+Preserve native CALLSITE events and their original payload bytes. Decode the return PC using the recorded byte order, resolve the caller symbol and PC - 1 with the recorded session/module maps, and leave callee function-entry locations separate. Missing debug images retain the original return PC without inventing a source line.
+---
+ cmds/dump.c    | 41 ++++++++++++++++++++++++++++++++++++++---
+ utils/fstack.c |  3 +++
+ 2 files changed, 41 insertions(+), 3 deletions(-)
+
+diff --git a/cmds/dump.c b/cmds/dump.c
+index ef6e5bf7d586..016378d72e99 100644
+--- a/cmds/dump.c
++++ b/cmds/dump.c
+@@ -1748,7 +1748,13 @@ static void dump_fgraph_task(struct uftrace_dump_ops *ops, struct uftrace_task_r
+ {
+ 	struct uftrace_record *record = task->rstack;
+ 	struct uftrace_dbg_loc *loc;
++	uint64_t retaddr = 0;
+ 	unsigned index;
++	bool callsite = record->type == UFTRACE_EVENT && record->addr == EVENT_ID_CALLSITE &&
++		task->args.data && task->args.len == sizeof(retaddr);
++
++	if (callsite)
++		memcpy(&retaddr, task->args.data, sizeof(retaddr));
+ 
+ 	pr_out("{\"type\":\"%s\",\"space\":\"user\",\"time_ns\":%" PRIu64
+ 	       ",\"tid\":%d,\"pid\":%d,\"cpu\":null,\"depth\":%u,\"address\":\"0x%" PRIx64 "\",\"name\":",
+@@ -1760,13 +1766,42 @@ static void dump_fgraph_task(struct uftrace_dump_ops *ops, struct uftrace_task_r
+ 		pr_out(",\"count\":%" PRIu64, record->addr);
+ 	if (record->more && task->args.data) {
+ 		pr_out(",\"payload_hex\":\"");
+-		for (index = 0; index < task->args.len; index++)
+-			pr_out("%02x", ((unsigned char *)task->args.data)[index]);
++		for (index = 0; index < task->args.len; index++) {
++			if (callsite) {
++				unsigned shift = task->h->hdr.endian == ELFDATA2LSB ? index : 7 - index;
++				pr_out("%02x", (unsigned)(retaddr >> (8 * shift)) & 0xff);
++			}
++			else
++				pr_out("%02x", ((unsigned char *)task->args.data)[index]);
++		}
+ 		pr_out("\"");
+ 		if (record->type == UFTRACE_ENTRY || record->type == UFTRACE_EXIT)
+ 			fgraph_user_values(task, record->type == UFTRACE_EXIT);
+ 	}
+-	loc = task_find_loc_addr(&task->h->sessions, task, record->time, record->addr);
++	if (callsite) {
++		struct uftrace_dbg_loc position;
++		if (retaddr) {
++			struct uftrace_symbol *caller = task_find_sym_addr(&task->h->sessions, task,
++								 record->time, retaddr - 1);
++
++			pr_out(",\"user_callsite\":{\"retaddr\":\"0x%" PRIx64 "\"", retaddr);
++			if (caller) {
++				char *caller_name = symbol_getname(caller, retaddr - 1);
++				pr_out(",\"name\":");
++				fgraph_string(caller_name);
++				symbol_putname(caller, caller_name);
++			}
++			if (task_find_exact_loc_addr(&task->h->sessions, task, record->time,
++					     retaddr - 1, &position) && position.file && position.line > 0) {
++				pr_out(",\"source\":{\"file\":");
++				fgraph_string(position.file->name);
++				pr_out(",\"line\":%d}", position.line);
++			}
++			pr_out("}");
++		}
++	}
++	loc = record->type == UFTRACE_ENTRY || record->type == UFTRACE_EXIT ?
++		task_find_loc_addr(&task->h->sessions, task, record->time, record->addr) : NULL;
+ 	if (loc && loc->file && loc->line) {
+ 		pr_out(",\"source\":{\"file\":");
+ 		fgraph_string(loc->file->name);
+diff --git a/utils/fstack.c b/utils/fstack.c
+index 6302bcff15c0..3ec05f8c82a7 100644
+--- a/utils/fstack.c
++++ b/utils/fstack.c
+@@ -1402,6 +1402,9 @@ static int read_task_event_size(struct uftrace_task_reader *task, void *buf, siz
+ 	if (fread(&len, sizeof(len), 1, task->fp) != 1)
+ 		return -1;
+ 
++	if (task->h->needs_byte_swap)
++		len = bswap_16(len);
++
+ 	ASSERT(len == buflen);
+ 
+ 	if (fread(buf, len, 1, task->fp) != 1)

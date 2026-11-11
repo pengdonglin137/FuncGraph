@@ -28,13 +28,14 @@ class UftraceInputError(ValueError):
 
 
 class UftraceLine(FtraceLine):
-    __slots__ = ('space', 'boundary', 'source', 'record_type')
+    __slots__ = ('space', 'boundary', 'source', 'source_kind', 'record_type')
 
-    def __init__(self, *, record_type, space=None, boundary=False, source=None, **kwargs):
+    def __init__(self, *, record_type, space=None, boundary=False, source=None, source_kind=None, **kwargs):
         super().__init__(**kwargs)
         self.space = space
         self.boundary = boundary
         self.source = source
+        self.source_kind = source_kind
         self.record_type = record_type
 
 
@@ -42,11 +43,17 @@ def _uint(value, maximum=(1 << 64) - 1):
     return type(value) is int and 0 <= value <= maximum
 
 
+def _source_position(source):
+    return (isinstance(source, dict) and isinstance(source.get('file'), str) and source['file'] and
+            _uint(source.get('line'), (1 << 31) - 1) and source['line'] > 0)
+
+
 def _check_record(record):
     kind, space = record.get('type'), record.get('space')
     if kind not in ('entry', 'exit', 'event', 'lost') or not _uint(record.get('time_ns')):
         raise UftraceInputError('invalid record type or timestamp')
-    if space is None and kind == 'event' and record.get('origin') == 'perf' and 'retaddr_symbol' not in record:
+    if (space is None and kind == 'event' and record.get('origin') == 'perf' and
+            'retaddr_symbol' not in record and 'user_callsite' not in record):
         return
     if space not in ('user', 'kernel'):
         raise UftraceInputError('expected explicit user or kernel address space')
@@ -94,11 +101,16 @@ def _check_record(record):
     for field in ('name', 'comm', 'text', 'payload_hex'):
         if field in record and not isinstance(record[field], str):
             raise UftraceInputError('invalid ' + field)
-    if 'source' in record:
-        source = record['source']
-        if not (isinstance(source, dict) and isinstance(source.get('file'), str) and source['file'] and
-                _uint(source.get('line'), (1 << 31) - 1) and source['line']):
-            raise UftraceInputError('invalid recorded source position')
+    if 'source' in record and not _source_position(record['source']):
+        raise UftraceInputError('invalid recorded source position')
+    if 'user_callsite' in record:
+        site = record['user_callsite']
+        if not (space == 'user' and kind == 'event' and record.get('name') == 'callsite' and
+                isinstance(site, dict) and isinstance(site.get('retaddr'), str) and
+                HEX.fullmatch(site['retaddr']) and int(site['retaddr'], 16) > 0 and
+                ('name' not in site or isinstance(site['name'], str) and bool(site['name'])) and
+                ('source' not in site or _source_position(site['source']))):
+            raise UftraceInputError('invalid recorded user call site')
 
 
 def _caller_info(record):
@@ -199,9 +211,11 @@ class UftraceTimeline(TimelineBuilder):
         self.parsed = []
         self.record_slices = {}
         self.positions = {}
+        self.callsite_positions = {}
         self.position_ids = {}
         self.user_details = {}
         self.kernel_details = {}
+        self.argument_names = {}
         self.caller_symbols = {}
         self.lifecycle = []
         self.native_depths = []
@@ -214,7 +228,7 @@ class UftraceTimeline(TimelineBuilder):
         self.s_flags[index] |= F_TRUNCATED
         self.s_end[index] = max(self.s_start[index], timestamp)
 
-    def _call(self, record, task, stack, lineno, flags, context):
+    def _call(self, record, task, stack, lineno, flags, context, user_site=None):
         depth, timestamp = record['depth'], record['time_ns']
         user = record['space'] == 'user'
         address = int(record['address'], 16)
@@ -261,6 +275,14 @@ class UftraceTimeline(TimelineBuilder):
             detail = self.user_details[lineno] = {'address': record['address']}
             if 'user_args' in record:
                 detail['args'] = ', '.join(_display(value) for value in record['user_args'])
+            if user_site:
+                detail['callsite'] = {'retaddr': user_site['retaddr']}
+                if 'name' in user_site:
+                    detail['callsite']['name'] = _display(user_site['name'])
+                if 'source' in user_site:
+                    site = user_site['source']
+                    position = (_display(site['file']), site['line'], '')
+                    self.callsite_positions[lineno] = self.position_ids.setdefault(position, len(self.position_ids))
             if is_exit:
                 self._user_exit(record, lineno)
             source = record.get('source')
@@ -298,11 +320,15 @@ class UftraceTimeline(TimelineBuilder):
                       if record.get('space') == 'user' and record.get('comm')}
         user_stacks = defaultdict(list)
         user_last = {}
+        user_sites = {}
         for lineno, record in enumerate(self.records, 3):
             space, kind, timestamp = record.get('space'), record['type'], record['time_ns']
             if space is None:
                 continue
             tid, cpu = record['tid'], record['cpu']
+            pending = user_sites.pop(tid, None) if space == 'user' else None
+            if 'user_callsite' in record:
+                user_sites[tid] = (timestamp, record['user_callsite'])
             if kind == 'lost':
                 self.lost.append([cpu, timestamp, record['count'] if record['count'] >= 0 else None, lineno])
                 if space == 'kernel':
@@ -321,7 +347,8 @@ class UftraceTimeline(TimelineBuilder):
             if space == 'user':
                 user_last[tid] = timestamp
                 if kind in ('entry', 'exit'):
-                    self._call(record, task, user_stacks[tid], lineno, 0, None)
+                    site = pending[1] if kind == 'entry' and pending and pending[0] + 1 == timestamp else None
+                    self._call(record, task, user_stacks[tid], lineno, 0, None, site)
                 continue
             flags, context, lat = _latency(record, self.lazy_resched)
             self.caps['cpu'] = True
@@ -351,10 +378,28 @@ class UftraceTimeline(TimelineBuilder):
             self._join()
         self.caps['retval'] = any(value is not None for value in self.s_ret)
         self._finish(True)
+        self._name_kernel_arguments()
         self.stats['build_time'] = time.monotonic() - start
         self.stats.update(user_kernel_boundaries=self.joined, detached_kernel_roots=self.detached)
         self.parsed = self._text_lines(enable_fold, include_text)
         return self
+
+    def _name_kernel_arguments(self):
+        if self.rettypes is None or not hasattr(self.rettypes, 'argument_names'):
+            return
+        counts = {}
+        for index, flags in enumerate(self.s_flags):
+            if flags & (F_USER | F_ORPHAN) or self.s_args[index] < 0:
+                continue
+            values = self.records[self.s_line[index] - 3].get('args')
+            if not values:
+                continue
+            name = self.s_name[index]
+            counts[name] = max(counts.get(name, 0), len(values))
+        for name, count in counts.items():
+            names = self.rettypes.argument_names(self.strings[name], count)
+            if any(names):
+                self.argument_names[name] = names
 
     def _event(self, record, task, timestamp, cpu, context):
         name, payload = record.get('name', ''), record.get('text', '')
@@ -437,6 +482,7 @@ class UftraceTimeline(TimelineBuilder):
         if not include_text:
             return lines
         fold_ids, ancestors = {}, {}
+        positions = tuple(self.position_ids)
         for lineno, record in enumerate(self.records, 3):
             kind, space = record['type'], record.get('space')
             tid, cpu = record.get('tid'), record.get('cpu')
@@ -444,7 +490,7 @@ class UftraceTimeline(TimelineBuilder):
             tag = ('U' if space == 'user' else 'K') if self.mixed and space else ' '
             prefix = f'{seconds:>7}.{nanos:09d} | {str(cpu) if cpu is not None else "–":>3} | {str(tid) if tid is not None else "–":>7} | {tag} | '
             index = self.record_slices.get(lineno)
-            name = args = fold_id = fold_type = depth = duration = source = comm = func_info = None
+            name = args = fold_id = fold_type = depth = duration = source = source_kind = comm = func_info = None
             path = ''
             boundary = False
             if index is not None:
@@ -458,6 +504,11 @@ class UftraceTimeline(TimelineBuilder):
                     args = self.strings[self.s_args[index]] if self.s_args[index] >= 0 else None
                     if space == 'user':
                         args = self.user_details[lineno].get('args') or ('raw bytes: ' + args if args else None)
+                    else:
+                        names = self.argument_names.get(self.s_name[index], ())
+                        if names and record.get('args'):
+                            args = ', '.join(f'{names[position]}={value}' if position < len(names) and names[position]
+                                             else f'slot{position + 1}={value}' for position, value in enumerate(record['args']))
                     detail = ' (' + args + ')' if args else '()'
                     body = name + detail + ' {'
                     if space == 'user':
@@ -468,6 +519,13 @@ class UftraceTimeline(TimelineBuilder):
                     pos = record.get('source')
                     if space == 'user' and pos:
                         source = (_display(pos['file']), pos['line'])
+                        source_kind = 'user function entry'
+                    if space == 'user' and 'callsite' in self.user_details[lineno]:
+                        body += ' /* caller return address ' + self.user_details[lineno]['callsite']['retaddr'] + ' */'
+                        position_id = self.callsite_positions.get(lineno)
+                        if position_id is not None:
+                            source = positions[position_id][:2]
+                            source_kind = 'user call site (recorded return address - 1)'
                 else:
                     retval = self.s_ret[index]
                     duration = (self.s_end[index] - self.s_start[index]) / 1000 if not flags & F_ORPHAN else None
@@ -501,7 +559,8 @@ class UftraceTimeline(TimelineBuilder):
                                      expandable=bool(func_info), func_info=func_info,
                                      display_func_name=name, cpu=cpu, pid=tid, comm=comm, params=args,
                                      duration=duration, sort_duration=duration, fold_id=fold_id, fold_type=fold_type,
-                                     fold_ancestors=path, call_depth=depth, space=space, boundary=boundary, source=source, record_type=kind,
+                                     fold_ancestors=path, call_depth=depth, space=space, boundary=boundary, source=source,
+                                     source_kind=source_kind, record_type=kind,
                                      irqs_off=lat[0] if lat else None, need_resched=lat[1] if lat else None,
                                      hardirq_softirq=lat[2] if lat else None, preempt_depth=lat[3] if lat else None))
         return lines
@@ -514,12 +573,16 @@ class UftraceTimeline(TimelineBuilder):
             data['uftrace']['user_details'] = self.user_details
         if self.kernel_details:
             data['uftrace']['kernel_details'] = self.kernel_details
+        if self.argument_names:
+            data['uftrace']['kernel_arg_names'] = self.argument_names
         if self.caller_symbols:
             data['uftrace']['caller_symbols'] = self.caller_symbols
         if self.lifecycle:
             data['uftrace']['lifecycle'] = [[task, timestamp - data['t0'], phase, line]
                                            for task, timestamp, phase, line in self.lifecycle]
-        if self.positions:
+        if self.positions or self.callsite_positions:
             data['sources'] = {'functions': {}, 'callers': {}, 'user_lines': self.positions,
                                'user_positions': list(self.position_ids)}
+            if self.callsite_positions:
+                data['sources']['user_callsites'] = self.callsite_positions
         return data

@@ -1,4 +1,5 @@
 """Exercise the patched uftrace executable with real user and synthetic kernel data."""
+import io
 import json
 import os
 from pathlib import Path
@@ -6,6 +7,7 @@ import platform
 import shutil
 import subprocess
 import struct
+import sys
 import tempfile
 import unittest
 
@@ -80,6 +82,108 @@ class UftraceExportTest(unittest.TestCase):
         self.assertEqual(Path(child['source']['file']).name, 'workload_lib.c')
         self.assertEqual(child['source']['line'], 1)
         self.assertNotIn('user_args', child)
+
+    def test_recorded_user_callsite_is_not_the_callee_entry(self):
+        directory = Path(self.workspace.name) / 'callsite'
+        subprocess.run([str(EXECUTABLE), 'record', '--no-sched', '--no-libcall', '--srcline',
+                        *RECORD_FLAGS, '-T', 'child@callsite', '-d', str(directory), str(self.binary)],
+                       check=True, capture_output=True)
+        self.capture = directory
+        records = self.records()
+        event = next(record for record in records if record.get('name') == 'callsite')
+        site = event['user_callsite']
+        self.assertEqual(site['name'], 'main')
+        self.assertGreater(int(site['retaddr'], 16), 0)
+        self.assertEqual(Path(site['source']['file']).name, 'workload.c')
+        self.assertEqual(site['source']['line'], 2)
+        child = next(record for record in records if record.get('name') == 'child' and record['type'] == 'entry')
+        self.assertEqual(event['time_ns'] + 1, child['time_ns'])
+        self.assertEqual(event['tid'], child['tid'])
+        self.assertNotEqual(site['retaddr'], child['address'])
+        self.assertEqual(Path(child['source']['file']).name, 'workload_lib.c')
+        self.assertIn('payload_hex', event)
+        from fglib import inputs
+        data = inputs.UftraceInput(io.StringIO('\n'.join(json.dumps(record) for record in records))).build().to_data()
+        line = next(line for line, detail in data['uftrace']['user_details'].items()
+                    if detail['address'] == child['address'])
+        position = data['sources']['user_positions'][data['sources']['user_callsites'][line]]
+        self.assertEqual(Path(position[0]).name, 'workload.c')
+        self.assertEqual(position[1], 2)
+
+    def test_two_user_invocations_keep_distinct_exact_call_lines(self):
+        source = Path(self.workspace.name) / 'two-sites.c'
+        source.write_text('''__attribute__((noinline)) int child(int value)
+{
+    return value + 1;
+}
+int main(void)
+{
+    int first = child(1);
+    int second = child(2);
+    return first + second != 5;
+}
+''')
+        binary = source.with_suffix('')
+        subprocess.run(['gcc', *COMPILE_FLAGS, '-g', '-O0', '-o', str(binary), str(source)],
+                       check=True, capture_output=True)
+        directory = Path(self.workspace.name) / 'two-sites.data'
+        subprocess.run([str(EXECUTABLE), 'record', '--no-sched', '--no-libcall', '--srcline',
+                        *RECORD_FLAGS, '-T', 'child@callsite', '-d', str(directory), str(binary)],
+                       check=True, capture_output=True)
+        self.capture = directory
+        events = [record for record in self.records() if 'user_callsite' in record]
+        self.assertEqual([record['user_callsite']['source']['line'] for record in events], [7, 8])
+        self.assertNotEqual(events[0]['user_callsite']['retaddr'], events[1]['user_callsite']['retaddr'])
+
+    def test_user_callsite_without_dwarf_retains_pc_without_inventing_source(self):
+        source = Path(self.workspace.name) / 'no-debug.c'
+        source.write_text('__attribute__((noinline)) int child(void) { return 0; }\n'
+                          'int main(void) { return child(); }\n')
+        binary = source.with_suffix('')
+        subprocess.run(['gcc', *COMPILE_FLAGS, '-O0', '-o', str(binary), str(source)],
+                       check=True, capture_output=True)
+        directory = Path(self.workspace.name) / 'no-debug.data'
+        subprocess.run([str(EXECUTABLE), 'record', '--no-sched', '--no-libcall',
+                        *RECORD_FLAGS, '-T', 'child@callsite', '-d', str(directory), str(binary)],
+                       check=True, capture_output=True)
+        self.capture = directory
+        event = next(record for record in self.records() if 'user_callsite' in record)
+        self.assertGreater(int(event['user_callsite']['retaddr'], 16), 0)
+        self.assertNotIn('source', event['user_callsite'])
+
+    def test_user_callsite_opposite_endian_preserves_original_event_bytes(self):
+        directory = Path(self.workspace.name) / 'opposite-endian'
+        subprocess.run([str(EXECUTABLE), 'record', '--no-sched', '--no-libcall', '--srcline',
+                        *RECORD_FLAGS, '-T', 'child@callsite', '-d', str(directory), str(self.binary)],
+                       check=True, capture_output=True)
+        self.capture = directory
+        original = next(record for record in self.records() if 'user_callsite' in record)
+        source_order, target_order = ('<', '>') if sys.byteorder == 'little' else ('>', '<')
+        for path in directory.glob('[0-9]*.dat'):
+            payload = path.read_bytes()
+            swapped = bytearray()
+            offset = 0
+            while offset < len(payload):
+                timestamp, record = struct.unpack_from(source_order + 'QQ', payload, offset)
+                swapped.extend(struct.pack(target_order + 'QQ', timestamp, record))
+                offset += 16
+                if record & 4:
+                    self.assertEqual(record & 3, 3)
+                    length = struct.unpack_from(source_order + 'H', payload, offset)[0]
+                    self.assertEqual(length, 8)
+                    swapped.extend(struct.pack(target_order + 'H', length))
+                    swapped.extend(payload[offset + 2:offset + 10][::-1])
+                    swapped.extend(payload[offset + 10:offset + 16])
+                    offset += 16
+            path.write_bytes(swapped)
+        info = bytearray((directory / 'info').read_bytes())
+        for offset, size in ((8, 4), (12, 2), (16, 8), (24, 8), (32, 2)):
+            info[offset:offset + size] = info[offset:offset + size][::-1]
+        info[14] = 2 if sys.byteorder == 'little' else 1
+        (directory / 'info').write_bytes(info)
+        event = next(record for record in self.records() if 'user_callsite' in record)
+        self.assertEqual(event['user_callsite'], original['user_callsite'])
+        self.assertEqual(event['payload_hex'], bytes.fromhex(original['payload_hex'])[::-1].hex())
 
     def record_user_with_spec(self, arg_spec):
         directory = Path(self.workspace.name) / 'typed'

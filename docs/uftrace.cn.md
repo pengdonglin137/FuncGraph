@@ -145,6 +145,24 @@ Compare 与 `--export` 分开统计用户态、内核态的同名函数。
   只减一次 1。模块调用点保留模块归属，必须使用匹配的模块镜像。未知、脱敏、非代码或没有结束
   边界的符号保持原始地址。旧版只有裸地址的 JSONL 仍兼容；需用更新后的补丁版程序重新导出
   原始采集目录才能获得符号信息，不会仅凭任意一个 vmlinux 强行解析裸地址。
+- **用户态调用点**：`recorded address` 是被调函数的记录地址，不能据此推出调用者中的调用行。
+  采集时增加 `-T '.@callsite' --srcline`，保存 uftrace 原生的调用点事件，例如：
+
+  ```bash
+  fguftrace record --srcline -T '.@callsite' -d capture.data ./app
+  funcgraph --uftrace capture.data --user-src "$PWD" --timeline --enable-fold --output report.html
+  ```
+
+  更新后的补丁版导出保留事件原始字节和返回 PC，使用采集会话的模块映射、匹配的带调试信息镜像
+  解析 `PC - 1`。只把事件与同线程恰好晚 1 ns 的下一条用户态入口配对；缺失、丢失或不匹配时不补猜。
+  Text 和详情源码优先展示 **User call site source**；调用栈只在保存的调用者符号与父帧匹配时，
+  将该位置放到父帧右侧。没采集调用点或缺少匹配的 DWARF 时，明确标注函数入口回退，仍保留原始地址。
+  旧采集若没有调用点事件，需要重新采集；仅重新生成 HTML 无法找回从未记录的调用地址。
+- **内核参数名**：提供匹配的 `--vmlinux` 或 `--btf` 后，详情的 **args (BTF)** 和 Text 显示
+  `参数名=原始值`，原始槽位仍在可展开的 **Raw argument slots** 中。不额外做 DWARF 查询，也不解引用指针。
+  只命名可以确认 ABI 对应关系的整数/指针参数前缀；聚合参数、浮点、可变参数、原型冲突、
+  可能改写参数的编译器克隆以及未知字长的宽整数不强配参数名。其余槽位保持 `slotN`，不冒充函数参数。
+  无 BTF 时仍显示 **raw args**；用户态的标量参数和值仍按采集规格解码，不借用内核的参数名。
 - **过滤**：启用 `--filter` 后，Text 与 Timeline 共用的 Filter 支持 `space:user` 和
   `space:kernel`；sidecar 报告不必先加载 Text。命令行的调用树预过滤暂不适用于 uftrace。
 - **数据缺口**：缺失进出记录或丢失事件会标记，不补造实测帧。用户态 CPU 未知，

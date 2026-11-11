@@ -11,11 +11,14 @@ class TimelinePositionTest(unittest.TestCase):
         text = path.read_text()
         helper = text[text.index('function safeSourceUrl('):text.index('function callNavigationHtml(')]
         position = text[text.index('function callSitePos('):text.index('function fillCallSite(')]
+        model = (path.parent / 'model.js').read_text()
+        user_position = model[model.index('function userCallSite('):model.index('function retOf(')]
         setup = '''
             const assert = require('node:assert/strict');
             const csPosCache = new Map();
             const D = {sources:{callers:{}}};
             let sCaller = [0, 1, 2, 3];
+            const sLine = [42, 43, 44, 45];
             const isSyn = index => index >= 4;
             let legacyReads = 0;
             const callSiteBlock = () => { legacyReads++; throw new Error('Source line map read'); };
@@ -23,7 +26,7 @@ class TimelinePositionTest(unittest.TestCase):
             const document = {baseURI:'https://report.test/report.html',
                 createElement() {throw new Error('Source DOM parsed');}};
         '''
-        result = subprocess.run(['node', '-e', setup + helper + position + assertions],
+        result = subprocess.run(['node', '-e', setup + helper + user_position + position + assertions],
                                 capture_output=True, text=True, timeout=20)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
@@ -72,6 +75,16 @@ class TimelinePositionTest(unittest.TestCase):
                 assert.throws(() => callSitePos(0), /Source line map read/);
             }
             assert.equal(legacyReads, 8);
+        ''')
+
+    def test_user_callsite_zero_position_id_uses_no_kernel_url_or_source_dom(self):
+        self.run_position('''
+            D.uftrace = {user_details:{42:{address:'0x100',callsite:{retaddr:'0x250'}}}};
+            D.sources.user_positions = [['user/demo.c', 17, '']];
+            D.sources.user_callsites = {42:0};
+            assert.deepEqual(callSitePos(0), {func:'',at:'user/demo.c:17',href:null,inl:false});
+            assert.equal(callSitePos(1), null);
+            assert.equal(legacyReads, 0);
         ''')
 
 

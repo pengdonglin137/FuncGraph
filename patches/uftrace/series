@@ -7,3 +7,4 @@
 0007-dump-symbolize-original-kernel-return-PCs-using-capt.patch
 0008-fix-session-preserve-whitespace-in-captured-executab.patch
 0009-fix-aarch64-trace-patchable-entries-without-a-disass.patch
+0010-dump-export-captured-user-callsite-positions.patch

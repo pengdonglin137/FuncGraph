@@ -104,7 +104,12 @@ function detailContextData(root) {
                 }
                 const child = path.ids[position + 1], childChain = child === undefined || gapOf(child) ? null : detailSourceChain(child);
                 const site = childChain && childChain[0][0] === nameOf(index) ? childChain[0] : null;
-                yield withBoundary(detailRealRow(index, level++, site));
+                const row = detailRealRow(index, level++, site);
+                const userSite = child !== undefined && sFlags[index] & FL.USER && sFlags[child] & FL.USER &&
+                    sParent[child] === index && !gapOf(child) &&
+                    D.uftrace?.user_details?.[sLine[child]]?.callsite?.name === nameOf(index) ? userCallSite(child) : null;
+                if (userSite) Object.assign(row, detailSourceFields(userSite, 'call_site'), { sourceOwner: child });
+                yield withBoundary(row);
             }
         }, path.status));
         if (eChain[root] >= 0) {
@@ -142,13 +147,15 @@ function detailRowsHtml(list, rows) {
         if (row.kind !== 'outside') {
             const at = row.file ? row.file + ':' + row.line : 'Source unavailable';
             const basis = row.file ? row.sourceKind === 'function_entry' ? 'Resolved function entry, not the calling line' :
-                row.sourceKind === 'recorded_user_source' ? 'Recorded user source position, not a call site' : 'Call site inside this frame' : '';
+                row.sourceKind === 'recorded_user_source' ? 'Recorded user function entry, not a call site' : 'Call site inside this frame' : '';
             const href = safeSourceUrl(row.href);
-            const embedded = traced && row.sourceKind === 'recorded_user_source' && callSiteBlock(row.index) !== null;
+            const sourceOwner = row.sourceOwner === undefined ? row.index : row.sourceOwner;
+            const embedded = traced && (row.sourceKind === 'recorded_user_source' && !userCallSite(row.index) || row.sourceOwner !== undefined) &&
+                callSiteBlock(sourceOwner) !== null;
             const tag = href ? 'a' : embedded ? 'button' : 'span';
             source = '<div class="tl-context-source">' +
                 '<' + tag + (href ? ' href="' + esc(href) + '" target="_blank" rel="noopener noreferrer"' :
-                    embedded ? ' type="button" class="tl-source-open" data-slice="' + row.index + '"' : '') +
+                    embedded ? ' type="button" class="tl-source-open" data-slice="' + sourceOwner + '"' : '') +
                 ' title="' + esc(at + (basis ? ' — ' + basis : '') + (row.file && !href && !embedded ? ' — no source URL configured' : '')) + '">' +
                 (row.file ? '<span class="tl-source-file">' + esc(row.file) + '</span><span class="tl-source-line">:' + esc(row.line) + '</span>' : esc(at)) +
                 '</' + tag + '></div>';
@@ -309,14 +316,23 @@ function showDetail(i) {
     const userDetail = f & FL.USER ? D.uftrace?.user_details?.[sLine[i]] : null;
     if (userDetail) {
         h += kv('recorded address', esc(userDetail.address));
+        const userSite = userCallSite(i);
+        if (userDetail.callsite) h += kv('caller return address', esc(userDetail.callsite.retaddr) +
+            '<span class="tl-cs-at">' + (userSite ? '<br><span data-callsite-position>' + esc(userSite[0] + ':' + userSite[1]) + '</span>' : '') + '</span>' +
+            (!userSite ? '<div class="tl-context-note">Call-site source unavailable; function entry is a fallback.</div>' : ''));
+        else h += kv('call site', '<span class="tl-muted">Not recorded · capture with -T &apos;.@callsite&apos;</span>');
         if (userDetail.args !== undefined) h += kv('user args', esc(userDetail.args));
         else if (a) h += kv('raw argument bytes', esc(a));
         if (userDetail.retval !== undefined) h += kv('user return', esc(userDetail.retval));
         else if (userDetail.return_payload) h += kv('raw return bytes', esc(userDetail.return_payload));
-    } else if (a) h += kv(D.uftrace ? (f & FL.USER ? 'raw payload' : 'raw args') : 'args', esc(a));
+    } else if (a) {
+        const namedArgs = namedArgsOf(i);
+        if (namedArgs) h += kv('args (BTF)', esc(namedArgs) + '<details class="tl-context-note"><summary>Raw argument slots</summary>' + esc(a) + '</details>');
+        else h += kv(D.uftrace ? (f & FL.USER ? 'raw payload' : 'raw args') : 'args', esc(a));
+    }
     if (ATOMIC.has(i)) h += kv('context', 'called with ' + esc(atomicText(ATOMIC.get(i))) + ' (sleeping function in atomic context)', 'err');
     h += kv('trace lines', lineLink(sLine[i]) + (sEline && sEline[i] && sEline[i] !== sLine[i] ? ' → ' + lineLink(sEline[i]) : ''));
-    h += '</div><details class="tl-cs" open><summary class="tl-sec">' + (f & FL.USER ? 'User source' : D.uftrace && !D.sources?.callers?.[sCaller?.[i]]?.length ? 'Kernel function source' : 'Call site source') + '</summary><div class="tl-cs-src"></div></details></div><div>';
+    h += '</div><details class="tl-cs" open><summary class="tl-sec">' + (f & FL.USER ? userCallSite(i) ? 'User call site source' : 'User function source (entry)' : D.uftrace && !D.sources?.callers?.[sCaller?.[i]]?.length ? 'Kernel function source' : 'Call site source') + '</summary><div class="tl-cs-src"></div></details></div><div>';
     h += breakdownHtml(i);
     if (context.lists.has('error')) h += detailListHtml('error');
     h += detailListHtml('stack') + detailContextHint();
@@ -332,6 +348,8 @@ function callSiteBlock(i) {
 const csPosCache = new Map();
 function callSitePos(i) {
     if (isSyn(i)) return null;
+    const userSite = userCallSite(i);
+    if (userSite) return { func: '', at: userSite[0] + ':' + userSite[1], href: null, inl: false };
     if (D.uftrace && !D.uftrace.caller_symbols?.[sCaller?.[i]]) return null;
     const chain = D.sources?.callers?.[sCaller?.[i]];
     if (Array.isArray(chain)) {
