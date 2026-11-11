@@ -57,7 +57,8 @@ FuncGraph 不需要安装，直接运行仓库里的 `funcgraph.py` 即可。
 | git | `--source-rev` 从 git 仓库读取指定版本的源码 | 可选 |
 
 `--fast` 的源码片段由 Python 读取，不依赖 `gawk`；没有 `gawk` 也能显示代码行。
-使用原生内核 `faddr2line` 且缺少 `gawk` 时，仍保留已解析的源码位置与链接。
+使用原生内核 `faddr2line` 且缺少 `gawk` 时，仍保留已解析的源码位置与链接；
+需要代码上下文与内联调用链时请优先使用 `--fast`。
 
 交叉编译的内核需要设置工具链前缀，规则和内核的 `scripts/faddr2line` 一样：
 

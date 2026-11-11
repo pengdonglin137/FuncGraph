@@ -362,6 +362,33 @@ same-run reference. Experimental snapshots verify every saved setting after
 completed captures, separately from byte-decoder verification; the production
 wrapper's failure/cancellation recovery is still pending.
 
+### Local native package acceptance (2026-11-11)
+
+- The complete x86_64 native/browser suite runs 673 tests: 670 pass and three
+  optional cases skip.
+- Both x86_64 and Raspberry Pi ARM64 pass all 24 native export regressions.
+  ARM64 is built cleanly from the corresponding source and also passes two
+  two-NOP safety cases and two mapping-path unit tests, without relaxing argument assertions.
+- Both platform wheels pass Twine and base/`[all]` installation checks outside
+  the checkout, with the original native build prefix moved away for each run.
+  The extras run passes 12 of 13 tests, skipping only the unrequested raw-install
+  integration. The Pi has no `gawk`; source snippets and tail-call assertions pass.
+- The wheels carry byte-identical nine-patch native source archives. All four
+  upstream gitlinks and locks remain unchanged; 36 independent dependency,
+  build and runtime tests pass on each architecture.
+- After isolating listed-source test fixtures from host `gawk` availability,
+  92 affected source/browser regressions and 18 additional Pi source regressions
+  pass. The real no-`gawk` installation check does not use that fixture.
+- The installed ARM64 recorder completes the user-only pigz/zlib workload with
+  1,108 calls: `deflate` retains its nonzero original pointer and `4` arguments,
+  returns `1`, and gzip round-tripping matches byte-for-byte. An offline browser
+  verifies the details and clickable `deflate.c:981` source without extra requests
+  or JavaScript errors.
+
+These are local build/installation results, not evidence of a push, successful
+GitHub Actions run or published Release. This ARM64 pigz recording is user-only;
+it does not replace the real kernel capture/byte comparisons below.
+
 ### Real capture evidence (2026-11-11)
 
 | Environment | Kernel records independently matched | Context | Restored settings |

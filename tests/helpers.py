@@ -53,7 +53,7 @@ def fixture(name):
 
 
 class FakeKernel:
-    """A temp dir with an empty vmlinux and kernel-src/scripts/faddr2line stub."""
+    """A fake kernel with optional listed-source resolver/capability stubs."""
 
     def __init__(self, inline_source=False):
         self.dir = tempfile.mkdtemp(prefix='fgtest_')
@@ -66,6 +66,11 @@ class FakeKernel:
         with open(tool, 'w') as f:
             f.write(FAKE_INLINE_FADDR2LINE if inline_source else FAKE_FADDR2LINE)
         os.chmod(tool, 0o755)
+        if inline_source:
+            capability = os.path.join(self.ksrc, 'scripts', 'gawk')
+            with open(capability, 'w') as stream:
+                stream.write('#!/bin/sh\n[ "$1" = --version ]\n')
+            os.chmod(capability, 0o755)
         self.vmlinux = os.path.join(self.dir, 'vmlinux')
         with open(self.vmlinux, 'wb') as f:
             f.write(b'\0' * 64)
@@ -76,6 +81,7 @@ class FakeKernel:
         cmd = [sys.executable, os.path.join(ROOT, 'funcgraph.py'), '--vmlinux', self.vmlinux,
                '--kernel-src', self.ksrc, '--output', out] + list(opts) + [trace]
         env = dict(os.environ, FAKE_SRC=self.ksrc)
+        env['PATH'] = os.path.join(self.ksrc, 'scripts') + os.pathsep + env.get('PATH', '')
         env.pop('CROSS_COMPILE', None)
         p = subprocess.run(cmd, capture_output=True, text=True, env=env, timeout=600)
         if p.returncode != 0:
