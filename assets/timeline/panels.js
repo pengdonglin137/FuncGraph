@@ -801,7 +801,8 @@ function renderFilterProgress() {
     elFcount.setAttribute('role', status?.error ? 'alert' : 'status');
     elFcount.setAttribute('aria-live', status?.error ? 'assertive' : 'polite');
     elFcount.setAttribute('aria-busy', String(!!status && !status.error));
-    elFcount.textContent = status ? status.message : filteredCallCount === null ? '' : filteredCallCount + ' of ' + N + ' calls';
+    elFcount.textContent = status ? status.message : filteredCallCount === null ? '' :
+        !N ? 'Text filter only · event tracks unfiltered' : filteredCallCount + ' of ' + N + ' calls';
     elFcount.title = status ? status.message : '';
     if (filterRetryButton) { filterRetryButton.remove(); filterRetryButton = null; }
     if (status?.error) {
@@ -824,6 +825,11 @@ function applyTextFilter() {
         for (const t of ORDER) { t.hits = 0; t.hidden = false; }
         elFcount.textContent = '';
         elFbar.classList.remove('on');
+    } else if (!N) {
+        textHits = null;
+        filteredCallCount = 0;
+        for (const task of ORDER) { task.hits = 0; task.hidden = false; }
+        elFbar.classList.add('on');
     } else {
         textHits = new Uint8Array(N);
         for (const t of ORDER) t.hits = 0;
@@ -988,18 +994,18 @@ function refreshPanel() {
         if (HAS_KERNEL && !D.btf && c.retval) note('Kernel returns are raw bits; errno inference requires kernel BTF.', true);
         if (HAS_KERNEL && !c.sched_events) note('No usable kernel sched_switch records; off-CPU periods are not inferred from user events.', true);
     } else {
-    if (!c.latency) note('No latency columns: context is inferred from IRQ/softirq entry function names. Enable <code>options/latency-format</code> for exact irqs-off / need-resched / hardirq / softirq / preempt flags.');
+    if (N && !c.latency) note('No latency columns: context is inferred from IRQ/softirq entry function names. Enable <code>options/latency-format</code> for exact irqs-off / need-resched / hardirq / softirq / preempt flags.');
     if (!c.proc && !c.switch_markers) note('No task info: tracks are per CPU. Enable <code>options/funcgraph-proc</code>.');
-    if (!c.retval) note('No return values: error paths need <code>options/funcgraph-retval</code>.');
-    else if (!D.btf && c.retval_btf) note('The kernel printed type-aware return values (BTF-aware funcgraph-retval): void functions have no ret=, errnos and ERR_PTRs are signed.', true);
-    else if (!D.btf) note('No BTF: errors are guessed from the value alone (void functions may show false positives). Use a vmlinux with <code>CONFIG_DEBUG_INFO_BTF</code> or pass <code>--btf</code>.');
-    if (!c.retaddr) note('No call sites: enable <code>options/funcgraph-retaddr</code> to see where each call came from.', true);
-    else if (!c.args && !c.retval_btf) note('Arguments are not printed while <code>funcgraph-retaddr</code> is on (kernel limitation, e.g. 6.18).', true);
+    if (N && !c.retval) note('No return values: error paths need <code>options/funcgraph-retval</code>.');
+    else if (N && !D.btf && c.retval_btf) note('The kernel printed type-aware return values (BTF-aware funcgraph-retval): void functions have no ret=, errnos and ERR_PTRs are signed.', true);
+    else if (N && !D.btf) note('No BTF: errors are guessed from the value alone (void functions may show false positives). Use a vmlinux with <code>CONFIG_DEBUG_INFO_BTF</code> or pass <code>--btf</code>.');
+    if (N && !c.retaddr) note('No call sites: enable <code>options/funcgraph-retaddr</code> to see where each call came from.', true);
+    else if (N && !c.args && !c.retval_btf) note('Arguments are not printed while <code>funcgraph-retaddr</code> is on (kernel limitation, e.g. 6.18).', true);
     if (TIMED && !c.switch_markers && c.proc) note('No context-switch markers seen: off-CPU periods cannot be shown.', true);
     }
-    if (D.overhead) note('Tracing overhead estimate (' + esc(D.overhead.source) + '): ' + fmtDur(D.overhead.child) +
+    if (N && D.overhead) note('Tracing overhead estimate (' + esc(D.overhead.source) + '): ' + fmtDur(D.overhead.child) +
         ' per traced child call, ' + fmtDur(D.overhead.self) + ' per call. Toggle <b>Overhead</b> to subtract it; slice positions stay as measured.', true);
-    else if (TIMED) note(D.uftrace ? 'Durations include tracing overhead; no per-address-space correction was recorded.' :
+    else if (N && TIMED) note(D.uftrace ? 'Durations include tracing overhead; no per-address-space correction was recorded.' :
         'Durations include tracing overhead (measured 0.2 us per traced call on a QEMU x86_64 VM, 1.1 us on a Raspberry Pi 4). Capture with <code>fgcapture.sh --calibrate</code> to get a correction.', true);
     if (c.latency && PBASE && !D.uftrace) note('Every line shows preempt depth ' + PBASE + ' or more: function_graph itself disables preemption while recording. ' +
         'The timeline subtracts it (preempt off, sections, atomic sleeps, preempt overlay); the text view shows the raw digit, so use <code>preempt:&gt;' + PBASE + '</code> there.', true);
@@ -1026,6 +1032,7 @@ elHelp.innerHTML = `
 <li><b>Search</b>: function-name regex; highlights matches and navigates between calls with Enter / Shift+Enter.</li>
 <li><b>Filter</b>: conditions such as <code>pid:1234 AND graph:vfs_read</code>, applied with Enter and shared with Text. Analysis panels use this filter, not the search expression.</li>
 <li>Search navigation stays within the filtered calls. <b>Hide unmatched</b> hides tracks without filter matches.</li></ul>
+${N ? '' : '<p>No function calls were recorded. Search has no call matches; shared filters apply to Text lines only and do not hide or filter event tracks.</p>'}
 <h4>Select</h4><ul>
 <li>Call details have native navigation buttons: <kbd>↑</kbd> recorded parent · <kbd>↓</kbd> first recorded child · <kbd>[</kbd>/<kbd>]</kbd> recorded siblings (task roots stay within the task); synthetic frames are skipped</li>
 <li><kbd>E</kbd>/<kbd>Shift+E</kbd> next/prev error · <kbd>/</kbd> search, <kbd>N</kbd>/<kbd>Shift+N</kbd> next/prev match</li>

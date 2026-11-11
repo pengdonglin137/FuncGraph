@@ -139,6 +139,14 @@ Compare 与 `--export` 分开统计用户态、内核态的同名函数。
   轨道上的生命周期细标记只绘制可见范围，同一轨道同一像素合并绘制，不删除原始事件。
   分页限制的是面板 DOM，不是完整报告或 CSV 导出的内存；原始事件和索引仍保留。
   合成十万事件的重现方法与测量边界见[生命周期性能记录](performance-lifecycle.md)。
+- **只有事件、没有调用**：有时间戳的调度观测，或 uftrace 的 exec / exit 里程碑，即使没有
+  函数记录也可生成 Timeline，包括 single / sidecar / auto 交付及 `--no-text-view`。
+  例如 `funcgraph events.jsonl --timeline --no-text-view --output events.html`；不需要为这些
+  事件提供 vmlinux 或源码。页面明确提示没有已记录函数调用，Tasks、等待链和事件 CSV
+  仍可使用；单个里程碑只代表一个观测点，不补造调用、CPU 时间或进程寿命。
+  此时 Search 没有调用可匹配，**Hide unmatched** 禁用，共享 Filter 只过滤 Text 行，
+  不隐藏或过滤事件上下文。空数据、只有丢失记录、未知事件或缺少可用时间信息不会凭空
+  生成 Timeline。只有内核调度事件而没有内核函数时，仍检查跨态时钟，不合并未验证的任务身份。
 - **混合展示**：Timeline 默认 Context 配色区分两态。分界线画在匹配的内核根调用
   顶边，长度就是该调用的记录时段，深度随实际调用关系变化，不横贯整条轨道。
   Text 用 `U` / `K` 标记，分界处加下划线，调用栈也标出转换。单态报告不画分界线。

@@ -201,8 +201,7 @@ class UftraceTimeline(TimelineBuilder):
         self.metadata = metadata
         self.records = records
         self.spaces = {record['space'] for record in records if record['type'] in ('entry', 'exit') or
-                       (record.get('space') == 'kernel' and record['type'] == 'event' and
-                        record.get('name') in LIFECYCLE)}
+                       (record.get('space') == 'kernel' and record['type'] == 'event')}
         clock, settings = metadata['clock'], metadata['kernel_settings']
         version = KERNEL_VERSION.match(settings.get('kernel_release', ''))
         self.lazy_resched = tuple(map(int, version.groups())) >= (6, 13) if version else None

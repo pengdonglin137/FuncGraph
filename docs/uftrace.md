@@ -169,6 +169,18 @@ kernel names separately, even when their symbols have identical spelling.
   Pagination bounds panel DOM, not total report or CSV-export memory; all events and their
   index remain in memory. See the [lifecycle performance record](performance-lifecycle.md)
   for the reproducible synthetic benchmark and its measurement limits.
+- **Events without calls:** timestamped scheduling observations or uftrace exec /
+  exit milestones can produce a Timeline with zero function records, including
+  single / sidecar / auto delivery and `--no-text-view`. For example,
+  `funcgraph events.jsonl --timeline --no-text-view --output events.html` needs no
+  vmlinux or source tree for these events. A visible notice identifies the lack of
+  recorded function calls; Tasks, wait chains and event CSV remain available.
+  A single milestone is only an observed point, not an invented call, CPU duration
+  or process lifetime. Search has no calls to match, **Hide unmatched** is disabled,
+  and shared filters affect Text lines only, leaving event context unfiltered.
+  Empty, loss-only, unknown-event-only and untimed input do not invent a Timeline.
+  Kernel scheduler events still count as kernel observations when no kernel calls
+  exist, so unverified user/kernel clocks keep task identities separate.
 - **Mixed:** Timeline's default Context colors distinguish user code from
   kernel execution. The thin line along a linked kernel root's top edge spans
   exactly that recorded interval, at the depth where it occurred. Text uses

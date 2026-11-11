@@ -9,6 +9,13 @@
     user-select: none;
 }
 
+.tl-event-only {
+    flex: 0 0 auto;
+    padding: 4px 8px;
+    color: var(--text-muted);
+    border-bottom: 1px solid var(--border-color);
+}
+
 /* toolbar */
 .tl-toolbar {
     display: flex;

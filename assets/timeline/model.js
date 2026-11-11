@@ -402,7 +402,14 @@ for (let start = 0, block = 0; start < WAKES.length; start += WAKE_BLOCK_SIZE, b
     WAKE_BOUNDS[block + 1] = latest;
 }
 
-const ORDER = TRACKS.filter(t => t.lo >= 0 || t.off.length || PROCESS_BY_TASK.has(t.id)).sort((a, b) => {
+const EVENT_TASKS = new Set();
+if (!N) {
+    for (const wake of WAKES) { EVENT_TASKS.add(wake[0]); EVENT_TASKS.add(wake[2]); }
+    for (const section of SECTIONS) EVENT_TASKS.add(section[0]);
+}
+const ORDER = TRACKS.filter(t => t.lo >= 0 || t.off.length || PROCESS_BY_TASK.has(t.id) ||
+    (!N && (t.rs.length || t.io.length || EVENT_TASKS.has(t.id) ||
+        ((D.caps.sched_events || D.caps.switch_markers) && t.runs.length)))).sort((a, b) => {
     if (a.kind !== b.kind) return a.kind - b.kind;
     if (a.kind === 1) return (a.cpu || 0) - (b.cpu || 0);
     return b.busy - a.busy;
@@ -651,10 +658,11 @@ tlRoot.innerHTML = `
   <span class="tl-group tl-filterbar"><span class="tl-label">Filter</span>
   <input class="tl-ftext" placeholder="e.g. pid:1234" aria-label="Filter trace lines" title="Uses the same filter syntax as Text" spellcheck="false">
   <span class="tl-fcount"></span>
-  <button class="tl-btn" data-act="fhide" title="Hide tracks without matches">Hide unmatched</button>
+  <button class="tl-btn" data-act="fhide" title="${N ? 'Hide tracks without matches' : 'No recorded calls to match; event tracks stay visible'}"${N ? '' : ' disabled'}>Hide unmatched</button>
   <button class="tl-btn" data-act="fclear">Clear</button></span>
   </div>
 </div>
+${N ? '' : '<div class="tl-event-only" role="note">No recorded function calls. Showing recorded scheduling / lifecycle observations only.</div>'}
 <div class="tl-notes"></div>
 <div class="tl-stage">
   <canvas class="tl-head-canvas"></canvas>

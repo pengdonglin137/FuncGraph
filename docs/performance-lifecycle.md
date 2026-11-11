@@ -95,3 +95,51 @@ the assertion expects the lengths without `auto`. The preceding full-suite
 log contains the same failure. Those staged and unstaged Text patches were
 verified byte-for-byte unchanged before and after the lifecycle commit.
 This work does not alter that assertion or claim the full suite is green.
+
+## Event-only follow-up (November 11, 2026)
+
+The CLI previously discarded every zero-call Timeline, including valid scheduler
+events and uftrace exec/exit milestones. With `--no-text-view`, that also caused
+an error claiming that Timeline was missing. Reports now retain recognized timed
+observations without inventing function calls. Runs-only and wakeup-only tasks
+are visible in this mode; normal call reports keep their existing track policy.
+A muted notice explains the zero-call view. Call-only hiding is disabled, and a
+shared Text filter leaves scheduler/lifecycle context unfiltered. Missing BTF,
+argument and call-site warnings are not emitted for a function-free trace.
+
+Kernel events also establish kernel address-space presence when no kernel
+functions were recorded. User calls and kernel scheduler events with unverified
+clocks therefore retain separate task identities, even when their PIDs match.
+Empty, metadata-only, loss-only, unknown-event-only and untimed inputs still do
+not produce an event-only Timeline. A single milestone keeps a zero-length
+observed extent; display zoom is not a measured lifetime or CPU duration.
+
+Validation commands:
+
+```bash
+PYTHONPATH=tests:. python3 -m unittest test_event_only -v
+PYTHONPATH=tests:. python3 -m unittest \
+    test_event_only test_lifecycle test_timeline test_timeline_zero test_uftrace_import -v
+FG_UFTRACE_REQUIRED=1 FG_SAMPLE_BROWSER_REQUIRED=1 tests/run.sh
+```
+
+- The 19 dedicated tests pass, including seven browser tests. They cover raw
+  timestamps above JavaScript's exact integer range, zero-span milestones,
+  scheduler-only text, wakeup-only identities, clock separation, all report
+  delivery modes, `--no-text-view`, operation without vmlinux/source, CSV,
+  Text/shared-filter behavior, and touch portrait/landscape in both themes.
+- The focused regression runs 74 tests: 73 pass and one external-trace test is
+  skipped. The complete suite runs 865 tests in 431.882 seconds: 861 pass,
+  three are skipped, and the same pre-existing Text intrinsic-size assertion
+  described above fails. The unrelated staged and unstaged Text patches remain
+  byte-for-byte unchanged.
+- A scheduler-only projection of the saved QEMU Linux `7.4.0-rc2` recording keeps
+  all 49 original kernel events: 14 switches, 28 waking events and seven wakeups.
+  With matching `mono` clock metadata, it produces zero calls, 20 task identities,
+  11 off-CPU intervals and 28 nonduplicated wake observations, without vmlinux or
+  source arguments. Both single-file and sidecar output succeed.
+- Eight real-data browser configurations cover both output modes, desktop light
+  theme, phone portrait in both themes and dark touch landscape. All 20 task
+  tracks remain available, without page errors or horizontal page overflow.
+  These are projections of saved events, not new captures or reconstructed
+  missing function calls. No new performance or total-memory claim is made.

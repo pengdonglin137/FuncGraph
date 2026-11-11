@@ -118,8 +118,14 @@ def build_timeline_data(parsed_lines, vmlinux_path, module_dirs, args, structure
     print(f"Timeline: {st['slices']} slices, {st['tasks']} tasks, mode={data['mode']}, "
           f"{sum(1 for c in data['chains'] if not c[6])} error chains (+{sum(c[6] for c in data['chains'])} minor), {st['offcpu']} off-CPU, {time.time() - t0:.2f}s")
     if data['n'] == 0:
-        print("Note: no function_graph calls found; timeline tab omitted", file=sys.stderr)
-        return None
+        timed_events = data['mode'] in ('abs', 'rel') and (
+            any(data.get(name) for name in ('offcpu', 'wakeups', 'resched', 'irqoff', 'sections')) or
+            data.get('uftrace', {}).get('lifecycle') or
+            data['caps'].get('sched_events') and any(task['runs'] for task in data['tasks']))
+        if not timed_events:
+            print("Note: no function calls or timed scheduling/lifecycle events found; timeline tab omitted", file=sys.stderr)
+            return None
+        print("Note: no function calls found; timeline shows scheduling/lifecycle observations only", file=sys.stderr)
     return data
 
 
