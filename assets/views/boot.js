@@ -241,7 +241,10 @@
             if (apis[which] && apis[which].resize) apis[which].resize();
             return api;
         }
-        if (current === 'text') textScroll = window.scrollY;
+        if (current === 'text') {
+            textScroll = window.scrollY;
+            fgCloseTextControls();
+        }
         if (typeof closeKeyboardHint === 'function') closeKeyboardHint();
         pausedSources[current] = fgCancelSources(document.getElementById(current === 'text' ? 'content' : views[current]?.el));
         apis[current]?.suspend?.();

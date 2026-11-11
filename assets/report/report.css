@@ -545,7 +545,7 @@
         .controls .filter-box { box-shadow: none; padding: 4px 0 0; border: none; border-top: 1px dashed var(--border-color); border-radius: 0; background: transparent; }
         .controls .filter-input-row input { max-width: 720px; }
         /* anchors must not hide under the sticky bar */
-        .line-container { scroll-margin-top: 90px; }
+        .line-container { scroll-margin-top: calc(var(--ctl-h, 86px) + 4px); }
         .toolbar {
             display: flex;
             gap: 4px;
@@ -569,6 +569,31 @@
             padding-left: 6px;
             border-left: 1px solid var(--border-color);
         }
+        .text-more, #textFilterStatus { display: none; }
+        .text-toolbar-options { display: contents; }
+        .text-compact .text-more, .text-compact #textFilterStatus:not([hidden]) { display: inline-block; }
+        .text-compact .toolbar > .btn-group .control-btn { min-width: 44px; min-height: 44px; }
+        .text-compact .text-toolbar-options { display: none; }
+        .text-compact[data-panel="more"] .text-toolbar-options { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 6px; }
+        .text-compact[data-panel="more"] .btn-group { flex-wrap: wrap; }
+        .text-compact[data-panel="more"] .text-toolbar-options .btn-group { margin: 0; padding: 0; border: 0; }
+        .controls.text-compact .filter-box, .controls.text-compact .text-toolbar-options {
+            position: absolute;
+            inset: 100% 0 auto;
+            box-sizing: border-box;
+            max-height: min(52vh, 370px);
+            padding: 10px;
+            overflow: auto;
+            overscroll-behavior: contain;
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            background: var(--container-bg);
+            box-shadow: 0 8px 20px rgba(0,0,0,.20);
+        }
+        .text-compact .filter-input-row input { min-width: 0; font-size: 16px; }
+        .text-compact .filter-input-row input::placeholder { font-size: 12px; }
+        .text-compact .filter-tag { white-space: normal; overflow-wrap: anywhere; max-width: 100%; }
+        .text-compact :is(.filter-box, .text-toolbar-options) button { min-height: 34px; }
 
         /* Filter box styles */
         .filter-box {

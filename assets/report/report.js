@@ -8,6 +8,8 @@
         window.fgFilterProgress = null;
         function fgNotifyFilter(text, lines) {
             window.fgFilterState = { text: text, lines: lines };
+            const filterStatus = document.getElementById('textFilterStatus');
+            if (filterStatus) filterStatus.hidden = !lines;
             if (typeof window.fgOnFilter === 'function') window.fgOnFilter();
         }
         function fgSourceHtml(source) {
@@ -686,17 +688,79 @@
         }
 
         // 切换过滤器窗口的显示/隐藏
-        function toggleFilterBox() {
+        const fgTextCompactMedia = matchMedia('(any-pointer: coarse) and (max-width: 640px), (any-pointer: coarse) and (max-height: 480px)');
+        function fgCloseFieldDropdowns() {
+            document.querySelectorAll('.field-dropdown').forEach(dropdown => dropdown.remove());
+            document.querySelectorAll('.field-btn.active').forEach(button => button.classList.remove('active'));
+        }
+        function fgSetTextControlPanel(panel, restoreFocus = false) {
+            const controls = document.querySelector('.controls');
+            const filter = document.getElementById('filterBox');
+            const filterButton = document.getElementById('textFilterToggle');
+            const moreButton = document.getElementById('textMoreToggle');
+            const previous = controls.dataset.panel;
+            controls.dataset.panel = panel;
+            if (filter) filter.style.display = panel === 'filter' ? 'flex' : 'none';
+            filterButton.setAttribute('aria-expanded', String(panel === 'filter'));
+            moreButton.setAttribute('aria-expanded', String(panel === 'more'));
+            if (panel !== 'filter') fgCloseFieldDropdowns();
+            if (restoreFocus) (previous === 'filter' ? filterButton : moreButton).focus({preventScroll: true});
+        }
+        function fgCloseTextControls() {
+            if (fgTextCompactMedia.matches && document.querySelector('.controls').dataset.panel) fgSetTextControlPanel('');
+        }
+        function fgToggleTextMore() {
+            if (!fgTextCompactMedia.matches) return;
+            fgSetTextControlPanel(document.querySelector('.controls').dataset.panel === 'more' ? '' : 'more');
+        }
+        function toggleFilterBox(event) {
             const filterBox = document.getElementById('filterBox');
-            if (filterBox) {
-                if (filterBox.style.display === 'none') {
-                    filterBox.style.display = 'flex';
-                    lsSet('filterBoxVisible', 'true');
-                } else {
-                    filterBox.style.display = 'none';
-                    lsSet('filterBoxVisible', 'false');
+            if (!filterBox) return;
+            const open = filterBox.style.display === 'none';
+            if (fgTextCompactMedia.matches) {
+                fgSetTextControlPanel(open ? 'filter' : '');
+                if (open && event?.detail === 0) document.getElementById('filterInput').focus({preventScroll: true});
+            } else {
+                filterBox.style.display = open ? 'flex' : 'none';
+                document.getElementById('textFilterToggle').setAttribute('aria-expanded', String(open));
+                lsSet('filterBoxVisible', String(open));
+            }
+        }
+        function fgInitTextControls() {
+            const controls = document.querySelector('.controls');
+            const filter = document.getElementById('filterBox');
+            const filterButton = document.getElementById('textFilterToggle');
+            function sync() {
+                fgSetTextControlPanel('');
+                const compact = fgTextCompactMedia.matches;
+                controls.classList.toggle('text-compact', compact);
+                filterButton.hidden = compact && !filter;
+                if (filter && !compact && lsGet('filterBoxVisible') !== 'false') {
+                    filter.style.display = 'flex';
+                    filterButton.setAttribute('aria-expanded', 'true');
                 }
             }
+            function updateHeight() {
+                if (controls.offsetHeight) document.documentElement.style.setProperty('--ctl-h', controls.offsetHeight + 'px');
+            }
+            fgTextCompactMedia.addEventListener('change', sync);
+            document.addEventListener('pointerdown', event => {
+                if (!controls.contains(event.target) && !event.target.closest('.field-dropdown')) fgCloseTextControls();
+            });
+            document.addEventListener('keydown', event => {
+                if (event.key !== 'Escape' || event.isComposing || !fgTextCompactMedia.matches || !controls.dataset.panel) return;
+                event.preventDefault();
+                event.stopImmediatePropagation();
+                const dropdown = document.querySelector('.field-dropdown');
+                if (dropdown) {
+                    const owner = controls.querySelector('.field-btn.active');
+                    fgCloseFieldDropdowns();
+                    owner?.focus({preventScroll: true});
+                } else fgSetTextControlPanel('', true);
+            }, true);
+            sync();
+            updateHeight();
+            if (window.ResizeObserver) new ResizeObserver(updateHeight).observe(controls);
         }
 
         // ====== Unified Filter Expression Parser ======
@@ -1428,41 +1492,32 @@
                 dropdown.style.left = '0px';
                 dropdown.style.top = '0px';
                 document.body.appendChild(dropdown);
-                const dw = dropdown.offsetWidth;
-                const dh = dropdown.offsetHeight;
+                const visual = fgTextCompactMedia.matches ? window.visualViewport : null;
+                const margin = 4;
+                const leftEdge = (visual?.offsetLeft || 0) + margin;
+                const topEdge = (visual?.offsetTop || 0) + margin;
+                const rightEdge = leftEdge + (visual?.width || window.innerWidth) - 2 * margin;
+                const bottomEdge = topEdge + (visual?.height || window.innerHeight) - 2 * margin;
+                if (visual) dropdown.style.maxHeight = Math.max(0, Math.min(200, bottomEdge - topEdge)) + 'px';
+                const dropdownWidth = dropdown.offsetWidth;
+                const dropdownHeight = dropdown.offsetHeight;
                 dropdown.style.visibility = '';
 
-                const vw = window.innerWidth;
-                const vh = window.innerHeight;
-                const margin = 4;
-
                 // Horizontal: align left edge to button, clamp to viewport
-                let left = rect.left;
-                if (left + dw > vw - margin) {
-                    left = vw - dw - margin;
-                }
-                if (left < margin) left = margin;
+                const left = Math.max(leftEdge, Math.min(rect.left, rightEdge - dropdownWidth));
 
                 // Vertical: prefer above button, fall back to below if no room
-                let top = rect.top - dh - margin;
-                if (top < margin) {
+                let top = rect.top - dropdownHeight - margin;
+                if (top < topEdge) {
                     top = rect.bottom + margin;
                 }
-                // Clamp bottom edge
-                if (top + dh > vh - margin) {
-                    top = vh - dh - margin;
-                }
-                if (top < margin) top = margin;
+                top = Math.max(topEdge, Math.min(top, bottomEdge - dropdownHeight));
 
                 dropdown.style.left = left + 'px';
                 dropdown.style.top = top + 'px';
             }
 
             // Helper: close all field dropdowns
-            function closeFieldDropdowns() {
-                document.querySelectorAll('.field-dropdown').forEach(d => d.remove());
-                document.querySelectorAll('.field-btn.active').forEach(b => b.classList.remove('active'));
-            }
 
             // Field button click handlers
             document.querySelectorAll('.field-btn').forEach(btn => {
@@ -1479,7 +1534,7 @@
                     }
 
                     // Close any existing dropdown
-                    closeFieldDropdowns();
+                    fgCloseFieldDropdowns();
 
                     // Toggle active state
                     this.classList.add('active');
@@ -2244,19 +2299,7 @@
 
         // 页面初始化：恢复filter窗口状态
         document.addEventListener('DOMContentLoaded', function() {
-            // 从localStorage读取filter窗口的显示状态
-            const filterBoxVisible = lsGet('filterBoxVisible');
-            const filterBox = document.getElementById('filterBox');
-
-            if (filterBox) {
-                // 如果有保存的状态，按状态显示
-                if (filterBoxVisible === 'false') {
-                    filterBox.style.display = 'none';
-                } else {
-                    // 默认显示（包括filterBoxVisible为'true'或未设置的情况）
-                    filterBox.style.display = 'flex';
-                }
-            }
+            fgInitTextControls();
 
             // 恢复折叠状态
             if (fgTextDeferred()) return;

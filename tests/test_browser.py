@@ -764,6 +764,71 @@ class BrowserSmokeTest(unittest.TestCase):
                 page.locator('.tl-detail .tl-close').tap()
                 self.assertEqual(state()['selected'], -1)
 
+    def test_text_phone_toolbar_keeps_filters_and_actions_off_the_reading_area(self):
+        for width, height in [(320, 700), (390, 844), (844, 390)]:
+            with self.subTest(width=width, height=height), self.browser.new_context(
+                    viewport=dict(width=width, height=height), is_mobile=True, has_touch=True) as context:
+                page = context.new_page()
+                page.on('pageerror', lambda error: self.errors.append(str(error)))
+                page.goto(self.url, wait_until='load')
+                toolbar = page.locator('.controls')
+                filter_toggle = page.locator('#textFilterToggle')
+                more_toggle = page.locator('#textMoreToggle')
+                filter_box = page.locator('#filterBox')
+                options = page.locator('#textToolbarOptions')
+                first_row = page.locator('#content .line-container').first
+                original_height = toolbar.bounding_box()['height']
+                original_row = first_row.bounding_box()['y']
+                self.assertLessEqual(original_height, 60)
+                self.assertFalse(filter_box.is_visible())
+                self.assertFalse(options.is_visible())
+
+                filter_toggle.tap()
+                self.assertTrue(filter_box.is_visible())
+                self.assertEqual(filter_toggle.get_attribute('aria-expanded'), 'true')
+                self.assertEqual(toolbar.bounding_box()['height'], original_height)
+                self.assertEqual(first_row.bounding_box()['y'], original_row)
+                page.locator('.field-btn[data-field=cpu]').tap()
+                dropdown = page.locator('.field-dropdown')
+                bounds = dropdown.bounding_box()
+                self.assertLessEqual(bounds['x'] + bounds['width'], width)
+                self.assertLessEqual(bounds['y'] + bounds['height'], height)
+                page.keyboard.press('Escape')
+                self.assertFalse(dropdown.is_visible())
+                self.assertTrue(filter_box.is_visible())
+                query = page.get_by_role('textbox', name='Filter trace lines')
+                query.fill('func:do_sys_openat2')
+                query.press('Enter')
+                page.wait_for_function("window.fgFilterState.lines?.size > 0")
+                query.press('Escape')
+                self.assertFalse(filter_box.is_visible())
+                self.assertTrue(filter_toggle.evaluate('node => node === document.activeElement'))
+                self.assertTrue(page.locator('#textFilterStatus').is_visible())
+
+                more_toggle.tap()
+                self.assertTrue(options.is_visible())
+                self.assertEqual(toolbar.bounding_box()['height'], original_height)
+                guides = page.locator('#foldGuidesBtn')
+                previous = guides.get_attribute('aria-pressed')
+                guides.tap()
+                self.assertNotEqual(guides.get_attribute('aria-pressed'), previous)
+                filter_toggle.tap()
+                self.assertFalse(options.is_visible())
+                self.assertTrue(filter_box.is_visible())
+                page.locator('.view-tab[data-view=timeline]').tap()
+                page.locator('.tl-canvas').wait_for()
+                self.assertEqual(page.locator('.tl-ftext').input_value(), 'func:do_sys_openat2')
+                page.locator('.view-tab[data-view=text]').tap()
+                self.assertFalse(filter_box.is_visible())
+                self.assertTrue(page.locator('#textFilterStatus').is_visible())
+                page.evaluate("lsSet('filterBoxVisible', 'false')")
+                page.set_viewport_size(dict(width=1100, height=800))
+                more_toggle.wait_for(state='hidden')
+                self.assertFalse(more_toggle.is_visible())
+                self.assertFalse(filter_box.is_visible())
+                filter_toggle.click()
+                self.assertTrue(filter_box.is_visible())
+
     def test_timeline_phone_options_leave_canvas_and_selection_in_view(self):
         for width, height, theme in [(320, 700, 'light'), (390, 844, 'dark'), (844, 390, 'light')]:
             with self.subTest(width=width, height=height), self.browser.new_context(

@@ -234,11 +234,13 @@ class HtmlGenerator:
             <div id="filterPlaceholder"></div>
             <div class="toolbar">
                 <div class="btn-group">
-                    <button class="control-btn btn-nav" onclick="toggleFilterBox()">&#x1F50D; Filter</button>
+                    <button class="control-btn btn-nav" id="textFilterToggle" onclick="toggleFilterBox(event)" aria-expanded="false"{' aria-controls="filterBox"' if self.filter_html else ''}>&#x1F50D; Filter<span id="textFilterStatus" hidden> · On</span></button>
                     <button class="control-btn btn-nav" onclick="scrollToTop()">Top</button>
-                    {tree_button}
+                    <button type="button" class="control-btn btn-nav text-more" id="textMoreToggle" onclick="fgToggleTextMore()" aria-expanded="false" aria-controls="textToolbarOptions">More</button>
                 </div>
+                <div class="text-toolbar-options" id="textToolbarOptions">
                 <div class="btn-group">
+                    {tree_button}
                     <button class="control-btn btn-expand" onclick="expandAll()">Expand All</button>
                     <button class="control-btn btn-collapse" onclick="collapseAll()">Collapse All</button>
                 </div>
@@ -249,6 +251,7 @@ class HtmlGenerator:
                     <button class="control-btn btn-tool" id="srcModeBtn" onclick="fgToggleSrcMode()" title="Source blocks: inline chain (outer to inner, collapsible) or flat faddr2line order">Source: chain</button>
                 </div>
                 <span class="heatmap-legend" id="heatmapLegend"></span>
+                </div>
             </div>
         </div>
 
@@ -288,6 +291,7 @@ class HtmlGenerator:
         <ul>
             <li>Click <strong>▶</strong> to fold/unfold; <kbd>Shift</kbd>+Click for recursive fold/unfold</li>
             <li>On a phone, tap the left gutter to fold without scrolling to the function name</li>
+            <li>On a phone, <strong>Filter</strong> opens the query editor; <strong>More</strong> contains Tree guides and other Text tools</li>
             <li><kbd>1</kbd>-<kbd>9</kbd>: Fold to depth N (hide calls deeper than N)</li>
             <li><kbd>0</kbd>: Unfold all fold blocks</li>
             <li>Folded blocks show summary: call count, total time, return value</li>
@@ -735,7 +739,7 @@ class HtmlGenerator:
             <div class="filter-box" id="filterBox">
                 <div class="filter-tags" id="filterTags"></div>
                 <div class="filter-input-row">
-                    <input type="text" id="filterInput" placeholder="field:value, e.g. cpu:3 AND duration:>10 graph:funcname sort:desc" autocomplete="off" data-error-values="{error_values_json}">
+                    <input type="text" id="filterInput" aria-label="Filter trace lines" placeholder="field:value, e.g. cpu:3 AND duration:>10 graph:funcname sort:desc" autocomplete="off" data-error-values="{error_values_json}">
                     <button class="control-btn filter-btn" onclick="applyFilter()">Apply</button>
                     <button class="control-btn clear-btn" onclick="clearFilter()">Clear</button>
                     <button class="control-btn filter-help-btn" onclick="toggleFilterHelp()" title="Filter syntax help">?</button>
