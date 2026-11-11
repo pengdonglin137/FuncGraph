@@ -624,7 +624,7 @@ def resolve_addresses(proc, addr_specs_and_addrs, kernel_src_root, options):
             # 检查是否是内联函数行
             if line.startswith('(inlined by)'):
                 # 格式: (inlined by) 函数名 at 路径:行号
-                match = re.match(r'\(inlined by\) (.+) at ([^:]+):(\d+)', line)
+                match = re.match(r'\(inlined by\) (.+?) at (.+):([0-9]+)(?:\s+\(discriminator [0-9]+\))?$', line)
                 if match:
                     func_name = match.group(1)
                     file_path = match.group(2)
@@ -633,7 +633,7 @@ def resolve_addresses(proc, addr_specs_and_addrs, kernel_src_root, options):
                     output_lines.append(f" (inlined by) {func_name} at {cleaned_path}:{line_num}")
             else:
                 # 普通函数行: 函数名 at 路径:行号
-                match = re.match(r'(.+) at ([^:]+):(\d+)', line)
+                match = re.match(r'(.+?) at (.+):([0-9]+)(?:\s+\(discriminator [0-9]+\))?$', line)
                 if match:
                     func_name = match.group(1)
                     file_path = match.group(2)
@@ -784,10 +784,11 @@ def print_source_code(lines, kernel_src_root, options):
     processed_locations = set()
 
     # Regex patterns for the two line formats
-    inline_pattern = re.compile(r'\(inlined by\) (.+) at ([^:]+):(\d+)')
-    normal_pattern = re.compile(r'(.+) at ([^:]+):(\d+)')
+    inline_pattern = re.compile(r'\(inlined by\) (.+?) at (.+):([0-9]+)(?:\s+\(discriminator [0-9]+\))?$')
+    normal_pattern = re.compile(r'(.+?) at (.+):([0-9]+)(?:\s+\(discriminator [0-9]+\))?$')
 
     for line in lines:
+        line = line.strip()
         # 跳过空行
         if not line.strip():
             continue

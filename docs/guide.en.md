@@ -57,8 +57,9 @@ Nothing to install: run `funcgraph.py` from the repository.
 | git | reading a given revision with `--source-rev` | optional |
 
 `--fast` reads source snippets in Python and needs no `gawk` to display code lines.
-The native kernel `faddr2line` fallback still shows resolved locations and links
-when `gawk` is unavailable; prefer `--fast` for code context and inline chains.
+Without `gawk`, the native kernel `faddr2line` fallback still preserves resolved
+locations, links and inline chains, including Timeline CALL STACK and resolved
+tail-jump sites. Prefer `--fast` for source-code context snippets.
 
 For cross-compiled kernels set the toolchain the same way as for the kernel's `scripts/faddr2line`:
 

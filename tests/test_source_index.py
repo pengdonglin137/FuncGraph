@@ -70,6 +70,20 @@ class TimelineSourceTest(unittest.TestCase):
         self.assertEqual(data['inline'], {})
         self.assertEqual(data['n'], helpers.json_script(self.full, 'tlData')['n'])
 
+    def test_without_gawk_keeps_inline_and_source_locations_but_does_not_invent_code(self):
+        kernel = helpers.FakeKernel(inline_source=True, listing=False)
+        self.addCleanup(kernel.close)
+        report, _ = kernel.run(self.trace, '--timeline', '--highlight-code',
+                               '--base-url', 'https://example.org/src')
+        plain = helpers.json_script(report, 'tlData')
+        listed = helpers.json_script(self.full, 'tlData')
+        self.assertEqual(plain['inline'], listed['inline'])
+        self.assertEqual(plain['sources'], listed['sources'])
+        pool = helpers.json_script(report, 'fgSrc')
+        self.assertTrue(pool)
+        self.assertTrue(any('inline_helper' in block and '(inlined&nbsp;by)' in block for block in pool))
+        self.assertFalse(any('source-line' in block for block in pool))
+
     def test_keep_source_requires_both_timeline_and_no_text_before_output(self):
         output = Path(self.kernel.dir, 'previous.html')
         for options in [[], ['--timeline'], ['--no-text-view'],
@@ -155,7 +169,7 @@ class SourceBlockTest(unittest.TestCase):
                     generator.func_locations_map[key] = {key: locations} if nested else locations
                     before = copy.deepcopy(generator.func_locations_map)
                     block = generator._src_pool[generator._source_index(selector)]
-                    self.assertIn('(inlined)&nbsp;inline&lt;&amp;&gt;&nbsp;at&nbsp;kernel/fake.c:2', block)
+                    self.assertIn('(inlined&nbsp;by)&nbsp;inline&lt;&amp;&gt;&nbsp;at&nbsp;kernel/fake.c:2', block)
                     if module_url:
                         self.assertIn('href="https://module.example/src/kernel/fake.c#L2"', block)
                     else:

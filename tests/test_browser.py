@@ -3919,6 +3919,33 @@ class BrowserSmokeTest(unittest.TestCase):
             self.assertIn(target['source'], self.page.locator('.tl-tip').inner_text())
         self.assertEqual(self.ev('legacySourceReads'), 1)
 
+    def test_plain_source_mode_keeps_clickable_inline_call_stack_without_code_snippets(self):
+        kernel = helpers.FakeKernel(inline_source=True, listing=False)
+        try:
+            kernel.run(helpers.fixture('pi4_full'), '--timeline', '--no-text-view', '--keep-source',
+                       '--base-url', 'https://example.org/src')
+            self.page.goto('file://' + kernel.dir + '/out.html', wait_until='load')
+            self.page.wait_for_function("fgCurrentView() === 'timeline' && !!fgView('timeline')")
+            chain = self.ev("""() => {
+                const data = fgData.read('tlData');
+                const index = data.cols.caller.findIndex((caller, index) =>
+                    data.inline[caller]?.length === 2 && fgSourceForLine(data.cols.line[index]) !== null);
+                if (index < 0) return null;
+                fgView('timeline').probe().select(index);
+                return data.sources.callers[data.cols.caller[index]];
+            }""")
+            self.assertIsNotNone(chain)
+            self.assertEqual([frame[0] for frame in chain], ['traced_outer', 'inline_helper'])
+            self.assertEqual([frame[2] for frame in chain], [3, 2])
+            links = self.page.locator('[data-context-list=stack] [data-context-kind=inline] .tl-context-source a')
+            self.assertGreater(links.count(), 0)
+            self.assertIn('https://example.org/src/kernel/fake.c#L2',
+                          links.evaluate_all('elements => elements.map(element => element.href)'))
+            self.assertEqual(self.page.locator('.tl-cs').count(), 0)
+            self.assertEqual(self.page.locator('.tl-cs .source-line').count(), 0)
+        finally:
+            kernel.close()
+
     def test_timeline_only_retains_source_code_inline_frames_and_source_controls(self):
         kernel = helpers.FakeKernel(inline_source=True)
         try:

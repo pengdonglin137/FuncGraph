@@ -35,14 +35,18 @@ done
 """
 
 FAKE_INLINE_FADDR2LINE = """#!/bin/sh
+listed=false
+for argument in "$@"; do
+  [ "$argument" = --list ] && listed=true
+done
 for argument in "$@"; do
   case "$argument" in
     --*|*vmlinux*) ;;
     *) printf '%s:\\n' "$argument"
        printf 'inline_helper at %s/kernel/fake.c:2\\n' "$FAKE_SRC"
-       printf ' 1\\tint a;\\n>2<\\tint b;\\n 3\\tint c;\\n'
+       if "$listed"; then printf ' 1\\tint a;\\n>2<\\tint b;\\n 3\\tint c;\\n'; fi
        printf ' (inlined by) traced_outer at %s/kernel/fake.c:3\\n' "$FAKE_SRC"
-       printf ' 2\\tint b;\\n>3<\\tint c;\\n' ;;
+       if "$listed"; then printf ' 2\\tint b;\\n>3<\\tint c;\\n'; fi ;;
   esac
 done
 """
@@ -55,7 +59,7 @@ def fixture(name):
 class FakeKernel:
     """A fake kernel with optional listed-source resolver/capability stubs."""
 
-    def __init__(self, inline_source=False):
+    def __init__(self, inline_source=False, listing=True):
         self.dir = tempfile.mkdtemp(prefix='fgtest_')
         self.ksrc = os.path.join(self.dir, 'ksrc')
         os.makedirs(os.path.join(self.ksrc, 'scripts'))
@@ -69,7 +73,7 @@ class FakeKernel:
         if inline_source:
             capability = os.path.join(self.ksrc, 'scripts', 'gawk')
             with open(capability, 'w') as stream:
-                stream.write('#!/bin/sh\n[ "$1" = --version ]\n')
+                stream.write('#!/bin/sh\n[ "$1" = --version ] && exit ' + ('0' if listing else '1') + '\n')
             os.chmod(capability, 0o755)
         self.vmlinux = os.path.join(self.dir, 'vmlinux')
         with open(self.vmlinux, 'wb') as f:

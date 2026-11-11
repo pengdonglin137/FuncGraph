@@ -1,11 +1,18 @@
 """fastfaddr2line.py: symbol matching (pure) and, optionally, agreement with the kernel's faddr2line."""
 import os
+from pathlib import Path
+import re
+import shutil
 import subprocess
 import sys
+import tempfile
 import unittest
 from collections import defaultdict
+from unittest.mock import patch
 
 import helpers
+from fglib.inline import parse_chain
+from fglib.resolver import AddressResolver
 
 sys.path.insert(0, helpers.ROOT)
 try:
@@ -60,6 +67,71 @@ class MatchTest(unittest.TestCase):
 
     def test_unknown(self):
         self.assertIsNone(self.find('nope', 0, 0x10))
+
+
+@unittest.skipUnless(ff is not None and all(shutil.which(tool) for tool in ['gcc', 'nm', 'objdump', 'addr2line']),
+                     'GCC, binutils and pyelftools required for real inline DWARF')
+class InlineDwarfTest(unittest.TestCase):
+    def test_real_plain_and_listed_inline_chains_match_gnu_at_return_pc_minus_one(self):
+        with tempfile.TemporaryDirectory(prefix='fg inline:123.') as directory:
+            root = Path(directory)
+            source = root / 'inline.c'
+            source.write_text('''volatile int sink;
+__attribute__((noinline, noclone)) int event(int value)
+{
+    sink = value;
+    return value + 1;
+}
+static __attribute__((always_inline)) inline int helper_inner(int value)
+{
+    return event(value) + 2;
+}
+static __attribute__((always_inline)) inline int helper_outer(int value)
+{
+    return helper_inner(value) + 3;
+}
+__attribute__((noinline, noclone)) int traced(int value)
+{
+    return helper_outer(value) + 4;
+}
+int main(int count, char **values)
+{
+    return traced(count);
+}
+''', encoding='utf-8')
+            binary = root / 'inline'
+            subprocess.run(['gcc', '-O2', '-g', '-fno-optimize-sibling-calls',
+                            '-o', str(binary), str(source)], check=True, capture_output=True, timeout=60)
+            symbols = subprocess.check_output(['nm', '-S', str(binary)], text=True, timeout=30)
+            symbol = re.search(r'^([0-9a-fA-F]+)\s+([0-9a-fA-F]+)\s+\w\s+traced$', symbols, re.M)
+            self.assertIsNotNone(symbol)
+            entry, size = (int(part, 16) for part in symbol.groups())
+            assembly = subprocess.check_output(['objdump', '-d', '--disassemble=traced', str(binary)],
+                                               text=True, timeout=30).splitlines()
+            call = next(index for index, line in enumerate(assembly)
+                        if re.search(r'\b(?:callq?|bl)\b.*<event>', line))
+            following = re.match(r'\s*([0-9a-fA-F]+):', assembly[call + 1])
+            self.assertIsNotNone(following)
+            address = int(following.group(1), 16) - 1
+            reference = subprocess.check_output(['addr2line', '-afi', '-e', str(binary), hex(address)],
+                                                text=True, timeout=30).splitlines()[1:]
+            expected = []
+            for function, location in zip(reference[0::2], reference[1::2]):
+                match = re.fullmatch(r'(.+):([0-9]+)(?:\s+\(discriminator [0-9]+\))?', location)
+                self.assertIsNotNone(match)
+                expected.append([function, match.group(1), int(match.group(2))])
+            expected.reverse()
+            self.assertEqual([frame[0] for frame in expected], ['traced', 'helper_outer', 'helper_inner'])
+            self.assertTrue(all(frame[1] == str(source) for frame in expected))
+            selector = 'traced+' + hex(address - entry) + '/' + hex(size)
+            resolver = AddressResolver(str(Path(helpers.ROOT) / 'fastfaddr2line.py'), str(binary))
+            with patch.dict(os.environ, {'CROSS_COMPILE': ''}):
+                for listed in [False, True]:
+                    with self.subTest(listed=listed):
+                        positions = resolver.resolve_batch([selector], use_list=listed)[selector]
+                        self.assertEqual(parse_chain(positions), expected)
+                        if listed:
+                            self.assertIn('>' + str(expected[-1][2]) + '<', positions)
 
 
 @unittest.skipIf(ff is None or not os.environ.get('FG_VMLINUX'), 'set FG_VMLINUX (and FG_KERNEL_SRC) to compare with scripts/faddr2line')

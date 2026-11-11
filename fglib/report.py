@@ -1184,7 +1184,7 @@ class HtmlGenerator:
                     else:
                         link_text = f"{loc['func']} at {file_path}"
                     if loc.get('inlined'):
-                        link_text = f"(inlined) {link_text}"
+                        link_text = f"(inlined by) {link_text}"
                     escaped_link = escape_html_preserve_spaces(link_text)
                     if current_base_url and clean_path and line_num is not None:
                         escaped_url = html.escape(url)

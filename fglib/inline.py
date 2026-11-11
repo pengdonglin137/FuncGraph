@@ -18,40 +18,60 @@ where `line` is the position inside that frame: for chain[k] it is the line that
 """
 import re
 
-RE_POS = re.compile(r'^\s*(?:\(inlined by\)\s+)?(?:\(inlined\)\s+)?([A-Za-z_$][\w.$]*) at (\S+?):(\d+)\b')
+RE_POS = re.compile(r'^\s*(?:\(inlined by\)\s+)?(?:\(inlined\)\s+)?([A-Za-z_$][\w.$]*) at (.+):([0-9]+)(?:\s+\(discriminator [0-9]+\))?\s*$')
 RE_CODE = re.compile(r'^\s*>?\d+<?\s')
 RE_HEAD = re.compile(r'^\S+\+0x[0-9a-fA-F]+/0x[0-9a-fA-F]+(?: \[[\w-]+\])?:$')
 
 
 def parse_chain(text, rel=None):
-    """Parse one faddr2line result (str) -> frames outer->inner, or [] if nothing found.
+    """Parse text or structured resolver positions into outer->inner frames.
 
     rel: optional callable mapping a file path to the displayed (repository-relative) path.
     """
-    if not text or not isinstance(text, str):
+    if isinstance(text, str):
+        positions = []
+        for line in text.split('\n'):
+            stripped = line.strip()
+            if not stripped or RE_CODE.match(line):
+                continue
+            if RE_HEAD.match(stripped):
+                if positions:
+                    break
+                continue
+            match = RE_POS.match(line)
+            if match:
+                positions.append({'func': match.group(1), 'file': match.group(2),
+                                  'line': match.group(3),
+                                  'inlined': stripped.startswith('(inlined by)')})
+    elif isinstance(text, list):
+        positions = text
+    else:
         return []
     frames = []
-    for line in text.split('\n'):
-        st = line.strip()
-        if not st or RE_CODE.match(line):
-            continue
-        if RE_HEAD.match(st):
-            if frames:
-                break               # a second candidate (duplicate symbol names): keep the first
-            continue
-        m = RE_POS.match(line)
-        if not m:
-            continue
-        inlined = st.startswith('(inlined by)')
+    for position in positions:
+        if not isinstance(position, dict):
+            return []
+        inlined = position.get('inlined', False)
+        if type(inlined) is not bool:
+            return []
         if frames and not inlined:
             break                   # a new, unrelated position
-        path = m.group(2)
+        function, path, number = position.get('func'), position.get('file'), position.get('line')
+        if isinstance(number, str) and re.fullmatch(r'[0-9]+', number):
+            try:
+                number = int(number)
+            except ValueError:
+                return []
+        if (not isinstance(function, str) or not function.strip()
+                or not isinstance(path, str) or not path.strip()
+                or type(number) is not int or number <= 0):
+            return []
         if rel is not None:
             try:
                 path = rel(path) or path
             except Exception:
                 pass
-        frames.append([m.group(1), path, int(m.group(3))])
+        frames.append([function, path, number])
     frames.reverse()
     return frames
 

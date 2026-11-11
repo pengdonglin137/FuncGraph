@@ -136,7 +136,7 @@ class AddressResolver:
                             if current_func:
                                 # 使用原始键存储
                                 original_func = func_info_map.get(current_func, current_func)
-                                results[original_func] = '\n'.join(current_output)
+                                results.setdefault(original_func, '\n'.join(current_output))
 
                             # 开始新的函数条目
                             current_func = header_match.group(1).strip()
@@ -149,7 +149,7 @@ class AddressResolver:
                     # 保存最后一个函数的信息
                     if current_func:
                         original_func = func_info_map.get(current_func, current_func)
-                        results[original_func] = '\n'.join(current_output)
+                        results.setdefault(original_func, '\n'.join(current_output))
 
                     # 检查是否有函数没有出现在输出中
                     # 清理results的键进行比较（只算一次）
@@ -198,7 +198,7 @@ class AddressResolver:
                     current_locations = []
 
                     for line in output.splitlines():
-                        line = line.rstrip()
+                        line = line.strip()
                         if not line:
                             continue
 
@@ -208,7 +208,7 @@ class AddressResolver:
                             if current_func:
                                 # 使用原始键存储
                                 original_func = func_info_map.get(current_func, current_func)
-                                func_locations[original_func] = current_locations
+                                func_locations.setdefault(original_func, current_locations)
 
                             # 开始新的函数条目
                             current_func = line[:-1]  # 去掉末尾的冒号
@@ -225,7 +225,7 @@ class AddressResolver:
                         loc_match = re.match(r'(.*)\s+at\s+(.*):(\d+)', line)
                         if loc_match:
                             func_name = loc_match.group(1).strip()
-                            file_path = loc_match.group(2).strip()
+                            file_path = loc_match.group(2)
                             line_no = loc_match.group(3).strip()
                             current_locations.append({
                                 'func': func_name,
@@ -237,7 +237,7 @@ class AddressResolver:
                     # 保存最后一个函数的信息
                     if current_func:
                         original_func = func_info_map.get(current_func, current_func)
-                        func_locations[original_func] = current_locations
+                        func_locations.setdefault(original_func, current_locations)
 
                     elapsed = time.time() - start_time
                     verbose_print(f"Parsed {len(func_locations)} function locations in {elapsed:.2f} seconds", self.verbose)
@@ -423,7 +423,7 @@ class AddressResolver:
 
         # 修复正则表达式以匹配包含discriminator信息的行
         # 修改正则表达式，使其能够匹配包含discriminator的行
-        loc_pattern = re.compile(r'^(?:\(inlined by\)\s+)?(.+?)\s+at\s+(.+?):(\d+).*$')
+        loc_pattern = re.compile(r'^(?:\(inlined by\)\s+)?(.+?)\s+at\s+(.+):([0-9]+)(?:\s+\(discriminator [0-9]+\))?\s*$')
 
         # 处理所有行
         i = 0

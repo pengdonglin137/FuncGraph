@@ -7,6 +7,39 @@ from fglib.report import HtmlGenerator
 
 
 class TimelineSourcesTest(unittest.TestCase):
+    @staticmethod
+    def structured(locations):
+        from fglib.inline import parse_chain
+
+        return [{'func': function, 'file': path, 'line': str(number), 'inlined': index > 0}
+                for index, (function, path, number) in enumerate(reversed(parse_chain(locations)))]
+
+    def test_structured_and_text_positions_produce_identical_inline_and_source_indexes(self):
+        listed = self.generator()
+        plain = self.generator()
+        plain.func_locations_map = {selector: self.structured(locations)
+                                    for selector, locations in plain.func_locations_map.items()}
+        with patch('fglib.report.call_faddr2line_batch', side_effect=AssertionError('new lookup')):
+            for generator in [listed, plain]:
+                generator._attach_inline()
+                generator._attach_timeline_sources()
+        self.assertEqual(plain.timeline_json['inline'], listed.timeline_json['inline'])
+        self.assertGreater(len(plain.timeline_json['inline']), 0)
+        self.assertEqual(plain.timeline_json['sources'], listed.timeline_json['sources'])
+
+    def test_structured_tail_jump_source_keeps_exact_instruction_offset(self):
+        generator = HtmlGenerator([], None, None, kernel_src='/tree', base_url='https://kernel.test/src',
+            timeline_json={'tail_calls': {'pairs': {'pair': {'sites': [{'symbol': 'parent+0x14/0x20'}]}}}})
+        generator.func_locations_map = {
+            'parent+0x13/0x20': self.structured('parent at /tree/kernel/parent.c:10'),
+            'parent+0x14/0x20': self.structured('helper at /tree/include/helper.h:30\n'
+                                               ' (inlined by) parent at /tree/kernel/parent.c:20'),
+        }
+        generator._attach_tail_sources()
+        site = generator.timeline_json['tail_calls']['pairs']['pair']['sites'][0]
+        self.assertEqual(site['source'], ['include/helper.h', 30, 'https://kernel.test/src/include/helper.h#L30'])
+        self.assertEqual(site['source_function'], 'helper')
+
     def test_tail_jump_source_uses_exact_instruction_offset_not_return_address_minus_one(self):
         generator = HtmlGenerator([], None, None, kernel_src='/tree', base_url='https://kernel.test/src',
             timeline_json={'tail_calls': {'pairs': {'pair': {'sites': [{'symbol': 'parent+0x14/0x20'}]}}}})
