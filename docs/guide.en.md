@@ -554,7 +554,7 @@ When recorded, **Exec / exit** lists kernel lifecycle events and links to Text;
 From top to bottom:
 
 1. **Toolbar, first row**: Color (color mode), Overlay (layer switches), function search, error navigation.
-2. **Toolbar, second row**: Fit (show all), Tracks (expand / collapse all tracks), Tasks (task navigator, 7.7), Overhead (measured / subtracted), Inline (inline frames), Errors, Sections, Sched latency (the analysis panels), Notes (collapse / expand the notes), Max (hide the page header and tabs, `M`), then **Filter**: the filter expression shared with the text view, see 6.6. Use the shared header **?** for help; only maximized layouts show a toolbar fallback. Narrow windows wrap the toolbar into more rows.
+2. **Toolbar, second row**: Fit (show all), Tracks (expand / collapse all tracks), Tasks (task navigator, 7.7), Go to… (precise positioning, 6.10), Overhead (measured / subtracted), Inline (inline frames), Errors, Sections, Sched latency (the analysis panels), Notes (collapse / expand the notes), Max (hide the page header and tabs, `M`), then **Filter**: the filter expression shared with the text view, see 6.6. Use the shared header **?** for help; only maximized layouts show a toolbar fallback. Narrow windows wrap the toolbar into more rows.
 3. **Notes**: what this trace lacks and what that means ("No timestamps…", "Arguments are not printed…"). Blue notes are information, yellow ones need attention.
 4. **Overview strip**: the whole trace in miniature. Blue bars show how busy each moment is, red lines are error origins (tall: reached user space, short orange: handled by a caller), the blue frame is the visible range. Click or drag to jump, use the wheel to zoom.
 5. **Time axis**: the right side shows the visible span (`span`) and the absolute start time (`start`), plus `selected` for a range selection; the time under the cursor is shown next to it.
@@ -827,6 +827,7 @@ Inline and untraced details cache the selected frame's raw extent facts, so refr
 | `[` / `]` | previous / next recorded sibling; roots stay within the task; no wrapping |
 | `E` / Shift + `E` | next / previous error origin |
 | `/`, `N` / Shift + `N` | search, next / previous match |
+| `G` | open precise positioning without changing the selected call (6.10) |
 | `H` | duration distribution of the selected function |
 | `O` | measured / overhead subtracted |
 | `I` | hide / show inline frames |
@@ -835,6 +836,37 @@ Inline and untraced details cache the selected frame's raw extent facts, so refr
 | Enter | open the selected call in the text view |
 | Esc | close the help; clear selection and range |
 | `?` | help and legend |
+
+### 6.10 Precise positioning (Go to…)
+
+Click **Go to…**, or press `G` outside an input in Timeline. Compact layouts put the button inside **More**.
+Enter a coordinate in **Start / center**. A blank **End** keeps the current zoom and centers the coordinate,
+subject to the existing pan limits near trace edges. Supplying both fields shows the exact interval,
+for example `100 us` to `0.2 ms`. This changes only the viewport: it does not select a nearby function
+or change filters, the selected call, tracks or the bottom panel's analysis scope.
+
+![Precise positioning dialog](img/timeline_position.png)
+
+- **Measured time**: offsets are relative to the report origin. Accepted units are `ns`, `us`, `µs`, `μs`,
+  `ms` and `s`; no unit means nanoseconds. The origin can precede the first function call and is not
+  necessarily the first visible call's start.
+- **Recorded timestamp**: offered only with a trustworthy exact origin. No unit means seconds here;
+  a recorded timestamp can be entered directly. The integer-nanosecond origin is subtracted exactly
+  before conversion to frontend coordinates, preserving low bits even above JavaScript's safe absolute
+  integer range. These are not calendar timestamps. Unverified mixed clocks do not offer this option;
+  offset navigation does not establish cross-space clock alignment either.
+- **Duration-based / packed modes without timestamps**: inputs refer to the report's constructed
+  coordinates, not original timestamps. Packed coordinates cannot recover real idle gaps; the dialog
+  describes the current mode.
+- **Call-order mode**: use `u` / `unit` / `units` (default `u`), with exact thousandths supported.
+  This is a drawing coordinate, not an ordinal call lookup; time units are rejected.
+
+Only decimal values are accepted: no hexadecimal, exponential notation, fractional nanoseconds,
+negative offsets, positions past the recorded extent or relative coordinates outside the safe integer
+range. End must exceed start. Invalid fields keep their text and display an inline explanation without
+moving the viewport. Changing the coordinate basis converts both valid fields exactly.
+`Enter` submits; `Esc` / **Cancel** closes without moving. Dialog keys do not activate underlying
+Timeline shortcuts, and closing restores focus to an available control.
 
 ## 7. Analysis panels
 

@@ -579,9 +579,131 @@ elSearch.addEventListener('keydown', ev => {
     ev.stopPropagation();
 });
 
+let positionBasis = 'offset', positionReturnFocus = null;
+function positionOrigin() {
+    if (MODE !== 'abs' || MIXED && !D.uftrace.aligned) return null;
+    const origin = D.uftrace?.origin_ns;
+    if (origin !== undefined) return typeof origin === 'string' && /^\d{1,32}$/.test(origin) ? BigInt(origin) : null;
+    return Number.isSafeInteger(D.t0) && D.t0 >= 0 ? BigInt(D.t0) : null;
+}
+function positionText(coordinate, basis) {
+    const value = BigInt(Math.round(coordinate));
+    if (basis === 'timestamp') {
+        const timestamp = positionOrigin() + value;
+        return timestamp / 1000000000n + '.' + String(timestamp % 1000000000n).padStart(9, '0') + ' s';
+    }
+    if (MODE === 'count') return value / 1000n + (value % 1000n ? '.' + String(value % 1000n).padStart(3, '0').replace(/0+$/, '') : '') + ' u';
+    return value + ' ns';
+}
+function parsePosition(text, basis) {
+    text = text.trim();
+    if (!text) throw new Error('Enter a position.');
+    const match = text.length <= 80 && /^([+-]?)(?:(\d+)(?:\.(\d*))?|\.(\d+))\s*(ns|us|µs|μs|ms|s|u|units?)?$/i.exec(text);
+    if (!match) throw new Error(MODE === 'count' ? 'Use a call-order coordinate, for example 12 or 12.5 u.' : 'Use a decimal value with ns, us, µs, ms or s.');
+    const unit = (match[5] || (MODE === 'count' ? 'u' : basis === 'timestamp' ? 's' : 'ns')).toLowerCase();
+    const countUnit = ['u', 'unit', 'units'].includes(unit);
+    if (MODE === 'count' ? !countUnit : countUnit) throw new Error(MODE === 'count' ? 'Call-order units are not time: use u, not ns/us/ms/s.' : 'Use time units, not call-order units.');
+    const fraction = match[3] || match[4] || '', divisor = 10n ** BigInt(fraction.length);
+    const factor = countUnit ? 1000n : { ns: 1n, us: 1000n, 'µs': 1000n, 'μs': 1000n, ms: 1000000n, s: 1000000000n }[unit];
+    const numerator = BigInt((match[2] || '0') + fraction) * factor;
+    if (numerator % divisor) throw new Error(MODE === 'count' ? 'Use at most three decimal places for call-order units.' : 'Use whole nanoseconds; sub-nanosecond coordinates are unavailable.');
+    let value = (match[1] === '-' ? -1n : 1n) * (numerator / divisor);
+    if (basis === 'timestamp') {
+        const origin = positionOrigin();
+        if (origin === null) throw new Error('Recorded timestamps are unavailable for this report.');
+        value -= origin;
+    }
+    if (value < 0n || value > BigInt(Number.MAX_SAFE_INTEGER)) throw new Error('Position must be nonnegative and fit the exact integer coordinate range.');
+    const coordinate = Number(value);
+    if (coordinate > tMax) throw new Error('Position is past the recorded extent (' + positionText(tMax, 'offset') + ' from the report origin).');
+    return coordinate;
+}
+function clearPositionError() {
+    elPositionError.textContent = '';
+    elPositionStart.setAttribute('aria-invalid', 'false');
+    elPositionEnd.setAttribute('aria-invalid', 'false');
+}
+function positionHint() {
+    const basis = positionBasis === 'timestamp' ? 'Recorded timestamps; default unit s. ' : 'Report-origin offsets; default unit ns. ';
+    const mode = MODE === 'count' ? 'Call-order coordinates only (u); no timestamps or durations are available. No unit means u. ' :
+        MODE === 'compressed' ? 'Packed coordinates, not wall-clock time: gaps are lost. ns/us/µs/ms/s; default ns. ' :
+        MODE === 'rel' ? 'Duration-based coordinates, not recorded timestamps. ns/us/µs/ms/s; default ns. ' : basis + 'Units: ns/us/µs/ms/s. ';
+    elPosition.querySelector('#tlPositionHint').textContent = mode + 'Blank End centers at current zoom, clamped near trace edges; Start + End shows the exact interval. ' +
+        'Selection, filters and analysis remain unchanged.' + (MIXED && !D.uftrace.aligned ? ' Clocks are not verified; offsets do not establish cross-space alignment.' : '');
+}
+function showPosition() {
+    if (elPosition.open) return;
+    positionReturnFocus = document.activeElement;
+    positionBasis = 'offset';
+    elPositionBasis.value = positionBasis;
+    elPosition.querySelector('[data-position-basis]').hidden = positionOrigin() === null;
+    elPosition.querySelector('#tlPositionTitle').textContent = MODE === 'count' ? 'Go to call-order position' : MODE === 'compressed' ? 'Go to packed position' : 'Go to time';
+    elPositionStart.value = positionText(Math.min(Number.MAX_SAFE_INTEGER, tMax, Math.max(0, view.s)), positionBasis);
+    elPositionEnd.value = '';
+    clearPositionError();
+    positionHint();
+    elPosition.showModal();
+    elPositionStart.focus();
+    elPositionStart.select();
+}
+elPosition.addEventListener('input', clearPositionError);
+elPositionBasis.addEventListener('change', () => {
+    let field = elPositionStart;
+    try {
+        const start = parsePosition(elPositionStart.value, positionBasis);
+        field = elPositionEnd;
+        const end = elPositionEnd.value.trim() ? parsePosition(elPositionEnd.value, positionBasis) : null;
+        positionBasis = elPositionBasis.value;
+        elPositionStart.value = positionText(start, positionBasis);
+        if (end !== null) elPositionEnd.value = positionText(end, positionBasis);
+        clearPositionError();
+        positionHint();
+    } catch (error) {
+        elPositionBasis.value = positionBasis;
+        field.setAttribute('aria-invalid', 'true');
+        elPositionError.textContent = error.message;
+        field.focus();
+    }
+});
+elPosition.querySelector('form').addEventListener('submit', event => {
+    event.preventDefault();
+    let field = elPositionStart;
+    try {
+        const start = parsePosition(elPositionStart.value, positionBasis);
+        field = elPositionEnd;
+        const end = elPositionEnd.value.trim() ? parsePosition(elPositionEnd.value, positionBasis) : null;
+        if (end !== null && end <= start) throw new Error('End must be greater than start.');
+        if (end === null) panBy(start - (view.s + view.e) / 2);
+        else { view.s = start; view.e = end; draw(); }
+        elPosition.close();
+    } catch (error) {
+        field.setAttribute('aria-invalid', 'true');
+        elPositionError.textContent = error.message;
+        field.focus();
+    }
+});
+elPosition.querySelector('[data-position-cancel]').addEventListener('click', () => elPosition.close());
+elPosition.addEventListener('close', () => {
+    if (window.fgCurrentView() !== 'timeline') return;
+    if (positionReturnFocus?.isConnected && positionReturnFocus.getClientRects().length && !positionReturnFocus.disabled) positionReturnFocus.focus({ preventScroll: true });
+    else focusTimelineControl();
+});
+
 // ---- keyboard (capture phase: keeps the text view's shortcuts from firing) ----
 window.addEventListener('keydown', ev => {
     if (window.fgCurrentView() !== 'timeline') return;
+    if (elPosition.open) {
+        ev.stopPropagation();
+        if (ev.key === 'Tab') {
+            const controls = Array.from(elPosition.querySelectorAll('input, select, button')).filter(control => !control.disabled && control.getClientRects().length);
+            const index = controls.indexOf(document.activeElement);
+            if (controls.length && (index < 0 || ev.shiftKey && index === 0 || !ev.shiftKey && index === controls.length - 1)) {
+                ev.preventDefault();
+                controls[ev.shiftKey ? controls.length - 1 : 0].focus();
+            }
+        }
+        return;
+    }
     if (ev.key === 'Escape' && elOptions.classList.contains('open')) {
         ev.stopPropagation(); ev.preventDefault();
         setToolbarOptions(false, true);
@@ -610,6 +732,7 @@ window.addEventListener('keydown', ev => {
         case ']': navigateCall('next'); break;
         case 'Enter': if (sel >= 0) gotoText(sLine[sel]); break;
         case '/': elSearch.focus(); elSearch.select(); break;
+        case 'g': case 'G': showPosition(); break;
         case 'h': case 'H': if (sel >= 0) showDist(sName[sel]); break;
         case 'o': case 'O': toggleAdjusted(); break;
         case 'i': case 'I': toggleInlineView(); break;
@@ -623,7 +746,7 @@ window.addEventListener('keydown', ev => {
     }
     if (handled) {
         ev.preventDefault();
-        if (ev.key !== '/' && window.fgCurrentView() === 'timeline') focusTimelineControl();
+        if (ev.key !== '/' && ev.key.toLowerCase() !== 'g' && window.fgCurrentView() === 'timeline') focusTimelineControl();
     }
 }, true);
 

@@ -973,7 +973,7 @@ tlRoot.querySelectorAll('[data-ov]').forEach(b => {
 elToolbar.addEventListener('click', ev => {
     const b = ev.target.closest('[data-act]');
     if (!b) return;
-    if (elOptions.classList.contains('open') && b.matches('[data-act^=an-], [data-act=process-events], [data-act=max], [data-act=help]')) {
+    if (elOptions.classList.contains('open') && b.matches('[data-act^=an-], [data-act=position], [data-act=process-events], [data-act=max], [data-act=help]')) {
         setToolbarOptions(false, true);
     }
     switch (b.dataset.act) {
@@ -995,6 +995,7 @@ elToolbar.addEventListener('click', ev => {
         case 'an-lat': showLatency(); break;
         case 'an-sec': showSections(); break;
         case 'an-tasks': showTasks(null); break;
+        case 'position': showPosition(); break;
         case 'process-events': showProcessEvents(); break;
         case 'expand': {
             const any = ORDER.some(t => t.collapsed);
@@ -1100,6 +1101,7 @@ ${N ? '' : '<p>No function calls were recorded. Search has no call matches; shar
 <li><kbd>E</kbd>/<kbd>Shift+E</kbd> next/prev error · <kbd>/</kbd> search, <kbd>N</kbd>/<kbd>Shift+N</kbd> next/prev match</li>
 <li>Click an off-CPU segment: wait chain (who woke the task, wake latency, and who woke the waker)</li>
 <li><b>Tasks</b>: find recorded tasks by name / PID / CPU, including tasks without traced calls; browse 100 identities per page with Previous / Next and export all matching rows, not just this page</li>
+<li><kbd>G</kbd> or <b>Go to…</b>: center at an offset without changing zoom, or enter start/end to show an exact interval. Timestamped reports accept ns/us/ms/s; recorded timestamps require a known exact origin. Packed and call-order coordinates are explicitly not wall-clock time. Selection, filters and analysis stay unchanged.</li>
 <li><b>Errors</b>: independent pages of 200 error groups and 100 atomic groups. Previous / Next replaces rows without losing a group's occurrence position; all three CSV exports include the complete current scope, not just the page.</li>
 <li><b>Duration distribution</b>: browse 50 slowest-first calls per page. Previous / Next do not change percentiles or histogram scope; CSV includes all calls in the selected function, call site and duration bucket, not just the page. Toggle <b>Histogram</b> to give calls more room while keeping all six statistics; this report-local choice does not change the saved panel split.</li>
 <li><b>Explore all children</b> in call details: complete parent-scoped groups/calls, longest-call navigation and full CSV</li>
@@ -1184,4 +1186,4 @@ const probe = () => ({ N, NA, SYN, S, sName, sStart, sEnd, sDepth, sParent, sTas
     errors: showErrors, latency: showLatency, sections: showSections, dist: showDist, wait: showWaitChain,
     inline: (on) => { if (!!on !== inlineView) toggleInlineView(); } });
 return { resize: resize, revealLine: revealLine, draw: draw, probe: probe,
-    suspend: () => { setToolbarOptions(false); hideTip(); discardSceneCache(); }, showHelp: () => elHelp.classList.add('show') };
+    suspend: () => { if (elPosition.open) elPosition.close(); setToolbarOptions(false); hideTip(); discardSceneCache(); }, showHelp: () => elHelp.classList.add('show') };

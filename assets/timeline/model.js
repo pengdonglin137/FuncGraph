@@ -646,6 +646,7 @@ tlRoot.innerHTML = `
   <span class="tl-group">
     <button class="tl-btn" data-act="expand" title="Expand / collapse all tracks">Tracks</button>
     <button class="tl-btn" data-act="an-tasks" title="Find and navigate all recorded tasks, including scheduling-only tasks">Tasks</button>
+    <button class="tl-btn" data-act="position" title="Go to a coordinate or interval without changing selection (G)">Go to…</button>
     <button class="tl-btn" data-act="adj" title="Subtract the estimated tracing overhead from durations (O)">Overhead: measured</button>
     <button class="tl-btn" data-act="inl" title="Show inlined functions as frames between the traced calls (I)">Inline: hidden</button>
     <button class="tl-btn" data-act="an-errors" title="Error summary by syscall / origin / errno">Errors</button>
@@ -672,6 +673,17 @@ ${N ? '' : '<div class="tl-event-only" role="note">No recorded function calls. S
 <div class="tl-resizer" title="Drag to resize the panel, double-click to reset"></div>
 <div class="tl-detail"></div>
 <div class="tl-tip"></div>
+<dialog class="tl-position" aria-labelledby="tlPositionTitle" aria-describedby="tlPositionHint">
+  <form novalidate>
+    <h3 id="tlPositionTitle">Go to position</h3>
+    <p id="tlPositionHint"></p>
+    <label data-position-basis>Coordinate basis<select id="tlPositionBasis"><option value="offset">Offset from report origin</option><option value="timestamp">Recorded timestamp</option></select></label>
+    <label>Start / center<input id="tlPositionStart" type="text" maxlength="80" autocomplete="off" spellcheck="false" aria-describedby="tlPositionHint tlPositionError"></label>
+    <label>End (optional)<input id="tlPositionEnd" type="text" maxlength="80" autocomplete="off" spellcheck="false" aria-describedby="tlPositionHint tlPositionError"></label>
+    <p id="tlPositionError" role="status" aria-live="polite"></p>
+    <div class="tl-position-actions"><button class="tl-btn" type="button" data-position-cancel>Cancel</button><button class="tl-btn" type="submit" data-position-go>Go</button></div>
+  </form>
+</dialog>
 <div class="tl-toast"></div>`;
 const elHead = tlRoot.querySelector('.tl-head-canvas');
 const elScroll = tlRoot.querySelector('.tl-scroll');
@@ -697,6 +709,11 @@ const elFbar = tlRoot.querySelector('.tl-filterbar');
 const elResizer = tlRoot.querySelector('.tl-resizer');
 const elFtext = tlRoot.querySelector('.tl-ftext');
 const elFcount = tlRoot.querySelector('.tl-fcount');
+const elPosition = tlRoot.querySelector('.tl-position');
+const elPositionStart = elPosition.querySelector('#tlPositionStart');
+const elPositionEnd = elPosition.querySelector('#tlPositionEnd');
+const elPositionBasis = elPosition.querySelector('#tlPositionBasis');
+const elPositionError = elPosition.querySelector('#tlPositionError');
 
 let toastTimer = 0;
 function toast(msg) {
