@@ -192,6 +192,10 @@ Compare 与 `--export` 分开统计用户态、内核态的同名函数。
   只解释 ABI 对应关系已确认的整数/指针前缀；聚合参数、浮点、可变参数、原型冲突、编译器克隆、
   未知指针字长等不能确认的布局不强行裁剪，其余槽位保持 `slotN`。不额外做 DWARF 查询。
   无匹配 BTF 时仍显示 **raw args** / **raw return**，不承诺与所有内核版本的 `cat trace` 逐字一致。
+- **BTF 解析依赖**：报告端的 `fglib/btf.py` 仅使用 Python 标准库，不要求安装 libbpf 或
+  bpftool。它读取匹配目标内核的原始 BTF、ELF 的 `.BTF` 段及有基准 BTF 的模块 split BTF，
+  提取本项目所需的原型与标量类型；不是 libbpf 的完整替代实现，也不负责加载 eBPF 程序。
+  原生采集程序的构建依赖与这条报告端解析路径分开，见下方可复现构建说明。
 - **用户态参数**：应用应带调试信息编译，采集时使用 `--auto-args`，或以 `-A` / `-R` 明确规格。
   例如 `fguftrace record --auto-args --srcline -T '.@callsite' -d capture.data ./app`。
   自动标量按 uftrace replay 的数值规则导出；不支持的字符串、浮点、枚举和聚合规格保留原始字节，缺失规格不猜测。

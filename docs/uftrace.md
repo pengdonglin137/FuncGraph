@@ -250,6 +250,12 @@ kernel names separately, even when their symbols have identical spelling.
   No additional DWARF lookup is needed. Without matching BTF, **raw args** and
   **raw return** remain; byte-for-byte equivalence with every kernel version's
   `cat trace` formatter is not claimed.
+- **BTF reader dependencies:** the report-side `fglib/btf.py` uses only the Python
+  standard library; neither libbpf nor bpftool is required. It reads matching raw
+  BTF, ELF `.BTF` sections and module split BTF with its base, extracting the
+  prototypes and scalar types needed here. It is not a complete libbpf replacement
+  and does not load eBPF programs. Native recorder build dependencies are separate;
+  see the reproducible build section below.
 - **User arguments:** compile with debug information and record with `--auto-args`,
   or specify `-A` / `-R` explicitly. For example,
   `fguftrace record --auto-args --srcline -T '.@callsite' -d capture.data ./app`.
