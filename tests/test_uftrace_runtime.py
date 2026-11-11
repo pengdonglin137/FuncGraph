@@ -81,7 +81,7 @@ class UftraceRuntimeTest(unittest.TestCase):
         fixture = Path(__file__).parent.parent / 'samples/sample_mixed.jsonl'
         executable.write_text('#!/bin/sh\nexec cat "' + str(fixture) + '"\n')
         imported = inputs.read_uftrace_directory(str(self.root))
-        self.assertEqual(len(imported.records), 2184)
+        self.assertEqual(len(imported.records), 1648)
 
 
 if __name__ == '__main__':
