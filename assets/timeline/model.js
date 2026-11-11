@@ -315,7 +315,22 @@ for (const r of D.offcpu) if (r[2] === null) r[2] = tMax;
 const WAKES = D.wakeups || [];
 const OFF_IDX = new Map(D.offcpu.map((r, i) => [r, i]));
 const WAKE_OF_OFF = new Map();
-for (const w of WAKES) if (w[5] >= 0) WAKE_OF_OFF.set(w[5], w);
+const WAKE_BLOCK_SIZE = 128;
+const WAKE_BOUNDS = new Float64Array(2 * Math.ceil(WAKES.length / WAKE_BLOCK_SIZE));
+function wakeOff(wake) { return wake[5] >= 0 ? D.offcpu[wake[5]] : null; }
+for (let start = 0, block = 0; start < WAKES.length; start += WAKE_BLOCK_SIZE, block += 2) {
+    if (start && start % 16384 === 0) yield 'Indexing wakeup spans…';
+    let earliest = Infinity, latest = -Infinity;
+    const stop = Math.min(start + WAKE_BLOCK_SIZE, WAKES.length);
+    for (let index = start; index < stop; index++) {
+        const wake = WAKES[index], off = wakeOff(wake);
+        if (wake[5] >= 0) WAKE_OF_OFF.set(wake[5], wake);
+        earliest = Math.min(earliest, wake[1]);
+        latest = Math.max(latest, off ? off[2] : wake[1]);
+    }
+    WAKE_BOUNDS[block] = earliest;
+    WAKE_BOUNDS[block + 1] = latest;
+}
 
 const ORDER = TRACKS.filter(t => t.lo >= 0 || t.off.length || PROCESS_BY_TASK.has(t.id)).sort((a, b) => {
     if (a.kind !== b.kind) return a.kind - b.kind;

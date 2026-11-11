@@ -4810,6 +4810,51 @@ class BrowserSmokeTest(unittest.TestCase):
         self.page.click('[data-ov=wk]')
         self.page.click('[data-ov=wk]')
 
+    def test_wakeup_overlay_indexes_intersections_without_reordering(self):
+        def wake(time, off=-1):
+            return [0, time, 1, 0, -1, off]
+
+        ends = [25000, 9200, None]
+        offcpu = [[1, 0, end, 0, 0, 1, 0, 0, 0, -1] for end in ends]
+        wakes = [wake(50, 0)] + [wake(35000)] * 127 + [wake(1000, 1), wake(20800), wake(3000, 2), wake(12000)]
+        wakes += [wake(35000)] * 124 + [wake(31000 + index * 10) for index in range(16)]
+        self.open_range_data(['waker', 'sleeper'], starts=[0, 0], durations=[40000, 40000],
+                             columns={'task': [0, 1]}, extra=dict(wakeups=wakes, offcpu=offcpu,
+                                 tasks=[dict(pid=1, comm='waker', kind=0, cpu=0),
+                                        dict(pid=2, comm='sleeper', kind=0, cpu=0)]))
+        self.ev('''() => {
+            window.measureWakeups = async (start, end) => {
+                const model = fgView('timeline').probe(), canvas = document.querySelector('.tl-canvas');
+                await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+                const ctx = canvas.getContext('2d'), curves = [], labels = [];
+                const curve = ctx.bezierCurveTo, text = ctx.fillText;
+                ctx.bezierCurveTo = function (...args) { curves.push(args[4]); return curve.apply(this, args); };
+                ctx.fillText = function (...args) {
+                    if (args[0].includes('wakeups bunched')) labels.push(args);
+                    return text.apply(this, args);
+                };
+                try {
+                    model.zoomTo(start, end, -1);
+                    await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+                    const [left, right] = model.view(), width = canvas.clientWidth;
+                    return {ends: curves.map(px => Math.round(left + px * (right - left) / width)), labels, width};
+                } finally { ctx.bezierCurveTo = curve; ctx.fillText = text; }
+            };
+        }''')
+        result = self.ev('measureWakeups(10000, 20000)')
+        self.assertEqual(result['ends'], [25000, 9200, 20800, 40000, 12000])
+        self.assertEqual(result['labels'], [])
+        self.page.set_viewport_size({'width': 350, 'height': 680})
+        result = self.ev('measureWakeups(31000, 31150)')
+        self.assertEqual(result['ends'], [])
+        label, x, _y, width = result['labels'][0]
+        self.assertEqual(label, '17 of 17 wakeups bunched')
+        self.assertGreaterEqual(x, 0)
+        self.assertLessEqual(x + width, result['width'])
+        self.ev("fgView('timeline').probe().select(0)")
+        result = self.ev('measureWakeups(31000, 31150)')
+        self.assertEqual(result['ends'], [40000] + [31000 + index * 10 for index in range(16)])
+
     def test_range_summary_and_theme(self):
         self.open_timeline()
         box = self.page.query_selector('.tl-canvas').bounding_box()

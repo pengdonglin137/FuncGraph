@@ -421,29 +421,26 @@ function trackAnchorY(tid, slice, sy) {
 const WAKE_MAX = 15;   // above this many visible arrows only the focused ones get their full curve
 function drawWakeups(vs, ve, k, sy) {
     const vis = [];
-    for (const w of WAKES) {
-        const off = w[5] >= 0 ? D.offcpu[w[5]] : null;
-        const t1 = off ? off[2] : w[1];              // target resumes here
-        if (t1 < vs || w[1] > ve) continue;
-        const y0 = trackAnchorY(w[0], w[4], sy);
-        const tt = TRACKS[w[2]];
-        if (y0 === null || !tt || tt.hidden || tt.h === 0) continue;
-        const y1 = off && !tt.collapsed ? tt.y - sy + HDR + offRow(off) * ROW + ROW / 2 : tt.y - sy + HDR / 2;
-        if ((y0 < 0 && y1 < 0) || (y0 > H && y1 > H)) continue;
-        vis.push([w, off, (w[1] - vs) * k, y0, (t1 - vs) * k, y1]);
+    for (let block = 0, start = 0; block < WAKE_BOUNDS.length; block += 2, start += WAKE_BLOCK_SIZE) {
+        if (WAKE_BOUNDS[block] > ve || WAKE_BOUNDS[block + 1] < vs) continue;
+        const stop = Math.min(start + WAKE_BLOCK_SIZE, WAKES.length);
+        for (let index = start; index < stop; index++) {
+            const wake = WAKES[index], off = wakeOff(wake);
+            const resume = off ? off[2] : wake[1];
+            if (resume < vs || wake[1] > ve) continue;
+            const y0 = trackAnchorY(wake[0], wake[4], sy);
+            const target = TRACKS[wake[2]];
+            if (y0 === null || !target || target.hidden || target.h === 0) continue;
+            const y1 = off && !target.collapsed ? target.y - sy + HDR + offRow(off) * ROW + ROW / 2 : target.y - sy + HDR / 2;
+            if ((y0 < 0 && y1 < 0) || (y0 > H && y1 > H)) continue;
+            vis.push([wake, off, (wake[1] - vs) * k, y0, (resume - vs) * k, y1]);
+        }
     }
     if (!vis.length) return;
-    // crowded: another arrow ends within 6 px (bursts of wakeups); or simply too many in view
-    const xs = vis.map(v => v[4]).sort((a, b) => a - b);
-    const near = x => {
-        let lo = 0, hi = xs.length;
-        while (lo < hi) { const m = (lo + hi) >> 1; if (xs[m] < x - 12) lo = m + 1; else hi = m; }
-        let n = 0;
-        for (let j = lo; j < xs.length && xs[j] <= x + 12; j++) n++;
-        return n - 1;
-    };
-    const crowded = vis.map(v => vis.length > WAKE_MAX || near(v[4]) >= 1);
-    const dense = crowded.some(Boolean);
+    const allCrowded = vis.length > WAKE_MAX;
+    const crowded = allCrowded ? null : vis.map((entry, index) => vis.some((other, candidate) =>
+        index !== candidate && other[4] >= entry[4] - 12 && other[4] <= entry[4] + 12));
+    const crowdedCount = allCrowded ? vis.length : crowded.filter(Boolean).length;
     const focus = new Set();
     if (sel >= 0) focus.add(sTask[sel]);
     if (hov >= 0) focus.add(sTask[hov]);
@@ -454,7 +451,7 @@ function drawWakeups(vs, ve, k, sy) {
     for (let q = 0; q < vis.length; q++) {
         const [w, off, x0, y0, x1, y1] = vis[q];
         const hot = hovOff && off === hovOff;
-        const full = !crowded[q] || hot || focus.has(w[0]) || focus.has(w[2]);
+        const full = (!allCrowded && !crowded[q]) || hot || focus.has(w[0]) || focus.has(w[2]);
         ctx.fillStyle = ctx.strokeStyle = hot ? '#0b7a6b' : col;
         const dir = y1 >= y0 ? 1 : -1;
         if (!full) {
@@ -473,16 +470,21 @@ function drawWakeups(vs, ve, k, sy) {
         ctx.stroke();
         ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x1 - 5, y1 - 4 * dir); ctx.lineTo(x1 + 1, y1 - 6 * dir); ctx.closePath(); ctx.fill();
     }
-    if (dense) {
-        const nc = crowded.filter(Boolean).length;
-        const msg = nc + ' of ' + vis.length + ' wakeups bunched' + (focus.size ? ' · arrows for the focused task' : ' · hover or select a task to see its arrows, zoom in for all');
+    if (crowdedCount) {
+        const summary = crowdedCount + ' of ' + vis.length + ' wakeups bunched';
+        const hint = focus.size ? ' · arrows for the focused task' : ' · hover or select a task to see its arrows, zoom in for all';
         ctx.font = FONT_S;
-        const tw = ctx.measureText(msg).width;
-        ctx.fillStyle = dark ? 'rgba(31,33,38,.85)' : 'rgba(255,255,255,.85)';
-        ctx.fillRect(W - tw - 16, 4, tw + 12, 16);
-        ctx.fillStyle = col;
-        ctx.textBaseline = 'middle';
-        ctx.fillText(msg, W - tw - 10, 12);
+        const available = W - 20;
+        if (available > 0) {
+            const fullWidth = ctx.measureText(summary + hint).width;
+            const msg = fullWidth <= available ? summary + hint : summary;
+            const width = fullWidth <= available ? fullWidth : Math.min(ctx.measureText(summary).width, available);
+            ctx.fillStyle = dark ? 'rgba(31,33,38,.85)' : 'rgba(255,255,255,.85)';
+            ctx.fillRect(W - width - 16, 4, width + 12, 16);
+            ctx.fillStyle = col;
+            ctx.textBaseline = 'middle';
+            ctx.fillText(msg, W - width - 10, 12, width);
+        }
         ctx.font = FONT;
     }
 }

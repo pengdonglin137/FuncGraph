@@ -581,13 +581,15 @@ Each overlay can be switched off; buttons of overlays without data are hidden.
 | **Off-CPU** | grey hatched segment labeled `off-CPU 7.640 ms · do_wait [S]` | the task was not on a CPU; drawn one level below the frame that was open. Label: duration, function it waited in, state at switch-out (`S` interruptible sleep, `D` uninterruptible, `R` still runnable) |
 | | the same with an **amber tint** | preempted (it could have kept running) |
 | **Wakeups** | **teal arrow** from a dot at the waker to where the woken task resumes | who woke whom and when (needs `sched_waking` or `sched_wakeup`) |
-| | only a small head | bunched wakeups show just the end point. Hovering or selecting a task, or hovering an off-CPU segment, draws its full arrows; the top right says "N of M wakeups bunched" |
+| | only a small head | bunched wakeups show just the end point. Hovering or selecting a task, or hovering an off-CPU segment, draws its full arrows. The top right shows “N of M wakeups bunched” and drops the interaction hint on narrow windows |
 | **Preempt depth** (off by default) | grey bar at the bottom of a slice, darker for deeper | |
 | **Markers** | **dotted right edge** | entry seen, return not (the capture ended, or events were lost) |
 | | **dotted left edge** | return seen, entry not (the call started before the capture) |
 | | **small purple square** top left | caller differs from the recorded parent: tail calls, inlining or untraced code may explain it; the cause is unresolved, not necessarily a missing frame |
 | | **small grey arrow** top left | `--tail-calls` found a direct tail jump to this function in the supplied binary; static evidence, not a captured branch |
 | | **red underline** | a sleeping function called in atomic context (7.4) |
+
+When zoomed in, Wakeups keeps arrows crossing the time window even if their wakeup starts offscreen. Wait Chain and exports still use the complete records.
 
 ![tl_errors](img/tl_errors.png)
 
