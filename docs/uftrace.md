@@ -34,15 +34,33 @@ the x86_64 QEMU Linux `7.4.0-rc2` capture of [`demo_mixed.c`](../samples/demo_mi
 on November 11, 2026. It contains 25 user calls, 1,067 kernel calls and five
 linked transitions. The extract keeps the original call records (including
 addresses, parameters and raw return values), but not scheduler/perf events.
-No kernel debug image is used here; use the [kernel-only sample](../sample.html)
-for resolved kernel source and BTF-backed error paths. To rebuild the mixed
-report from the repository root (no uftrace executable or `vmlinux` needed):
+The published report uses the matching kernel debug image: 332 unique kernel
+functions have resolved entry locations, pinned Linux `v7.4-rc2` links and embedded
+source excerpts, alongside the recorded user source. Select `__x64_sys_sendto`
+for `net/socket.c:2286` and **Kernel function source**, or expand its Text row.
+These are function-entry locations, not resolved raw return-address call sites.
+The matching BTF also verifies the nonblocking receive error path. Viewing the
+HTML needs neither the kernel tree nor uftrace. To rebuild it from the repository
+root, provide the matching debug-enabled image and source repository:
 
 ```bash
 python3 funcgraph.py --no-config --timeline --enable-fold --filter \
-    --user-src samples --report-mode single \
+    --user-src samples --report-mode single --func-links --fast --highlight-code \
+    --vmlinux /vol_1t/Qemu/linux/x86_64/vmlinux --kernel-src /vol_1t/Qemu/linux \
+    --source-rev 7475ea8b58616b33c04afb976cf0fbaad9dd63fb \
+    --source-browser github --source-browser-rev v7.4-rc2 \
     --output sample_mixed.html samples/sample_mixed.jsonl
 FG_CONFIG=/dev/null python3 samples/make_shots.py  # screenshots; needs Playwright + Chromium
+```
+
+Adjust the local paths to your matching build. Without that image, the following
+still rebuilds the same recorded calls, timings, boundaries and user source,
+but cannot resolve kernel source or perform the image's BTF checks:
+
+```bash
+python3 funcgraph.py --no-config --timeline --enable-fold --filter \
+    --user-src samples --report-mode single --highlight-code \
+    --output mixed-no-kernel-source.html samples/sample_mixed.jsonl
 ```
 
 ## Generate a report
@@ -84,6 +102,12 @@ kernel names separately, even when their symbols have identical spelling.
   expand its Text row. Missing and out-of-root files remain plain locations.
   User frames never use the kernel `--base-url`, even for identical names. Use
   `--no-text-view --keep-source` to keep excerpts without mounting Text.
+  For kernel functions, add `--vmlinux`, `--kernel-src` and `--func-links` to resolve
+  entry locations and embed source excerpts in Text and Timeline. The selected
+  `--source-rev` / `--source-url` provider also supplies these excerpts. Source
+  links use the kernel browser and revision; raw caller addresses remain raw,
+  with no fabricated call-site or inline chain. Missing debug positions or files
+  leave the source unavailable rather than borrowing a user location.
 - **Filtering:** with `--filter`, use `space:user` or `space:kernel` in Text
   or Timeline's shared Filter. Sidecar reports can apply this filter before
   Text loads. CLI tree pre-filters are not supported on uftrace streams yet.

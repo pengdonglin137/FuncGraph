@@ -310,7 +310,7 @@ function showDetail(i) {
     } else if (a) h += kv(D.uftrace ? (f & FL.USER ? 'raw payload' : 'raw args') : 'args', esc(a));
     if (ATOMIC.has(i)) h += kv('context', 'called with ' + esc(atomicText(ATOMIC.get(i))) + ' (sleeping function in atomic context)', 'err');
     h += kv('trace lines', lineLink(sLine[i]) + (sEline && sEline[i] && sEline[i] !== sLine[i] ? ' → ' + lineLink(sEline[i]) : ''));
-    h += '</div><details class="tl-cs" open><summary class="tl-sec">' + (f & FL.USER ? 'User source' : 'Call site source') + '</summary><div class="tl-cs-src"></div></details></div><div>';
+    h += '</div><details class="tl-cs" open><summary class="tl-sec">' + (f & FL.USER ? 'User source' : D.uftrace ? 'Kernel function source' : 'Call site source') + '</summary><div class="tl-cs-src"></div></details></div><div>';
     h += breakdownHtml(i);
     if (context.lists.has('error')) h += detailListHtml('error');
     h += detailListHtml('stack') + detailContextHint();

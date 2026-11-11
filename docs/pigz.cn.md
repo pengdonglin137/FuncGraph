@@ -49,8 +49,45 @@ uftrace record -K 30 --clock=mono --kernel-full-info --no-sched --srcline \
     -d capture-mixed ./pigz/pigz -p 1 -6 -c orders.csv > orders-mixed.csv.gz
 ./pigz/pigz -dc orders-mixed.csv.gz | cmp - orders.csv
 uftrace dump --fgraph --srcline -d capture-mixed > capture-mixed.jsonl
-funcgraph capture-mixed.jsonl --timeline --enable-fold --filter --user-src "$PWD" --output mixed.html
 ```
+
+生成报告时，**用户态和内核态源码需要分别配置**。以下是本案例已验证的 QEMU
+Linux `7.4.0-rc2` 构建；如果换了内核，镜像、源码提交和网页版本必须一起替换为
+**采集时运行的内核**，不能直接用当前主机的 `uname -r` 或源码仓库的最新提交：
+
+```bash
+KERNEL_SRC=/vol_1t/Qemu/linux
+VMLINUX="$KERNEL_SRC/x86_64/vmlinux"
+KERNEL_REV=7475ea8b58616b33c04afb976cf0fbaad9dd63fb
+
+funcgraph capture-mixed.jsonl --no-config --timeline --enable-fold --filter \
+    --user-src "$PWD" --vmlinux "$VMLINUX" --kernel-src "$KERNEL_SRC" \
+    --source-rev "$KERNEL_REV" --func-links --highlight-code \
+    --source-browser github --source-browser-rev "$KERNEL_REV" \
+    --output mixed.html
+```
+
+- `--user-src "$PWD"`：内嵌 pigz / zlib 的用户态源码，不使用内核网页地址。
+- `--vmlinux`：用匹配的 DWARF 调试信息解析内核函数入口位置；只有源码目录不够。
+- `--kernel-src` / `--source-rev`：从指定源码仓库的固定提交提取内核源码片段。
+- `--func-links`：让 Text 的内核函数名可点击；Timeline 调用栈中的路径也有链接。
+- `--source-browser` / `--source-browser-rev`：控制内核网页链接，与内嵌源码内容的选择分开。
+  这里显式使用 GitHub 的固定提交，避免继承旧配置；使用 Elixir 时改为
+  `--source-browser elixir --source-browser-rev v7.4-rc2`。定制内核应链接到对应仓库，
+  而不是把定制源码的行号指向 Torvalds 仓库。
+
+也可以把内核配置保存为预设，后续只指定用户态源码目录：
+
+```bash
+fgreport init qemu-pigz --vmlinux "$VMLINUX" --kernel-src "$KERNEL_SRC" \
+    --source-rev "$KERNEL_REV" --source-browser github --source-browser-rev "$KERNEL_REV"
+fgreport -p qemu-pigz capture-mixed.jsonl -- --user-src "$PWD"
+```
+
+如果只想查看调用关系，或手头没有匹配的内核调试镜像，可以省略内核相关参数：
+`funcgraph capture-mixed.jsonl --no-config --timeline --enable-fold --filter --user-src "$PWD" --output mixed-no-kernel-source.html`。
+这仍能显示混合调用栈和跨态分界线，但**不会生成内核源码位置、链接或片段**。
+仅用户态采集使用前两节的命令，不需要任何内核源码参数。
 
 切到 Timeline，点击 **Fit**，再点 **Exec / exit**。面板可跳到 Text 里的原始记录；
 **Markers** 在任务轨道标记事件时间。`sched_process_exec` 表示新程序镜像已装载，

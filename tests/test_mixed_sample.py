@@ -1,4 +1,4 @@
-"""Rebuild and open the published mixed sample without native dependencies."""
+"""Validate the published mixed sample and its no-debug-image fallback."""
 
 from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
@@ -26,7 +26,7 @@ PAGE_FILES = {'index.html', 'sample.html', 'sample.png', 'sample_text.png',
 
 
 def generate(trace, report):
-    result = invoke('--timeline', '--enable-fold', '--filter', '--user-src', ROOT / 'samples',
+    result = invoke('--timeline', '--enable-fold', '--filter', '--highlight-code', '--user-src', ROOT / 'samples',
                     '--report-mode', 'single', '--output', report, trace)
     if result.returncode:
         raise AssertionError(result.stderr)
@@ -45,7 +45,7 @@ def stable_html(html):
 
 
 class MixedSampleTest(unittest.TestCase):
-    def test_real_capture_and_reproducible_report(self):
+    def test_real_capture_and_no_debug_rebuild_preserve_recorded_model(self):
         with TRACE.open(encoding='utf-8') as source:
             metadata, records = uftrace.read_export(source)
         self.assertEqual(metadata['kernel_settings']['kernel_release'], '7.4.0-rc2')
@@ -96,13 +96,53 @@ class MixedSampleTest(unittest.TestCase):
         self.assertEqual(detail['address'], dispatch['address'])
         self.assertEqual(detail['args'], ', '.join(dispatch['user_args']))
         self.assertEqual(detail['retval'], '512')
-        self.assertEqual(data['chains'], [])
+        self.assertGreater(data['btf'], 0)
+        self.assertEqual(len(data['chains']), 1)
+        self.assertEqual(data['chains'][0][2], -11)
+        self.assertTrue(data['chains'][0][3])
         self.assertEqual(len(re.findall(r'<div class="line-container [^>]+data-boundary="user-kernel"', html)), 5)
         with tempfile.TemporaryDirectory() as directory:
             rebuilt = Path(directory) / REPORT.name
             generate(TRACE, rebuilt)
-            self.assertTrue(stable_html(html) == stable_html(rebuilt.read_text(encoding='utf-8')),
-                            'Regenerate sample_mixed.html using the command in docs/uftrace.md')
+            rebuilt_html = rebuilt.read_text(encoding='utf-8')
+            rebuilt_data = helpers.json_script(rebuilt_html, 'tlData')
+            for key in data.keys() - {'btf', 'cols', 'errs', 'chains', 'errnames', 'sources', 'stats'}:
+                self.assertEqual(data[key], rebuilt_data[key], key)
+            for key in cols:
+                if key == 'flags':
+                    self.assertEqual([flags & ~timeline.F_NULL_RET for flags in cols[key]], rebuilt_data['cols'][key])
+                else:
+                    self.assertEqual(cols[key], rebuilt_data['cols'][key], key)
+            for key in data['stats'].keys() - {'build_time'}:
+                self.assertEqual(data['stats'][key], rebuilt_data['stats'][key], key)
+            for key in ('user_lines', 'user_positions'):
+                self.assertEqual(data['sources'][key], rebuilt_data['sources'][key])
+            self.assertEqual(rebuilt_data['sources']['functions'], {})
+            for line in data['sources']['user_lines']:
+                original_source = helpers.json_script(html, 'fgSrc')[helpers.json_script(html, 'fgSrcLines')[line]]
+                rebuilt_source = helpers.json_script(rebuilt_html, 'fgSrc')[helpers.json_script(rebuilt_html, 'fgSrcLines')[line]]
+                self.assertEqual(original_source, rebuilt_source)
+            generate(TRACE, rebuilt)
+            self.assertEqual(stable_html(rebuilt_html), stable_html(rebuilt.read_text(encoding='utf-8')))
+
+    def test_published_kernel_entries_have_pinned_links_and_embedded_excerpts(self):
+        html = REPORT.read_text(encoding='utf-8')
+        data, pool, source_lines = (helpers.json_script(html, key) for key in ('tlData', 'fgSrc', 'fgSrcLines'))
+        functions, cols = data['sources']['functions'], data['cols']
+        self.assertEqual(len(functions), 332)
+        self.assertEqual(data['sources']['callers'], {})
+        self.assertEqual(data['inline'], {})
+        for index, flags in enumerate(cols['flags']):
+            if flags & timeline.F_USER:
+                continue
+            position = functions[f'{cols["name"][index]}:-1']
+            self.assertTrue(position[0] and position[1] > 0)
+            self.assertEqual(position[2], f'https://github.com/torvalds/linux/blob/v7.4-rc2/{position[0]}#L{position[1]}')
+            excerpt = pool[source_lines[str(cols['line'][index])]]
+            self.assertIn('kernel function entry', excerpt)
+            self.assertIn('source-line current-line', excerpt)
+            self.assertIn(position[2], excerpt)
+        self.assertTrue(all(not position[2] for position in data['sources']['user_positions']))
 
     def test_pages_stage_preserves_both_examples(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -218,6 +258,42 @@ class MixedSampleBrowserTest(unittest.TestCase):
         irq_rows.first.wait_for(state='visible')
         self.assertEqual(page.locator('.line-container[data-space=user]:visible').count(), 0)
         self.assertEqual(page.locator('.line-container[data-space=kernel]:visible').count(), irq_rows.count())
+        self.assertEqual(errors, [])
+        self.assertEqual(requests, [REPORT.as_uri()])
+
+    def test_offline_kernel_entry_links_and_excerpts_in_both_views(self):
+        page, errors, requests = self.open_page(REPORT.as_uri())
+        page.get_by_role('button', name='Timeline', exact=True).click()
+        line = page.evaluate('''() => {
+            const model = fgView('timeline').probe();
+            const index = Array.from({length: model.N}, (unused, candidate) => candidate)
+                .find(candidate => model.nameOf(candidate) === '__x64_sys_sendto');
+            model.select(index);
+            return fgData.read('tlData').cols.line[index];
+        }''')
+        summary = page.locator('.tl-cs summary', has_text='Kernel function source')
+        summary.wait_for(state='visible')
+        page.locator('.tl-cs-src .current-line', has_text='SYSCALL_DEFINE6(sendto').wait_for(state='visible')
+        source = page.locator('[data-context-list=stack] [data-space-boundary] .tl-context-source a')
+        self.assertEqual(source.get_attribute('href'), 'https://github.com/torvalds/linux/blob/v7.4-rc2/net/socket.c#L2286')
+        self.assertIn('function entry, not the calling line', source.get_attribute('title'))
+        excerpt_link = page.locator('.tl-cs-src .location-link a')
+        self.assertEqual(excerpt_link.get_attribute('href'), source.get_attribute('href'))
+        page.context.route('https://github.com/torvalds/linux/**', lambda route: route.fulfill(
+            status=200, content_type='text/html', body='<title>Kernel source</title>'))
+        for link in (source, excerpt_link):
+            with page.expect_popup() as opened:
+                link.click()
+            popup = opened.value
+            popup.wait_for_load_state()
+            self.assertEqual(popup.url, source.get_attribute('href'))
+            popup.close()
+        self.assertEqual(page.locator('.tl-cs-at [data-callsite-position]').count(), 0)
+        page.get_by_role('button', name='Text', exact=True).click()
+        entry = page.locator(f'#L{line}')
+        self.assertEqual(entry.locator('a.func-name-link').get_attribute('href'), source.get_attribute('href'))
+        entry.click()
+        page.locator('.expanded-content:visible .current-line', has_text='SYSCALL_DEFINE6(sendto').wait_for(state='visible')
         self.assertEqual(errors, [])
         self.assertEqual(requests, [REPORT.as_uri()])
 

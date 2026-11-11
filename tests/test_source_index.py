@@ -4,6 +4,7 @@ from pathlib import Path
 import re
 import subprocess
 import sys
+import tempfile
 import unittest
 from unittest import mock
 
@@ -89,6 +90,44 @@ class TimelineSourceTest(unittest.TestCase):
 
 
 class SourceBlockTest(unittest.TestCase):
+    def test_kernel_entry_excerpt_rejects_unresolved_missing_and_out_of_root_sources(self):
+        from fglib.uftrace import UftraceLine
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / 'source'
+            source.mkdir()
+            outside = root / 'outside.c'
+            outside.write_text('int private_file;\n', encoding='utf-8')
+            (source / 'escape.c').symlink_to(outside)
+            generator = HtmlGenerator([], None, None, kernel_src=str(source))
+            for position in [('??', 1), ('missing.c', 1), ('escape.c', 1), ('../outside.c', 1),
+                             (str(outside), 1), ('missing.c', 0), ('missing.c', '??')]:
+                with self.subTest(position=position):
+                    line = UftraceLine(record_type='entry', space='kernel', raw_func_name='work', func_name_info=position)
+                    self.assertIsNone(generator._kernel_source_index(line))
+            self.assertEqual(generator._src_pool, [])
+
+    def test_kernel_entry_excerpt_reads_selected_provider_not_modified_worktree(self):
+        from fglib.sources import Provider
+        from fglib.uftrace import UftraceLine
+
+        provider = Provider()
+        provider.files['kernel/fake.c'] = ['int pinned_revision;', 'int selected_line;']
+        generator = HtmlGenerator([], None, None, source_provider=provider, base_url='https://kernel.invalid/src')
+        line = UftraceLine(record_type='entry', space='kernel', raw_func_name='work',
+                           func_name_info=('kernel/fake.c', 2))
+        self.assertEqual(generator._kernel_source_index(line), 0)
+        self.assertEqual(generator._kernel_source_index(line), 0)
+        self.assertEqual(len(generator._src_pool), 1)
+        self.assertIn('int selected_line;', generator._src_pool[0])
+        self.assertIn('kernel function entry', generator._src_pool[0])
+        self.assertIn('https://kernel.invalid/src/kernel/fake.c#L2', generator._src_pool[0])
+        generator.func_links = True
+        generator.base_url = None
+        self.assertIn('<span class="hl-func">work</span>',
+                      generator._uftrace_markup(line, '0 | 0 | 1 | K | work() {'))
+
     def test_cache_uses_full_function_identity_and_accepts_source_id_zero(self):
         generator = HtmlGenerator([], None, None)
         original = generator._adjust_func_info

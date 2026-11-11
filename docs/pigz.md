@@ -58,8 +58,51 @@ uftrace record -K 30 --clock=mono --kernel-full-info --no-sched --srcline \
     -d capture-mixed ./pigz/pigz -p 1 -6 -c orders.csv > orders-mixed.csv.gz
 ./pigz/pigz -dc orders-mixed.csv.gz | cmp - orders.csv
 uftrace dump --fgraph --srcline -d capture-mixed > capture-mixed.jsonl
-funcgraph capture-mixed.jsonl --timeline --enable-fold --filter --user-src "$PWD" --output mixed.html
 ```
+
+Configure **user and kernel sources separately** when generating the report.
+These values identify the QEMU Linux `7.4.0-rc2` build verified for this case.
+For another capture, replace the image, source commit and browser revision
+together with those of the **kernel running during recording**, not the report
+host's `uname -r` or the source tree's latest commit:
+
+```bash
+KERNEL_SRC=/vol_1t/Qemu/linux
+VMLINUX="$KERNEL_SRC/x86_64/vmlinux"
+KERNEL_REV=7475ea8b58616b33c04afb976cf0fbaad9dd63fb
+
+funcgraph capture-mixed.jsonl --no-config --timeline --enable-fold --filter \
+    --user-src "$PWD" --vmlinux "$VMLINUX" --kernel-src "$KERNEL_SRC" \
+    --source-rev "$KERNEL_REV" --func-links --highlight-code \
+    --source-browser github --source-browser-rev "$KERNEL_REV" \
+    --output mixed.html
+```
+
+- `--user-src "$PWD"` embeds pigz / zlib source, without using the kernel browser.
+- `--vmlinux` resolves kernel function entries using matching DWARF debug information;
+  a source directory alone cannot resolve them.
+- `--kernel-src` / `--source-rev` extract kernel excerpts from a pinned source commit.
+- `--func-links` makes kernel symbols clickable in Text; stack paths in Timeline link too.
+- `--source-browser` / `--source-browser-rev` select kernel web links independently of
+  embedded source content. This example explicitly pins GitHub links rather than
+  inheriting old settings. For Elixir, use
+  `--source-browser elixir --source-browser-rev v7.4-rc2`. Custom kernels need their
+  own repository links, not custom line numbers pointing into Torvalds' tree.
+
+Alternatively, store the kernel settings in a preset and supply only user sources
+on subsequent runs:
+
+```bash
+fgreport init qemu-pigz --vmlinux "$VMLINUX" --kernel-src "$KERNEL_SRC" \
+    --source-rev "$KERNEL_REV" --source-browser github --source-browser-rev "$KERNEL_REV"
+fgreport -p qemu-pigz capture-mixed.jsonl -- --user-src "$PWD"
+```
+
+Without a matching debug image, a call-flow-only report remains useful:
+`funcgraph capture-mixed.jsonl --no-config --timeline --enable-fold --filter --user-src "$PWD" --output mixed-no-kernel-source.html`.
+It retains mixed stacks and boundaries, but **does not generate kernel source
+positions, links or excerpts**. The user-only run in the first two sections needs
+no kernel source options.
 
 In Timeline, click **Fit** and then **Exec / exit**. The panel links each
 milestone to its original Text record. The **Markers** overlay draws ticks

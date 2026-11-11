@@ -1211,33 +1211,54 @@ class HtmlGenerator:
         return source_index
 
     def _user_source_index(self, position):
-        if position in self._src_calls:
-            return self._src_calls[position]
+        return self._position_source_index(position, self.user_src, 'recorded user source')
+
+    def _kernel_source_index(self, line):
+        position = line.get('func_name_info')
+        if line.get('space') != 'kernel' or not line.get('raw_func_name') or not position:
+            return None
+        if not position[0] or position[0] == '??' or not re.fullmatch(r'[1-9][0-9]*', str(position[1])):
+            return None
+        file, number, url = self._timeline_position(*position, line.get('module_name'))
+        root = Path(self.kernel_src).resolve() if self.kernel_src else None
+        return self._position_source_index((file, number), root, 'kernel function entry', url, self.source_provider)
+
+    def _position_source_index(self, position, root, basis, url='', provider=None):
+        key = (basis, *position, url)
+        if key in self._src_calls:
+            return self._src_calls[key]
         file, line = position
         result = None
-        if self.user_src is not None:
-            try:
-                target = (self.user_src / file).resolve()
-                if self.user_src in target.parents and target.is_file() and target.stat().st_size <= 4 * 1024 * 1024:
-                    first = max(1, line - 5)
+        try:
+            first = max(1, line - 5)
+            excerpt = []
+            if provider is not None:
+                content = provider.get(file)
+                if content is not None:
+                    excerpt = content[first - 1:line + 5]
+            elif root is not None:
+                target = (root / file).resolve()
+                if root in target.parents and target.is_file() and target.stat().st_size <= 4 * 1024 * 1024:
                     with target.open(encoding='utf-8', errors='replace') as stream:
                         excerpt = list(islice(stream, first - 1, line + 5))
-                    if len(excerpt) > line - first:
-                        parts = [f'<div class="location-link">{html.escape(file)}:{line} · recorded user source</div>']
-                        for number, code in enumerate(excerpt, first):
-                            code = code.rstrip('\r\n')
-                            code = highlight_c_code(code) if self.highlight_code else html.escape(code)
-                            classes = 'source-line current-line' if number == line else 'source-line'
-                            parts.append(f'<div class="{classes}">{number:>6}  {code}</div>')
-                        result = len(self._src_pool)
-                        self._src_pool.append(''.join(parts))
-            except (OSError, ValueError, RuntimeError):
-                pass
-        self._src_calls[position] = result
+            if len(excerpt) > line - first:
+                label = html.escape(f'{file}:{line}')
+                if url:
+                    label = f'<a href="{html.escape(url, quote=True)}" target="_blank" rel="noopener noreferrer">{label}</a>'
+                parts = [f'<div class="location-link" data-source-position>{label} · {basis}</div>']
+                for number, code in enumerate(excerpt, first):
+                    code = code.rstrip('\r\n')
+                    code = highlight_c_code(code) if self.highlight_code else html.escape(code)
+                    classes = 'source-line current-line' if number == line else 'source-line'
+                    parts.append(f'<div class="{classes}">{number:>6}  {code}</div>')
+                result = len(self._src_pool)
+                self._src_pool.append(''.join(parts))
+        except (OSError, ValueError, RuntimeError):
+            pass
+        self._src_calls[key] = result
         return result
 
-    @staticmethod
-    def _uftrace_markup(line, raw_line):
+    def _uftrace_markup(self, line, raw_line):
         fields = raw_line.split(' | ', 4)
         if len(fields) != 5:
             return html.escape(raw_line)
@@ -1251,7 +1272,16 @@ class HtmlGenerator:
         if line.raw_func_name:
             name = html.escape(line.raw_func_name)
             rest = html.escape(body[len(line.raw_func_name):]).replace('{', '<span class="hl-symbol">{</span>', 1)
-            body = f'<span class="hl-func">{name}</span>' + rest
+            symbol = f'<span class="hl-func">{name}</span>'
+            if self.func_links and line.space == 'kernel' and line.func_name_info:
+                source_file, number = line.func_name_info
+                if source_file and source_file != '??' and re.fullmatch(r'[1-9][0-9]*', str(number)):
+                    module = line.get('module_name')
+                    base = self.combined_module_url_map.get(module, self.default_module_url) if module else self.base_url
+                    if base:
+                        symbol = create_source_link(source_file, number, line.raw_func_name, self.base_url,
+                                                    self.kernel_src, self.module_srcs, module, base)
+            body = symbol + rest
         elif body.startswith('}'):
             body = '<span class="hl-symbol">}</span><span class="hl-comment">' + html.escape(body[1:]) + '</span>'
         else:
@@ -1299,10 +1329,10 @@ class HtmlGenerator:
                     fold_ends[line.get('fold_id')] = index + 1
         for idx, line_data in enumerate(self.parsed_lines):
             position = line_data.get('source')
-            user_src_idx = self._user_source_index(position) if position else None
+            position_src_idx = self._user_source_index(position) if position else self._kernel_source_index(line_data)
             if self.omit_text:
-                if user_src_idx is not None:
-                    self._src_lines[idx + 1] = user_src_idx
+                if position_src_idx is not None:
+                    self._src_lines[idx + 1] = position_src_idx
                 elif line_data['expandable'] and line_data['func_info']:
                     self._src_lines[idx + 1] = self._source_index(line_data['func_info'])
                 if not line_data['raw_line'].startswith('#') or header_count >= 200:
@@ -1385,7 +1415,7 @@ class HtmlGenerator:
                 escaped_line = escaped_line.replace(f'___HTML_LINK_{idx}___', link)
 
             # 检查是否可展开
-            is_expandable = user_src_idx is not None or (line_data['expandable'] and line_data['func_info'])
+            is_expandable = position_src_idx is not None or (line_data['expandable'] and line_data['func_info'])
             expandable_class = "expandable" if is_expandable else ""
 
             # 获取折叠信息
@@ -1412,7 +1442,7 @@ class HtmlGenerator:
             duration_raw = line_data.get('duration_raw')  # 原始耗时字符串
             attributes = self._text_attributes(line_data, raw_line, fold_ends, fold_starts)
             data_attrs = ''.join(f' data-{name}="{html.escape(value, quote=True)}"' for name, value in attributes.items())
-            src_idx = user_src_idx if position else self._source_index(line_data['func_info']) if is_expandable else None
+            src_idx = position_src_idx if position_src_idx is not None else self._source_index(line_data['func_info']) if is_expandable else None
             if self.text_index is not None:
                 self.text_index.append(line_number, attributes, escaped_line, source=src_idx)
 

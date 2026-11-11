@@ -27,15 +27,30 @@ Text 在对应入口旁显示带下划线的 `K`，用户态入口行显示参�
 [仓库内的 JSONL](../samples/sample_mixed.jsonl) 取自 2026 年 11 月 11 日在 x86_64 QEMU
 Linux `7.4.0-rc2` 上对 [`demo_mixed.c`](../samples/demo_mixed.c) 的实际采集，包含 25 次用户态调用、
 1,067 次内核态调用和 5 处匹配的跨态边界。截取时保留了原始调用记录，包括地址、参数和原始
-返回值；没有纳入调度 / perf 事件。这个报告不使用内核调试镜像；若要看内核源码解析和 BTF
-校验的错误路径，可打开[纯内核态示例](../sample.html)。在仓库根目录重建混合报告无需 uftrace
-可执行文件或 `vmlinux`：
+返回值；没有纳入调度 / perf 事件。发布的报告使用了匹配的内核调试镜像：332 个不同的内核
+函数均有入口源码位置、固定到 Linux `v7.4-rc2` 的链接和内嵌片段，与记录的用户态源码同时展示。
+选中 `__x64_sys_sendto` 可看到 `net/socket.c:2286` 和 **Kernel function source**，也可展开
+对应的 Text 行。这是函数入口位置，不是由原始返回地址解析出的调用点；匹配的 BTF 还可
+校验非阻塞接收的错误路径。打开 HTML 无需内核源码树或 uftrace。在仓库根目录重建它时，
+需要匹配且含调试信息的镜像及源码仓库：
 
 ```bash
 python3 funcgraph.py --no-config --timeline --enable-fold --filter \
-    --user-src samples --report-mode single \
+    --user-src samples --report-mode single --func-links --fast --highlight-code \
+    --vmlinux /vol_1t/Qemu/linux/x86_64/vmlinux --kernel-src /vol_1t/Qemu/linux \
+    --source-rev 7475ea8b58616b33c04afb976cf0fbaad9dd63fb \
+    --source-browser github --source-browser-rev v7.4-rc2 \
     --output sample_mixed.html samples/sample_mixed.jsonl
 FG_CONFIG=/dev/null python3 samples/make_shots.py  # 重建截图，需要 Playwright + Chromium
+```
+
+本地路径请按匹配的构建调整。没有该镜像时，下面的命令仍能重建相同的调用记录、时序、
+跨态边界和用户态源码，但无法解析内核源码或执行该镜像的 BTF 类型校验：
+
+```bash
+python3 funcgraph.py --no-config --timeline --enable-fold --filter \
+    --user-src samples --report-mode single --highlight-code \
+    --output mixed-no-kernel-source.html samples/sample_mixed.jsonl
 ```
 
 ## 生成报告
@@ -68,6 +83,10 @@ Compare 与 `--export` 分开统计用户态、内核态的同名函数。
   `--user-src DIR` 只嵌入解析后仍位于该目录内的源码；点击调用栈位置或展开 Text 行查看。
   找不到源码或路径越出该目录时只显示记录的位置，不生成外链。使用
   `--no-text-view --keep-source` 可省略 Text DOM，但保留片段。
+  内核函数使用 `--vmlinux`、`--kernel-src` 和 `--func-links` 解析入口位置，在 Text 和
+  Timeline 内嵌源码片段；指定 `--source-rev` / `--source-url` 时，片段也使用选定的源码提供器。
+  内核链接使用对应的浏览器和版本，不混用用户态位置；原始 caller 地址仍按原样保留，
+  不伪造调用点或内联链。缺少调试位置或文件时，源码保持不可用。
 - **过滤**：启用 `--filter` 后，Text 与 Timeline 共用的 Filter 支持 `space:user` 和
   `space:kernel`；sidecar 报告不必先加载 Text。命令行的调用树预过滤暂不适用于 uftrace。
 - **数据缺口**：缺失进出记录或丢失事件会标记，不补造实测帧。用户态 CPU 未知，

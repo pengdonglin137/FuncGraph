@@ -220,6 +220,74 @@ class UftraceImportTest(unittest.TestCase):
             comparison = helpers.json_script((root / 'compare.html').read_text(encoding='utf-8'), 'cmpData')
             self.assertEqual({row[11] for row in comparison['rows'] if row[0] == 'work<int>'}, {'user', 'kernel'})
 
+    def test_kernel_entry_sources_are_separate_from_recorded_user_and_raw_callers(self):
+        kernel = helpers.FakeKernel()
+        self.addCleanup(kernel.close)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / 'kernel').mkdir()
+            (root / 'kernel/fake.c').write_text('/* user file */\nint user_only;\n', encoding='utf-8')
+            records = capture()
+            records[1]['source'] = {'file': 'kernel/fake.c', 'line': 2}
+            trace = root / 'capture.jsonl'
+            trace.write_text(stream(records), encoding='utf-8')
+            baseline = None
+            for extra in ([], ['--no-text-view', '--keep-source'], ['--no-text-view']):
+                with self.subTest(options=extra):
+                    html, _ = kernel.run(str(trace), '--no-config', '--timeline', '--enable-fold',
+                                         '--func-links', '--base-url', 'https://kernel.invalid/src',
+                                         '--user-src', str(root), *extra)
+                    data = helpers.json_script(html, 'tlData')
+                    pool, lines = (helpers.json_script(html, key) for key in ('fgSrc', 'fgSrcLines'))
+                    self.assertEqual(data['sources']['callers'], {})
+                    self.assertEqual(data['inline'], {})
+                    cols = data['cols']
+                    names = [data['strings'][name] for name in cols['name']]
+                    kernel_index = next(index for index, name in enumerate(names)
+                                        if name == 'work<int>' and not cols['flags'][index] & timeline.F_USER)
+                    user_index = names.index('work<int>')
+                    if extra == ['--no-text-view']:
+                        self.assertEqual(pool, [])
+                        self.assertEqual(lines, {})
+                        continue
+                    self.assertEqual(data['sources']['functions'][f'{cols["name"][kernel_index]}:-1'],
+                                     ['kernel/fake.c', 2, 'https://kernel.invalid/src/kernel/fake.c#L2'])
+                    kernel_block = pool[lines[str(cols['line'][kernel_index])]]
+                    user_block = pool[lines[str(cols['line'][user_index])]]
+                    self.assertIn('kernel function entry', kernel_block)
+                    self.assertIn('int b;', kernel_block)
+                    self.assertNotIn('user_only', kernel_block)
+                    self.assertIn('int user_only;', user_block)
+                    self.assertIn('recorded user source', user_block)
+                    self.assertNotIn('https://kernel.invalid', user_block)
+                    if baseline is None:
+                        baseline = pool, lines
+                        self.assertIn('class="func-name-link" href="https://kernel.invalid/src/kernel/fake.c#L2"', html)
+                    else:
+                        self.assertEqual((pool, lines), baseline)
+            html, _ = kernel.run(str(trace), '--no-config', '--timeline', '--user-src', str(root))
+            self.assertFalse(helpers.json_script(html, 'tlData')['sources']['functions'])
+            self.assertTrue(all('kernel function entry' not in block for block in helpers.json_script(html, 'fgSrc')))
+
+    def test_entry_excerpts_work_in_text_only_for_each_address_space(self):
+        kernel = helpers.FakeKernel()
+        self.addCleanup(kernel.close)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / 'demo.c').write_text('/* user source */\nint user_main;\n', encoding='utf-8')
+            trace = root / 'capture.jsonl'
+            for space in ('user', 'kernel', 'mixed'):
+                with self.subTest(space=space):
+                    records = [record for record in capture() if space == 'mixed' or record['space'] == space]
+                    trace.write_text(stream(records), encoding='utf-8')
+                    html, _ = kernel.run(str(trace), '--no-config', '--func-links', '--user-src', str(root),
+                                         '--base-url', 'https://kernel.invalid/src')
+                    pool = helpers.json_script(html, 'fgSrc')
+                    self.assertIsNone(helpers.json_script(html, 'tlData'))
+                    self.assertEqual(any('kernel function entry' in block for block in pool), space != 'user')
+                    self.assertEqual(any('recorded user source' in block for block in pool), space != 'kernel')
+                    self.assertEqual(len(pool), 2 if space == 'mixed' else 1)
+
 
 class UftraceBrowserTest(unittest.TestCase):
     def test_timeline_boundary_and_deferred_text_filter(self):
@@ -301,6 +369,17 @@ class UftraceBrowserTest(unittest.TestCase):
                     boundary = page.locator('#content [data-boundary]')
                     self.assertEqual(boundary.count(), 2)
                     self.assertEqual(page.locator('#content [data-space=user] a[href^="' + kernel_url + '"]').count(), 0)
+                    kernel_entry = page.locator('#content .fold-entry[data-space=kernel][data-func="work<int>"]')
+                    self.assertEqual(kernel_entry.locator('a.func-name-link').get_attribute('href'),
+                                     kernel_url + '/kernel/fake.c#L2')
+                    kernel_entry.click()
+                    page.locator('.expanded-content:visible .current-line', has_text='int b;').wait_for()
+                    page.evaluate('fgView("timeline").probe().select(2)')
+                    page.get_by_role('button', name='Timeline', exact=True).click()
+                    page.locator('.tl-cs summary', has_text='Kernel function source').wait_for(state='visible')
+                    page.locator('.tl-cs-src .current-line', has_text='int b;').wait_for(state='visible')
+                    self.assertEqual(page.locator('.tl-cs-at [data-callsite-position]').count(), 0)
+                    page.get_by_role('button', name='Text', exact=True).click()
                     page.locator('#content .fold-entry[data-space=user] .fold-icon').first.click()
                     self.assertFalse(boundary.first.is_visible())
                     self.assertEqual(errors, [])
