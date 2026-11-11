@@ -486,6 +486,26 @@ yield 'Drawing Timeline…';
 // ---- DOM skeleton ----
 tlRoot.innerHTML = `
 <div class="tl-toolbar">
+  <span class="tl-group tl-search-group">
+    <input class="tl-search" placeholder="/ search function (regex)" spellcheck="false" aria-label="Search traced function names (regular expression)" aria-describedby="tlSearchStatus" aria-invalid="false">
+    <span class="tl-search-nav">
+      <button class="tl-btn" data-act="searchprev" title="Previous search match (Shift+Enter / Shift+N)" aria-label="Previous search match" disabled>◀</button>
+      <button class="tl-btn" data-act="searchnext" title="Next search match (Enter / N)" aria-label="Next search match" disabled>▶</button>
+    </span>
+    <span class="tl-count" id="tlSearchStatus" role="status" aria-live="polite" aria-atomic="true"></span>
+  </span>
+  <span class="tl-group tl-quick">
+    <span class="tl-group tl-zoom-group" role="group" aria-label="Timeline zoom">
+      <button class="tl-btn tl-touch-zoom" data-act="zoomout" aria-label="Zoom timeline out">−</button>
+      <button class="tl-btn tl-touch-zoom" data-act="zoomin" aria-label="Zoom timeline in">+</button>
+      <button class="tl-btn" data-act="fit" title="Show the whole trace (0)">Fit</button>
+    </span>
+    <button class="tl-btn" data-act="notes" title="Show / hide the notes about this trace" aria-pressed="false">Notes</button>
+    <button class="tl-btn tl-more" data-act="options" aria-expanded="false" aria-controls="tlOptions">More<span class="tl-more-filter" hidden> · Filter on</span></button>
+  </span>
+  ${MIXED ? '<span class="tl-group tl-space-key" aria-label="Address space legend"><span class="tl-space-user">User</span><span>Kernel</span>' +
+    (D.stats.user_kernel_boundaries ? '<span class="tl-space-edge" title="Boundary spans the recorded kernel call">User → kernel</span>' : '') + '</span>' : ''}
+  <div class="tl-options" id="tlOptions">
   <span class="tl-group"><span class="tl-label">Color</span>
     <span class="tl-seg" data-role="color">
       <button data-v="ctx" class="on" title="Execution context (task / softirq / hardirq / NMI)">Context</button>
@@ -494,8 +514,6 @@ tlRoot.innerHTML = `
       <button data-v="cpu" title="CPU the call ran on">CPU</button>
       <button data-v="module" title="Kernel module">Module</button>
     </span></span>
-  ${MIXED ? '<span class="tl-group tl-space-key" aria-label="Address space legend"><span class="tl-space-user">User</span><span>Kernel</span>' +
-    (D.stats.user_kernel_boundaries ? '<span class="tl-space-edge" title="Boundary spans the recorded kernel call">User → kernel</span>' : '') + '</span>' : ''}
   <span class="tl-group"><span class="tl-label">Overlay</span>
     <button class="tl-chip" data-ov="err"><i class="dot" style="background:#d32f2f"></i>Errors</button>
     <button class="tl-chip" data-ov="irq"><i class="dot" style="background:repeating-linear-gradient(135deg,#555 0 2px,transparent 2px 4px)"></i>IRQs off</button>
@@ -505,23 +523,10 @@ tlRoot.innerHTML = `
     <button class="tl-chip off" data-ov="preempt"><i class="dot" style="background:#6b7280"></i>Preempt depth</button>
     <button class="tl-chip" data-ov="mk"><i class="dot" style="background:#8e44ad"></i>Markers</button>
   </span>
-  <span class="tl-group tl-search-group">
-    <input class="tl-search" placeholder="/ search function (regex)" spellcheck="false" aria-label="Search traced function names (regular expression)" aria-describedby="tlSearchStatus" aria-invalid="false">
-    <span class="tl-search-nav">
-      <button class="tl-btn" data-act="searchprev" title="Previous search match (Shift+Enter / Shift+N)" aria-label="Previous search match" disabled>◀</button>
-      <button class="tl-btn" data-act="searchnext" title="Next search match (Enter / N)" aria-label="Next search match" disabled>▶</button>
-    </span>
-    <span class="tl-count" id="tlSearchStatus" role="status" aria-live="polite" aria-atomic="true"></span>
-  </span>
   <span class="tl-group tl-errnav">
     <button class="tl-btn" data-act="errprev" title="Previous error origin (Shift+E)">◀</button>
     <button class="tl-btn" data-act="errmode" title="Toggle: user-visible errors only / all errors"><span class="err-label"></span></button>
     <button class="tl-btn" data-act="errnext" title="Next error origin (E)">▶</button>
-  </span>
-  <span class="tl-group tl-zoom-group" role="group" aria-label="Timeline zoom">
-    <button class="tl-btn tl-touch-zoom" data-act="zoomout" aria-label="Zoom timeline out">−</button>
-    <button class="tl-btn tl-touch-zoom" data-act="zoomin" aria-label="Zoom timeline in">+</button>
-    <button class="tl-btn" data-act="fit" title="Show the whole trace (0)">Fit</button>
   </span>
   <span class="tl-group">
     <button class="tl-btn" data-act="expand" title="Expand / collapse all tracks">Tracks</button>
@@ -532,15 +537,15 @@ tlRoot.innerHTML = `
     <button class="tl-btn" data-act="an-sec" title="Critical sections: irqs-off / preempt-off / BH-off regions">Sections</button>
     <button class="tl-btn" data-act="an-lat" title="Scheduling latency: need-resched windows and what delayed them">Sched latency</button>
     ${PROCESS_EVENTS.length ? '<button class="tl-btn" data-act="process-events" title="Recorded kernel exec and exit events">Exec / exit</button>' : ''}
-    <button class="tl-btn" data-act="notes" title="Show / hide the notes about this trace">Notes</button>
     <button class="tl-btn" data-act="max" title="Maximize: hide the page header and tabs (M)">Max</button>
     <button class="tl-btn" data-act="help" title="Timeline help (?)" aria-label="Timeline help" hidden>?</button>
   </span>
   <span class="tl-group tl-filterbar"><span class="tl-label">Filter</span>
-  <input class="tl-ftext" placeholder="same syntax as the text view, e.g. pid:1234 AND graph:vfs_read" spellcheck="false">
+  <input class="tl-ftext" placeholder="e.g. pid:1234" aria-label="Filter trace lines" title="Uses the same filter syntax as Text" spellcheck="false">
   <span class="tl-fcount"></span>
   <button class="tl-btn" data-act="fhide" title="Hide tracks without matches">Hide unmatched</button>
   <button class="tl-btn" data-act="fclear">Clear</button></span>
+  </div>
 </div>
 <div class="tl-notes"></div>
 <div class="tl-stage">
@@ -561,6 +566,12 @@ const elDetail = tlRoot.querySelector('.tl-detail');
 const elTip = tlRoot.querySelector('.tl-tip');
 const elHelp = tlRoot.querySelector('.tl-help');
 const elNotes = tlRoot.querySelector('.tl-notes');
+const elToolbar = tlRoot.querySelector('.tl-toolbar');
+const elOptions = tlRoot.querySelector('.tl-options');
+const elMore = tlRoot.querySelector('.tl-more');
+const elMoreFilter = tlRoot.querySelector('.tl-more-filter');
+const elNotesButton = tlRoot.querySelector('[data-act=notes]');
+const compactToolbar = window.matchMedia('(any-pointer: coarse) and (max-width: 640px), (any-pointer: coarse) and (max-height: 480px)');
 const elSearch = tlRoot.querySelector('.tl-search');
 const elCount = tlRoot.querySelector('.tl-count');
 const elSearchPrev = tlRoot.querySelector('[data-act=searchprev]');

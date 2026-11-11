@@ -277,6 +277,8 @@ Interaction: `W`/`S` or Ctrl+wheel zoom, `A`/`D` or drag to pan, double-click to
 
 On a touchscreen, tap a call to open its details or a track header to collapse it. Swipe horizontally on the tracks to pan through time, swipe vertically to scroll tracks, and pinch over the tracks to zoom the time range rather than the page. Use **−**, **+** and **Fit** in the toolbar if a pinch is inconvenient; browser zoom is unchanged outside the track canvas.
 
+On a phone, search, zoom, **Notes** and the mixed-trace legend stay in the toolbar. **More** opens the shared filter, overlays, colors and analysis tools over the timeline without shrinking it. **Filter on** means the shared filter is still applied, even when the panel is closed. **Notes** opens capture limitations separately; it starts closed on phones. The selected call stays in view when its detail panel opens.
+
 The tool adapts to the options the trace was captured with and tells you what is missing:
 
 | Missing option | Effect in the timeline |

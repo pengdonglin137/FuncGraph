@@ -167,7 +167,8 @@ function detailDefault() { return Math.round(Math.min(400, Math.max(180, window.
 function detailPx() { const v = +prefGet('detailFrac'); return v > 0 && v < 1 ? Math.round(v * window.innerHeight) : detailDefault(); }
 function clampDetailH(h) {
     const notesMin = elNotes.classList.contains('hide') ? 0 : 28;
-    return Math.round(Math.max(60, Math.min(h, tlRoot.clientHeight - 160 - 32 - notesMin - elResizer.offsetHeight)));
+    const controlsHeight = compactToolbar.matches ? elToolbar.offsetHeight : 32 + notesMin;
+    return Math.round(Math.max(60, Math.min(h, tlRoot.clientHeight - 160 - controlsHeight - elResizer.offsetHeight)));
 }
 
 // ---- main canvas ----
@@ -175,6 +176,7 @@ function resize() {
     DPR = window.devicePixelRatio || 1;
     const top = Math.max(0, tlRoot.getBoundingClientRect().top);
     tlRoot.style.height = Math.max(288, window.innerHeight - top - 12) + 'px';
+    if (compactToolbar.matches) tlRoot.style.setProperty('--tl-toolbar-height', elToolbar.offsetHeight + 'px');
     if (elDetail.classList.contains('show')) {
         elDetail.style.height = clampDetailH(detailPx()) + 'px';
     }

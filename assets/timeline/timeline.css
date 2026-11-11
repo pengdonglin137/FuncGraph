@@ -56,7 +56,8 @@
 .tl-seg button.on { background: #3b6fd8; color: #fff; }
 .tl-btn { border: 1px solid var(--border-color); border-radius: 6px; }
 .tl-btn:disabled { opacity: .45; cursor: default; }
-.tl-touch-zoom { display: none; }
+.tl-touch-zoom, .tl-more { display: none; }
+.tl-options { display: contents; }
 .tl-chip {
     border: 1px solid var(--border-color);
     border-radius: 12px;
@@ -413,8 +414,52 @@ table.tl-sum td.err { color: #c62828; }
 }
 
 @media (any-pointer: coarse) {
-    .tl-zoom-group { order: -2; }
-    .tl-search-group { order: -1; }
     .tl-zoom-group .tl-btn { min-width: 44px; min-height: 44px; }
     .tl-touch-zoom { display: inline-block; font-size: 16px; }
+}
+
+.tl-compact { position: relative; }
+.tl-compact .tl-toolbar {
+    position: relative;
+    flex: 0 0 auto;
+    max-height: none;
+    overflow: visible;
+    gap: 4px 10px;
+}
+.tl-compact .tl-quick, .tl-compact .tl-zoom-group { gap: 4px; }
+.tl-compact .tl-quick .tl-btn, .tl-compact .tl-search-nav .tl-btn, .tl-compact .tl-close {
+    min-width: 44px;
+    min-height: 44px;
+}
+.tl-compact .tl-search-group { flex: 0 1 295px; flex-wrap: nowrap; }
+.tl-compact .tl-search { flex: 1 1 auto; min-width: 0; font-size: 16px; }
+.tl-compact .tl-search::placeholder { font-size: 12px; }
+.tl-compact .tl-count { min-width: 0; }
+.tl-compact .tl-more { display: inline-block; }
+.tl-compact .tl-more-filter { color: var(--link-color); font-weight: 600; }
+.tl-compact .tl-options:not(.open) { display: none; }
+.tl-compact .tl-options.open, .tl-compact .tl-notes:not(.hide) {
+    position: absolute;
+    z-index: 5;
+    box-sizing: border-box;
+    flex-wrap: wrap;
+    align-items: start;
+    gap: 8px 14px;
+    max-height: min(48vh, 350px);
+    padding: 10px;
+    overflow: auto;
+    overscroll-behavior: contain;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    background: var(--container-bg);
+    box-shadow: 0 8px 20px rgba(0, 0, 0, .20);
+}
+.tl-compact .tl-options.open { display: flex; inset: 100% 0 auto; }
+.tl-compact .tl-notes:not(.hide) { inset: var(--tl-toolbar-height, 100px) 0 auto; }
+.tl-compact .tl-options :is(button, input) { min-height: 36px; }
+.tl-compact .tl-options input { font-size: 16px; }
+.tl-compact .tl-slice-head { box-sizing: border-box; min-height: 44px; padding-inline-end: 52px; gap: 4px 8px; }
+.tl-compact .tl-slice-head .tl-close { position: absolute; inset-block-start: 0; inset-inline-end: 4px; }
+@media (min-height: 481px) {
+    .tl-compact .tl-slice-head { top: 0; }
 }

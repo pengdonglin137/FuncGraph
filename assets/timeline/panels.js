@@ -466,12 +466,42 @@ elResizer.addEventListener('pointerdown', ev => {
 elResizer.addEventListener('dblclick', () => { prefSet('detailFrac', null); resize(); });
 
 // Notes strip (hidden state remembered) and maximized layout (no page header / tabs).
-function setNotes(on) {
+function updateNotes(on) {
+    on = on && elNotes.children.length > 0;
     elNotes.classList.toggle('hide', !on);
-    tlRoot.querySelector('[data-act=notes]').classList.toggle('on', on);
-    prefSet('notes', on ? '1' : '0');
-    resize();
+    elNotesButton.classList.toggle('on', on);
+    elNotesButton.setAttribute('aria-pressed', String(on));
 }
+function setNotes(on) {
+    updateNotes(on);
+    prefSet(compactToolbar.matches ? 'notesCompact' : 'notes', on ? '1' : '0');
+    if (!compactToolbar.matches) resize();
+}
+function setToolbarOptions(on, restoreFocus = false) {
+    const open = on && compactToolbar.matches;
+    if (open && !elNotes.classList.contains('hide')) setNotes(false);
+    elOptions.classList.toggle('open', open);
+    elMore.setAttribute('aria-expanded', String(open));
+    if (restoreFocus) elMore.focus({ preventScroll: true });
+}
+function syncToolbar() {
+    const compact = compactToolbar.matches;
+    const focusInOptions = elOptions.contains(document.activeElement);
+    tlRoot.classList.toggle('tl-compact', compact);
+    setToolbarOptions(false, compact && focusInOptions);
+    updateNotes(compact ? prefGet('notesCompact') === '1' : prefGet('notes') !== '0');
+}
+function dismissToolbarOptions(event) {
+    if (elOptions.classList.contains('open') && !elOptions.contains(event.target) && !elMore.contains(event.target)) {
+        setToolbarOptions(false);
+    }
+}
+document.addEventListener('pointerdown', dismissToolbarOptions);
+document.addEventListener('focusin', dismissToolbarOptions);
+compactToolbar.addEventListener('change', () => {
+    syncToolbar();
+    if (window.fgCurrentView() === 'timeline') resize();
+});
 function setMax(on) {
     // only in the timeline; the classes sit on the elements (see views.css)
     document.body.classList.toggle('tl-max', on);
@@ -699,6 +729,7 @@ window.fgOnFilterProgress = renderFilterProgress;
 function applyTextFilter() {
     const st = window.fgFilterState || { text: '', lines: null };
     if (document.activeElement !== elFtext) elFtext.value = st.text || '';
+    elMoreFilter.hidden = !st.lines;
     if (!st.lines) {
         textHits = null;
         filteredCallCount = null;
@@ -785,10 +816,14 @@ tlRoot.querySelectorAll('[data-ov]').forEach(b => {
         draw();
     });
 });
-tlRoot.querySelector('.tl-toolbar').addEventListener('click', ev => {
+elToolbar.addEventListener('click', ev => {
     const b = ev.target.closest('[data-act]');
     if (!b) return;
+    if (elOptions.classList.contains('open') && b.matches('[data-act^=an-], [data-act=process-events], [data-act=max], [data-act=help]')) {
+        setToolbarOptions(false, true);
+    }
     switch (b.dataset.act) {
+        case 'options': setToolbarOptions(!elOptions.classList.contains('open')); break;
         case 'searchprev': searchNext(-1); break;
         case 'searchnext': searchNext(1); break;
         case 'errprev': gotoErr(-1); break;
@@ -896,7 +931,8 @@ elHelp.innerHTML = `
 <li><kbd>Shift</kbd>+drag: summarize a range in this track (<kbd>Shift</kbd>+<kbd>Alt</kbd>: all tracks)</li></ul>
 <h4>Touch</h4><ul>
 <li>Tap a call or track header. Swipe horizontally on the tracks to pan; swipe vertically to scroll.</li>
-<li>Pinch the tracks to zoom around your fingers, or use <b>−</b>, <b>+</b> and <b>Fit</b> on touch devices.</li></ul>
+<li>Pinch the tracks to zoom around your fingers, or use <b>−</b>, <b>+</b> and <b>Fit</b> on touch devices.</li>
+<li>On phones, <b>More</b> opens the filter, overlays and analysis tools without resizing the tracks. <b>Notes</b> shows capture limitations.</li></ul>
 <h4>Search and filter</h4><ul>
 <li><b>Search</b>: function-name regex; highlights matches and navigates between calls with Enter / Shift+Enter.</li>
 <li><b>Filter</b>: conditions such as <code>pid:1234 AND graph:vfs_read</code>, applied with Enter and shared with Text. Analysis panels use this filter, not the search expression.</li>
@@ -950,15 +986,10 @@ if (!D.offcpu.length) tlRoot.querySelector('[data-ov=off]').classList.add('na');
 if (!sDurAdj) tlRoot.querySelector('[data-act=adj]').style.display = 'none';
 if (!HAS_INL) tlRoot.querySelector('[data-act=inl]').style.display = 'none';
 else if (typeof lsGet === 'function' && lsGet('tlInline') === '1') toggleInlineView(true);
-{
-    const nn = elNotes.children.length, nb = tlRoot.querySelector('[data-act=notes]');
-    if (!nn) nb.style.display = 'none';
-    else {
-        nb.textContent = 'Notes ' + nn;
-        const on = prefGet('notes') !== '0';
-        elNotes.classList.toggle('hide', !on); nb.classList.toggle('on', on);
-    }
-}
+const noteCount = elNotes.children.length;
+if (noteCount) elNotesButton.textContent = 'Notes ' + noteCount;
+else elNotesButton.hidden = true;
+syncToolbar();
 if (!WAKES.length) tlRoot.querySelector('[data-ov=wk]').classList.add('na');
 if (!D.caps.retval) tlRoot.querySelector('[data-ov=err]').classList.add('na');
 new MutationObserver(() => { palette(); ovDirty = true; draw(); scheduleDistHistogram(); })
@@ -966,14 +997,15 @@ new MutationObserver(() => { palette(); ovDirty = true; draw(); scheduleDistHist
 window.addEventListener('resize', () => { if (window.fgCurrentView() === 'timeline') { resize(); sizeDetailHead(); } });
 if (typeof ResizeObserver !== 'undefined') {
     let controlsFrame = 0;
-    const controlsObserver = new ResizeObserver(() => {
+    const controlsObserver = new ResizeObserver(entries => {
+        if (compactToolbar.matches && !entries.some(entry => entry.target === elToolbar)) return;
         if (controlsFrame || window.fgCurrentView() !== 'timeline') return;
         controlsFrame = requestAnimationFrame(() => {
             controlsFrame = 0;
             if (window.fgCurrentView() === 'timeline') resize();
         });
     });
-    controlsObserver.observe(tlRoot.querySelector('.tl-toolbar'));
+    controlsObserver.observe(elToolbar);
     controlsObserver.observe(elNotes);
 }
 
@@ -990,4 +1022,5 @@ const probe = () => ({ N, NA, SYN, S, sName, sStart, sEnd, sDepth, sParent, sTas
     range: (s, e, track) => { range = { s: s, e: e, track: track === undefined ? null : track }; select(-1); showRangeSummary(); draw(); },
     errors: showErrors, latency: showLatency, sections: showSections, dist: showDist, wait: showWaitChain,
     inline: (on) => { if (!!on !== inlineView) toggleInlineView(); } });
-return { resize: resize, revealLine: revealLine, draw: draw, probe: probe, suspend: hideTip, showHelp: () => elHelp.classList.add('show') };
+return { resize: resize, revealLine: revealLine, draw: draw, probe: probe,
+    suspend: () => { setToolbarOptions(false); hideTip(); }, showHelp: () => elHelp.classList.add('show') };

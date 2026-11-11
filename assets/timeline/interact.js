@@ -69,10 +69,10 @@ function zoomTo(s, e, revealSlice) {
     if (revealSlice >= 0) revealRow(revealSlice);
     draw();
 }
-function revealRow(i) {
+function revealRow(i, expand = true) {
     const t = TRACKS[sTask[i]];
-    if (t.collapsed) { t.collapsed = false; layout(); }
-    const y = t.y + HDR + rowOf(i) * ROW;
+    if (t.collapsed && expand) { t.collapsed = false; layout(); }
+    const y = t.y + HDR + (t.collapsed ? 0 : rowOf(i)) * ROW;
     if (y < elScroll.scrollTop + 4 || y + ROW > elScroll.scrollTop + H - 4) elScroll.scrollTop = Math.max(0, y - H / 3);
 }
 function setSelection(index) {
@@ -93,6 +93,7 @@ function select(i, opts) {
             revealRow(i);
         }
         showDetail(i);
+        if (compactToolbar.matches) revealRow(i, false);
     } else hideDetail();
     draw();
 }
@@ -572,6 +573,11 @@ elSearch.addEventListener('keydown', ev => {
 // ---- keyboard (capture phase: keeps the text view's shortcuts from firing) ----
 window.addEventListener('keydown', ev => {
     if (window.fgCurrentView() !== 'timeline') return;
+    if (ev.key === 'Escape' && elOptions.classList.contains('open')) {
+        ev.stopPropagation(); ev.preventDefault();
+        setToolbarOptions(false, true);
+        return;
+    }
     if (ev.target.matches && ev.target.matches('input, textarea, select')) return;
     ev.stopPropagation();
     if ((ev.key === 'Enter' || ev.key === ' ') && ev.target.closest && ev.target.closest('button, a[href], summary')) return;

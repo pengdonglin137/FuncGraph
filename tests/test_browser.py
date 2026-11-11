@@ -764,6 +764,92 @@ class BrowserSmokeTest(unittest.TestCase):
                 page.locator('.tl-detail .tl-close').tap()
                 self.assertEqual(state()['selected'], -1)
 
+    def test_timeline_phone_options_leave_canvas_and_selection_in_view(self):
+        for width, height, theme in [(320, 700, 'light'), (390, 844, 'dark'), (844, 390, 'light')]:
+            with self.subTest(width=width, height=height), self.browser.new_context(
+                    viewport=dict(width=width, height=height), is_mobile=True, has_touch=True) as context:
+                page = context.new_page()
+                page.on('pageerror', lambda error: self.errors.append(str(error)))
+                page.goto(self.url, wait_until='load')
+                page.evaluate("theme => document.documentElement.setAttribute('data-theme', theme)", theme)
+                page.locator('.view-tab[data-view=timeline]').tap()
+                canvas = page.locator('.tl-canvas')
+                canvas.wait_for()
+                more = page.locator('[data-act=options]')
+                notes = page.locator('[data-act=notes]')
+                options = page.locator('#tlOptions')
+                toolbar = page.locator('.tl-toolbar')
+                self.assertLessEqual(toolbar.bounding_box()['height'], 120)
+                self.assertFalse(options.is_visible())
+                self.assertFalse(page.locator('.tl-notes').is_visible())
+                self.assertEqual(notes.get_attribute('aria-pressed'), 'false')
+
+                before = canvas.bounding_box()
+                more.tap()
+                self.assertTrue(options.is_visible())
+                self.assertEqual(more.get_attribute('aria-expanded'), 'true')
+                self.assertEqual(canvas.bounding_box(), before)
+                self.assertLessEqual(options.bounding_box()['y'] + options.bounding_box()['height'], height)
+                trace_filter = page.get_by_role('textbox', name='Filter trace lines')
+                trace_filter.fill('pid:1')
+                trace_filter.press('Enter')
+                page.wait_for_function("!!window.fgFilterState?.lines")
+                self.assertTrue(page.get_by_text('· Filter on', exact=True).is_visible())
+                trace_filter.press('Escape')
+                self.assertFalse(options.is_visible())
+                self.assertEqual(more.get_attribute('aria-expanded'), 'false')
+                self.assertTrue(more.evaluate('node => document.activeElement === node'))
+                self.assertLessEqual(toolbar.evaluate('node => node.scrollWidth'), width)
+                more.tap()
+                page.locator('[data-act=fclear]').tap()
+                page.wait_for_function("!window.fgFilterState?.lines")
+                page.locator('.tl-search').tap()
+                self.assertFalse(options.is_visible())
+
+                point = page.evaluate('''() => {
+                    const model = fgView('timeline').probe();
+                    const canvas = document.querySelector('.tl-canvas');
+                    const bounds = canvas.getBoundingClientRect();
+                    let lowest = null;
+                    for (let index = 0; index < model.N; index++) {
+                        if (model.isGhost(index) || model.TRACKS[model.sTask[index]].collapsed) continue;
+                        const [sliceX, sliceY] = model.xyOf(index);
+                        if (sliceY < bounds.top + 22 || (lowest && sliceY <= lowest[1])) continue;
+                        if (document.elementFromPoint(sliceX, sliceY) === canvas) lowest = [sliceX, sliceY];
+                    }
+                    return lowest;
+                }''')
+                self.assertIsNotNone(point)
+                page.touchscreen.tap(*point)
+                page.locator('.tl-detail.show').wait_for()
+                selection = page.evaluate('''() => {
+                    const model = fgView('timeline').probe();
+                    const bounds = document.querySelector('.tl-canvas').getBoundingClientRect();
+                    return [model.xyOf(model.sel())[1], bounds.top, bounds.bottom];
+                }''')
+                self.assertGreaterEqual(selection[0], selection[1])
+                self.assertLess(selection[0], selection[2])
+                detail_head = page.locator('.tl-slice-head').bounding_box()
+                close = page.locator('.tl-slice-head .tl-close').bounding_box()
+                self.assertAlmostEqual(detail_head['y'], close['y'], delta=1)
+                self.assertAlmostEqual(detail_head['x'] + detail_head['width'], close['x'] + close['width'], delta=5)
+                more.tap()
+                more.press('Escape')
+                self.assertTrue(page.locator('.tl-detail.show').is_visible())
+                canvas_with_detail = canvas.bounding_box()
+                notes.tap()
+                self.assertTrue(page.locator('.tl-notes').is_visible())
+                self.assertEqual(notes.get_attribute('aria-pressed'), 'true')
+                self.assertEqual(canvas.bounding_box(), canvas_with_detail)
+                self.assertLessEqual(page.locator('.tl-detail').evaluate('node => node.getBoundingClientRect().bottom'), height + 1)
+                page.reload(wait_until='load')
+                page.locator('.tl-notes').wait_for()
+                self.assertEqual(notes.get_attribute('aria-pressed'), 'true')
+                page.set_viewport_size(dict(width=1100, height=800))
+                options.wait_for()
+                self.assertFalse(more.is_visible())
+                self.assertEqual(page.evaluate("localStorage.getItem('fgTl.notes')"), None)
+
     def test_timeline_compact_controls_resize_and_maximize_in_both_themes(self):
         self.open_timeline()
         self.ev("fgView('timeline').probe().select(0)")
