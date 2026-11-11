@@ -249,6 +249,100 @@ class TextModelTest(unittest.TestCase):
             assert.deepEqual(Array.from(folding.visibleLines({root:true}, null)), [1]);
         ''')
 
+    def test_fold_members_use_prepared_ranges_without_rescanning_record_attributes(self):
+        self.run_model('''
+            const rows = Array.from({length:600}, (unused, index) => [index * 3 + 1, 'row', {'fold-id':'other' + index}]);
+            rows[400][2] = {'fold-id':'target', 'fold-type':'entry'};
+            rows[401][2] = {'fold-id':'child', 'fold-type':'inner', 'fold-ancestors':'target target'};
+            rows[403][2] = {'fold-id':'target', 'fold-type':'exit'};
+            rows[599][2] = {'fold-ancestors':'target'};
+            const model = drain(fgTextModel.prepare(data(rows)));
+            const folding = fgTextModel.folding(model);
+            for (const record of model.records) record.getAttribute = () => { throw new Error('Full record scan'); };
+            assert.deepEqual(Array.from(folding.members('target'), record => record.row[0]), [1201,1204,1210,1798]);
+            assert.deepEqual(Array.from(folding.members('missing')), []);
+        ''')
+
+    def test_fold_scope_unions_merge_overlaps_without_filling_interleaved_gaps(self):
+        self.run_model('''
+            const model = drain(fgTextModel.prepare(data([
+                [2, 'outer', {'fold-id':'outer', 'fold-type':'entry'}],
+                [7, 'other', {'fold-id':'other', 'fold-type':'entry'}],
+                [11, 'inner', {'fold-id':'inner', 'fold-type':'entry', 'fold-ancestors':'outer'}],
+                [13, 'unrelated', {}],
+                [19, 'leaf', {'fold-id':'inner', 'fold-type':'inner', 'fold-ancestors':'outer inner inner', func:'leaf'}],
+                [23, 'inner exit', {'fold-id':'inner', 'fold-type':'exit', 'fold-ancestors':'outer'}],
+                [29, 'outer exit', {'fold-id':'outer', 'fold-type':'exit'}],
+                [31, 'other exit', {'fold-id':'other', 'fold-type':'exit'}]])));
+            const folding = fgTextModel.folding(model);
+            model.records[Symbol.iterator] = () => { throw new Error('Global record enumeration'); };
+            const numbers = scopes => Array.from(folding.membersOf(scopes), record => record.row[0]);
+            assert.deepEqual(numbers(['inner', 'outer', 'inner', 'missing']), [2,11,19,23,29]);
+            assert.deepEqual(numbers(['other', 'inner']), [7,11,19,23,31]);
+            assert.deepEqual(numbers(['other', 'outer']), [2,7,11,19,23,29,31]);
+            assert.deepEqual(numbers([]), []);
+            assert.deepEqual(numbers(['missing']), []);
+        ''')
+
+    def test_fold_range_membership_and_unions_match_an_independent_randomized_reference(self):
+        self.run_model('''
+            let seed = 42871;
+            const random = () => (seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0);
+            const ids = ['a', 'a1', 'a10', 'b', 'quoted"', '层级', null, ''];
+            const rows = Array.from({length:1200}, (unused, index) => [index * 5 + 1, 'row', {
+                'fold-id':ids[random() % ids.length], 'fold-type':['entry', 'inner', 'exit', null][random() % 4],
+                'fold-ancestors':Array.from({length:random() % 6}, () => ids[random() % ids.length] || '').join('  '),
+                func:random() % 3 ? 'call' : null}]);
+            const input = data(rows);
+            const original = JSON.stringify(input);
+            const model = drain(fgTextModel.prepare(input));
+            const folding = fgTextModel.folding(model);
+            const belongs = (record, id) => record.getAttribute('data-fold-id') === id ||
+                (record.getAttribute('data-fold-ancestors') || '').split(/\\s+/).filter(Boolean).includes(id);
+            for (const id of [...ids, 'missing', undefined]) {
+                assert.deepEqual(Array.from(folding.members(id)), model.records.filter(record => belongs(record, id)));
+            }
+            for (let query = 0; query < 100; query++) {
+                const selected = Array.from({length:random() % 12}, () => ids[random() % ids.length]);
+                const expected = model.records.filter(record => selected.some(id => belongs(record, id)));
+                assert.deepEqual(Array.from(folding.membersOf(selected)), expected);
+            }
+            assert.equal(JSON.stringify(input), original);
+        ''')
+
+    def test_fold_index_handles_deep_and_ancestry_only_scopes_without_recursion(self):
+        self.run_model('''
+            const ids = Array.from({length:3000}, (unused, index) => 'scope' + index);
+            const model = drain(fgTextModel.prepare(data([[3, 'header', {}],
+                [9, 'partial leaf', {'fold-id':'leaf', 'fold-type':'inner', func:'leaf', 'fold-ancestors':ids.join(' ')}],
+                [20, 'outside', {}]])));
+            const folding = fgTextModel.folding(model);
+            for (const id of ids) assert.deepEqual(Array.from(folding.members(id)), [model.records[1]]);
+            assert.deepEqual(Array.from(folding.membersOf(ids)), [model.records[1]]);
+            assert.equal(folding.blocks.get('scope2999').entry, null);
+            assert.equal(folding.blocks.get('scope2999').calls, 1);
+            assert.equal(folding.visible(model.records[1], {scope2999:true}, null), false);
+        ''')
+
+    def test_cancelling_fold_range_finalization_does_not_publish_partial_metadata(self):
+        self.run_model('''
+            const model = drain(fgTextModel.prepare(data(Array.from({length:1800}, (unused, index) =>
+                [index + 1, 'entry', {'fold-id':'scope' + index, 'fold-type':'entry', func:'call'}]))));
+            const cancelled = fgTextModel.prepareFolding(model);
+            let step;
+            do { step = cancelled.next(); } while (!step.done && !String(step.value).startsWith('Indexing Text fold ranges:'));
+            assert.equal(step.done, false);
+            cancelled.return();
+            const retry = fgTextModel.prepareFolding(model);
+            assert.match(retry.next().value, /Preparing Text fold metadata/);
+            const folding = drain(retry);
+            assert.equal(folding.blocks.size, 1800);
+            assert.deepEqual(Array.from(folding.membersOf(['scope1799', 'scope0'])), [model.records[0], model.records[1799]]);
+            const cached = fgTextModel.prepareFolding(model).next();
+            assert.equal(cached.done, true);
+            assert.equal(cached.value, folding);
+        ''')
+
     def test_navigation_uses_presentation_order_nearest_calls_and_wraparound_without_dom(self):
         self.run_model('''
             const order = [5,1,9,3];

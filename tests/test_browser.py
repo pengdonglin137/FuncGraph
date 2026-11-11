@@ -1859,6 +1859,94 @@ class BrowserSmokeTest(unittest.TestCase):
         self.assertGreater(facts['rows'], 100)
         self.assertEqual(len(facts['changes']), 0, facts['changes'][:5])
 
+    def test_bulk_fold_projects_only_the_unique_union_of_changed_scopes(self):
+        parent, child, grandchild, outside = self.nested_fold_rows()
+        facts = self.ev('''ids => {
+            const root = document.getElementById('content');
+            const expected = [...root.querySelectorAll('.line-container')].filter(line =>
+                ids.scopes.includes(line.dataset.foldId) ||
+                (line.dataset.foldAncestors || '').split(/\\s+/).some(id => ids.scopes.includes(id)))
+                .map(line => +line.dataset.lineNumber).sort((left, right) => left - right);
+            const project = fgProjectFoldRecords;
+            const projections = [];
+            fgProjectFoldRecords = (folding, records) => {
+                const selected = Array.from(records);
+                projections.push(selected.map(record => record.row[0]));
+                return project(folding, selected);
+            };
+            try {
+                fgSetFoldStates([[ids.scopes[0],true], [ids.scopes[1],true], [ids.scopes[0],true], ['missing',true]]);
+                fgSetFoldStates([[ids.scopes[0],true], [ids.scopes[1],true], ['missing',true]]);
+                fgSetFoldStates([[ids.scopes[0],false], [ids.scopes[1],false]]);
+            } finally { fgProjectFoldRecords = project; }
+            return {expected, projections, total:fgGetTextFolding().records.length,
+                unrelated:document.getElementById(ids.outside).style.display};
+        }''', dict(scopes=[child['fold'], grandchild['fold']], outside=outside['row']))
+        self.assertEqual(facts['projections'], [facts['expected']] * 2)
+        self.assertLess(len(facts['expected']), facts['total'])
+        self.assertEqual(facts['unrelated'], '')
+
+    def test_recursive_fold_keeps_projection_local_and_unrelated_source_dom_untouched(self):
+        parent, child, grandchild, outside = self.nested_fold_rows()
+        self.expand_fold_source(grandchild)
+        self.expand_fold_source(outside)
+        facts = self.ev('''entries => {
+            const folding = fgGetTextFolding();
+            const expected = Array.from(folding.members(entries.child.fold), record => record.row[0]);
+            const project = fgProjectFoldRecords;
+            const projections = [];
+            const observer = new MutationObserver(() => {});
+            observer.observe(document.getElementById(entries.outside.row), {subtree:true, attributes:true, childList:true});
+            observer.observe(document.getElementById(entries.outside.line + '_content'), {subtree:true, attributes:true, childList:true});
+            fgProjectFoldRecords = (model, records) => {
+                const selected = Array.from(records);
+                projections.push(selected.map(record => record.row[0]));
+                return project(model, selected);
+            };
+            let hidden;
+            try {
+                toggleFoldRecursive(entries.child.fold);
+                hidden = document.getElementById(entries.grandchild.line + '_content').style.display;
+                toggleFoldRecursive(entries.child.fold);
+            } finally { fgProjectFoldRecords = project; }
+            const changes = observer.takeRecords().length;
+            observer.disconnect();
+            return {expected, projections, hidden, changes,
+                restored:document.getElementById(entries.grandchild.line + '_content').style.display,
+                outside:document.getElementById(entries.outside.line + '_content').style.display};
+        }''', dict(child=child, grandchild=grandchild, outside=outside))
+        self.assertEqual(facts['projections'], [facts['expected']] * 2)
+        self.assertEqual(facts['hidden'], 'none')
+        self.assertEqual(facts['restored'], 'block')
+        self.assertEqual(facts['outside'], 'block')
+        self.assertEqual(facts['changes'], 0)
+
+    def test_scoped_bulk_folds_preserve_complete_visibility_after_filtering_and_reordering(self):
+        parent, child, grandchild, outside = self.nested_fold_rows()
+        facts = self.ev('''entries => {
+            const failures = [];
+            for (const order of ['task', 'time']) {
+                fgSetTextOrder(order);
+                for (const text of ['', 'func:^' + document.getElementById(entries.grandchild.row).dataset.func + '$']) {
+                    document.getElementById('filterInput').value = text;
+                    applyFilter();
+                    const before = Array.from(fgFilterState.lines || []);
+                    for (const folded of [true, false]) {
+                        fgSetFoldStates([[entries.child.fold,folded], [entries.grandchild.fold,folded]]);
+                        const folding = fgGetTextFolding();
+                        for (const record of folding.records) {
+                            const expected = folding.visible(record, foldedBlocks, fgFilterState.lines);
+                            const visible = document.getElementById('L' + record.row[0]).style.display !== 'none';
+                            if (visible !== expected) failures.push([order, text, folded, record.row[0]]);
+                        }
+                        if (JSON.stringify(Array.from(fgFilterState.lines || [])) !== JSON.stringify(before)) failures.push('filter changed');
+                    }
+                }
+            }
+            return failures;
+        }''', dict(child=child, grandchild=grandchild))
+        self.assertEqual(facts, [])
+
     def test_parent_fold_cancels_pending_descendant_source_click(self):
         parent, child, grandchild, outside = self.nested_fold_rows()
         self.page.locator('#' + grandchild['row'] + ' .line-content').click()

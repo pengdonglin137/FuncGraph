@@ -1955,11 +1955,11 @@
 
         function fgSetFoldStates(changes, restore = false) {
             const folding = fgGetTextFolding();
-            let changed = false;
+            const changed = [];
             for (const [foldId, shouldFold] of changes) {
-                if (fgUpdateFoldState(folding, foldId, shouldFold, restore)) changed = true;
+                if (fgUpdateFoldState(folding, foldId, shouldFold, restore)) changed.push(foldId);
             }
-            if (changed) fgProjectFoldRecords(folding, folding.records);
+            if (changed.length) fgProjectFoldRecords(folding, folding.membersOf(changed));
         }
 
         function _setFolded(foldId, shouldFold, restore) {

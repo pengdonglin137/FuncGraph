@@ -68,6 +68,17 @@
         if (foldModels.has(model)) return foldModels.get(model);
         const blocks = new Map();
         const ancestry = new Map();
+        const memberRanges = new Map();
+        let rangeValues = 0;
+        function addMember(id, index) {
+            if (!memberRanges.has(id)) memberRanges.set(id, []);
+            const ranges = memberRanges.get(id);
+            if (ranges.length && ranges[ranges.length - 1] === index) ranges[ranges.length - 1] = index + 1;
+            else { ranges.push(index, index + 1); rangeValues += 2; }
+        }
+        function* recordsIn(start, end) {
+            for (let index = start; index < end; index++) yield model.records[index];
+        }
         const ancestors = record => {
             const text = record.getAttribute('data-fold-ancestors') || '';
             if (!ancestry.has(text)) ancestry.set(text, Array.from(new Set(text.split(/\s+/).filter(Boolean))));
@@ -82,23 +93,54 @@
             const id = record.getAttribute('data-fold-id');
             const type = record.getAttribute('data-fold-type');
             const parents = ancestors(record);
+            const ownsAncestor = parents.includes(id);
+            const call = type === 'entry' || type === 'inner' && record.getAttribute('data-func');
             if (id && (type === 'entry' || type === 'exit')) block(id)[type] = record;
-            if (type === 'entry' || type === 'inner' && record.getAttribute('data-func')) {
-                for (const ancestor of parents) {
-                    if (ancestor !== id || type === 'inner') block(ancestor).calls++;
-                }
-                if (type === 'inner' && id && !parents.includes(id)) block(id).calls++;
+            for (const ancestor of parents) {
+                addMember(ancestor, scanned);
+                if (call && (ancestor !== id || type === 'inner')) block(ancestor).calls++;
             }
+            if (!ownsAncestor) addMember(id, scanned);
+            if (call && type === 'inner' && id && !ownsAncestor) block(id).calls++;
             scanned++;
             if (scanned % 512 === 0) yield 'Preparing Text fold metadata: ' + scanned + ' / ' + model.records.length + '…';
+        }
+        const rangeIndex = new Uint32Array(rangeValues + memberRanges.size);
+        let indexed = 0, position = 0;
+        for (const [id, ranges] of memberRanges) {
+            rangeIndex[position] = ranges.length;
+            rangeIndex.set(ranges, position + 1);
+            memberRanges.set(id, position);
+            position += ranges.length + 1;
+            indexed++;
+            if (indexed % 512 === 0) yield 'Indexing Text fold ranges: ' + indexed + ' / ' + memberRanges.size + '…';
         }
         const result = {
             records: model.records,
             blocks,
             *members(id) {
-                for (const record of model.records) {
-                    if (record.getAttribute('data-fold-id') === id || ancestors(record).includes(id)) yield record;
+                const position = memberRanges.get(id);
+                if (position === undefined) return;
+                const end = position + 1 + rangeIndex[position];
+                for (let offset = position + 1; offset < end; offset += 2) yield* recordsIn(rangeIndex[offset], rangeIndex[offset + 1]);
+            },
+            *membersOf(ids) {
+                const selected = [];
+                for (const id of new Set(ids)) {
+                    const position = memberRanges.get(id);
+                    if (position === undefined) continue;
+                    const end = position + 1 + rangeIndex[position];
+                    for (let offset = position + 1; offset < end; offset += 2) selected.push([rangeIndex[offset], rangeIndex[offset + 1]]);
                 }
+                selected.sort((left, right) => left[0] - right[0] || right[1] - left[1]);
+                let start = -1, end = -1;
+                for (const range of selected) {
+                    if (range[0] > end) {
+                        if (start >= 0) yield* recordsIn(start, end);
+                        [start, end] = range;
+                    } else end = Math.max(end, range[1]);
+                }
+                if (start >= 0) yield* recordsIn(start, end);
             },
             visible(record, folds, matches) {
                 if (matches !== null && !matches.has(record.row[0])) return false;
