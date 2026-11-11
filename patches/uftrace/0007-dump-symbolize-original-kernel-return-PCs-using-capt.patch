@@ -1,0 +1,237 @@
+From f745683300fe3247a339f443114dab64fd3c32eb Mon Sep 17 00:00:00 2001
+From: pengdonglin <pengdonglin@xiaomi.com>
+Date: Wed, 11 Nov 2026 11:44:09 +0800
+Subject: [PATCH 7/7] dump: symbolize original kernel return PCs using captured
+ kallsyms
+
+Add optional retaddr_symbol metadata to FuncGraph kernel entry records without
+changing the original return address or any native event field. Read the saved
+capture's kallsyms once, retain code types and module ownership, sort addresses,
+and use binary search for the code range containing PC - 1. Keep the offset
+relative to the unmodified return PC so the report applies its existing source
+lookup adjustment only once.
+
+Record the captured start address, return offset, next-distinct-symbol range,
+module and saved-kallsyms provenance. Preserve raw-only fallback for redacted,
+missing, malformed, non-code, unbounded or module-ambiguous mappings. Handle
+unsorted symbols, weak aliases, symbol-end returns and relocated kernel addresses
+without consulting the reporting host or guessing a KASLR slide.
+
+Validation: 20 native export tests pass, including byte-order/word-size and
+argument-layout matrices; combined importer/source suite passes 43 tests.
+An independent saved-page decoder verifies all 79,194 kernel records in the
+real QEMU capture. Every original field in the 2,186-record mixed sample matches
+the new full export; only derived symbol metadata is added.
+---
+ cmds/dump.c | 164 ++++++++++++++++++++++++++++++++++++++++++++++++++--
+ 1 file changed, 159 insertions(+), 5 deletions(-)
+
+diff --git a/cmds/dump.c b/cmds/dump.c
+index 11c71fc8856a..ef6e5bf7d586 100644
+--- a/cmds/dump.c
++++ b/cmds/dump.c
+@@ -1,4 +1,5 @@
+ #include <elf.h>
++#include <errno.h>
+ #include <inttypes.h>
+ #include <stdbool.h>
+ #include <stdint.h>
+@@ -1479,6 +1480,158 @@ static const char *fgraph_type(struct uftrace_record *record)
+ 	}
+ }
+ 
++struct fgraph_symbol {
++	uint64_t address;
++	char *name;
++	char *module;
++};
++
++struct uftrace_fgraph_dump {
++	struct uftrace_dump_ops ops;
++	int cpu;
++	bool symbols_loaded;
++	size_t nr_symbols;
++	struct fgraph_symbol *symbols;
++};
++
++static void fgraph_free_symbols(struct uftrace_fgraph_dump *dump)
++{
++	size_t index;
++
++	for (index = 0; index < dump->nr_symbols; index++) {
++		free(dump->symbols[index].name);
++		free(dump->symbols[index].module);
++	}
++	free(dump->symbols);
++	dump->symbols = NULL;
++	dump->nr_symbols = 0;
++}
++
++static int fgraph_symbol_compare(const void *left, const void *right)
++{
++	const struct fgraph_symbol *first = left, *second = right;
++
++	if (first->address != second->address)
++		return first->address < second->address ? -1 : 1;
++	if (!!first->name != !!second->name)
++		return first->name ? 1 : -1;
++	return first->name ? strcmp(first->name, second->name) : 0;
++}
++
++static void fgraph_load_symbols(struct uftrace_fgraph_dump *dump, const char *dirname)
++{
++	const char *name_chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_.$";
++	const char *module_chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-";
++	char *path, *line = NULL;
++	size_t length = 0, capacity = 0;
++	FILE *stream;
++
++	dump->symbols_loaded = true;
++	xasprintf(&path, "%s/kallsyms", dirname);
++	stream = fopen(path, "r");
++	free(path);
++	if (!stream)
++		return;
++	while (getline(&line, &length, stream) >= 0) {
++		char *state, *address, *type, *name, *module, *end;
++		uint64_t value;
++		struct fgraph_symbol *symbol;
++
++		address = strtok_r(line, " \t\n", &state);
++		type = strtok_r(NULL, " \t\n", &state);
++		name = strtok_r(NULL, " \t\n", &state);
++		module = strtok_r(NULL, " \t\n", &state);
++		if (!address || strlen(address) > 16 ||
++		    strspn(address, "0123456789abcdefABCDEF") != strlen(address) ||
++		    !type || !name || strlen(type) != 1 ||
++		    strtok_r(NULL, " \t\n", &state))
++			goto invalid;
++		errno = 0;
++		value = strtoull(address, &end, 16);
++		if (errno || *end)
++			goto invalid;
++		if (!value)
++			continue;
++		if (dump->nr_symbols == capacity) {
++			capacity = capacity ? capacity * 2 : 4096;
++			dump->symbols = xrealloc(dump->symbols, capacity * sizeof(*symbol));
++		}
++		symbol = &dump->symbols[dump->nr_symbols++];
++		*symbol = (struct fgraph_symbol) { .address = value };
++		if (!strchr("TtWw", type[0]) || strspn(name, name_chars) != strlen(name))
++			continue;
++		if (module) {
++			size_t module_length = strlen(module);
++
++			if (module_length < 3 || module[0] != '[' || module[module_length - 1] != ']')
++				continue;
++			module[module_length - 1] = '\0';
++			module++;
++			if (strspn(module, module_chars) != strlen(module))
++				continue;
++			symbol->module = xstrdup(module);
++		}
++		symbol->name = xstrdup(name);
++	}
++	if (ferror(stream))
++		goto invalid;
++	if (dump->nr_symbols)
++		qsort(dump->symbols, dump->nr_symbols, sizeof(*dump->symbols), fgraph_symbol_compare);
++	free(line);
++	fclose(stream);
++	return;
++invalid:
++	fgraph_free_symbols(dump);
++	free(line);
++	fclose(stream);
++}
++
++static void fgraph_retaddr_symbol(struct uftrace_fgraph_dump *dump, const char *dirname,
++				 uint64_t retaddr)
++{
++	size_t lower = 0, upper, next, index;
++	struct fgraph_symbol *symbol;
++	uint64_t size;
++
++	if (!retaddr)
++		return;
++	if (!dump->symbols_loaded)
++		fgraph_load_symbols(dump, dirname);
++	upper = dump->nr_symbols;
++	while (lower < upper) {
++		size_t middle = lower + (upper - lower) / 2;
++
++		if (dump->symbols[middle].address <= retaddr - 1)
++			lower = middle + 1;
++		else
++			upper = middle;
++	}
++	next = lower;
++	if (!next || next == dump->nr_symbols)
++		return;
++	symbol = &dump->symbols[next - 1];
++	if (!symbol->name)
++		return;
++	for (index = next - 1; index > 0 && dump->symbols[index - 1].address == symbol->address; index--) {
++		struct fgraph_symbol *alias = &dump->symbols[index - 1];
++
++		if (alias->name && ((!!alias->module != !!symbol->module) ||
++		    (alias->module && strcmp(alias->module, symbol->module))))
++			return;
++	}
++	size = dump->symbols[next].address - symbol->address;
++	pr_out(",\"retaddr_symbol\":{\"name\":");
++	fgraph_string(symbol->name);
++	pr_out(",\"address\":\"0x%" PRIx64 "\",\"offset\":%" PRIu64
++	       ",\"size\":%" PRIu64 ",\"size_basis\":\"next_symbol\",\"source\":\"saved_kallsyms\"",
++	       symbol->address, retaddr - symbol->address, size);
++	if (symbol->module) {
++		pr_out(",\"module\":");
++		fgraph_string(symbol->module);
++	}
++	pr_out("}");
++}
++
+ static void dump_fgraph_header(struct uftrace_dump_ops *ops, struct uftrace_data *handle,
+ 				struct uftrace_opts *opts)
+ {
+@@ -1632,7 +1785,10 @@ static void dump_fgraph_task_event(struct uftrace_dump_ops *ops, struct uftrace_
+ static void dump_fgraph_footer(struct uftrace_dump_ops *ops, struct uftrace_data *handle,
+ 				struct uftrace_opts *opts)
+ {
++	struct uftrace_fgraph_dump *dump = container_of(ops, typeof(*dump), ops);
++
+ 	pr_out("{\"type\":\"end\",\"complete\":%s}\n", uftrace_done ? "false" : "true");
++	fgraph_free_symbols(dump);
+ }
+ 
+ static void fgraph_context(struct uftrace_kernel_context *ctx)
+@@ -1667,6 +1823,7 @@ static void dump_fgraph_kernel(struct uftrace_dump_ops *ops,
+ 			       struct uftrace_kernel_reader *kernel, int cpu,
+ 			       struct uftrace_record *record, char *name)
+ {
++	struct uftrace_fgraph_dump *dump = container_of(ops, typeof(*dump), ops);
+ 	struct uftrace_kernel_context *ctx = &kernel->parser.context;
+ 
+ 	pr_out("{\"type\":\"%s\",\"space\":\"kernel\",\"time_ns\":%" PRIu64
+@@ -1674,6 +1831,8 @@ static void dump_fgraph_kernel(struct uftrace_dump_ops *ops,
+ 	       fgraph_type(record), record->time, ctx->common_pid, kernel->cpu_ids[cpu], ctx->depth, ctx->func);
+ 	fgraph_string(name);
+ 	fgraph_context(ctx);
++	if (ctx->has_retaddr)
++		fgraph_retaddr_symbol(dump, kernel->dirname, ctx->retaddr);
+ 	pr_out("}\n");
+ }
+ 
+@@ -1700,11 +1859,6 @@ static void dump_fgraph_event(struct uftrace_dump_ops *ops,
+ 	pr_out("}\n");
+ }
+ 
+-struct uftrace_fgraph_dump {
+-	struct uftrace_dump_ops ops;
+-	int cpu;
+-};
+-
+ static void dump_fgraph_cpu(struct uftrace_dump_ops *ops,
+ 			    struct uftrace_kernel_reader *kernel, int cpu)
+ {

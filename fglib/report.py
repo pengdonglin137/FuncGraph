@@ -422,6 +422,7 @@ class HtmlGenerator:
         modules = columns.get('module')
         from .timeline import F_USER
         flags = columns.get('flags') if 'uftrace' in timeline else None
+        captured_callers = {str(key) for key in timeline.get('uftrace', {}).get('caller_symbols', {})}
         names = {(name, modules[index] if modules else -1) for index, name in enumerate(columns['name'])
                  if flags is None or not flags[index] & F_USER}
         for name, module_index in sorted(names):
@@ -430,7 +431,7 @@ class HtmlGenerator:
                 module = strings[module_index] if module_index >= 0 else None
                 functions[f'{name}:{module_index}'] = self._timeline_position(*position, module)
         for caller in sorted(set(columns.get('caller') or [])):
-            if caller < 0 or timeline.get('uftrace'):
+            if caller < 0 or timeline.get('uftrace') and str(caller) not in captured_callers:
                 continue
             address = strings[caller]
             locations = self.func_locations_map.get(self._adjust_func_info(address, remove_suffix=False))
@@ -1329,7 +1330,12 @@ class HtmlGenerator:
                     fold_ends[line.get('fold_id')] = index + 1
         for idx, line_data in enumerate(self.parsed_lines):
             position = line_data.get('source')
-            position_src_idx = self._user_source_index(position) if position else self._kernel_source_index(line_data)
+            call_chain = parse_chain(self.func_locations_map.get(
+                self._adjust_func_info(line_data['func_info'], remove_suffix=False))) if (
+                    line_data.get('space') == 'kernel' and line_data['expandable'] and line_data['func_info']) else []
+            position_src_idx = (self._source_index(line_data['func_info']) if call_chain and
+                                all(frame[1] != '??' and frame[2] > 0 for frame in call_chain) else
+                                self._user_source_index(position) if position else self._kernel_source_index(line_data))
             if self.omit_text:
                 if position_src_idx is not None:
                     self._src_lines[idx + 1] = position_src_idx

@@ -3938,6 +3938,9 @@ class BrowserSmokeTest(unittest.TestCase):
             self.assertEqual(self.page.locator('#content .expandable').count(), 0)
             self.assertGreater(self.page.locator('.tl-cs .source-line').count(), 0)
             self.assertEqual(self.page.locator('.tl-cs .src-frame').count(), 2)
+            self.assertEqual(self.page.locator('.tl-cs .src-frame summary a.src-at').count(), 2)
+            self.assertEqual(self.page.locator('.tl-cs .src-frame.src-call summary a.src-at').get_attribute('href'),
+                             'https://example.org/src/kernel/fake.c#L2')
             self.assertIn('kernel/fake.c:2', self.page.locator('.tl-cs-at').inner_text())
             source_mode = self.page.locator('.tl-cs [data-fg-source-mode]')
             source_mode.click()

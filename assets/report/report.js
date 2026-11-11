@@ -134,8 +134,15 @@
                     (m ? escapeHtml(m[2]) : '') + '</span>' +
                     (k < n - 1 ? ' <span class="src-note">→ inlines ' + escapeHtml((frames[k + 1].loc.textContent.replace(/^\(inlined\s+by\)\s*/, '').split(/\s+at\s+/)[0]) || '') + ' here</span>'
                                : ' <span class="src-note">← the traced call happens here</span>');
-                const link = f.loc.querySelector('a');
-                if (link) { const a = link.cloneNode(true); a.textContent = '↗'; a.className = 'src-open'; sm.appendChild(a); }
+                const link = f.loc.matches('a[href]') ? f.loc : f.loc.querySelector('a[href]');
+                if (link) {
+                    const source = link.cloneNode(false);
+                    source.textContent = m ? m[2] : txt;
+                    source.className = 'src-at';
+                    source.title = 'Open source at ' + source.textContent;
+                    source.rel = 'noopener noreferrer';
+                    sm.querySelector('.src-at').replaceWith(source);
+                }
                 d.appendChild(sm);
                 for (const ln of f.lines) d.appendChild(ln);
                 el.appendChild(d);

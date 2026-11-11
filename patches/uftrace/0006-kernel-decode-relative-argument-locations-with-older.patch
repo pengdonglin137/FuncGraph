@@ -1,0 +1,30 @@
+From 4cdc70388e8cecf483e8620da13a9509ce1742df Mon Sep 17 00:00:00 2001
+From: pengdonglin <pengdonglin@xiaomi.com>
+Date: Wed, 11 Nov 2026 11:02:42 +0800
+Subject: [PATCH 6/7] kernel: decode relative argument locations with older
+ libtraceevent
+
+Identify __rel_loc from the recorded field type, as libtraceevent itself does, instead of requiring the newer TEP_FIELD_IS_RELATIVE enum in build headers. Preserve field-relative offset decoding with both old and new parser libraries; release builds can retain an Ubuntu 22.04 glibc baseline without disabling kernel tracing.
+---
+ utils/kernel-parser.c | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/utils/kernel-parser.c b/utils/kernel-parser.c
+index 484cf661a6f5..521ef95d992c 100644
+--- a/utils/kernel-parser.c
++++ b/utils/kernel-parser.c
+@@ -282,12 +282,12 @@ static int read_kernel_context(struct uftrace_kernel_parser *kp, struct tep_even
+ 	width = tep_get_long_size(kp->tep);
+ 	offset = field->offset;
+ 	length = field->size ? field->size : record->size - offset;
+-	if (field->flags & TEP_FIELD_IS_DYNAMIC) {
++	if (field->flags & TEP_FIELD_IS_DYNAMIC || !strncmp(field->type, "__rel_loc", 9)) {
+ 		if (!read_context_number(event, record, "args", &location))
+ 			return -1;
+ 		offset = location & 0xffff;
+ 		length = location >> 16;
+-		if (field->flags & TEP_FIELD_IS_RELATIVE)
++		if (!strncmp(field->type, "__rel_loc", 9))
+ 			offset += field->offset + field->size;
+ 	}
+ 	if ((width != 4 && width != 8) || offset < 0 || length < 0 ||

@@ -139,6 +139,11 @@ class UftraceExportTest(unittest.TestCase):
                             self.assertEqual('retaddr' in first, retaddr)
                             if retaddr:
                                 self.assertEqual(first['retaddr'], '0x1008')
+                                self.assertEqual(first['retaddr_symbol'], {
+                                    'name': 'root', 'address': '0x1000', 'offset': 8, 'size': 256,
+                                    'size_basis': 'next_symbol', 'source': 'saved_kallsyms'})
+                            else:
+                                self.assertNotIn('retaddr_symbol', first)
                             self.assertEqual(returning['retval'], hex((1 << (width * 8)) - 2))
                             self.assertEqual(returning['calltime_ns'], 1000000101)
                             self.assertEqual(returning['rettime_ns'], 1000000310)
@@ -189,6 +194,53 @@ class UftraceExportTest(unittest.TestCase):
                 stream.write(f'{base + offset:016x} t lower_module_{offset:x}\t[fixture]\n'.encode())
         calls = [record for record in self.records('--kernel-only') if record['type'] in ('entry', 'exit')]
         self.assertEqual([record['name'] for record in calls], ['root', 'child', 'child', 'root'])
+
+    def test_captured_return_symbols_use_relocated_saved_addresses(self):
+        base = 0xffffffff81000000
+        add_kernel(self.capture, address_base=base, retaddr=True)
+        calls = [record for record in self.records('--kernel-only') if record['type'] == 'entry']
+        for record in calls:
+            self.assertEqual(record['retaddr'], hex(base + 0x1008))
+            self.assertEqual(record['retaddr_symbol']['address'], hex(base + 0x1000))
+            self.assertEqual(record['retaddr_symbol']['offset'], 8)
+            self.assertEqual(record['retaddr_symbol']['name'], 'root')
+
+    def test_return_at_symbol_end_belongs_to_preceding_function(self):
+        add_kernel(self.capture, retaddr=True)
+        (self.capture / 'kallsyms').write_text('1000 T root\n1008 T next\n1100 T child\n1200 T boundary\n')
+        first = next(record for record in self.records('--kernel-only') if record['type'] == 'entry')
+        self.assertEqual(first['retaddr_symbol']['name'], 'root')
+        self.assertEqual(first['retaddr_symbol']['offset'], 8)
+        self.assertEqual(first['retaddr_symbol']['size'], 8)
+
+    def test_caller_module_is_preserved_independently_of_callee(self):
+        base = 0xffffffff81000000
+        add_kernel(self.capture, retaddr=True, address_base=base)
+        (self.capture / 'kallsyms').write_text(
+            f'{base + 0x1000:x} T root\t[caller_mod]\n{base + 0x1100:x} T child\n{base + 0x1200:x} T boundary\n')
+        calls = [record for record in self.records('--kernel-only') if record['type'] == 'entry']
+        self.assertEqual(calls[1]['name'], 'child')
+        self.assertEqual(calls[1]['retaddr_symbol']['module'], 'caller_mod')
+
+    def test_unresolved_redacted_data_and_unbounded_callers_stay_raw(self):
+        add_kernel(self.capture, retaddr=True)
+        for symbols in ['', '0 T root\n0 T child\n', '1000 D root\n1100 T child\n',
+                        '1000 T root\n', '1009 T root\n1100 T child\n',
+                        '1000 T root\n1000 t alias\t[other]\n1100 T child\n']:
+            with self.subTest(symbols=symbols):
+                (self.capture / 'kallsyms').write_text(symbols)
+                calls = [record for record in self.records('--kernel-only') if record['type'] == 'entry']
+                self.assertTrue(calls)
+                for record in calls:
+                    self.assertEqual(record['retaddr'], '0x1008')
+                    self.assertNotIn('retaddr_symbol', record)
+
+    def test_unsorted_aliases_share_a_bounded_code_range(self):
+        add_kernel(self.capture, retaddr=True)
+        (self.capture / 'kallsyms').write_text('1100 T child\n1000 t alias\n1200 T boundary\n1000 W root\n')
+        first = next(record for record in self.records('--kernel-only') if record['type'] == 'entry')
+        self.assertEqual(first['retaddr_symbol']['name'], 'root')
+        self.assertEqual(first['retaddr_symbol']['size'], 256)
 
     def test_malformed_arguments_fail_without_success_footer(self):
         add_kernel(self.capture, dynamic_args=True)

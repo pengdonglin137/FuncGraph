@@ -11,6 +11,8 @@ are generated from committed changes in `build/uftrace-dev`, never hand-edited.
 | 0003 | Versioned `dump --fgraph` JSONL export of original streams, recorded clock, sparse CPU identity, perf events and explicit completion. | Not submitted. Remove after an upstream export preserves this contract (or migrate the importer explicitly). |
 | 0004 | Fix sorted kernel symbol ranges on Pi; final native validation fixes declaration diagnostics and rejects malformed/trailing user records instead of reporting completion. | Not submitted. Remove after equivalent upstream fixes land and the regression tests pass. |
 | 0005 | Export supported user scalar arguments/returns from saved specifications while preserving raw payload bytes. | Not submitted. Remove when an upstream export offers both forms. |
+| 0006 | Decode relative argument locations with older libtraceevent headers without requiring its newer flag enum. | Not submitted. Remove when upstream handles both supported metadata forms. |
+| 0007 | Export bounded code-symbol/module metadata for original return PCs using only saved kallsyms; preserve raw addresses. | Not submitted. Remove when upstream offers the same captured-symbol provenance and boundary semantics. |
 
 The full base SHA is `842ed731248a9daded38774d8fb26c7b09474461`, locked in both
 the gitlink and `third_party/versions.json`. Build scripts reject mismatches;

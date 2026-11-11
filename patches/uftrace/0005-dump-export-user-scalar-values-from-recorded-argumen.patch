@@ -1,7 +1,7 @@
 From a23fbb507c33967ec4539c8b26c034ed74c09537 Mon Sep 17 00:00:00 2001
 From: pengdonglin <pengdonglin@xiaomi.com>
 Date: Wed, 11 Nov 2026 07:05:55 +0800
-Subject: [PATCH 5/5] dump: export user scalar values from recorded argument
+Subject: [PATCH 5/7] dump: export user scalar values from recorded argument
  specifications
 
 Keep raw payloads, use capture byte order and native alignment, and add user_args/user_retval only for complete supported scalar records. Leave other argument formats uninterpreted.

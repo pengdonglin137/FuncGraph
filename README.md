@@ -76,7 +76,7 @@ The sample was recaptured on November 10, 2026. The trace, QEMU runtime and host
 
 Open [sample_mixed.html](sample_mixed.html) locally or click the screenshot to open it online. In **Timeline**, select `dispatch_datagram` for user arguments, return value and recorded function address, then `__x64_sys_sendto` for the boundary line and matching call-stack separator. Text marks the same entry with an underlined `K`. This real QEMU [`demo_mixed.c`](samples/demo_mixed.c) recording has five linked transitions. See the [uftrace guide](docs/uftrace.md#mixed-sample-follow-sendto-into-the-kernel) for capture and rebuild steps.
 
-The mixed sample also embeds kernel function-entry source alongside user source, with kernel links pinned to Linux `v7.4-rc2`. Select `__x64_sys_sendto` to inspect `net/socket.c:2286`; the raw caller address is not presented as a resolved call site.
+The mixed sample includes user source, kernel entry positions and 500 resolved kernel call sites (305 with inline chains), with links pinned to Linux `v7.4-rc2`. Select `__x64_sys_sendto`: its stack entry is `net/socket.c:2286`, while **Call site source** shows `do_syscall_x64` at `arch/x86/entry/syscall_64.c:61`. The symbol-plus-offset comes from saved capture symbols; the original return address remains visible separately.
 
 ---
 

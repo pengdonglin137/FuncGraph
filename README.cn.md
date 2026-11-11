@@ -79,7 +79,7 @@ FG_CONFIG=/dev/null python3 docs/img/make_shots.py
 
 本地打开 [sample_mixed.html](sample_mixed.html)，也可以点截图在线查看。在 **Timeline** 选中 `dispatch_datagram` 可看用户态参数、返回值和记录的函数地址；选中 `__x64_sys_sendto` 可看调用顶边细线和调用栈分界。Text 同一入口旁的 `K` 带下划线。这份 QEMU 上对 [`demo_mixed.c`](samples/demo_mixed.c) 的实际采集有 5 处匹配的跨态边界，采集和重建步骤见 [uftrace 指南](docs/uftrace.cn.md)。
 
-混合样例同时内嵌用户态和内核函数入口的源码片段，内核链接固定到 Linux `v7.4-rc2`。选中 `__x64_sys_sendto` 可查看 `net/socket.c:2286`；原始 caller 地址不会冒充已解析的调用点。
+混合样例包含用户态源码、内核入口位置及 500 个已解析的内核调用点（其中 305 个含内联链），链接固定到 Linux `v7.4-rc2`。选中 `__x64_sys_sendto`：调用栈入口是 `net/socket.c:2286`，**Call site source** 则展示 `do_syscall_x64` 中的 `arch/x86/entry/syscall_64.c:61`。函数名＋偏移来自采集时保存的符号表，原始返回地址仍单独展示。
 
 ---
 

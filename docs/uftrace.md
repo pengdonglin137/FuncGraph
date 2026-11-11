@@ -35,10 +35,12 @@ on November 11, 2026. It contains 25 user calls, 1,067 kernel calls and five
 linked transitions. The extract keeps the original call records (including
 addresses, parameters and raw return values), but not scheduler/perf events.
 The published report uses the matching kernel debug image: 332 unique kernel
-functions have resolved entry locations, pinned Linux `v7.4-rc2` links and embedded
-source excerpts, alongside the recorded user source. Select `__x64_sys_sendto`
-for `net/socket.c:2286` and **Kernel function source**, or expand its Text row.
-These are function-entry locations, not resolved raw return-address call sites.
+functions retain entry locations in the call stack, and 500 unique captured
+kernel call sites resolve to source, including 305 inline chains. Links are pinned
+to Linux `v7.4-rc2`. Select `__x64_sys_sendto` for its `net/socket.c:2286` stack
+entry and **Call site source** in `do_syscall_x64`, `arch/x86/entry/syscall_64.c:61`.
+The recorded PC `0xffffffff82129117` is retained separately from
+`do_syscall_64+0xb7/0x580`. Expanding its Text row shows the same call-site chain.
 The matching BTF also verifies the nonblocking receive error path. Viewing the
 HTML needs neither the kernel tree nor uftrace. To rebuild it from the repository
 root, provide the matching debug-enabled image and source repository:
@@ -105,9 +107,23 @@ kernel names separately, even when their symbols have identical spelling.
   For kernel functions, add `--vmlinux`, `--kernel-src` and `--func-links` to resolve
   entry locations and embed source excerpts in Text and Timeline. The selected
   `--source-rev` / `--source-url` provider also supplies these excerpts. Source
-  links use the kernel browser and revision; raw caller addresses remain raw,
-  with no fabricated call-site or inline chain. Missing debug positions or files
-  leave the source unavailable rather than borrowing a user location.
+  links use the kernel browser and revision. A resolved captured call site takes
+  precedence over the function-entry excerpt; the latter remains a labeled
+  fallback. Missing debug positions or files leave the source unavailable rather
+  than borrowing a user location.
+- **Kernel call sites:** updated native exports add optional `retaddr_symbol`
+  metadata from the recording's saved `kallsyms`, never the analysis host's live
+  table or a guessed KASLR slide. Text and Timeline display
+  `function+0xOFFSET/0xRANGE [module]`; the original return PC remains in JSONL and
+  report metadata and is shown separately in Timeline. The range ends at the next
+  distinct saved symbol, not a measured ELF function size. Lookup uses `PC - 1`
+  to choose the preceding function at an exact boundary, but keeps the original
+  return offset; the existing source resolver subtracts one exactly once.
+  Module callers retain their module identity and require the matching module
+  image. Unknown, redacted, non-code or unbounded symbols stay raw. Older raw-only
+  JSONL is still supported; re-export its original capture with the updated patched
+  executable to obtain symbol metadata. Supplying only an arbitrary vmlinux does
+  not authorize guessing raw addresses.
 - **Filtering:** with `--filter`, use `space:user` or `space:kernel` in Text
   or Timeline's shared Filter. Sidecar reports can apply this filter before
   Text loads. CLI tree pre-filters are not supported on uftrace streams yet.

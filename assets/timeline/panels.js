@@ -93,16 +93,18 @@ function detailContextData(root) {
                 const index = path.ids[position];
                 const gap = Math.max(0, gapOf(index));
                 const chain = detailSourceChain(index);
-                for (let offset = 0; offset < gap; offset++) yield { kind: 'untraced', name: offset === gap - 1 ? callerFn(index) : '?',
+                let boundary = !!(sFlags[index] & FL.BOUNDARY);
+                const withBoundary = row => { row.boundary = boundary; boundary = false; return row; };
+                for (let offset = 0; offset < gap; offset++) yield withBoundary({ kind: 'untraced', name: offset === gap - 1 ? callerFn(index) : '?',
                     owner: index, depth: sDepth[index] - gap + offset, level: level++,
-                    ...detailSourceFields(offset === gap - 1 && chain && chain[0][0] === callerFn(index) ? chain[0].slice(1) : null, 'call_site') };
+                    ...detailSourceFields(offset === gap - 1 && chain && chain[0][0] === callerFn(index) ? chain[0].slice(1) : null, 'call_site') });
                 if (chain) for (let frameIndex = 1; frameIndex < chain.length; frameIndex++) {
                     const frame = chain[frameIndex];
-                    yield { kind: 'inline', name: frame[0], owner: index, level: level++, ...detailSourceFields(frame.slice(1), 'call_site') };
+                    yield withBoundary({ kind: 'inline', name: frame[0], owner: index, level: level++, ...detailSourceFields(frame.slice(1), 'call_site') });
                 }
                 const child = path.ids[position + 1], childChain = child === undefined || gapOf(child) ? null : detailSourceChain(child);
                 const site = childChain && childChain[0][0] === nameOf(index) ? childChain[0] : null;
-                yield detailRealRow(index, level++, site);
+                yield withBoundary(detailRealRow(index, level++, site));
             }
         }, path.status));
         if (eChain[root] >= 0) {
@@ -129,10 +131,11 @@ function detailRowsHtml(list, rows) {
         const traced = row.kind === 'traced', current = traced ? row.index === detailContext.root : row.current;
         const label = traced ? list.kind === 'error' ? String(row.depth) : fmtDur(durOf(row.index)) : row.kind === 'outside' ? '' : row.kind === 'call_site' ? 'call site' : row.kind;
         const suffix = list.kind === 'error' ? retOf(row.index) || '' : '';
+        const rowSpace = MIXED && row.owner >= 0 && row.kind !== 'outside' ? spaceOf(row.owner) : null;
         const title = row.name + (suffix ? ' — ' + suffix : '') + (row.kind === 'untraced' ? ' (not traced: skipped depth)' : '');
         const main = '<' + (traced ? 'button type="button"' : 'div') + ' class="tl-crumb tl-context-select' + (current ? ' cur' : '') + '"' + (traced ? ' data-slice="' + row.index + '"' : '') +
             ' title="' + esc(title) + '"><span class="tl-context-value">' + esc(label) + '</span><span class="tl-context-text">' +
-            (traced && MIXED ? '<span class="tl-stack-space">' + (spaceOf(row.index) === 'user' ? 'U' : 'K') + '</span>' : '') + esc(row.name) +
+            (rowSpace ? '<span class="tl-stack-space">' + (rowSpace === 'user' ? 'U' : 'K') + '</span>' : '') + esc(row.name) +
             (traced && tailJumpOf(row.index) ? ' <span class="tl-tail-tag" title="' + esc(callerRelationText(row.index)) + '">⇢ tail jump</span>' : '') +
             (suffix ? ' <span class="d">' + esc(suffix) + '</span>' : '') + '</span></' + (traced ? 'button' : 'div') + '>';
         let source = '';
@@ -150,7 +153,7 @@ function detailRowsHtml(list, rows) {
                 (row.file ? '<span class="tl-source-file">' + esc(row.file) + '</span><span class="tl-source-line">:' + esc(row.line) + '</span>' : esc(at)) +
                 '</' + tag + '></div>';
         }
-        const boundary = list.kind === 'stack' && traced && (sFlags[row.index] & FL.BOUNDARY);
+        const boundary = list.kind === 'stack' && row.boundary;
         return '<div class="tl-context-row' + (traced ? '' : ' inl') + '" data-context-kind="' + row.kind + '"' +
             (boundary ? ' data-space-boundary="user-kernel" title="User → kernel"' : '') + '>' + main + source + '</div>';
     }).join('');
@@ -290,7 +293,10 @@ function showDetail(i) {
         h += kv(D.uftrace ? 'raw return' : 'return', rv, eRole[i] >= 0 ? 'err' : '');
     }
     const c = callerOf(i);
-    if (c) h += kv(D.uftrace ? 'caller address' : 'call site', esc(c) + '<span class="tl-cs-at"></span>' + (f & FL.MISMATCH ? '<div class="tl-context-note tl-tail-note">' + esc(callerRelationText(i)) + '</div>' : ''));
+    const capturedCaller = D.uftrace?.caller_symbols?.[sCaller?.[i]];
+    if (c) h += kv(D.uftrace && !capturedCaller ? 'caller address' : 'call site', esc(c) + '<span class="tl-cs-at"></span>' + (f & FL.MISMATCH ? '<div class="tl-context-note tl-tail-note">' + esc(callerRelationText(i)) + '</div>' : ''));
+    if (capturedCaller) h += kv('return address', esc(D.uftrace.kernel_details?.[sLine[i]]?.retaddr || '') +
+        '<div class="tl-context-note">Symbol from captured kallsyms; range ends at the next saved symbol.</div>');
     const tailJump = tailJumpOf(i);
     if (tailJump) h += kv('tail jump', tailJump.sites.map(site => {
         const source = site.source;
@@ -310,7 +316,7 @@ function showDetail(i) {
     } else if (a) h += kv(D.uftrace ? (f & FL.USER ? 'raw payload' : 'raw args') : 'args', esc(a));
     if (ATOMIC.has(i)) h += kv('context', 'called with ' + esc(atomicText(ATOMIC.get(i))) + ' (sleeping function in atomic context)', 'err');
     h += kv('trace lines', lineLink(sLine[i]) + (sEline && sEline[i] && sEline[i] !== sLine[i] ? ' → ' + lineLink(sEline[i]) : ''));
-    h += '</div><details class="tl-cs" open><summary class="tl-sec">' + (f & FL.USER ? 'User source' : D.uftrace ? 'Kernel function source' : 'Call site source') + '</summary><div class="tl-cs-src"></div></details></div><div>';
+    h += '</div><details class="tl-cs" open><summary class="tl-sec">' + (f & FL.USER ? 'User source' : D.uftrace && !D.sources?.callers?.[sCaller?.[i]]?.length ? 'Kernel function source' : 'Call site source') + '</summary><div class="tl-cs-src"></div></details></div><div>';
     h += breakdownHtml(i);
     if (context.lists.has('error')) h += detailListHtml('error');
     h += detailListHtml('stack') + detailContextHint();
@@ -326,7 +332,7 @@ function callSiteBlock(i) {
 const csPosCache = new Map();
 function callSitePos(i) {
     if (isSyn(i)) return null;
-    if (D.uftrace) return null;
+    if (D.uftrace && !D.uftrace.caller_symbols?.[sCaller?.[i]]) return null;
     const chain = D.sources?.callers?.[sCaller?.[i]];
     if (Array.isArray(chain)) {
         if (!chain.length) return null;

@@ -15,6 +15,8 @@ from .timeline import (TimelineBuilder, _Frame, F_USER, F_BOUNDARY, F_ORPHAN, F_
 
 SCHEMA = 'funcgraph.uftrace.v1'
 HEX = re.compile(r'0x[0-9a-fA-F]{1,16}\Z')
+SYMBOL = re.compile(r'[A-Za-z0-9_.$]+\Z')
+MODULE = re.compile(r'[A-Za-z0-9_-]+\Z')
 SCALAR = re.compile(r'(?:-?[0-9]{1,20}|0x[0-9a-fA-F]{1,16})\Z')
 CLOCK = re.compile(r'\[([^\]]+)\]')
 KERNEL_VERSION = re.compile(r'^([0-9]+)\.([0-9]+)(?:[.+-]|$)')
@@ -44,7 +46,7 @@ def _check_record(record):
     kind, space = record.get('type'), record.get('space')
     if kind not in ('entry', 'exit', 'event', 'lost') or not _uint(record.get('time_ns')):
         raise UftraceInputError('invalid record type or timestamp')
-    if space is None and kind == 'event' and record.get('origin') == 'perf':
+    if space is None and kind == 'event' and record.get('origin') == 'perf' and 'retaddr_symbol' not in record:
         return
     if space not in ('user', 'kernel'):
         raise UftraceInputError('expected explicit user or kernel address space')
@@ -63,6 +65,19 @@ def _check_record(record):
     for field in ('retval', 'retaddr'):
         if field in record and (not isinstance(record[field], str) or not HEX.fullmatch(record[field])):
             raise UftraceInputError('invalid ' + field)
+    if 'retaddr_symbol' in record:
+        symbol = record['retaddr_symbol']
+        if not (space == 'kernel' and kind == 'entry' and 'retaddr' in record and
+                isinstance(symbol, dict) and isinstance(symbol.get('name'), str) and
+                SYMBOL.fullmatch(symbol['name']) and isinstance(symbol.get('address'), str) and
+                HEX.fullmatch(symbol['address']) and _uint(symbol.get('offset')) and
+                _uint(symbol.get('size')) and 0 < symbol['offset'] <= symbol['size'] and
+                0 < int(symbol['address'], 16) <= int(record['retaddr'], 16) and
+                int(symbol['address'], 16) + symbol['offset'] == int(record['retaddr'], 16) and
+                int(symbol['address'], 16) + symbol['size'] < (1 << 64) and
+                symbol.get('size_basis') == 'next_symbol' and symbol.get('source') == 'saved_kallsyms' and
+                ('module' not in symbol or isinstance(symbol['module'], str) and MODULE.fullmatch(symbol['module']))):
+            raise UftraceInputError('invalid captured return-address symbol')
     if 'args' in record and (not isinstance(record['args'], list) or
                              not all(isinstance(value, str) and HEX.fullmatch(value) for value in record['args'])):
         raise UftraceInputError('invalid arguments')
@@ -84,6 +99,14 @@ def _check_record(record):
         if not (isinstance(source, dict) and isinstance(source.get('file'), str) and source['file'] and
                 _uint(source.get('line'), (1 << 31) - 1) and source['line']):
             raise UftraceInputError('invalid recorded source position')
+
+
+def _caller_info(record):
+    symbol = record.get('retaddr_symbol')
+    if not symbol:
+        return None
+    module = ' [' + symbol['module'] + ']' if symbol.get('module') else ''
+    return f'{symbol["name"]}+0x{symbol["offset"]:x}/0x{symbol["size"]:x}{module}'
 
 
 def read_export(stream):
@@ -178,6 +201,8 @@ class UftraceTimeline(TimelineBuilder):
         self.positions = {}
         self.position_ids = {}
         self.user_details = {}
+        self.kernel_details = {}
+        self.caller_symbols = {}
         self.lifecycle = []
         self.native_depths = []
         self.addresses = []
@@ -218,7 +243,12 @@ class UftraceTimeline(TimelineBuilder):
         args = (', '.join(record['args']) or '[]') if 'args' in record else record.get('payload_hex')
         if user and is_exit:
             args = None
-        caller = self._s(record.get('retaddr')) if not user else -1
+        caller_info = _caller_info(record) if not user else None
+        caller = self._s(caller_info or record.get('retaddr')) if not user else -1
+        if not user and 'retaddr' in record:
+            self.kernel_details[lineno] = {'retaddr': record['retaddr']}
+            if caller_info:
+                self.caller_symbols[caller] = record['retaddr_symbol']
         self.caps['args'] |= bool(args)
         self.caps['retaddr'] |= caller >= 0
         index = self._new_slice(task, depth, timestamp, timestamp if is_exit else None,
@@ -414,7 +444,7 @@ class UftraceTimeline(TimelineBuilder):
             tag = ('U' if space == 'user' else 'K') if self.mixed and space else ' '
             prefix = f'{seconds:>7}.{nanos:09d} | {str(cpu) if cpu is not None else "–":>3} | {str(tid) if tid is not None else "–":>7} | {tag} | '
             index = self.record_slices.get(lineno)
-            name = args = fold_id = fold_type = depth = duration = source = comm = None
+            name = args = fold_id = fold_type = depth = duration = source = comm = func_info = None
             path = ''
             boundary = False
             if index is not None:
@@ -433,7 +463,8 @@ class UftraceTimeline(TimelineBuilder):
                     if space == 'user':
                         body += ' /* recorded address ' + record['address'] + ' */'
                     if record.get('retaddr'):
-                        body += ' /* caller address ' + record['retaddr'] + ' */'
+                        func_info = _caller_info(record)
+                        body += ' /* ' + (func_info or 'caller address ' + record['retaddr']) + ' */'
                     pos = record.get('source')
                     if space == 'user' and pos:
                         source = (_display(pos['file']), pos['line'])
@@ -467,6 +498,7 @@ class UftraceTimeline(TimelineBuilder):
                 body = '/* ' + _display(record.get('name', 'perf event')) + ': ' + _display(record.get('text', '')) + ' */'
             _, _, lat = _latency(record, self.lazy_resched) if space == 'kernel' else (0, None, None)
             lines.append(UftraceLine(raw_line=prefix + body, raw_func_name=name if kind == 'entry' else None,
+                                     expandable=bool(func_info), func_info=func_info,
                                      display_func_name=name, cpu=cpu, pid=tid, comm=comm, params=args,
                                      duration=duration, sort_duration=duration, fold_id=fold_id, fold_type=fold_type,
                                      fold_ancestors=path, call_depth=depth, space=space, boundary=boundary, source=source, record_type=kind,
@@ -480,6 +512,10 @@ class UftraceTimeline(TimelineBuilder):
                           'spaces': sorted(self.spaces), 'kernel_settings': self.metadata['kernel_settings']}
         if self.user_details:
             data['uftrace']['user_details'] = self.user_details
+        if self.kernel_details:
+            data['uftrace']['kernel_details'] = self.kernel_details
+        if self.caller_symbols:
+            data['uftrace']['caller_symbols'] = self.caller_symbols
         if self.lifecycle:
             data['uftrace']['lifecycle'] = [[task, timestamp - data['t0'], phase, line]
                                            for task, timestamp, phase, line in self.lifecycle]

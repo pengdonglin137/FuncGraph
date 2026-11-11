@@ -106,7 +106,7 @@ class MixedSampleTest(unittest.TestCase):
             generate(TRACE, rebuilt)
             rebuilt_html = rebuilt.read_text(encoding='utf-8')
             rebuilt_data = helpers.json_script(rebuilt_html, 'tlData')
-            for key in data.keys() - {'btf', 'cols', 'errs', 'chains', 'errnames', 'sources', 'stats'}:
+            for key in data.keys() - {'btf', 'cols', 'errs', 'chains', 'errnames', 'sources', 'stats', 'inline'}:
                 self.assertEqual(data[key], rebuilt_data[key], key)
             for key in cols:
                 if key == 'flags':
@@ -130,8 +130,10 @@ class MixedSampleTest(unittest.TestCase):
         data, pool, source_lines = (helpers.json_script(html, key) for key in ('tlData', 'fgSrc', 'fgSrcLines'))
         functions, cols = data['sources']['functions'], data['cols']
         self.assertEqual(len(functions), 332)
-        self.assertEqual(data['sources']['callers'], {})
-        self.assertEqual(data['inline'], {})
+        self.assertEqual(len(data['sources']['callers']), 500)
+        self.assertTrue(all(data['sources']['callers'].values()))
+        self.assertEqual(len(data['inline']), 305)
+        self.assertEqual(len(data['uftrace']['kernel_details']), COUNTS['kernel'])
         for index, flags in enumerate(cols['flags']):
             if flags & timeline.F_USER:
                 continue
@@ -139,9 +141,14 @@ class MixedSampleTest(unittest.TestCase):
             self.assertTrue(position[0] and position[1] > 0)
             self.assertEqual(position[2], f'https://github.com/torvalds/linux/blob/v7.4-rc2/{position[0]}#L{position[1]}')
             excerpt = pool[source_lines[str(cols['line'][index])]]
-            self.assertIn('kernel function entry', excerpt)
+            self.assertNotIn('kernel function entry', excerpt)
             self.assertIn('source-line current-line', excerpt)
-            self.assertIn(position[2], excerpt)
+            chain = data['sources']['callers'][str(cols['caller'][index])]
+            self.assertTrue(chain)
+            self.assertTrue(all(frame[3] in excerpt for frame in chain))
+            symbol = data['uftrace']['caller_symbols'][str(cols['caller'][index])]
+            raw = data['uftrace']['kernel_details'][str(cols['line'][index])]['retaddr']
+            self.assertEqual(int(symbol['address'], 16) + symbol['offset'], int(raw, 16))
         self.assertTrue(all(not position[2] for position in data['sources']['user_positions']))
 
     def test_pages_stage_preserves_both_examples(self):
@@ -213,9 +220,12 @@ class MixedSampleBrowserTest(unittest.TestCase):
         self.assertTrue(painted, 'Expected a one-device-pixel boundary spanning the recorded sendto root')
         page.mouse.click(*point)
         stack = page.locator('[data-context-list=stack]')
-        divider = stack.locator('[data-space-boundary=user-kernel]', has_text='__x64_sys_sendto')
+        divider = stack.locator('[data-space-boundary=user-kernel]', has_text='do_syscall_x64')
         divider.wait_for(state='visible')
         self.assertEqual(divider.evaluate('row => getComputedStyle(row).borderTopWidth'), '1px')
+        self.assertEqual(divider.locator('.tl-stack-space').inner_text(), 'K')
+        self.assertEqual(divider.get_attribute('data-context-kind'), 'inline')
+        self.assertEqual(divider.evaluate('row => row.previousElementSibling.querySelector(".tl-stack-space").textContent'), 'U')
         stack.locator('.tl-source-open', has_text='demo_mixed.c:25').click()
         page.get_by_text('static ssize_t dispatch_datagram(', exact=False).first.wait_for(state='visible')
         page.evaluate('''() => {
@@ -271,29 +281,36 @@ class MixedSampleBrowserTest(unittest.TestCase):
             model.select(index);
             return fgData.read('tlData').cols.line[index];
         }''')
-        summary = page.locator('.tl-cs summary', has_text='Kernel function source')
+        summary = page.locator('.tl-cs > summary', has_text='Call site source')
         summary.wait_for(state='visible')
-        page.locator('.tl-cs-src .current-line', has_text='SYSCALL_DEFINE6(sendto').wait_for(state='visible')
-        source = page.locator('[data-context-list=stack] [data-space-boundary] .tl-context-source a')
+        page.locator('.tl-cs-src .current-line', has_text='regs->ax = x64_sys_call').wait_for(state='visible')
+        source = page.locator('[data-context-list=stack] [data-context-kind=traced]', has_text='__x64_sys_sendto').locator('.tl-context-source a')
         self.assertEqual(source.get_attribute('href'), 'https://github.com/torvalds/linux/blob/v7.4-rc2/net/socket.c#L2286')
         self.assertIn('function entry, not the calling line', source.get_attribute('title'))
-        excerpt_link = page.locator('.tl-cs-src .location-link a')
-        self.assertEqual(excerpt_link.get_attribute('href'), source.get_attribute('href'))
+        callsite_url = 'https://github.com/torvalds/linux/blob/v7.4-rc2/arch/x86/entry/syscall_64.c#L61'
+        excerpt_link = page.locator('.tl-cs-src .src-call summary a.src-at')
+        self.assertEqual(excerpt_link.get_attribute('href'), callsite_url)
+        callsite_link = page.locator('.tl-cs-at [data-callsite-position]')
+        self.assertEqual(callsite_link.get_attribute('href'), callsite_url)
+        self.assertIn('do_syscall_64+0xb7/0x580', page.locator('.k:has-text("call site") + .v').inner_text())
+        self.assertIn('0xffffffff82129117', page.locator('.k:has-text("return address") + .v').inner_text())
         page.context.route('https://github.com/torvalds/linux/**', lambda route: route.fulfill(
             status=200, content_type='text/html', body='<title>Kernel source</title>'))
-        for link in (source, excerpt_link):
+        for link in (source, excerpt_link, callsite_link):
+            expected = link.get_attribute('href')
             with page.expect_popup() as opened:
                 link.click()
             popup = opened.value
             popup.wait_for_load_state()
-            self.assertEqual(popup.url, source.get_attribute('href'))
+            self.assertEqual(popup.url, expected)
             popup.close()
-        self.assertEqual(page.locator('.tl-cs-at [data-callsite-position]').count(), 0)
+        self.assertEqual(page.locator('.tl-cs-at [data-callsite-position]').count(), 1)
         page.get_by_role('button', name='Text', exact=True).click()
         entry = page.locator(f'#L{line}')
         self.assertEqual(entry.locator('a.func-name-link').get_attribute('href'), source.get_attribute('href'))
         entry.click()
-        page.locator('.expanded-content:visible .current-line', has_text='SYSCALL_DEFINE6(sendto').wait_for(state='visible')
+        self.assertIn('do_syscall_64+0xb7/0x580', entry.inner_text())
+        page.locator('.expanded-content:visible .current-line', has_text='regs->ax = x64_sys_call').wait_for(state='visible')
         self.assertEqual(errors, [])
         self.assertEqual(requests, [REPORT.as_uri()])
 
