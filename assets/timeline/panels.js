@@ -794,6 +794,8 @@ tlRoot.querySelector('.tl-toolbar').addEventListener('click', ev => {
         case 'errprev': gotoErr(-1); break;
         case 'errnext': gotoErr(1); break;
         case 'errmode': errFilter = errFilter ? 0 : 1; rebuildErrList(); draw(); break;
+        case 'zoomout': zoomAt(1.5, W / 2); break;
+        case 'zoomin': zoomAt(1 / 1.5, W / 2); break;
         case 'fit': fitAll(); break;
         case 'help': elHelp.classList.toggle('show'); break;
         case 'notes': setNotes(elNotes.classList.contains('hide')); break;
@@ -892,6 +894,9 @@ elHelp.innerHTML = `
 <li>Wheel: scroll tracks · click track header: collapse</li>
 <li><kbd>0</kbd> fit all · <kbd>F</kbd> zoom to selection · double-click: zoom to slice</li>
 <li><kbd>Shift</kbd>+drag: summarize a range in this track (<kbd>Shift</kbd>+<kbd>Alt</kbd>: all tracks)</li></ul>
+<h4>Touch</h4><ul>
+<li>Tap a call or track header. Swipe horizontally on the tracks to pan; swipe vertically to scroll.</li>
+<li>Pinch the tracks to zoom around your fingers, or use <b>−</b>, <b>+</b> and <b>Fit</b> on touch devices.</li></ul>
 <h4>Search and filter</h4><ul>
 <li><b>Search</b>: function-name regex; highlights matches and navigates between calls with Enter / Shift+Enter.</li>
 <li><b>Filter</b>: conditions such as <code>pid:1234 AND graph:vfs_read</code>, applied with Enter and shared with Text. Analysis panels use this filter, not the search expression.</li>

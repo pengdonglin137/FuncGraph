@@ -654,6 +654,116 @@ class BrowserSmokeTest(unittest.TestCase):
                 self.assertLessEqual(bounds['pageWidth'], width)
                 self.assertLessEqual(bounds['pageHeight'], height)
 
+    def test_timeline_touch_navigation(self):
+        for width, height in [(390, 844), (320, 700), (844, 390)]:
+            with self.subTest(width=width, height=height), self.browser.new_context(
+                    viewport=dict(width=width, height=height), is_mobile=True, has_touch=True,
+                    device_scale_factor=3) as context:
+                page = context.new_page()
+                page.on('pageerror', lambda error: self.errors.append(str(error)))
+                page.goto(self.url, wait_until='load')
+                page.locator('.view-tab[data-view=timeline]').tap()
+                canvas = page.locator('.tl-canvas')
+                canvas.wait_for()
+                fit = page.locator('[data-act=fit]')
+                zoom_in = page.get_by_role('button', name='Zoom timeline in')
+                zoom_out = page.get_by_role('button', name='Zoom timeline out')
+                cdp = context.new_cdp_session(page)
+
+                def state():
+                    return page.evaluate('''() => {
+                        const model = fgView('timeline').probe();
+                        const scroll = document.querySelector('.tl-scroll');
+                        return {window: model.view(), selected: model.sel(), scale: visualViewport.scale,
+                            scroll: scroll.scrollTop, maxScroll: scroll.scrollHeight - scroll.clientHeight};
+                    }''')
+
+                def gesture(start, end, *, cancel=False, release_one=False):
+                    def send(kind, points):
+                        cdp.send('Input.dispatchTouchEvent', dict(type=kind, touchPoints=[
+                            dict(id=index, x=round(x), y=round(y)) for index, (x, y) in enumerate(points)]))
+                    send('touchStart', start)
+                    for step in range(1, 9):
+                        send('touchMove', [(x + (target_x - x) * step / 8, y + (target_y - y) * step / 8)
+                                           for (x, y), (target_x, target_y) in zip(start, end)])
+                    if release_one:
+                        send('touchEnd', end[:1])
+                        send('touchMove', [(end[0][0] + 16, end[0][1])])
+                    send('touchCancel' if cancel else 'touchEnd', [])
+
+                full = state()['window']
+                zoom_in.tap()
+                zoom_in.tap()
+                left, right = state()['window']
+                span = right - left
+                self.assertLess(span, full[1] - full[0])
+                zoom_out.tap()
+                expanded_left, expanded_right = state()['window']
+                self.assertGreater(expanded_right - expanded_left, span)
+                zoom_in.tap()
+                bounds = canvas.bounding_box()
+                center_x = bounds['x'] + bounds['width'] / 2
+                center_y = bounds['y'] + bounds['height'] / 2
+                gesture([(center_x + 30, center_y)], [(center_x - 60, center_y)])
+                pan_left, pan_right = state()['window']
+                self.assertGreater(pan_left, left)
+                self.assertAlmostEqual(pan_right - pan_left, span, delta=1)
+                self.assertEqual(state()['selected'], -1)
+
+                gesture([(center_x - 30, center_y), (center_x + 30, center_y)],
+                        [(center_x - 60, center_y), (center_x + 76, center_y)], release_one=True)
+                pinched = state()
+                pinch_left, pinch_right = pinched['window']
+                self.assertAlmostEqual(pinch_right - pinch_left, span * 60 / 136, delta=span * 0.02)
+                anchor = (pan_left + pan_right) / 2
+                self.assertAlmostEqual(pinch_left + (pinch_right - pinch_left) * (0.5 + 8 / bounds['width']),
+                                       anchor, delta=span * 0.02)
+                self.assertEqual(pinched['scale'], 1)
+                self.assertEqual(pinched['selected'], -1)
+
+                self.assertGreater(pinched['maxScroll'], 0)
+                page.evaluate('''() => {
+                    document.querySelector('.tl-scroll').addEventListener('scrollend', () => {
+                        window.trackScrollFinished = true;
+                    }, {once: true});
+                }''')
+                vertical_distance = min(44, bounds['height'] / 3)
+                gesture([(center_x, center_y + vertical_distance)], [(center_x, center_y - vertical_distance)])
+                page.wait_for_function("window.trackScrollFinished && document.querySelector('.tl-scroll').scrollTop > 0")
+                self.assertEqual(state()['window'], pinched['window'])
+                self.assertEqual(state()['selected'], -1)
+
+                fit.tap()
+                self.assertEqual(state()['window'], full)
+                index = page.evaluate('''() => {
+                    const model = fgView('timeline').probe();
+                    return model.sStart.findIndex((start, index) =>
+                        !model.isGhost(index) && model.sEnd[index] - start > 300000);
+                }''')
+                self.assertGreaterEqual(index, 0)
+                page.evaluate('''index => {
+                    const model = fgView('timeline').probe();
+                    model.select(index);
+                    model.select(-1);
+                }''', index)
+                point = page.evaluate('''() => {
+                    const model = fgView('timeline').probe();
+                    const canvas = document.querySelector('.tl-canvas');
+                    for (let index = 0; index < model.N; index++) {
+                        if (model.isGhost(index) || model.TRACKS[model.sTask[index]].collapsed) continue;
+                        const [x, y] = model.xyOf(index);
+                        if (document.elementFromPoint(x, y) === canvas) return [x, y];
+                    }
+                    return null;
+                }''')
+                self.assertIsNotNone(point)
+                gesture([point], [point], cancel=True)
+                self.assertEqual(state()['selected'], -1)
+                page.touchscreen.tap(*point)
+                self.assertGreaterEqual(state()['selected'], 0)
+                page.locator('.tl-detail .tl-close').tap()
+                self.assertEqual(state()['selected'], -1)
+
     def test_timeline_compact_controls_resize_and_maximize_in_both_themes(self):
         self.open_timeline()
         self.ev("fgView('timeline').probe().select(0)")

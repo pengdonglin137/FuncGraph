@@ -42,16 +42,17 @@ function hitTest(mx, my) {
     return { track: t, slice: best, off: off, header: false, dense };
 }
 
-function zoomAt(factor, mx) {
-    const span = view.e - view.s;
-    let ns = span * factor;
+function zoomFrom(span, anchor, mx) {
     const minSpan = MODE === 'count' ? 2000 : 50;
-    ns = Math.max(minSpan, Math.min(tMax * 1.05, ns));
-    const tm = view.s + (mx / W) * span;
-    view.s = tm - (mx / W) * ns;
-    view.e = view.s + ns;
+    const nextSpan = Math.max(minSpan, Math.min(tMax * 1.05, span));
+    view.s = anchor - (mx / W) * nextSpan;
+    view.e = view.s + nextSpan;
     clampView();
     draw();
+}
+function zoomAt(factor, mx) {
+    const span = view.e - view.s;
+    zoomFrom(span * factor, view.s + (mx / W) * span, mx);
 }
 function panBy(dt) { view.s += dt; view.e += dt; clampView(); draw(); }
 function clampView() {
@@ -285,6 +286,15 @@ function hideTip() {
 // ---- mouse ----
 let drag = null;   // {mode:'pan'|'range'|'ov', x0, s0, e0, moved, track}
 function localXY(ev, el) { const b = el.getBoundingClientRect(); return [ev.clientX - b.left, ev.clientY - b.top]; }
+function activateCanvas(mx, my) {
+    const h = hitTest(mx, my);
+    if (h.header && h.track) { h.track.collapsed = !h.track.collapsed; layout(); draw(); return; }
+    if (h.cpuSeg) { openTaskAt(h.cpuSeg.t, h.tm); return; }
+    if (h.slice >= 0) select(h.slice);
+    else if (h.off) { setSelection(-1); showWaitChain(h.off); draw(); }
+    else if (range) { range = null; hideDetail(); draw(); }
+    else select(-1);
+}
 elCv.addEventListener('mousedown', ev => {
     if (ev.button !== 0) return;
     const [mx, my] = localXY(ev, elCv);
@@ -342,14 +352,7 @@ window.addEventListener('mouseup', ev => {
         return;
     }
     if (d.mode !== 'pan' || d.moved || ev.target !== elCv) return;
-    const [mx, my] = localXY(ev, elCv);
-    const h = hitTest(mx, my);
-    if (h.header && h.track) { h.track.collapsed = !h.track.collapsed; layout(); draw(); return; }
-    if (h.cpuSeg) { openTaskAt(h.cpuSeg.t, h.tm); return; }
-    if (h.slice >= 0) select(h.slice);
-    else if (h.off) { setSelection(-1); showWaitChain(h.off); draw(); }
-    else if (range) { range = null; hideDetail(); draw(); }
-    else select(-1);
+    activateCanvas(...localXY(ev, elCv));
 });
 elCv.addEventListener('mouseleave', () => { cursorX = -1; hov = -1; hovOff = null; hovCpu = null; hideTip(); draw(); });
 elCv.addEventListener('dblclick', ev => {
@@ -370,6 +373,69 @@ elCv.addEventListener('wheel', ev => {
     }
 }, { passive: false });
 elScroll.addEventListener('scroll', () => { hideTip(); draw(); });
+
+const touchPoints = new Map();
+const TOUCH_SLOP = 7;
+let touchGesture = null;
+function pinchGeometry() {
+    const [first, second] = touchPoints.values();
+    return {
+        center: (first.x + second.x) / 2,
+        distance: Math.max(1, Math.hypot(second.x - first.x, second.y - first.y)),
+    };
+}
+elCv.addEventListener('pointerdown', ev => {
+    if (ev.pointerType !== 'touch' || !W) return;
+    ev.preventDefault();
+    elCv.setPointerCapture(ev.pointerId);
+    const [x, y] = localXY(ev, elCv);
+    touchPoints.set(ev.pointerId, { x, y });
+    const span = view.e - view.s;
+    if (touchPoints.size === 1) {
+        touchGesture = { mode: 'tap', x, y, start: view.s, span };
+        cursorX = -1; hov = -1; hovOff = null; hovCpu = null;
+        hideTip();
+        draw();
+    } else if (touchPoints.size === 2 && touchGesture.mode !== 'blocked') {
+        const { center, distance } = pinchGeometry();
+        touchGesture = { mode: 'pinch', distance, span, anchor: view.s + center / W * span };
+    } else {
+        touchGesture.mode = 'blocked';
+    }
+});
+elCv.addEventListener('pointermove', ev => {
+    const point = touchPoints.get(ev.pointerId);
+    if (!point || window.fgCurrentView() !== 'timeline' || !W) return;
+    [point.x, point.y] = localXY(ev, elCv);
+    const gesture = touchGesture;
+    if (gesture.mode === 'blocked') return;
+    if (gesture.mode === 'pinch') {
+        const { center, distance } = pinchGeometry();
+        zoomFrom(gesture.span * gesture.distance / distance, gesture.anchor, center);
+        return;
+    }
+    const dx = point.x - gesture.x, dy = point.y - gesture.y;
+    if (gesture.mode === 'tap' && Math.max(Math.abs(dx), Math.abs(dy)) >= TOUCH_SLOP) {
+        gesture.mode = Math.abs(dx) > Math.abs(dy) ? 'pan' : 'blocked';
+    }
+    if (gesture.mode === 'pan') {
+        view.s = gesture.start - dx / W * gesture.span;
+        view.e = view.s + gesture.span;
+        clampView();
+        draw();
+    }
+});
+function finishTouch(ev) {
+    if (!touchPoints.delete(ev.pointerId)) return;
+    const gesture = touchGesture;
+    if (touchPoints.size) gesture.mode = 'blocked';
+    else touchGesture = null;
+    if (ev.type !== 'pointerup' || gesture.mode !== 'tap' || window.fgCurrentView() !== 'timeline') return;
+    const [x, y] = localXY(ev, elCv);
+    if (x >= 0 && x < W && y >= 0 && y < H &&
+            Math.max(Math.abs(x - gesture.x), Math.abs(y - gesture.y)) < TOUCH_SLOP) activateCanvas(x, y);
+}
+for (const event of ['pointerup', 'pointercancel', 'lostpointercapture']) elCv.addEventListener(event, finishTouch);
 
 function centerOn(t) {
     const span = view.e - view.s;

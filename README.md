@@ -275,6 +275,8 @@ What it shows:
 
 Interaction: `W`/`S` or Ctrl+wheel zoom, `A`/`D` or drag to pan, double-click to zoom into a slice, `E`/`Shift+E` next/previous error, `/` search, `Shift`+drag to summarize a time range (self/inclusive time per function, context breakdown, off-CPU time), `Enter` opens the selected call in the text view, and `Alt`+click on a text line shows it in the timeline. Press `?` in the timeline for the full list.
 
+On a touchscreen, tap a call to open its details or a track header to collapse it. Swipe horizontally on the tracks to pan through time, swipe vertically to scroll tracks, and pinch over the tracks to zoom the time range rather than the page. Use **−**, **+** and **Fit** in the toolbar if a pinch is inconvenient; browser zoom is unchanged outside the track canvas.
+
 The tool adapts to the options the trace was captured with and tells you what is missing:
 
 | Missing option | Effect in the timeline |

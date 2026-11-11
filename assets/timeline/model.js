@@ -505,7 +505,7 @@ tlRoot.innerHTML = `
     <button class="tl-chip off" data-ov="preempt"><i class="dot" style="background:#6b7280"></i>Preempt depth</button>
     <button class="tl-chip" data-ov="mk"><i class="dot" style="background:#8e44ad"></i>Markers</button>
   </span>
-  <span class="tl-group">
+  <span class="tl-group tl-search-group">
     <input class="tl-search" placeholder="/ search function (regex)" spellcheck="false" aria-label="Search traced function names (regular expression)" aria-describedby="tlSearchStatus" aria-invalid="false">
     <span class="tl-search-nav">
       <button class="tl-btn" data-act="searchprev" title="Previous search match (Shift+Enter / Shift+N)" aria-label="Previous search match" disabled>◀</button>
@@ -518,8 +518,12 @@ tlRoot.innerHTML = `
     <button class="tl-btn" data-act="errmode" title="Toggle: user-visible errors only / all errors"><span class="err-label"></span></button>
     <button class="tl-btn" data-act="errnext" title="Next error origin (E)">▶</button>
   </span>
-  <span class="tl-group">
+  <span class="tl-group tl-zoom-group" role="group" aria-label="Timeline zoom">
+    <button class="tl-btn tl-touch-zoom" data-act="zoomout" aria-label="Zoom timeline out">−</button>
+    <button class="tl-btn tl-touch-zoom" data-act="zoomin" aria-label="Zoom timeline in">+</button>
     <button class="tl-btn" data-act="fit" title="Show the whole trace (0)">Fit</button>
+  </span>
+  <span class="tl-group">
     <button class="tl-btn" data-act="expand" title="Expand / collapse all tracks">Tracks</button>
     <button class="tl-btn" data-act="an-tasks" title="Find and navigate all recorded tasks, including scheduling-only tasks">Tasks</button>
     <button class="tl-btn" data-act="adj" title="Subtract the estimated tracing overhead from durations (O)">Overhead: measured</button>
