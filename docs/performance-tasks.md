@@ -62,7 +62,7 @@ cover report startup, parsing, CSV cost or peak memory.
 
 ## Measured result
 
-The final-source comparison uses Chromium `145.0.7632.6`, a 1500 × 900 viewport
+The paging comparison, committed as `a86780633cbc`, uses Chromium `145.0.7632.6`, a 1500 × 900 viewport
 and three alternating before/after rounds. Both templates use the same input
 and CLI options, including `--timeline --no-text-view`; the substituted Timeline
 models are identical. Times below are medians, not latency guarantees.
@@ -103,7 +103,7 @@ replacement pagination does not discard data from the model or export.
   screenshots were visually reviewed. Eight mobile configurations additionally
   exercise native Filters taps, the query, active-condition indication, Reset
   and scrolling an entire task row into view, including short landscape panes.
-- The final required-native/sample-browser audit runs all 876 tests in 487.062 s:
+- The paging commit's required-native/sample-browser audit runs all 876 tests in 487.062 s:
   872 pass, three skip and one fails. The only failure is the previously
   documented, unrelated and uncommitted Text intrinsic-size assertion,
   `test_textchunks.TextChunkBrowserTest.test_native_layout_skips_offscreen_blocks_without_dropping_complete_records`:
@@ -125,3 +125,6 @@ loading, and no overall large-trace speedup or memory ceiling is claimed.
 Very short detail panes, including short landscape windows, still need vertical
 scrolling or a larger pane; this change does not make every control and task row
 simultaneously visible at arbitrary heights.
+The later [detail expansion follow-up](detail-panel-expansion.md) adds an explicit
+way to borrow the chart area without overwriting the saved split. The numbers
+above describe the paging commit, before that additional control was introduced.

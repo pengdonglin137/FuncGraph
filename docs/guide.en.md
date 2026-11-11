@@ -753,6 +753,8 @@ The list contents retain complete context independently of the shared filter. A 
 
 The detail panel and the analysis panels share the bottom area. Drag the bar above the panel to change its height; the canvas grows or shrinks accordingly. Double-click the bar to restore the default (32% of the window height, between 180 and 400 px). The height is stored in the browser as a fraction of the window, so other reports and other window sizes keep the same split.
 
+When the panel is shorter than 140px, such as phone landscape or a manually reduced split, a subdued **expand icon** appears beside Close. It temporarily borrows the chart area for details; press it again to restore the split, or close the panel / press Esc to restore the chart. Unlike **Max / M**, this does not hide the page header. It does not change the saved split, query, current task page or call selection. Expansion survives view changes, resizing and panel navigation in this session, but is not saved for the next report load. Help remains available, and extremely short windows can still scroll the details.
+
 For a larger canvas: **Max** in the toolbar (`M`) hides the page header and the view tabs, press it again to restore them. **Notes N** collapses or expands the notes about this trace below the toolbar (missing options, overhead estimate, ...); the choice is remembered.
 
 ### 6.6 Search and filter

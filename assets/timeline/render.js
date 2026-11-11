@@ -165,6 +165,7 @@ function prefSet(k, v) { try { if (v === null) localStorage.removeItem('fgTl.' +
 function detailDefault() { return Math.round(Math.min(400, Math.max(180, window.innerHeight * 0.32))); }
 // stored as a fraction of the window height, so the split looks the same on other screens
 function detailPx() { const v = +prefGet('detailFrac'); return v > 0 && v < 1 ? Math.round(v * window.innerHeight) : detailDefault(); }
+let detailExpanded = false;
 function clampDetailH(h) {
     const notesMin = elNotes.classList.contains('hide') ? 0 : 28;
     const controlsHeight = compactToolbar.matches ? elToolbar.offsetHeight : 32 + notesMin;
@@ -175,8 +176,13 @@ function clampDetailH(h) {
 function resize() {
     DPR = window.devicePixelRatio || 1;
     const top = Math.max(0, tlRoot.getBoundingClientRect().top);
-    tlRoot.style.height = Math.max(288, window.innerHeight - top - 12) + 'px';
+    tlRoot.style.height = Math.max(detailExpanded ? 60 : 288, window.innerHeight - top - 12) + 'px';
     if (compactToolbar.matches) tlRoot.style.setProperty('--tl-toolbar-height', elToolbar.offsetHeight + 'px');
+    if (detailExpanded) {
+        elDetail.classList.toggle('tl-detail-short', elDetail.clientHeight < 140);
+        scheduleDistHistogram();
+        return;
+    }
     if (elDetail.classList.contains('show')) {
         elDetail.style.height = clampDetailH(detailPx()) + 'px';
         elDetail.classList.toggle('tl-detail-short', elDetail.clientHeight < 140);

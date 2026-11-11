@@ -623,7 +623,7 @@ window.addEventListener('keydown', ev => {
     }
     if (handled) {
         ev.preventDefault();
-        if (ev.key !== '/' && window.fgCurrentView() === 'timeline') elCv.focus({ preventScroll: true });
+        if (ev.key !== '/' && window.fgCurrentView() === 'timeline') focusTimelineControl();
     }
 }, true);
 

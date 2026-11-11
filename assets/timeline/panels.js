@@ -497,10 +497,44 @@ function sizeDetailHead() {
     scheduleDistHistogram();
 }
 const detailHeadObserver = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(sizeDetailHead) : null;
+function updateDetailExpand() {
+    const button = elDetail.querySelector('[data-detail-expand]');
+    if (!button) return;
+    const label = detailExpanded ? 'Restore chart and detail split' : 'Expand details into the chart area';
+    button.title = label;
+    button.setAttribute('aria-label', label);
+    button.setAttribute('aria-pressed', String(detailExpanded));
+}
+function focusTimelineControl() {
+    const target = detailExpanded ? elDetail.querySelector('[data-detail-expand]') : elCv;
+    if (target) target.focus({ preventScroll: true });
+}
+function setDetailExpanded(on) {
+    detailExpanded = on && elDetail.classList.contains('show');
+    tlRoot.classList.toggle('tl-detail-expanded', detailExpanded);
+    updateDetailExpand();
+    resize();
+    sizeDetailHead();
+    const button = elDetail.querySelector('[data-detail-expand]');
+    if (button === document.activeElement && !button.getClientRects().length) {
+        elDetail.querySelector('.tl-close')?.focus({ preventScroll: true });
+    }
+}
 function openDetail(html) {
     const was = elDetail.classList.contains('show');
     fgCancelSources(elDetail);
     elDetail.innerHTML = html;
+    const head = elDetail.querySelector('.tl-detail-head');
+    const close = head && head.querySelector('.tl-close');
+    if (close) {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'tl-btn tl-detail-expand';
+        button.dataset.detailExpand = '';
+        button.innerHTML = '<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" focusable="false"><path class="tl-expand-icon" d="M6 2H2v4m0-4 5 5m3 7h4v-4m0 4-5-5"/><path class="tl-restore-icon" d="M2 6h4V2m0 4L1 1m13 9h-4v4m0-4 5 5"/></svg>';
+        close.before(button);
+        updateDetailExpand();
+    }
     elDetail.classList.add('show');
     elResizer.classList.add('show');
     // sticky table headers sit right below the (sticky) panel head
@@ -517,6 +551,8 @@ function hideDetail() {
     fgCancelSources(elDetail);
     elDetail.classList.remove('show');
     elResizer.classList.remove('show');
+    detailExpanded = false;
+    tlRoot.classList.remove('tl-detail-expanded');
     resize();
 }
 // Drag the handle above the panel to resize it (height kept across reports); double-click resets.
@@ -591,6 +627,10 @@ function setMax(on) {
     resize();
 }
 elDetail.addEventListener('click', ev => {
+    if (ev.target.closest('[data-detail-expand]')) {
+        setDetailExpanded(!detailExpanded);
+        return;
+    }
     const processPage = ev.target.closest('[data-process-page]');
     if (processPage && AN.kind === 'process') {
         processView.page += +processPage.dataset.processPage;
@@ -1041,6 +1081,7 @@ ${N ? '' : '<p>No function calls were recorded. Search has no call matches; shar
 <li><b>Explore all children</b> in call details: complete parent-scoped groups/calls, longest-call navigation and full CSV</li>
 <li><kbd>I</kbd>: show / hide inlined functions as dashed frames (extent = first to last traced call inside)</li>
 <li><kbd>M</kbd> or <b>Max</b>: maximize (hide the page header and tabs); drag the bar above the bottom panel to resize it, double-click it to reset</li>
+<li>In a very short detail panel, the expand icon next to Close borrows the chart area. Press it again to restore the split; closing the panel restores the chart too. The saved panel height, query and current task page are not changed.</li>
 <li><kbd>O</kbd>: durations as measured / with the tracing overhead subtracted</li>
 <li><kbd>H</kbd>: duration distribution of the selected function · toolbar <b>Errors</b> / <b>Sched latency</b>: summaries</li>
 <li><kbd>Enter</kbd>: open in text view · <kbd>Alt</kbd>+click a text line: show it here</li></ul>
@@ -1067,7 +1108,7 @@ ${MIXED ? '<i style="background:currentColor;height:1px"></i><span>user → kern
 <i style="background:#f0a35a;height:3px"></i><span>CPU track strip: hardirq (orange) / softirq (green) / NMI (purple)</span></div>`;
 elHelp.querySelector('.tl-help-close').addEventListener('click', () => {
     elHelp.classList.remove('show');
-    elCv.focus({ preventScroll: true });
+    focusTimelineControl();
 });
 
 // ---- init ----
