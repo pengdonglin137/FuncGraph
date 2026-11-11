@@ -283,43 +283,57 @@ class ReturnTypeDB:
         return None, False
 
 
-def build_return_db(vmlinux=None, extra_paths=None, module_paths=None, verbose=False):
-    """Build a ReturnTypeDB from vmlinux + optional extra BTF/ELF files + module .ko files.
+class ReturnTypeLoader:
+    """Lazily reuse BTF sources while keeping requested module databases separate."""
 
-    extra_paths: raw BTF or ELF files. A raw blob named 'vmlinux' (e.g. a copy of
-                 /sys/kernel/btf/vmlinux) is used as base when vmlinux has no .BTF.
-    module_paths: list of .ko paths (split BTF on top of the base).
+    def __init__(self, vmlinux=None, extra_paths=None):
+        self.vmlinux = vmlinux
+        self.extra_paths = tuple(extra_paths or ())
+        self._sources = {}
+        self._databases = {}
+
+    def _load(self, path, base, database):
+        key = (path, base)
+        if key not in self._sources:
+            try:
+                self._sources[key] = (load_btf(path, base=base), None)
+            except (OSError, BtfError, struct.error, EOFError, lzma.LZMAError, zlib.error) as error:
+                self._sources[key] = (None, f"{path}: {error}")
+        info, error = self._sources[key]
+        if error is not None:
+            database.errors.append(error)
+        return info
+
+    def build(self, module_paths=None):
+        modules = tuple(dict.fromkeys(module_paths or ()))
+        if modules in self._databases:
+            return self._databases[modules]
+        database = ReturnTypeDB()
+        base = None
+        candidates = (self.vmlinux,) if self.vmlinux else ()
+        for path in candidates + self.extra_paths:
+            info = self._load(path, None, database)
+            if info is not None and info.kinds:
+                base = info
+                database.add(info)
+                break
+        for path in self.extra_paths + modules:
+            if base is not None and path == base.source:
+                continue
+            if path in self.extra_paths and os.path.basename(path).startswith('vmlinux'):
+                continue
+            database.add(self._load(path, base, database))
+        self._databases[modules] = database
+        return database
+
+
+def build_return_db(vmlinux=None, extra_paths=None, module_paths=None, verbose=False):
+    """Build a return-type database; reuse ReturnTypeLoader for one report's views.
+
+    extra_paths accepts raw BTF or ELF files. A raw blob named 'vmlinux' is a
+    base candidate when vmlinux has no .BTF. Module files use split BTF.
     """
-    db = ReturnTypeDB()
-    base = None
-    candidates = []
-    if vmlinux:
-        candidates.append(vmlinux)
-    extra_paths = list(extra_paths or [])
-    # Base: first loadable non-split source
-    for p in candidates + extra_paths:
-        if base is not None:
-            break
-        try:
-            info = load_btf(p)
-        except (OSError, BtfError, struct.error, EOFError, lzma.LZMAError, zlib.error) as e:
-            db.errors.append(f"{p}: {e}")
-            continue
-        if info is not None and info.kinds:
-            base = info
-            db.add(info)
-    for p in extra_paths + list(module_paths or []):
-        if base is not None and p == base.source:
-            continue
-        if p in extra_paths and os.path.basename(p).startswith('vmlinux'):
-            continue  # another base candidate, not split BTF
-        try:
-            info = load_btf(p, base=base)
-        except (OSError, BtfError, struct.error, EOFError, lzma.LZMAError, zlib.error) as e:
-            db.errors.append(f"{p}: {e}")
-            continue
-        db.add(info)
-    return db
+    return ReturnTypeLoader(vmlinux, extra_paths).build(module_paths)
 
 
 if __name__ == '__main__':

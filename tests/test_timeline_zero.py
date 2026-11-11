@@ -36,7 +36,7 @@ class TimelineZeroTest(unittest.TestCase):
 
     def test_return_value_reusing_the_first_string_is_preserved(self):
         builder = TimelineBuilder(trace('leaf(); /* ret=0x0 */').splitlines())
-        self.assertEqual(builder._s('0'), 0)
+        self.assertEqual(builder._s('0x0'), 0)
         builder.build()
         self.assertEqual(builder.to_data()['cols']['ret'], [0])
 

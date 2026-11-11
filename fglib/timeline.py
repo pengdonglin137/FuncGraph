@@ -50,7 +50,7 @@ RE_LOST = re.compile(r'^CPU:(\d+) \[LOST (\d+|\?) EVENTS\]')
 RE_FUNC_HEAD = re.compile(r'([A-Za-z_$][\w.$]*)(?: \[([\w-]+)\])?\(')
 RE_CALLER = re.compile(r'<-([A-Za-z_$][\w.$]*)\+(0x[0-9a-fA-F]+)/(0x[0-9a-fA-F]+)(?: \[([\w-]+)\])?')
 # kernels with BTF-aware funcgraph-retval also print ret=true/false, unsigned decimals and '(trunc)'
-RE_RET = re.compile(r' ret=(-?\d+|0x[0-9a-fA-F]+|true|false)(\(trunc\))?')
+RE_RET = re.compile(r' ret=(0[xX][0-9a-fA-F]+|-?\d+|true|false)(\(trunc\))?(?=\s|\*/|$)')
 RE_EXIT_NAME = re.compile(r'^ ([A-Za-z_$][\w.$]*)(?: \[([\w-]+)\])?')
 # preempt-depth digit of task-context lines (for the baseline of the trace)
 RE_LAT_TASK = re.compile(r' [.dDb][.BNLbnpl]\.([.0-9a-f])[.0-9a-f]? \| ')
@@ -160,11 +160,18 @@ class _Task:
 class TimelineBuilder:
     """Build the timeline model from a list of raw trace lines."""
 
-    def __init__(self, lines, rettypes=None, errno_map=None, verbose=False, overhead=None):
-        """overhead: (child_ns, self_ns) or None to read it from a '# fgcapture: overhead' header."""
+    def __init__(self, lines, rettypes=None, errno_map=None, verbose=False, overhead=None, rettype_resolver=None):
+        """Resolve return types from paired module names before error analysis.
+
+        overhead: (child_ns, self_ns), or None to use a fgcapture overhead header.
+        rettype_resolver: optional callable accepting this model's module names.
+        """
         self.lines = lines
         self.overhead = overhead
         self.rettypes = rettypes
+        if rettypes is not None and rettype_resolver is not None:
+            raise ValueError('Use either return types or a return-type resolver, not both')
+        self.rettype_resolver = rettype_resolver
         self.errno_map = errno_map or {}
         self.verbose = verbose
 
@@ -874,6 +881,8 @@ class TimelineBuilder:
                 self.s_start[k], self.s_end[k] = s, e
                 prev_end = e
         # Error-path analysis
+        if self.rettype_resolver is not None:
+            self.rettypes = self.rettype_resolver(self.s_module)
         self._analyze_errors(children)
         self.stats.update(slices=n, tasks=len(self.task_list), truncated=sum(1 for f in self.s_flags if f & F_TRUNCATED),
                           orphans=sum(1 for f in self.s_flags if f & F_ORPHAN), clamped=drift_fix,
@@ -1106,8 +1115,9 @@ class TimelineBuilder:
         return data
 
 
-def build_timeline(lines, rettypes=None, errno_map=None, verbose=False, overhead=None):
-    b = TimelineBuilder(lines, rettypes=rettypes, errno_map=errno_map, verbose=verbose, overhead=overhead)
+def build_timeline(lines, rettypes=None, errno_map=None, verbose=False, overhead=None, rettype_resolver=None):
+    b = TimelineBuilder(lines, rettypes=rettypes, errno_map=errno_map, verbose=verbose, overhead=overhead,
+                        rettype_resolver=rettype_resolver)
     b.build()
     return b
 

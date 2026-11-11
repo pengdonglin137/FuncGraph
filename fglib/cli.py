@@ -20,7 +20,8 @@ from .uftrace import UftraceInputError
 from .util import SOURCE_BROWSERS, check_gawk_available, source_browser_url, verbose_print
 
 
-def build_compare_data(args, parsed_lines, timeline_json, vmlinux_path, module_dirs, module_index=None):
+def build_compare_data(args, parsed_lines, timeline_json, vmlinux_path, module_dirs, module_index=None,
+                       rettype_resolver=None):
     """Compare tab data: per-function statistics of --compare BASE vs. this trace."""
     from . import compare, timeline as tlmod
     t0 = time.time()
@@ -31,13 +32,14 @@ def build_compare_data(args, parsed_lines, timeline_json, vmlinux_path, module_d
         if isinstance(base_lines, inputs.UftraceInput):
             raise UftraceInputError('CLI pre-filters are not supported for uftrace; use the report filters')
         base_lines, _ = prefilter.apply(base_lines, pre)     # same filter on both sides
-    rettypes = load_rettypes(parsed_lines, vmlinux_path, module_dirs, args, module_index=module_index)
+    resolver = rettype_resolver if rettype_resolver is not None else ReturnTypeResolver(
+        vmlinux_path, module_dirs, args, module_index=module_index)
     if timeline_json is not None:
         cur = timeline_json
     else:
-        cur = tlmod.build_timeline([l.raw_line for l in parsed_lines], rettypes=rettypes, errno_map=ERROR_CODE_MAP,
+        cur = tlmod.build_timeline([l.raw_line for l in parsed_lines], rettype_resolver=resolver, errno_map=ERROR_CODE_MAP,
                                    overhead=parse_overhead(args.overhead)).to_data()
-    data = compare.compare(cur, base_lines, rettypes=rettypes, overhead=parse_overhead(args.overhead), base_name=os.path.basename(args.compare),
+    data = compare.compare(cur, base_lines, rettype_resolver=resolver, overhead=parse_overhead(args.overhead), base_name=os.path.basename(args.compare),
                            cur_name=os.path.basename(input_name(args)))
     print(f"Compare: {len(data['rows'])} functions vs {args.compare}, {time.time() - t0:.2f}s")
     return data
@@ -54,43 +56,52 @@ def parse_overhead(text):
     return (parts[0], parts[1] if len(parts) > 1 else 0)
 
 
-_RETTYPES = {}
+class ReturnTypeResolver:
+    """Resolve each model's modules using BTF caches owned by this report only."""
+
+    def __init__(self, vmlinux_path, module_dirs, args, module_index=None):
+        from .btf import ReturnTypeLoader
+        self.module_index = module_index if module_index is not None else ModuleIndex(module_dirs, args.verbose)
+        self.loader = None if args.no_btf or not (vmlinux_path or args.btf) else ReturnTypeLoader(vmlinux_path, args.btf)
+        self.verbose = args.verbose
+        self._reported = set()
+
+    def __call__(self, module_names):
+        if self.loader is None:
+            return None
+        paths = []
+        for name in sorted({name for name in module_names if name}):
+            path = self.module_index.find(name)
+            if path:
+                paths.append(path)
+        database = self.loader.build(paths)
+        if database not in self._reported:
+            self._reported.add(database)
+            for error in database.errors:
+                verbose_print(f"BTF: {error}", self.verbose)
+            if len(database) == 0:
+                print("Note: no BTF found (vmlinux lacks .BTF); error paths will be unverified", file=sys.stderr)
+            else:
+                verbose_print(f"BTF: {len(database)} function return types from {database.sources}", self.verbose)
+        return database if len(database) else None
 
 
 def load_rettypes(parsed_lines, vmlinux_path, module_dirs, args, module_index=None):
-    """BTF return-type database (cached per run); None with --no-btf or when no BTF exists."""
-    if args.no_btf or (not vmlinux_path and not args.btf):
-        return None
-    if 'db' in _RETTYPES:
-        return _RETTYPES['db']
-    from . import btf as btfmod
-    modules = sorted({l.get('module_name') for l in parsed_lines if l.get('module_name')})
-    mod_paths = []
-    lookup = module_index if module_index is not None else ModuleIndex(module_dirs, args.verbose)
-    for module_name in modules:
-        module_path = lookup.find(module_name)
-        if module_path:
-            mod_paths.append(module_path)
-    rettypes = btfmod.build_return_db(vmlinux_path, extra_paths=args.btf or [], module_paths=mod_paths)
-    for err in rettypes.errors:
-        verbose_print(f"BTF: {err}", args.verbose)
-    if len(rettypes) == 0:
-        print("Note: no BTF found (vmlinux lacks .BTF); error paths will be unverified", file=sys.stderr)
-        rettypes = None
-    else:
-        verbose_print(f"BTF: {len(rettypes)} function return types from {rettypes.sources}", args.verbose)
-    _RETTYPES['db'] = rettypes
-    return rettypes
+    """Compatibility helper; standalone calls never share a process-global database."""
+    resolver = ReturnTypeResolver(vmlinux_path, module_dirs, args, module_index=module_index)
+    return resolver(line.get('module_name') for line in parsed_lines)
 
 
-def build_timeline_data(parsed_lines, vmlinux_path, module_dirs, args, structured_data=None, module_index=None):
+def build_timeline_data(parsed_lines, vmlinux_path, module_dirs, args, structured_data=None, module_index=None,
+                        rettype_resolver=None):
     """Build the Timeline tab data set. Returns a JSON-serializable dict or None on failure."""
     from . import timeline as tlmod
     t0 = time.time()
     if structured_data is None:
-        rettypes = load_rettypes(parsed_lines, vmlinux_path, module_dirs, args, module_index=module_index)
+        resolver = rettype_resolver if rettype_resolver is not None else ReturnTypeResolver(
+            vmlinux_path, module_dirs, args, module_index=module_index)
         lines = [l.raw_line for l in parsed_lines]
-        builder = tlmod.build_timeline(lines, rettypes=rettypes, errno_map=ERROR_CODE_MAP, verbose=args.verbose,
+        builder = tlmod.build_timeline(lines, rettype_resolver=resolver, errno_map=ERROR_CODE_MAP, verbose=args.verbose,
                                        overhead=parse_overhead(args.overhead))
         data = builder.to_data()
     else:
@@ -502,6 +513,8 @@ def main():
         cross_compile, llvm, util_prefix, util_suffix = os.environ.get('CROSS_COMPILE', ''), os.environ.get('LLVM', ''), '', ''
         print("Note: no --vmlinux given: kernel source resolution and vmlinux BTF are skipped")
 
+    rettype_resolver = ReturnTypeResolver(vmlinux_path, module_dirs, args, module_index=module_index)
+
     # 处理内核源码路径（单个）
     kernel_src_abs = os.path.abspath(args.kernel_src) if args.kernel_src else None
 
@@ -553,7 +566,7 @@ def main():
             sys.exit(1)
         builder = raw_lines.build(enable_fold=args.enable_fold, verbose=args.verbose, errno_map=ERROR_CODE_MAP,
                                   include_text=not args.no_text_view or args.keep_source,
-                                  rettypes=load_rettypes([], vmlinux_path, module_dirs, args, module_index=module_index),
+                                  rettype_resolver=rettype_resolver,
                                   overhead=parse_overhead(args.overhead))
         parsed_lines = builder.parsed
         structured_data = builder.to_data()
@@ -578,13 +591,12 @@ def main():
     timeline_json = None
     if args.timeline:
         timeline_json = build_timeline_data(parsed_lines, vmlinux_path, module_dirs, args, structured_data,
-                                            module_index=module_index)
+                                            module_index=module_index, rettype_resolver=rettype_resolver)
 
     if args.export:
         from . import export, timeline as tlmod
         data = timeline_json or structured_data or tlmod.build_timeline([l.raw_line for l in parsed_lines],
-                                                     rettypes=load_rettypes(parsed_lines, vmlinux_path, module_dirs, args,
-                                                                            module_index=module_index),
+                                                     rettype_resolver=rettype_resolver,
                                                      errno_map=ERROR_CODE_MAP,
                                                      overhead=parse_overhead(args.overhead)).to_data()
         ex = export.write(args.export, data, ERROR_CODE_MAP, input_name(args))
@@ -595,10 +607,12 @@ def main():
     if args.compare:
         try:
             compare_json = build_compare_data(args, parsed_lines, timeline_json or structured_data, vmlinux_path,
-                                               module_dirs, module_index=module_index)
+                                               module_dirs, module_index=module_index, rettype_resolver=rettype_resolver)
         except (OSError, EOFError, lzma.LZMAError, inputs.raw.RawInputError, UftraceInputError, UnicodeError) as error:
             print(f"Error: cannot read comparison input: {error}", file=sys.stderr)
             sys.exit(1)
+
+    del rettype_resolver
 
     # 计算统计信息
     expandable_count = sum(1 for l in parsed_lines if l['expandable'])

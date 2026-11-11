@@ -66,13 +66,15 @@ def _rows(a, b):
     return rows
 
 
-def compare(cur_data, base_lines, rettypes=None, overhead=None, base_name='base', cur_name='current'):
+def compare(cur_data, base_lines, rettypes=None, overhead=None, base_name='base', cur_name='current', rettype_resolver=None):
     """overhead: applied to both traces (read from each trace's header when None)."""
     from .inputs import UftraceInput
     if isinstance(base_lines, UftraceInput):
-        base = base_lines.build(rettypes=rettypes, overhead=overhead, include_text=False).to_data()
+        base = base_lines.build(rettypes=rettypes, overhead=overhead, include_text=False,
+                                rettype_resolver=rettype_resolver).to_data()
     else:
-        base = timeline.build_timeline(base_lines, rettypes=rettypes, overhead=overhead).to_data()
+        base = timeline.build_timeline(base_lines, rettypes=rettypes, overhead=overhead,
+                                       rettype_resolver=rettype_resolver).to_data()
     by_space = 'uftrace' in base or 'uftrace' in cur_data
     rows = _rows(function_stats(base, by_space=by_space), function_stats(cur_data, by_space=by_space))
     both_adj = bool(base['cols'].get('adj') and cur_data['cols'].get('adj'))

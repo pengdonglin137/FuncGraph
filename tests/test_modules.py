@@ -175,8 +175,6 @@ class ModulePipelineTest(unittest.TestCase):
         self.trace = self.root / 'trace.txt'
         self.trace.write_text('# tracer: function_graph\n'
                               ' 2) mod_fn [mixed_module_name](); /* <-caller+0x1/0x20 [mixed_module_name] */\n')
-        cli._RETTYPES.clear()
-        self.addCleanup(cli._RETTYPES.clear)
 
     def test_btf_function_entries_and_call_sites_use_the_same_module_snapshot(self):
         from fglib.report import call_faddr2line_batch, call_faddr2line_for_func_names
@@ -207,7 +205,6 @@ class ModulePipelineTest(unittest.TestCase):
     def test_cli_reuses_one_index_and_thin_reports_do_not_scan_unused_trees(self):
         for thin in [False, True]:
             with self.subTest(thin=thin):
-                cli._RETTYPES.clear()
                 indexes = []
 
                 def make_index(*args, **kwargs):

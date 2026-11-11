@@ -230,6 +230,10 @@ func(args);    [/* <-caller+off/len [mod] ret=X */]  叶子
 
 用标准库读取 ELF 的 `.BTF` 段（支持 `SHF_COMPRESSED`），或直接读原始 BTF 数据（`/sys/kernel/btf/*` 的副本）。模块的 split BTF 需要以 vmlinux 的 BTF 为基础，类型 id 和字符串偏移接在基础之后。解析只保留函数名到 (类别, 字节数) 的映射，查找时会去掉 `.isra.0` 这类编译器后缀。pi4 的 vmlinux 有 55599 个函数，约 1s 解析完。
 
+`ReturnTypeLoader` 按报告惰性缓存 `(路径, 基础 BTF)` 的解析结果和失败结果，并为不同模块路径集合保存独立的 `ReturnTypeDB`。`ReturnTypeResolver` 复用本次命令的 `ModuleIndex`；Timeline 完成实际调用/孤立退出配对后，在错误分析之前才传入自身的 `s_module`。Compare 两侧因此分别取得类型表，既不会遗漏基准独有模块，也不会在两侧同名函数属于不同模块时混用类型。不重新解析原始 trace 或额外调用解析器来猜模块，已解析的内核 BTF 跨视图复用。无 BTF 或 `--no-btf` 时不扫描模块目录；新命令创建新缓存，替换二进制或先前缺失的 BTF 不会受进程级缓存污染。显式 `rettypes` 和惰性 resolver 不可同时传入；单次类型表内的同名符号仍沿用既有优先级，不宣称按模块消除所有符号歧义。
+
+CLI 完成 Timeline、导出与 Compare 数据准备后释放类型 resolver，再进入 HTML/源码渲染，避免基础 BTF 的原始类型段和解析数组继续常驻到大报告生成阶段。此释放不影响供源码解析共享的模块路径索引，也不代表整个报告采用常量内存。
+
 ### 6.7 数据格式（`tlData`）
 
 `to_data()` 输出的 JSON 内嵌在 `<script type="application/json" id="tlData">` 中，所有 `<` 都转义成 `\u003c`。

@@ -947,6 +947,8 @@ Click a row for the first occurrence, then the next; Shift-click or `◀` goes b
    - comparators (names with `cmp`/`compare`) are not errors: they return differences.
 2. Without BTF only the value can be used, and leftover register values of void functions cause false positives; such results are marked unverified.
 
+Native text and decoded raw `ret=0x...` values retain their complete hexadecimal bit pattern before type-width, negative-errno, `ERR_PTR` and NULL checks. A nonzero pointer is not NULL merely because its spelling starts with `0`. Tokens that cannot be recognized completely do not participate in error classification; their numeric prefix is not a substitute for the original value.
+
 The error navigator in the toolbar (`◀ N errors · to user ▶`): click the label to switch between "errors that reach user space" and "all errors".
 
 ### 7.5 Wait chain (click an off-CPU segment)
@@ -1033,6 +1035,8 @@ python3 funcgraph.py --compare before.txt --output cmp.html after.txt
 ```
 
 The current trace (`after.txt`) and the base (`before.txt`) are rebuilt the same way and summarized per function; pre-filters apply to both. `--timeline` is not needed: sorting controls and browser CSV export work independently.
+
+**Return types and modules:** with `--vmlinux`, `--btf` and `--module-dirs`, each side selects types for its own recorded modules, including modules present only in the baseline. The current trace's module database is not imposed on the baseline. Parsed kernel and module BTF is reused within one report; a new report reads it afresh, even in the same Python process. These paths still apply to both sides: supply matching binaries, not two unrelated kernel builds expecting automatic version matching. Missing types remain unverified; a negative value alone does not prove an error.
 
 - **Tags at the top**: changes of traced time (total of outermost calls), calls and error chains. Changes under 5% are grey, increases red, decreases green. A yellow warning appears when the two traces have different time modes (e.g. one without timestamps).
 - **Table**: for every metric three columns: base, current, Δ.
