@@ -507,7 +507,7 @@ class UftraceTimeline(TimelineBuilder):
         return lines
 
     def to_data(self):
-        data = super().to_data(preserve_zero=True)
+        data = super().to_data()
         data['uftrace'] = {'clock': self.metadata['clock'], 'aligned': self.aligned, 'origin_ns': str(data['t0']),
                           'spaces': sorted(self.spaces), 'kernel_settings': self.metadata['kernel_settings']}
         if self.user_details:

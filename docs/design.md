@@ -249,6 +249,10 @@ irqoff[]  [task, start, end]
 lost[]    [cpu, count, line]
 ```
 
+`ret/caller/args/module` 的缺失值为 `-1`；字符串表索引 `0` 是有效值。
+`cpu` 同样以 `-1` 表示未知，CPU `0` 必须保留。只有 `eline` 的 `0` 表示未记录退出行。
+序列化时仅在整列都是对应缺失值时省略该列，原生 ftrace 和 uftrace 使用同一规则。
+
 `flags` 的位定义（`timeline.py` 和 `model.js` 中的 `FL` 必须保持一致）：
 
 | 位 | 含义 |

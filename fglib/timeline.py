@@ -988,7 +988,7 @@ class TimelineBuilder:
             self.err_rows.append([i, e, role, fate, 1 if verified[i] else 0, cid])
 
     # -- serialization --------------------------------------------------
-    def to_data(self, preserve_zero=False):
+    def to_data(self):
         n = len(self.s_task)
         timed = self.mode in ('abs', 'rel')
         # Time origin: the earliest timestamp of anything drawn, not only of the calls. Sched events
@@ -1049,7 +1049,7 @@ class TimelineBuilder:
             cols['adj'] = [max(0, d - child_ns * k - self_ns) for d, k in zip(cols['dur'], desc)]
         # sparse columns are dropped when empty
         for k in ('ret', 'caller', 'args', 'module', 'eline', 'cpu'):
-            empty = (0,) if k == 'eline' else (-1,) if preserve_zero else (-1, 0)
+            empty = (0,) if k == 'eline' else (-1,)
             if all(v in empty for v in cols[k]):
                 cols[k] = None
         tasks = []
