@@ -354,6 +354,11 @@ table.tl-sum td.err { color: #c62828; }
 .an-task-head { flex-wrap: wrap; z-index: 2; left: 0; }
 .an-task-actions { display: flex; align-items: center; gap: 8px; margin-left: auto; flex-shrink: 0; }
 .an-task-tools, .an-task-footer { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 8px 12px; position: sticky; left: 0; color: var(--text-muted); }
+.an-task-footer { bottom: 0; z-index: 3; justify-content: space-between; background: var(--container-bg); border-top: 1px solid var(--border-color); }
+.an-task-footer [role=status] { font-variant-numeric: tabular-nums; }
+.an-task-pages { display: flex; gap: 8px; }
+.an-task-filter-toggle { display: none; }
+.tl-detail-short .an-task-head, .tl-detail-short .an-task-footer { position: static; }
 .an-task-tools label { display: flex; align-items: center; gap: 4px; min-width: 0; }
 .an-task-tools input[type=search] { width: 220px; max-width: 100%; min-width: 100px; }
 .an-task-tools input, .an-task-tools select { color: var(--text-color); background: var(--container-bg); border: 1px solid var(--border-color); border-radius: 4px; padding: 4px; }
@@ -482,6 +487,11 @@ table.tl-sum td.err { color: #c62828; }
 .tl-compact .tl-options :is(button, input) { min-height: 36px; }
 .tl-compact .tl-options input { font-size: 16px; }
 .tl-compact .tl-process-head .tl-btn, .tl-compact .tl-process-tools .tl-btn, .tl-compact .tl-process-link { min-height: 44px; }
+.tl-compact .an-task-head .tl-btn, .tl-compact .an-task-footer .tl-btn, .tl-compact [data-task-show],
+.tl-compact .an-task-tools :is(input[type=search], select) { min-height: 44px; }
+.tl-compact .an-task-tools input[type=search] { font-size: 16px; }
+.tl-compact .an-task-filter-toggle { display: inline-block; }
+.tl-compact .an-task-tools:not(.open) { display: none; }
 .tl-compact .tl-slice-head { box-sizing: border-box; min-height: 44px; padding-inline-end: 52px; gap: 4px 8px; }
 .tl-compact .tl-slice-head .tl-close { position: absolute; inset-block-start: 0; inset-inline-end: 4px; }
 @media (min-height: 481px) {

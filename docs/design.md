@@ -372,7 +372,7 @@ uftrace 的原生导出为内核入口增加可选 `retaddr_symbol`：仅解析�
 
 ### 任务导航与完整时间范围
 
-任务导航（`analysis.js` 的 `taskData/taskOrder/showTasks`）懒构建全体 `TRACKS` 的身份事实：真实切片、runs、offcpu、wakeups、resched、irqoff 与 sections 的计数/几何边界及 CPU 集合，错误计数含 minor 源头，不纳入合成帧。原始事实独立于过滤、Overhead 和 Inline；过滤匹配数按 `textHits` 身份另缓存，查询/排序只处理任务，不重扫调用。100 行追加分页与全量 CSV 共用同一排序结果；query 使用字面匹配，名称转义、CSV 复用公式防护。时间列区分实测、压缩和调用顺序口径，跨度含空隙、不是 CPU 用量；开放等待按 `OPEN_OFF` 保留未知恢复和下界身份。
+任务导航（`analysis.js` 的 `taskData/taskOrder/showTasks`）懒构建全体 `TRACKS` 的身份事实：真实切片、runs、offcpu、wakeups、resched、irqoff 与 sections 的计数/几何边界及 CPU 集合，错误计数含 minor 源头，不纳入合成帧。原始事实独立于过滤、Overhead 和 Inline；过滤匹配数按 `textHits` 身份另缓存，查询/排序只处理任务，不重扫调用。当前每页最多 100 行，前后翻页仅替换 tbody，普通刷新与重开保留页码，新条件重置首页；分页条在正常高度面板底部固定，极短面板的标题与分页条恢复普通滚动。分页与全量 CSV 共用同一排序结果，导出不受当前页限制；query 使用字面匹配，名称转义、CSV 复用公式防护。时间列区分实测、压缩和调用顺序口径，跨度含空隙、不是 CPU 用量；开放等待按 `OPEN_OFF` 保留未知恢复和下界身份。下表保留旧追加式 Tasks 的容量基准，当前分页的对照实测与边界见[任务分页性能记录](performance-tasks.md)。
 
 `model.js` 在补开放等待端点前遍历所有调用/调度/窗口边界，确定报告右界，不再仅取调用和已完成等待。`interact.js` 按需将仅调度任务加入 `ORDER`，显示真实头部而非伪造切片；CPU 点击选择实际深度中的最内层真实调用，否则清除旧选择、保留时间视野并显示该任务的 Tasks 行。Tasks 的 Show 则缩放到任务完整记录跨度。Tasks 的标题/工具/页脚均为详情区直接子元素，横向 sticky，紧凑窗口标题纵向滚动，动态排序后重算表头偏移。
 

@@ -73,7 +73,7 @@ function taskOrder() {
         const first = value(left), second = value(right);
         return (typeof first === 'string' ? first.localeCompare(second) : first - second) || left.task.id - right.task.id;
     });
-    taskOrderCache = { data, key, rows, visible: Math.min(TASK_PAGE, rows.length) };
+    taskOrderCache = { data, key, rows, page: 0 };
     return taskOrderCache;
 }
 function taskRows(rows) {
@@ -89,14 +89,29 @@ function taskRows(rows) {
     }).join('');
 }
 function updateTaskFooter(order) {
-    elDetail.querySelector('.an-task-footer [role=status]').textContent = 'Showing ' + order.visible + ' of ' + order.rows.length + ' tasks';
-    elDetail.querySelector('[data-act=tasks-more]').disabled = order.visible >= order.rows.length;
+    const start = order.page * TASK_PAGE, end = Math.min(start + TASK_PAGE, order.rows.length);
+    const previous = elDetail.querySelector('[data-task-page="-1"]');
+    const next = elDetail.querySelector('[data-task-page="1"]');
+    const focused = document.activeElement;
+    elDetail.querySelector('.an-task-footer [role=status]').textContent = order.rows.length ?
+        'Tasks ' + (start + 1) + '–' + end + ' of ' + order.rows.length : 'No matching tasks';
+    previous.disabled = order.page === 0;
+    next.disabled = end >= order.rows.length;
+    if (focused === next && next.disabled && !previous.disabled) previous.focus({ preventScroll: true });
+    else if (focused === previous && previous.disabled && !next.disabled) next.focus({ preventScroll: true });
     elDetail.querySelector('[data-act=tasks-csv]').disabled = !order.rows.length;
+    const filters = elDetail.querySelector('[data-task-filters]');
+    const active = !!taskView.query.trim() || taskView.kind !== 'all' || taskView.matching || taskView.only !== null;
+    filters.textContent = active ? 'Filters · on' : 'Filters';
+    filters.classList.toggle('on', active);
 }
-function appendTaskRows() {
-    const order = taskOrder(), start = order.visible;
-    order.visible = Math.min(start + TASK_PAGE, order.rows.length);
-    elDetail.querySelector('.an-task-table tbody').insertAdjacentHTML('beforeend', taskRows(order.rows.slice(start, order.visible)));
+function changeTaskPage(direction) {
+    if (AN.kind !== 'tasks') return;
+    const order = taskOrder(), last = Math.max(0, Math.ceil(order.rows.length / TASK_PAGE) - 1);
+    order.page = Math.max(0, Math.min(last, order.page + direction));
+    const start = order.page * TASK_PAGE;
+    elDetail.scrollTop = 0;
+    elDetail.querySelector('.an-task-table tbody').innerHTML = taskRows(order.rows.slice(start, start + TASK_PAGE));
     updateTaskFooter(order);
 }
 function exportTasksCsv() {
@@ -139,17 +154,20 @@ function showTasks(only) {
         openDetail('<div class="tl-detail-head an-task-head"><span class="tl-detail-title">Tasks</span>' +
             '<span class="an-task-scope"></span><span class="an-task-actions"><button class="tl-btn" data-act="tasks-csv">Export CSV</button>' +
             '<button class="tl-close" title="Close (Esc)">×</button></span></div>' +
-            '<div class="an-task-tools"><label>Find <input data-task-query type="search" placeholder="Name, old name, PID or CPU" spellcheck="false"></label>' +
+            '<div class="an-task-tools" id="tlTaskFilters"><label>Find <input data-task-query type="search" placeholder="Name, old name, PID or CPU" spellcheck="false"></label>' +
             '<label>Kind <select data-task-kind><option value="all">All</option>' + TASK_KINDS.map((name, kind) =>
                 '<option value="' + kind + '">' + name + '</option>').join('') + '</select></label>' +
             '<label><input type="checkbox" data-task-matching>Matching calls only</label><button class="tl-btn" data-act="tasks-reset">Reset</button></div>' +
-            '<table class="tl-sum an-task-table"></table><div class="an-task-footer"><span role="status" aria-live="polite"></span>' +
-            '<button class="tl-btn" data-act="tasks-more">Load more</button></div>' +
+            '<table class="tl-sum an-task-table"></table><div class="an-task-footer"><span role="status" aria-live="polite" aria-atomic="true"></span>' +
+            '<span class="an-task-pages" role="group" aria-label="Task browsing controls">' +
+            '<button class="tl-btn an-task-filter-toggle" type="button" data-task-filters aria-controls="tlTaskFilters" aria-expanded="false" title="Show task search and filters">Filters</button>' +
+            '<button class="tl-btn" type="button" data-task-page="-1" aria-label="Previous page of tasks">Previous</button>' +
+            '<button class="tl-btn" type="button" data-task-page="1" aria-label="Next page of tasks">Next</button></span></div>' +
             '<div class="an-hint">All recorded task identities, including scheduler-only tasks. Calls and errors exclude synthetic frames; errors include minor origins. ' +
             'The shared filter changes matches, not raw counts. Trace span includes gaps: not CPU time, running duration or task lifetime. ' +
             'Open waits extend to the report boundary (≥, lower bound), not a known resume. ' +
             (TIMED ? 'Positions use recorded time.' : MODE === 'count' ? 'Positions use call-order units, not elapsed time.' : 'Positions use packed durations; timing gaps are unknown.') +
-            ' Show fits the task extent; CPU clicks preserve the current time range. Empty spans have no recorded time boundary. CSV includes unloaded rows.</div>');
+            ' Show fits the task extent; CPU clicks preserve the current time range. Empty spans have no recorded time boundary. Pages contain at most 100 tasks; CSV includes every matching task, not just this page.</div>');
         elDetail.querySelector('[data-task-query]').addEventListener('input', event => {
             taskView.query = event.target.value; taskView.only = null; showTasks();
         });
@@ -162,7 +180,16 @@ function showTasks(only) {
         elDetail.querySelector('[data-act=tasks-reset]').onclick = () => {
             Object.assign(taskView, { query: '', kind: 'all', matching: false, only: null, sort: 'calls' }); showTasks();
         };
-        elDetail.querySelector('[data-act=tasks-more]').onclick = appendTaskRows;
+        elDetail.querySelector('[data-task-filters]').onclick = event => {
+            elDetail.scrollTop = 0;
+            const tools = elDetail.querySelector('.an-task-tools');
+            const shown = tools.classList.toggle('open');
+            event.currentTarget.setAttribute('aria-expanded', String(shown));
+            if (shown) elDetail.querySelector('[data-task-query]').focus({ preventScroll: true });
+        };
+        for (const button of elDetail.querySelectorAll('[data-task-page]')) {
+            button.onclick = () => changeTaskPage(+button.dataset.taskPage);
+        }
         elDetail.querySelector('[data-act=tasks-csv]').onclick = exportTasksCsv;
         elDetail.querySelector('.an-task-table').onclick = event => {
             const sort = event.target.closest('[data-task-sort]'), show = event.target.closest('[data-task-show]');
@@ -183,7 +210,8 @@ function showTasks(only) {
             ['errors', 'errors'], ['runs', 'runs'], ['span', 'trace span']];
         table.innerHTML = '<thead><tr>' + columns.map(([key, label]) => '<th' + (key ? ' aria-sort="' + (taskView.sort === key ?
             (key === 'name' ? 'ascending' : 'descending') : 'none') + '"><button class="tl-sum-sort" data-task-sort="' + key + '">' + label + '</button>' : '>' + label) +
-            '</th>').join('') + '<th>navigate</th></tr></thead><tbody>' + taskRows(order.rows.slice(0, order.visible)) + '</tbody>';
+            '</th>').join('') + '<th>navigate</th></tr></thead><tbody>' +
+            taskRows(order.rows.slice(order.page * TASK_PAGE, (order.page + 1) * TASK_PAGE)) + '</tbody>';
         table._taskOrder = order;
         if (reuse) elDetail.scrollTop = 0;
     }

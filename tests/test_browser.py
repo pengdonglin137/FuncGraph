@@ -2189,12 +2189,13 @@ class BrowserSmokeTest(unittest.TestCase):
                                     'overhead': {'child': 10, 'self': 5, 'source': 'test'}})
         self.page.click('[data-act=an-tasks]')
 
-    def test_tasks_paginate_export_all_and_preserve_focused_more_on_refresh(self):
+    def test_tasks_paginate_export_all_and_preserve_focused_pager_on_refresh(self):
         self.open_tasks_data()
         self.assertEqual(self.page.locator('.an-task-table tbody tr').count(), 100)
-        self.page.locator('[data-act=tasks-more]').press('Enter')
-        self.assertEqual(self.page.locator('.an-task-table tbody tr').count(), 200)
-        self.assertEqual(self.ev("document.activeElement.dataset.act"), 'tasks-more')
+        self.page.locator('[data-task-page="1"]').press('Enter')
+        self.assertEqual(self.page.locator('.an-task-table tbody tr').count(), 100)
+        self.assertEqual(self.ev("document.activeElement.dataset.taskPage"), '1')
+        self.assertEqual(self.page.locator('.an-task-footer [role=status]').inner_text(), 'Tasks 101–200 of 233')
         rows = self.download_csv('[data-act=tasks-csv]')
         self.assertEqual(len(rows), 233)
         self.assertEqual(rows[0]['task'], "'=unsafe")
@@ -2205,11 +2206,14 @@ class BrowserSmokeTest(unittest.TestCase):
         self.assertEqual(rows[-3]['start_ns'], '')
         self.assertEqual(rows[-2]['cpus'], '0')
         self.page.click('[data-act=adj]')
-        self.assertEqual(self.page.locator('.an-task-table tbody tr').count(), 200)
+        self.assertEqual(self.page.locator('.an-task-table tbody tr').count(), 100)
+        self.assertEqual(self.page.locator('.an-task-footer [role=status]').inner_text(), 'Tasks 101–200 of 233')
         self.assertEqual(self.download_csv('[data-act=tasks-csv]'), rows)
-        self.page.locator('[data-act=tasks-more]').press('Space')
-        self.assertEqual(self.page.locator('.an-task-table tbody tr').count(), 233)
-        self.assertTrue(self.page.locator('[data-act=tasks-more]').is_disabled())
+        self.page.locator('[data-task-page="1"]').press('Space')
+        self.assertEqual(self.page.locator('.an-task-table tbody tr').count(), 33)
+        self.assertTrue(self.page.locator('[data-task-page="1"]').is_disabled())
+        self.page.locator('[data-task-page="-1"]').press('Space')
+        self.assertEqual(self.page.locator('.an-task-footer [role=status]').inner_text(), 'Tasks 101–200 of 233')
 
     def test_tasks_literal_query_kind_shared_matches_and_navigation(self):
         self.open_tasks_data(count=12)
