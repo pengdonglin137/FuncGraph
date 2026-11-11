@@ -68,11 +68,19 @@ The repository pins unmodified official upstream sources:
 
 Each retains its own upstream licensing in `LICENSES`, `COPYING` or `COPYING.LIB`. The Python distributions do not vendor these libraries. Their submodules are a reproducible build option, not a requirement to initialize the repository for text reports. Download a Git checkout to use this option; a Python sdist does not contain the submodule sources.
 
+All four native dependency commits, including uftrace, are recorded in
+[`third_party/versions.json`](../third_party/versions.json) and must match the Git
+submodule gitlinks. The build script rejects a mismatched HEAD or modified tracked
+sources before compiling. Normal initialization does not follow upstream updates;
+do not use `git submodule update --remote`. See [dependency pins](../third_party/README.md)
+for validation and the intentional upgrade procedure.
+
 Example prerequisites on Ubuntu 24.04:
 
 ```bash
 sudo apt-get install build-essential pkg-config flex bison linux-libc-dev libzstd-dev zlib1g-dev
 git submodule update --init --recursive
+python3 third_party/check_pins.py
 bash third_party/build.sh "$HOME/.local/funcgraph-raw"
 export PKG_CONFIG_PATH="$HOME/.local/funcgraph-raw/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
 export LD_LIBRARY_PATH="$HOME/.local/funcgraph-raw/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"

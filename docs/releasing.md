@@ -68,6 +68,12 @@ creates a prerelease and is not marked as the latest release.
 
 ### 2. Validate locally
 
+Before packaging, verify the dependency lock with
+`python3 third_party/check_pins.py --allow-uninitialized`. This checks all indexed
+submodule commits, even for Python-only builds; initialized checkouts must also
+match and have no tracked edits. Native build scripts additionally require their
+selected submodules to be initialized. See [dependency pins](../third_party/README.md).
+
 Use a temporary virtual environment and a fresh output directory to avoid global
 Python changes or accidentally checking a stale package:
 

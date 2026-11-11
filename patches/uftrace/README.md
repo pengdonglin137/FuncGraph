@@ -12,6 +12,10 @@ are generated from committed changes in `build/uftrace-dev`, never hand-edited.
 | 0004 | Fix sorted kernel symbol ranges on Pi; final native validation fixes declaration diagnostics and rejects malformed/trailing user records instead of reporting completion. | Not submitted. Remove after equivalent upstream fixes land and the regression tests pass. |
 | 0005 | Export supported user scalar arguments/returns from saved specifications while preserving raw payload bytes. | Not submitted. Remove when an upstream export offers both forms. |
 
+The full base SHA is `842ed731248a9daded38774d8fb26c7b09474461`, locked in both
+the gitlink and `third_party/versions.json`. Build scripts reject mismatches;
+normal builds never track an upstream branch. See [dependency pins](../../third_party/README.md).
+
 The native executable is optional and is **not** linked into FuncGraph or
 included in Python distributions. uftrace is GPL-2.0; anyone distributing its
 binaries must also meet its corresponding-source/license obligations, including

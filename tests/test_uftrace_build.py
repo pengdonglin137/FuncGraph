@@ -1,5 +1,6 @@
 """Hermetic uftrace patch/build workflow tests; no tracing or compiler required."""
 import os
+import json
 from pathlib import Path
 import shutil
 import subprocess
@@ -38,6 +39,8 @@ class UftraceBuildTest(unittest.TestCase):
         self.git(self.root, '-c', 'protocol.file.allow=always', 'submodule', 'add', '-q',
                  str(upstream), 'third_party/uftrace')
         self.source = self.root / 'third_party/uftrace'
+        shutil.copy(Path(helpers.ROOT) / 'third_party/check_pins.py', self.root / 'third_party/check_pins.py')
+        (self.root / 'third_party/versions.json').write_text(json.dumps({'uftrace': self.git(self.source, 'rev-parse', 'HEAD')}))
 
     def git(self, directory, *arguments):
         result = subprocess.run(['git', '-C', str(directory), *arguments],
@@ -80,6 +83,20 @@ class UftraceBuildTest(unittest.TestCase):
         result = self.run_script('check')
         self.assertNotEqual(result.returncode, 0)
         self.assertIn('indexed submodule pin', result.stderr)
+
+    def test_lock_drift_is_rejected_before_applying_patches(self):
+        (self.root / 'third_party/versions.json').write_text(json.dumps({'uftrace': 'f' * 40}))
+        result = self.run_script('check')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('Dependency pin check failed:', result.stderr)
+        self.assertFalse((self.root / 'build').exists())
+
+    def test_dirty_upstream_is_rejected_before_applying_patches(self):
+        (self.source / 'value').write_text('local edit\n')
+        result = self.run_script('check')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('tracked submodule sources are modified: uftrace', result.stderr)
+        self.assertFalse((self.root / 'build').exists())
 
     def test_refresh_check_build_and_pristine_pin(self):
         self.make_patch()

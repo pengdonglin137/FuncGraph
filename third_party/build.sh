@@ -13,6 +13,7 @@ for library in libtraceevent libtracefs trace-cmd; do
         exit 1
     fi
 done
+python3 "$root/check_pins.py" --only libtraceevent libtracefs trace-cmd
 read -r -a compiler <<< "${CC:-cc}"
 read -r -a extra_flags <<< "${EXTRA_CFLAGS:-}"
 if ! printf '#include <linux/btf.h>\nint main(void) { return sizeof(struct btf_enum64); }\n' | \

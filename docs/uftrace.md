@@ -122,6 +122,13 @@ kernel names separately, even when their symbols have identical spelling.
 
 ## Reproducible native build
 
+The upstream base is locked to `842ed731248a9daded38774d8fb26c7b09474461`
+(v0.20). [`third_party/versions.json`](../third_party/versions.json) locks this and
+the three raw-decoder repositories to their current full commit SHAs. The build
+checks every gitlink against this lock and requires a clean uftrace checkout at
+the selected commit before applying patches. Do not use `git submodule update --remote`.
+See [dependency pins](../third_party/README.md) before intentionally upgrading.
+
 Build from a Git checkout, not from an installed Python wheel/sdist.
 
 ```bash

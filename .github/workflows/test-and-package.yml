@@ -38,7 +38,9 @@ jobs:
       - name: Run tests
         env:
           FG_SAMPLE_BROWSER_REQUIRED: ${{ matrix.browser && '1' || '0' }}
-        run: tests/run.sh
+        run: |
+          python third_party/check_pins.py --allow-uninitialized
+          tests/run.sh
 
   raw:
     runs-on: ubuntu-24.04

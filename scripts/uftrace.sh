@@ -38,6 +38,7 @@ BASE=$(git -C "$ROOT" ls-files --stage third_party/uftrace | awk '$1 == "160000"
 [[ -n $BASE && $(git -C "$SOURCE" rev-parse HEAD) == "$BASE" ]] || {
     echo 'uftrace HEAD must match the indexed submodule pin' >&2; exit 1;
 }
+python3 "$ROOT/third_party/check_pins.py" --only uftrace
 TEMP=$(mktemp -d)
 trap 'rm -rf "$TEMP"' EXIT
 

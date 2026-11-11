@@ -24,12 +24,26 @@ class RawLibraryBuildTest(unittest.TestCase):
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory(prefix='fg-raw-build-')
         self.addCleanup(self.directory.cleanup)
-        self.root = Path(self.directory.name)
+        project = Path(self.directory.name)
+        self.root = project / 'third_party'
+        self.root.mkdir()
         self.build = self.root / 'build.sh'
         shutil.copyfile(Path(helpers.ROOT) / 'third_party' / 'build.sh', self.build)
+        shutil.copyfile(Path(helpers.ROOT) / 'third_party' / 'check_pins.py', self.root / 'check_pins.py')
+        subprocess.run(['git', 'init', '-q', str(project)], check=True)
+        pins = {}
         for library in ['libtraceevent', 'libtracefs', 'trace-cmd']:
             (self.root / library).mkdir()
             (self.root / library / 'Makefile').touch()
+            repository = self.root / library
+            subprocess.run(['git', 'init', '-q', str(repository)], check=True)
+            subprocess.run(['git', '-C', str(repository), 'add', '.'], check=True)
+            subprocess.run(['git', '-C', str(repository), '-c', 'user.name=Test', '-c',
+                            'user.email=test@example.invalid', 'commit', '-qm', 'base'], check=True)
+            pins[library] = subprocess.check_output(['git', '-C', str(repository), 'rev-parse', 'HEAD']).decode().strip()
+            subprocess.run(['git', '-C', str(project), 'update-index', '--add', '--cacheinfo',
+                            '160000,' + pins[library] + ',third_party/' + library], check=True)
+        (self.root / 'versions.json').write_text(json.dumps(pins))
         tools = self.root / 'tools'
         tools.mkdir()
         self.log = self.root / 'calls.jsonl'
@@ -83,6 +97,23 @@ if actual != metadata:
         self.assertNotEqual(result.returncode, 0)
         self.assertIn('Recent Linux UAPI headers', result.stderr)
         self.assertEqual([name for name, arguments in self.calls()], ['cc'])
+
+    def test_dependency_drift_fails_before_compilation(self):
+        lock = self.root / 'versions.json'
+        pins = json.loads(lock.read_text())
+        pins['libtraceevent'] = 'f' * 40
+        lock.write_text(json.dumps(pins))
+        result = self.run_build()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('Dependency pin check failed:', result.stderr)
+        self.assertEqual(self.calls(), [])
+
+    def test_modified_dependency_fails_before_compilation(self):
+        (self.root / 'libtracefs/Makefile').write_text('modified\n')
+        result = self.run_build()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('tracked submodule sources are modified: libtracefs', result.stderr)
+        self.assertEqual(self.calls(), [])
 
     def test_missing_submodule_and_relative_prefix_do_not_invoke_tools(self):
         (self.root / 'libtracefs' / 'Makefile').unlink()

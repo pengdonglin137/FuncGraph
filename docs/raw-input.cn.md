@@ -68,11 +68,18 @@ pkg-config --modversion libtracecmd libtraceevent libtracefs
 
 各库保留自身 `LICENSES`、`COPYING` 或 `COPYING.LIB` 中的许可。Python 发布包不内置这些库。文本用户不必初始化子模块；通过 sdist 安装后若想构建这些依赖，需要另取 Git checkout，sdist 不包含子模块源码。
 
+这三个库与 uftrace 的完整 commit SHA 统一记录在
+[`third_party/versions.json`](../third_party/versions.json)，并与子模块 gitlink 严格一致。
+构建脚本在编译前拒绝 HEAD 不符或已跟踪源码被修改的依赖，不会跟随上游自动更新；
+不要使用 `git submodule update --remote`。校验命令和有意升级的步骤见
+[依赖版本锁说明](../third_party/README.md)。
+
 Ubuntu 24.04 上的依赖与构建示例：
 
 ```bash
 sudo apt-get install build-essential pkg-config flex bison linux-libc-dev libzstd-dev zlib1g-dev
 git submodule update --init --recursive
+python3 third_party/check_pins.py
 bash third_party/build.sh "$HOME/.local/funcgraph-raw"
 export PKG_CONFIG_PATH="$HOME/.local/funcgraph-raw/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
 export LD_LIBRARY_PATH="$HOME/.local/funcgraph-raw/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"

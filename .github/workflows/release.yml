@@ -26,6 +26,7 @@ jobs:
         env:
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
+          python third_party/check_pins.py --allow-uninitialized
           python - <<'PY'
           import os
           import re

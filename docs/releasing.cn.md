@@ -76,6 +76,11 @@ git ls-remote --tags origin "refs/tags/$release_tag" "refs/tags/$release_tag^{}"
 
 ## 3. 本地测试与打包
 
+打包前先执行 `python3 third_party/check_pins.py --allow-uninitialized`，核对所有
+子模块 gitlink 与锁文件一致；已初始化的仓库还必须 HEAD 匹配、已跟踪源码干净。
+原生构建脚本会进一步要求其所需子模块已初始化。详见
+[依赖版本锁说明](../third_party/README.md)。
+
 使用临时虚拟环境，避免修改系统 Python；输出到全新目录，避免混入旧的 `dist/` 包。
 
 ```bash

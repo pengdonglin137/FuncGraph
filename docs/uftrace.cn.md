@@ -96,6 +96,13 @@ Compare 与 `--export` 分开统计用户态、内核态的同名函数。
 
 ## 可复现构建
 
+上游基线固定为 `842ed731248a9daded38774d8fb26c7b09474461`（v0.20）。
+[`third_party/versions.json`](../third_party/versions.json) 同时记录 uftrace 和三个
+raw 解码库当前使用的完整 commit SHA。构建前检查全部 gitlink 与锁文件一致，
+并要求 uftrace 的 HEAD 匹配、已跟踪源码干净，再应用补丁；不要使用
+`git submodule update --remote`。有意升级时请按[依赖版本锁说明](../third_party/README.md)
+同时更新 gitlink、锁文件和补丁，并重新测试。
+
 从 Git checkout 构建，不是在已安装的 Python wheel / sdist 中构建。
 
 ```bash

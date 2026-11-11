@@ -1,0 +1,6 @@
+{
+  "libtraceevent": "13701b5532e0c3295bf5670361692b0d0044228d",
+  "libtracefs": "6fad6a14ba0d4c4b437d9e4eed7098d4bb07b4fc",
+  "trace-cmd": "3ce20923b3efa60d417da7acc8a327615fbd1419",
+  "uftrace": "842ed731248a9daded38774d8fb26c7b09474461"
+}
