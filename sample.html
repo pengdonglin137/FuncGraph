@@ -1945,11 +1945,11 @@ document.documentElement.setAttribute('data-theme', currentTheme);
                 <div class="info-item"><div class="info-label">OS:</div><div class="info-value">Linux 6.8.0-138-generic</div></div>
                 <div class="info-item"><div class="info-label">Hostname:</div><div class="info-value">pengdl-pc</div></div>
                 <div class="info-item"><div class="info-label">Processor:</div><div class="info-value">x86_64</div></div>
-                <div class="info-item"><div class="info-label">Generated At:</div><div class="info-value">2026-11-11 09:01:01</div></div>
+                <div class="info-item"><div class="info-label">Generated At:</div><div class="info-value">2026-11-11 09:18:35</div></div>
                 <div class="info-section-divider"></div>
                 <div class="info-section-title">Processing Stats</div>
                 <div class="info-item"><div class="info-label">Parse Time:</div><div class="info-value">0.02s</div></div>
-                <div class="info-item"><div class="info-label">Vmlinux Time:</div><div class="info-value">6.16s</div></div>
+                <div class="info-item"><div class="info-label">Vmlinux Time:</div><div class="info-value">8.77s</div></div>
                 <div class="info-item"><div class="info-label">Modules Time:</div><div class="info-value">0.00s</div></div>
                 <div class="info-item"><div class="info-label">Total Lines:</div><div class="info-value">739</div></div>
                 <div class="info-item"><div class="info-label">Expandable:</div><div class="info-value">485</div></div>
@@ -5982,6 +5982,61 @@ for (const wake of D.wakeups || []) observeEnd(wake[1]);
 for (const event of PROCESS_EVENTS) observeEnd(event[1]);
 const OPEN_OFF = new Set(D.offcpu.filter(record => record[2] === null));
 for (const r of D.offcpu) if (r[2] === null) r[2] = tMax;
+const SCHED_BLOCK_SIZE = 128;
+function* indexSchedulingIntervals(records) {
+    if (records.length < SCHED_BLOCK_SIZE) return null;
+    const bounds = new Float64Array(2 * Math.ceil(records.length / SCHED_BLOCK_SIZE));
+    let ordered = true, previousStart = -Infinity, previousEnd = -Infinity;
+    for (let start = 0, block = 0; start < records.length; start += SCHED_BLOCK_SIZE, block += 2) {
+        if (start && start % 16384 === 0) yield 'Indexing scheduling intervals…';
+        let earliest = Infinity, latest = -Infinity;
+        const stop = Math.min(records.length, start + SCHED_BLOCK_SIZE);
+        for (let ordinal = start; ordinal < stop; ordinal++) {
+            const record = records[ordinal], begin = record[1], end = record[2];
+            earliest = Math.min(earliest, begin);
+            latest = Math.max(latest, end);
+            if (begin < previousStart || end < previousEnd) ordered = false;
+            previousStart = begin;
+            previousEnd = end;
+        }
+        bounds[block] = earliest;
+        bounds[block + 1] = latest;
+    }
+    return ordered ? true : bounds;
+}
+function visitSchedulingIntervals(records, index, left, right, visit) {
+    if (index === true) {
+        let low = 0, high = records.length;
+        while (low < high) {
+            const middle = (low + high) >>> 1;
+            if (records[middle][2] < left) low = middle + 1;
+            else high = middle;
+        }
+        for (let ordinal = low; ordinal < records.length && records[ordinal][1] <= right; ordinal++) {
+            const record = records[ordinal];
+            if (visit(record)) return record;
+        }
+    } else if (index) {
+        for (let start = 0, block = 0; block < index.length; start += SCHED_BLOCK_SIZE, block += 2) {
+            if (index[block] > right || index[block + 1] < left) continue;
+            const stop = Math.min(records.length, start + SCHED_BLOCK_SIZE);
+            for (let ordinal = start; ordinal < stop; ordinal++) {
+                const record = records[ordinal];
+                if (record[1] <= right && record[2] >= left && visit(record)) return record;
+            }
+        }
+    } else {
+        for (const record of records) {
+            if (record[1] <= right && record[2] >= left && visit(record)) return record;
+        }
+    }
+    return null;
+}
+for (const track of TRACKS) {
+    track.offIndex = yield* indexSchedulingIntervals(track.off);
+    track.rsIndex = yield* indexSchedulingIntervals(track.rs);
+    track.ioIndex = yield* indexSchedulingIntervals(track.io);
+}
 // wakeups: [waker_task, ts, target_task, ctx, waker_slice, offcpu_index]
 const WAKES = D.wakeups || [];
 const OFF_IDX = new Map(D.offcpu.map((r, i) => [r, i]));
@@ -6563,9 +6618,11 @@ function drawTrack(t, y, vs, ve, k) {
     ctx.fillStyle = P.hdr;
     ctx.fillRect(0, y, W, HDR);
     // track-level windows in the header band
-    if (ov.rs) for (const r of t.rs) bandRect(r[1], r[2], y + HDR - 4, 3, P.rs, vs, k);
+    if (ov.rs && t.rs.length) visitSchedulingIntervals(t.rs, t.rsIndex, vs, ve,
+        record => bandRect(record[1], record[2], y + HDR - 4, 3, P.rs, vs, k));
     // irqs-off periods: dark grey like the hatching (red is reserved for errors)
-    if (ov.irq) for (const r of t.io) bandRect(r[1], r[2], y + HDR - 2, 2, P.io, vs, k);
+    if (ov.irq && t.io.length) visitSchedulingIntervals(t.io, t.ioIndex, vs, ve,
+        record => bandRect(record[1], record[2], y + HDR - 2, 2, P.io, vs, k));
     ctx.font = FONT_B;
     ctx.fillStyle = P.hdrText;
     ctx.textBaseline = 'middle';
@@ -6596,7 +6653,8 @@ function drawTrack(t, y, vs, ve, k) {
         if (ry > H || ry + ROW < 0) continue;
         drawRow(t.rows[d], ry, ROW - 1, vs, ve, k, true);
     }
-    if (ov.off) for (const r of t.off) drawOff(r, top + offRow(r) * ROW, vs, k);
+    if (ov.off && t.off.length) visitSchedulingIntervals(t.off, t.offIndex, vs, ve,
+        record => drawOff(record, top + offRow(record) * ROW, vs, k));
     if (ov.err) {
         // origins are always marked, even when merged into dense blocks
         for (const c of t.errs) {
@@ -7049,8 +7107,8 @@ function hitTest(mx, my) {
         }
     }
     let off = null;
-    if (best < 0 && ov.off && !t.collapsed) {
-        for (const r of t.off) if (offRow(r) === d && tm >= r[1] && tm <= r[2]) { off = r; break; }
+    if (best < 0 && ov.off && !t.collapsed && t.off.length) {
+        off = visitSchedulingIntervals(t.off, t.offIndex, tm, tm, record => offRow(record) === d);
     }
     return { track: t, slice: best, off: off, header: false, dense };
 }

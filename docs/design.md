@@ -716,6 +716,12 @@ traceB 的完整 Timeline、去重源码池和导出 Text 与独立 single 逐�
 
 全景降密以 `114b7b1d7c86` 为基线，在同一 Chromium 上用 `--overview --frames 10 --rounds 3` 测 50 万条合成唤醒，每版本每场景 30 帧。全部唤醒在视口内时，重绘回调中位数 331.7 → 12.65 ms（p95 349.5 → 13.3 ms）；窄窗口中位数 0.2 → 0.3 ms，约 800 条可见时 0.5 → 0.65 ms。全景仍逐条统计与视口相交的记录，省下的是重复的 Canvas 绘制命令，而不是丢弃事件。等待链、导出和稀疏箭头规则不变。
 
+### 调度叠加层的视窗索引
+
+每条任务轨道的 off-CPU、resched 和 IRQ-off 列表独立索引。少于 128 条直接检查；起止时刻均非递减时二分定位首个相交候选，否则每 128 条记录保留最早开始和最晚结束，用块边界排除不相交的块。构建时分批让出主线程，绘制与等待命中均保留原始顺序和包含端点的语义。开放等待仍以 trace 末尾作为可视化边界，保留未观察到恢复的身份；等待链、导出、Inline 行映射和 CPU 轨道上的 IRQ 标记不变。
+
+使用 `python3 tests/benchmark_scheduling.py BEFORE.html AFTER.html --overview-frames 3 --output scheduling.json` 对比单文件报告（基线 `53548c10801a`）。本机 Chromium 145.0.7632.6，每种叠加层 20 万条有序合成区间，每版本 60 个窄视窗样本：重绘回调中位数 3.9 → 0.4 ms（p95 5.6 → 0.6 ms）；off-CPU 命中测试由约 250 → 0.5 μs（每个样本为 200 次命中的平均值）。全景每版本 9 帧，中位数 604 → 560 ms，仍需绘制所有相交区间。结果只衡量桌面 Chromium 的重绘回调和命中函数，不代表真机帧率、首次加载速度或屏幕呈现。
+
 真实 traceB 对照保留同一 72,176 行、55,186 个调用、84,453 个模型帧和 12 个任务。Chromium 145.0.7632.6、1500×900、fgview HTTP、Timeline 预选，三轮交替旧/新报告，每次独立浏览器/context，无并行测试或基准。重复运行 `tests/benchmark_sidecar.py SINGLE.html SIDECAR_DIRECTORY --rounds 1 --text --output result.json` 可记录完整首开、准备反馈、最终阶段和长任务；对比旧/新 sidecar 时保持 trace/options 相同。以下为三轮中位数，不是跨机器承诺：
 
 | 首次完整 Text 指标 | 旧版整体解析 | 协作准备 |

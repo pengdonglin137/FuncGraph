@@ -311,6 +311,61 @@ for (const wake of D.wakeups || []) observeEnd(wake[1]);
 for (const event of PROCESS_EVENTS) observeEnd(event[1]);
 const OPEN_OFF = new Set(D.offcpu.filter(record => record[2] === null));
 for (const r of D.offcpu) if (r[2] === null) r[2] = tMax;
+const SCHED_BLOCK_SIZE = 128;
+function* indexSchedulingIntervals(records) {
+    if (records.length < SCHED_BLOCK_SIZE) return null;
+    const bounds = new Float64Array(2 * Math.ceil(records.length / SCHED_BLOCK_SIZE));
+    let ordered = true, previousStart = -Infinity, previousEnd = -Infinity;
+    for (let start = 0, block = 0; start < records.length; start += SCHED_BLOCK_SIZE, block += 2) {
+        if (start && start % 16384 === 0) yield 'Indexing scheduling intervals…';
+        let earliest = Infinity, latest = -Infinity;
+        const stop = Math.min(records.length, start + SCHED_BLOCK_SIZE);
+        for (let ordinal = start; ordinal < stop; ordinal++) {
+            const record = records[ordinal], begin = record[1], end = record[2];
+            earliest = Math.min(earliest, begin);
+            latest = Math.max(latest, end);
+            if (begin < previousStart || end < previousEnd) ordered = false;
+            previousStart = begin;
+            previousEnd = end;
+        }
+        bounds[block] = earliest;
+        bounds[block + 1] = latest;
+    }
+    return ordered ? true : bounds;
+}
+function visitSchedulingIntervals(records, index, left, right, visit) {
+    if (index === true) {
+        let low = 0, high = records.length;
+        while (low < high) {
+            const middle = (low + high) >>> 1;
+            if (records[middle][2] < left) low = middle + 1;
+            else high = middle;
+        }
+        for (let ordinal = low; ordinal < records.length && records[ordinal][1] <= right; ordinal++) {
+            const record = records[ordinal];
+            if (visit(record)) return record;
+        }
+    } else if (index) {
+        for (let start = 0, block = 0; block < index.length; start += SCHED_BLOCK_SIZE, block += 2) {
+            if (index[block] > right || index[block + 1] < left) continue;
+            const stop = Math.min(records.length, start + SCHED_BLOCK_SIZE);
+            for (let ordinal = start; ordinal < stop; ordinal++) {
+                const record = records[ordinal];
+                if (record[1] <= right && record[2] >= left && visit(record)) return record;
+            }
+        }
+    } else {
+        for (const record of records) {
+            if (record[1] <= right && record[2] >= left && visit(record)) return record;
+        }
+    }
+    return null;
+}
+for (const track of TRACKS) {
+    track.offIndex = yield* indexSchedulingIntervals(track.off);
+    track.rsIndex = yield* indexSchedulingIntervals(track.rs);
+    track.ioIndex = yield* indexSchedulingIntervals(track.io);
+}
 // wakeups: [waker_task, ts, target_task, ctx, waker_slice, offcpu_index]
 const WAKES = D.wakeups || [];
 const OFF_IDX = new Map(D.offcpu.map((r, i) => [r, i]));

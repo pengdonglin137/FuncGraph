@@ -279,6 +279,8 @@ On a touchscreen, tap a call to open its details or a track header to collapse i
 
 On a phone, search, zoom, **Notes** and the mixed-trace legend stay in the toolbar. **More** opens the shared filter, overlays, colors and analysis tools over the timeline without shrinking it. **Filter on** means the shared filter is still applied, even when the panel is closed. **Notes** opens capture limitations separately; it starts closed on phones. The selected call stays in view when its detail panel opens.
 
+On long scheduling traces, zoom into the interval you are investigating. The off-CPU, resched and IRQ-off track overlays skip intervals outside the visible time window, but keep intervals that cross its edges. If the full view is too dense, turn off overlays you do not need; this does not change analysis or exports.
+
 The tool adapts to the options the trace was captured with and tells you what is missing:
 
 | Missing option | Effect in the timeline |

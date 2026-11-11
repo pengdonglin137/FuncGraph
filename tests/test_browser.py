@@ -5125,6 +5125,72 @@ class BrowserSmokeTest(unittest.TestCase):
         self.page.click('[data-ov=wk]')
         self.page.click('[data-ov=wk]')
 
+    def test_scheduling_overlays_keep_boundary_geometry_and_first_hit(self):
+        for ordered in (True, False):
+            with self.subTest(ordered=ordered):
+                self.ev('localStorage.clear()')
+                self.page.goto(self.url)
+                self.assertEqual(self.ev('fgCurrentView()'), 'text')
+                outside = [(index * 20 + 2000, index * 20 + 2005, 0) for index in range(256)]
+                edge, crossing, overlap, right = (9000, 10000, 0), (9200, 12000, 1), (10500, 12500, 2), (21600, 21600, 0)
+                intervals = (outside + [edge, crossing, overlap, right] if ordered
+                             else [overlap] + outside + [edge, right, crossing])
+                waits = [[0, start, end, 0, name, -1, 0, 0, 0, -1] for start, end, name in intervals]
+                waits.append([0, 31000, None, 0, 2, -1, 0, -1, 0, -1])
+                self.open_range_data(['work', 'first_wait', 'second_wait'], starts=[0, 1000, 39900],
+                                     durations=[1, 1, 100], extra=dict(offcpu=waits,
+                                         resched=[[0, start, end, 1, 0, 0] for start, end, _ in intervals],
+                                         irqoff=[[0, start, end] for start, end, _ in intervals]))
+                self.ev('''() => {
+                    window.schedulingGeometry = async () => {
+                        const api = fgView('timeline'), probe = api.probe();
+                        const canvas = document.querySelector('.tl-canvas'), ctx = canvas.getContext('2d');
+                        const top = probe.TRACKS[0].y - document.querySelector('.tl-scroll').scrollTop;
+                        const rects = {resched: [], irq: [], waits: []}, original = ctx.fillRect;
+                        ctx.fillRect = function (rectX, rectY, width, height) {
+                            const name = rectY === top + 16 && height === 3 ? 'resched' :
+                                rectY === top + 18 && height === 2 ? 'irq' : rectY === top + 35 && height === 1 ? 'waits' : null;
+                            if (name) rects[name].push([Math.round(rectX), Math.round(width)]);
+                            return original.apply(this, arguments);
+                        };
+                        try {
+                            probe.zoomTo(10800, 20800, -1);
+                            await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+                            return {rects, width: canvas.clientWidth, view: probe.view()};
+                        } finally { ctx.fillRect = original; }
+                    };
+                }''')
+                result = self.ev('schedulingGeometry()')
+                self.assertEqual(result['view'], [10000, 21600])
+                width = result['width']
+                positions = [0, 0, round(width * 500 / 11600), width]
+                if not ordered:
+                    positions = [positions[index] for index in (2, 0, 3, 1)]
+                for rects in result['rects'].values():
+                    self.assertEqual([max(0, rect[0]) for rect in rects], positions)
+                    self.assertEqual(sum(rect[0] <= 0 and rect[1] > 2 for rect in rects), 1)
+                point = self.ev('''() => {
+                    const probe = fgView('timeline').probe();
+                    return probe.offXY([0, 11000, 11000, 0]);
+                }''')
+                self.page.mouse.click(*point)
+                self.assertIn('in first_wait' if ordered else 'in second_wait',
+                              self.page.locator('.an-wait-head').inner_text())
+                self.page.click('.an-wait-head .tl-close')
+                for overlay in ('off', 'rs', 'irq'):
+                    self.page.click(f'[data-ov={overlay}]')
+                self.assertEqual(self.ev('schedulingGeometry()')['rects'], dict(resched=[], irq=[], waits=[]))
+                self.page.mouse.click(*point)
+                self.assertFalse(self.page.locator('.an-wait-head').is_visible())
+                self.page.click('[data-ov=off]')
+                open_point = self.ev('''() => {
+                    const probe = fgView('timeline').probe();
+                    probe.zoomTo(35000, 38000, -1);
+                    return probe.offXY(probe.TRACKS[0].off.at(-1));
+                }''')
+                self.page.mouse.click(*open_point)
+                self.assertIn('blocked ≥', self.page.locator('.an-wait-head').inner_text())
+
     def test_wakeup_overlay_indexes_intersections_without_reordering(self):
         def wake(time, off=-1):
             return [0, time, 1, 0, -1, off]

@@ -301,9 +301,11 @@ function drawTrack(t, y, vs, ve, k) {
     ctx.fillStyle = P.hdr;
     ctx.fillRect(0, y, W, HDR);
     // track-level windows in the header band
-    if (ov.rs) for (const r of t.rs) bandRect(r[1], r[2], y + HDR - 4, 3, P.rs, vs, k);
+    if (ov.rs && t.rs.length) visitSchedulingIntervals(t.rs, t.rsIndex, vs, ve,
+        record => bandRect(record[1], record[2], y + HDR - 4, 3, P.rs, vs, k));
     // irqs-off periods: dark grey like the hatching (red is reserved for errors)
-    if (ov.irq) for (const r of t.io) bandRect(r[1], r[2], y + HDR - 2, 2, P.io, vs, k);
+    if (ov.irq && t.io.length) visitSchedulingIntervals(t.io, t.ioIndex, vs, ve,
+        record => bandRect(record[1], record[2], y + HDR - 2, 2, P.io, vs, k));
     ctx.font = FONT_B;
     ctx.fillStyle = P.hdrText;
     ctx.textBaseline = 'middle';
@@ -334,7 +336,8 @@ function drawTrack(t, y, vs, ve, k) {
         if (ry > H || ry + ROW < 0) continue;
         drawRow(t.rows[d], ry, ROW - 1, vs, ve, k, true);
     }
-    if (ov.off) for (const r of t.off) drawOff(r, top + offRow(r) * ROW, vs, k);
+    if (ov.off && t.off.length) visitSchedulingIntervals(t.off, t.offIndex, vs, ve,
+        record => drawOff(record, top + offRow(record) * ROW, vs, k));
     if (ov.err) {
         // origins are always marked, even when merged into dense blocks
         for (const c of t.errs) {

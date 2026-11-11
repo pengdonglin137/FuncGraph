@@ -36,8 +36,8 @@ function hitTest(mx, my) {
         }
     }
     let off = null;
-    if (best < 0 && ov.off && !t.collapsed) {
-        for (const r of t.off) if (offRow(r) === d && tm >= r[1] && tm <= r[2]) { off = r; break; }
+    if (best < 0 && ov.off && !t.collapsed && t.off.length) {
+        off = visitSchedulingIntervals(t.off, t.offIndex, tm, tm, record => offRow(record) === d);
     }
     return { track: t, slice: best, off: off, header: false, dense };
 }
