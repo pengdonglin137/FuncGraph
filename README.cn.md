@@ -79,7 +79,7 @@ FG_CONFIG=/dev/null python3 docs/img/make_shots.py
 
 本地打开 [sample_mixed.html](sample_mixed.html)，也可以点截图在线查看。在 **Timeline** 选中 `dispatch_datagram` 可看用户态参数、返回值和记录的函数地址；选中 `__x64_sys_sendto` 可看调用顶边细线和调用栈分界。Text 同一入口旁的 `K` 带下划线。这份 QEMU 上对 [`demo_mixed.c`](samples/demo_mixed.c) 的实际采集有 5 处匹配的跨态边界，采集和重建步骤见 [uftrace 指南](docs/uftrace.cn.md)。
 
-混合样例包含用户态源码、内核入口位置及 500 个已解析的内核调用点（其中 305 个含内联链），链接固定到 Linux `v7.4-rc2`。选中 `__x64_sys_sendto`：调用栈入口是 `net/socket.c:2286`，**Call site source** 则展示 `do_syscall_x64` 中的 `arch/x86/entry/syscall_64.c:61`。函数名＋偏移来自采集时保存的符号表，原始返回地址仍单独展示。
+更新后的混合样例包含 22 个真实用户态调用点、内核入口位置及 485 个已解析的内核调用点（其中 298 个含内联链），内核链接固定到 Linux `v7.4-rc2`。分别选中两次 `receive_frame`，源码落在不同的调用行 `demo_mixed.c:47` 和 `demo_mixed.c:49`，不再都定位到函数入口。选中 `__sys_sendto` 可看 BTF 参数名，并展开原始参数槽。对于 `__x64_sys_sendto`，调用栈入口仍是 `net/socket.c:2286`，**Call site source** 展示 `do_syscall_x64` 中的 `arch/x86/entry/syscall_64.c:61`。原始返回 PC 与被调函数地址分开保留，用户态源码不会套用内核链接。
 
 ---
 
@@ -134,7 +134,7 @@ Linux x86_64 / aarch64 的 wheel **内含带补丁的 uftrace 可执行程序和
 cc -pg -g -O0 -fno-omit-frame-pointer -o demo_mixed samples/demo_mixed.c
 printf 'FuncGraph demo\n' > demo-input.txt
 : > demo-output.txt
-fguftrace record --no-sched --srcline -d user.data ./demo_mixed demo-input.txt demo-output.txt
+fguftrace record --no-sched --srcline -T '.@callsite' -d user.data ./demo_mixed demo-input.txt demo-output.txt
 funcgraph --no-config --uftrace user.data --timeline --enable-fold --filter \
     --user-src samples --output user.html
 fgreport -P --uftrace user.data -- --user-src samples

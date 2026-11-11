@@ -76,7 +76,7 @@ The sample was recaptured on November 10, 2026. The trace, QEMU runtime and host
 
 Open [sample_mixed.html](sample_mixed.html) locally or click the screenshot to open it online. In **Timeline**, select `dispatch_datagram` for user arguments, return value and recorded function address, then `__x64_sys_sendto` for the boundary line and matching call-stack separator. Text marks the same entry with an underlined `K`. This real QEMU [`demo_mixed.c`](samples/demo_mixed.c) recording has five linked transitions. See the [uftrace guide](docs/uftrace.md#mixed-sample-follow-sendto-into-the-kernel) for capture and rebuild steps.
 
-The mixed sample includes user source, kernel entry positions and 500 resolved kernel call sites (305 with inline chains), with links pinned to Linux `v7.4-rc2`. Select `__x64_sys_sendto`: its stack entry is `net/socket.c:2286`, while **Call site source** shows `do_syscall_x64` at `arch/x86/entry/syscall_64.c:61`. The symbol-plus-offset comes from saved capture symbols; the original return address remains visible separately.
+The refreshed mixed sample includes 22 recorded user call sites, kernel entry positions and 485 resolved kernel call sites (298 with inline chains), with kernel links pinned to Linux `v7.4-rc2`. Select the two `receive_frame` calls for their different caller lines, `demo_mixed.c:47` and `demo_mixed.c:49`, instead of their common function entry. Select `__sys_sendto` for BTF argument names and expandable original slots. For `__x64_sys_sendto`, the stack entry remains `net/socket.c:2286`, while **Call site source** shows `do_syscall_x64` at `arch/x86/entry/syscall_64.c:61`. Original return PCs and recorded callee addresses remain separate; user source never uses kernel links.
 
 ---
 
@@ -135,7 +135,7 @@ shared libraries too; see the [architecture notes](docs/uftrace.md#install-and-s
 cc -pg -g -O0 -fno-omit-frame-pointer -o demo_mixed samples/demo_mixed.c
 printf 'FuncGraph demo\n' > demo-input.txt
 : > demo-output.txt
-fguftrace record --no-sched --srcline -d user.data ./demo_mixed demo-input.txt demo-output.txt
+fguftrace record --no-sched --srcline -T '.@callsite' -d user.data ./demo_mixed demo-input.txt demo-output.txt
 funcgraph --no-config --uftrace user.data --timeline --enable-fold --filter \
     --user-src samples --output user.html
 fgreport -P --uftrace user.data -- --user-src samples

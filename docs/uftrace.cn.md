@@ -17,7 +17,8 @@ FuncGraph 支持导入**仅用户态、仅内核态、混合**记录，不强制
 切到 **Timeline**，保留默认 **Context** 配色，沿
 `main → run_round → exchange_loopback → send_frame → dispatch_datagram → sendto → __x64_sys_sendto → … → loopback_xmit` 查看。
 点击 `dispatch_datagram`，详情会显示记录的函数地址、五个参数（其中长度为 `512`）和返回值
-`512`。点击调用栈里的 `demo_mixed.c:25` 可打开源码。两次 `receive_frame` 分别返回
+`512`。点击调用栈 `send_frame` 右侧的 `demo_mixed.c:33` 可打开真实调用点；
+`dispatch_datagram` 的函数入口仍单独保留为第 25 行。两次 `receive_frame` 分别返回
 `512` 和 `-1`；后者在空队列上使用了 `MSG_DONTWAIT`，不要把用户态返回值当作内核原始返回值。
 
 点击 `__x64_sys_sendto`，调用栈会在同一位置分隔两态，顶边细线仅覆盖这次内核调用的时段。
@@ -25,15 +26,22 @@ Text 在对应入口旁显示带下划线的 `K`，用户态入口行显示参�
 两种视图均可用 `space:user` 或 `space:kernel` 过滤。
 
 [仓库内的 JSONL](../samples/sample_mixed.jsonl) 取自 2026 年 11 月 11 日在 x86_64 QEMU
-Linux `7.4.0-rc2` 上对 [`demo_mixed.c`](../samples/demo_mixed.c) 的实际采集，包含 25 次用户态调用、
-1,067 次内核态调用和 5 处匹配的跨态边界。截取时保留了原始调用记录，包括地址、参数和原始
-返回值；没有纳入调度 / perf 事件。发布的报告使用了匹配的内核调试镜像：332 个不同的内核
-函数均保留调用栈入口位置，另外恢复了 500 个不同内核调用点的源码位置，其中 305 个含内联链，
+Linux `7.4.0-rc2` 上对 [`demo_mixed.c`](../samples/demo_mixed.c) 的实际采集，使用
+`--srcline -T '.@callsite'`，包含 25 次用户态调用、788 次内核态调用、22 个用户态调用点事件
+和 5 处匹配的跨态边界。截取时保留了原始调用记录和调用点事件，包括地址、参数和原始
+返回值；没有纳入调度 / perf 事件。发布的报告使用了匹配的内核调试镜像：314 个不同的内核
+函数均保留调用栈入口位置，另外恢复了 485 个不同内核调用点的源码位置，其中 298 个含内联链，
 链接固定到 Linux `v7.4-rc2`。选中 `__x64_sys_sendto`，调用栈中的函数入口仍是
 `net/socket.c:2286`；**Call site source** 展示 `do_syscall_x64` 中的
 `arch/x86/entry/syscall_64.c:61`。原始 PC `0xffffffff82129117` 与
 `do_syscall_64+0xb7/0x580` 分开展示；展开 Text 行可看同一调用点的内联源码链。匹配的 BTF 还可
-校验非阻塞接收的错误路径。打开 HTML 无需内核源码树或 uftrace。在仓库根目录重建它时，
+校验非阻塞接收的错误路径，并为 288 个内核函数提供 ABI 安全的参数名前缀。
+选中 `__sys_sendto` 可看 `fd`、`buff`、`len`、`flags`、`addr`、`addr_len`；展开
+**Raw argument slots** 可核对未经改写的原始参数槽。分别选中两次 `receive_frame`，
+源码应落在 `demo_mixed.c:47` 和 `demo_mixed.c:49`，而非共同的第 36 行函数入口；
+caller return PC 与被调函数的 recorded address 分开保留。缺失的 libc 源码如实显示不可用，
+不会套用内核链接。完整导出已与保存的 82,615 条内核记录独立逐条核对，75 项 tracefs
+设置均精确恢复。打开 HTML 无需内核源码树或 uftrace。在仓库根目录重建它时，
 需要匹配且含调试信息的镜像及源码仓库：
 
 ```bash
@@ -43,7 +51,7 @@ python3 funcgraph.py --no-config --timeline --enable-fold --filter \
     --source-rev 7475ea8b58616b33c04afb976cf0fbaad9dd63fb \
     --source-browser github --source-browser-rev v7.4-rc2 \
     --output sample_mixed.html samples/sample_mixed.jsonl
-FG_CONFIG=/dev/null python3 samples/make_shots.py  # 重建截图，需要 Playwright + Chromium
+FG_CONFIG=/dev/null python3 samples/make_shots.py --mixed-only  # 需要 Playwright + Chromium
 ```
 
 本地路径请按匹配的构建调整。没有该镜像时，下面的命令仍能重建相同的调用记录、时序、
@@ -92,7 +100,7 @@ ARM64 请替换为 `linux_aarch64`。`fguftrace record ...` 和 `fguftrace dump 
 ```bash
 cc -fpatchable-function-entry=2 -g -O0 -fno-omit-frame-pointer \
     -o demo_mixed samples/demo_mixed.c
-fguftrace record -P . --no-sched --srcline -d user.data \
+fguftrace record -P . --no-sched --srcline -T '.@callsite' -d user.data \
     ./demo_mixed demo-input.txt demo-output.txt
 ```
 

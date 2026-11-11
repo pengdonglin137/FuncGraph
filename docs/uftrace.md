@@ -20,7 +20,8 @@ Switch to **Timeline** with default **Context** colors. Follow
 `main → run_round → exchange_loopback → send_frame → dispatch_datagram → sendto → __x64_sys_sendto → … → loopback_xmit`.
 Select `dispatch_datagram` to see its recorded function address, the five
 arguments (including the 512-byte length), and return value `512`. Click
-`demo_mixed.c:25` in the stack for source. The two `receive_frame` calls return
+`demo_mixed.c:33` on the `send_frame` stack row for the recorded call site;
+`dispatch_datagram` retains its separate function entry at line 25. The two `receive_frame` calls return
 `512` and `-1`; the latter uses `MSG_DONTWAIT` on an empty queue. Its user return
 is not the raw kernel return value.
 
@@ -31,17 +32,26 @@ returns on user exit rows. Use `space:user` or `space:kernel` to inspect one spa
 
 The [checked-in JSONL](../samples/sample_mixed.jsonl) is a scoped extract from
 the x86_64 QEMU Linux `7.4.0-rc2` capture of [`demo_mixed.c`](../samples/demo_mixed.c)
-on November 11, 2026. It contains 25 user calls, 1,067 kernel calls and five
-linked transitions. The extract keeps the original call records (including
+on November 11, 2026, with `--srcline -T '.@callsite'`. It contains 25 user calls,
+788 kernel calls, 22 recorded user call-site events and five linked transitions.
+The extract keeps the original call records and call-site events (including
 addresses, parameters and raw return values), but not scheduler/perf events.
-The published report uses the matching kernel debug image: 332 unique kernel
-functions retain entry locations in the call stack, and 500 unique captured
-kernel call sites resolve to source, including 305 inline chains. Links are pinned
+The published report uses the matching kernel debug image: 314 unique kernel
+functions retain entry locations in the call stack, and 485 unique captured
+kernel call sites resolve to source, including 298 inline chains. Links are pinned
 to Linux `v7.4-rc2`. Select `__x64_sys_sendto` for its `net/socket.c:2286` stack
 entry and **Call site source** in `do_syscall_x64`, `arch/x86/entry/syscall_64.c:61`.
 The recorded PC `0xffffffff82129117` is retained separately from
 `do_syscall_64+0xb7/0x580`. Expanding its Text row shows the same call-site chain.
-The matching BTF also verifies the nonblocking receive error path. Viewing the
+The matching BTF also verifies the nonblocking receive error path and supplies
+safe argument-name prefixes for 288 kernel functions. Select `__sys_sendto` for
+`fd`, `buff`, `len`, `flags`, `addr` and `addr_len`; expand **Raw argument slots**
+to inspect the unchanged recorded values. Select each `receive_frame` call to see
+its distinct caller line, `demo_mixed.c:47` or `demo_mixed.c:49`, rather than its
+shared entry at line 36. The caller return PC is retained separately from the
+recorded callee address. Missing libc source stays unavailable, not kernel-linked.
+The complete native export was independently checked against 82,615 saved kernel
+records, and all 75 snapshotted tracefs settings were restored exactly. Viewing the
 HTML needs neither the kernel tree nor uftrace. To rebuild it from the repository
 root, provide the matching debug-enabled image and source repository:
 
@@ -52,7 +62,7 @@ python3 funcgraph.py --no-config --timeline --enable-fold --filter \
     --source-rev 7475ea8b58616b33c04afb976cf0fbaad9dd63fb \
     --source-browser github --source-browser-rev v7.4-rc2 \
     --output sample_mixed.html samples/sample_mixed.jsonl
-FG_CONFIG=/dev/null python3 samples/make_shots.py  # screenshots; needs Playwright + Chromium
+FG_CONFIG=/dev/null python3 samples/make_shots.py --mixed-only  # needs Playwright + Chromium
 ```
 
 Adjust the local paths to your matching build. Without that image, the following
@@ -110,7 +120,7 @@ shared-library paths.
 ```bash
 cc -fpatchable-function-entry=2 -g -O0 -fno-omit-frame-pointer \
     -o demo_mixed samples/demo_mixed.c
-fguftrace record -P . --no-sched --srcline -d user.data \
+fguftrace record -P . --no-sched --srcline -T '.@callsite' -d user.data \
     ./demo_mixed demo-input.txt demo-output.txt
 ```
 
@@ -351,7 +361,7 @@ idle tracefs validation environment, pass separate exact syscall roots and
 explicit `-A`/`-R` specifications, for example:
 
 ```bash
-uftrace record -K 30 --clock=mono --kernel-full-info --no-sched --srcline -d CAPTURE \
+uftrace record -K 30 --clock=mono --kernel-full-info --no-sched --srcline -T '.@callsite' -d CAPTURE \
     -F '__x64_sys_read@kernel;__x64_sys_write@kernel;__x64_sys_sendto@kernel;__x64_sys_recvfrom@kernel' \
     -A 'dispatch_datagram@arg1/i32,arg2/x64,arg3/u64,arg4/x64,arg5/u32' \
     -A 'receive_frame@arg1/i32,arg2/x64,arg3/u64,arg4/i32' \

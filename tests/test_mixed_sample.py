@@ -20,7 +20,7 @@ from test_uftrace_import import invoke
 ROOT = Path(helpers.ROOT)
 TRACE = ROOT / 'samples/sample_mixed.jsonl'
 REPORT = ROOT / 'sample_mixed.html'
-COUNTS = {'user': 25, 'kernel': 1067}
+COUNTS = {'user': 25, 'kernel': 788}
 PAGE_FILES = {'index.html', 'sample.html', 'sample.png', 'sample_text.png',
               'sample_mixed.html', 'sample_mixed.png', '.nojekyll'}
 
@@ -52,7 +52,10 @@ class MixedSampleTest(unittest.TestCase):
         for space, count in COUNTS.items():
             for kind in ('entry', 'exit'):
                 self.assertEqual(sum(record['space'] == space and record['type'] == kind for record in records), count)
-        self.assertEqual({record['type'] for record in records}, {'entry', 'exit'})
+        self.assertEqual({record['type'] for record in records}, {'entry', 'exit', 'event'})
+        events = [record for record in records if record['type'] == 'event']
+        self.assertEqual(len(events), 22)
+        self.assertTrue(all(record['space'] == 'user' and record['name'] == 'callsite' for record in events))
         sendto = next(record for record in records if record['name'] == '__x64_sys_sendto' and record['type'] == 'entry')
         self.assertTrue(sendto['args'])
         self.assertIn('retaddr', sendto)
@@ -75,10 +78,10 @@ class MixedSampleTest(unittest.TestCase):
         cols = data['cols']
         names = [data['strings'][index] for index in cols['name']]
         kernel_flags = [flags for flags in cols['flags'] if not flags & timeline.F_USER]
-        self.assertEqual(sum(bool(flags & timeline.F_IRQOFF) for flags in kernel_flags), 136)
+        self.assertEqual(sum(bool(flags & timeline.F_IRQOFF) for flags in kernel_flags), 61)
         self.assertEqual(sum(bool(flags & timeline.F_BHOFF) for flags in kernel_flags), 51)
-        self.assertEqual(sum(flags & timeline.F_CTX_MASK == timeline.CTX_HARDIRQ for flags in kernel_flags), 53)
-        self.assertEqual(sum(flags & timeline.F_CTX_MASK == timeline.CTX_SOFTIRQ for flags in kernel_flags), 386)
+        self.assertEqual(sum(flags & timeline.F_CTX_MASK == timeline.CTX_HARDIRQ for flags in kernel_flags), 0)
+        self.assertEqual(sum(flags & timeline.F_CTX_MASK == timeline.CTX_SOFTIRQ for flags in kernel_flags), 131)
         self.assertTrue(all(flags & timeline.F_HAS_LAT for flags in kernel_flags))
         self.assertFalse(any(flags & timeline.F_HAS_LAT for flags in cols['flags'] if flags & timeline.F_USER))
         boundaries = [index for index, flags in enumerate(cols['flags']) if flags & timeline.F_BOUNDARY]
@@ -106,8 +109,12 @@ class MixedSampleTest(unittest.TestCase):
             generate(TRACE, rebuilt)
             rebuilt_html = rebuilt.read_text(encoding='utf-8')
             rebuilt_data = helpers.json_script(rebuilt_html, 'tlData')
-            for key in data.keys() - {'btf', 'cols', 'errs', 'chains', 'errnames', 'sources', 'stats', 'inline'}:
+            for key in data.keys() - {'btf', 'cols', 'errs', 'chains', 'errnames', 'sources', 'stats', 'inline', 'uftrace'}:
                 self.assertEqual(data[key], rebuilt_data[key], key)
+            self.assertTrue(data['uftrace']['kernel_arg_names'])
+            self.assertNotIn('kernel_arg_names', rebuilt_data['uftrace'])
+            self.assertEqual({key: value for key, value in data['uftrace'].items() if key != 'kernel_arg_names'},
+                             rebuilt_data['uftrace'])
             for key in cols:
                 if key == 'flags':
                     self.assertEqual([flags & ~timeline.F_NULL_RET for flags in cols[key]], rebuilt_data['cols'][key])
@@ -115,12 +122,17 @@ class MixedSampleTest(unittest.TestCase):
                     self.assertEqual(cols[key], rebuilt_data['cols'][key], key)
             for key in data['stats'].keys() - {'build_time'}:
                 self.assertEqual(data['stats'][key], rebuilt_data['stats'][key], key)
-            for key in ('user_lines', 'user_positions'):
+            for key in ('user_lines', 'user_positions', 'user_callsites'):
                 self.assertEqual(data['sources'][key], rebuilt_data['sources'][key])
             self.assertEqual(rebuilt_data['sources']['functions'], {})
+            original_lines, rebuilt_lines = (helpers.json_script(content, 'fgSrcLines')
+                                             for content in (html, rebuilt_html))
             for line in data['sources']['user_lines']:
-                original_source = helpers.json_script(html, 'fgSrc')[helpers.json_script(html, 'fgSrcLines')[line]]
-                rebuilt_source = helpers.json_script(rebuilt_html, 'fgSrc')[helpers.json_script(rebuilt_html, 'fgSrcLines')[line]]
+                self.assertEqual(line in original_lines, line in rebuilt_lines)
+                if line not in original_lines:
+                    continue
+                original_source = helpers.json_script(html, 'fgSrc')[original_lines[line]]
+                rebuilt_source = helpers.json_script(rebuilt_html, 'fgSrc')[rebuilt_lines[line]]
                 self.assertEqual(original_source, rebuilt_source)
             generate(TRACE, rebuilt)
             self.assertEqual(stable_html(rebuilt_html), stable_html(rebuilt.read_text(encoding='utf-8')))
@@ -129,10 +141,10 @@ class MixedSampleTest(unittest.TestCase):
         html = REPORT.read_text(encoding='utf-8')
         data, pool, source_lines = (helpers.json_script(html, key) for key in ('tlData', 'fgSrc', 'fgSrcLines'))
         functions, cols = data['sources']['functions'], data['cols']
-        self.assertEqual(len(functions), 332)
-        self.assertEqual(len(data['sources']['callers']), 500)
+        self.assertEqual(len(functions), 314)
+        self.assertEqual(len(data['sources']['callers']), 485)
         self.assertTrue(all(data['sources']['callers'].values()))
-        self.assertEqual(len(data['inline']), 305)
+        self.assertEqual(len(data['inline']), 298)
         self.assertEqual(len(data['uftrace']['kernel_details']), COUNTS['kernel'])
         for index, flags in enumerate(cols['flags']):
             if flags & timeline.F_USER:
@@ -150,6 +162,48 @@ class MixedSampleTest(unittest.TestCase):
             raw = data['uftrace']['kernel_details'][str(cols['line'][index])]['retaddr']
             self.assertEqual(int(symbol['address'], 16) + symbol['offset'], int(raw, 16))
         self.assertTrue(all(not position[2] for position in data['sources']['user_positions']))
+
+    def test_published_argument_names_and_user_sites_match_original_records(self):
+        with TRACE.open(encoding='utf-8') as source:
+            _, records = uftrace.read_export(source)
+        html = REPORT.read_text(encoding='utf-8')
+        data, pool, source_lines = (helpers.json_script(html, key) for key in ('tlData', 'fgSrc', 'fgSrcLines'))
+        cols, sources = data['cols'], data['sources']
+        names = [data['strings'][index] for index in cols['name']]
+        index = names.index('__sys_sendto')
+        self.assertEqual(data['uftrace']['kernel_arg_names'][str(cols['name'][index])],
+                         ['fd', 'buff', 'len', 'flags', 'addr', 'addr_len'])
+        self.assertEqual(len(data['uftrace']['kernel_arg_names']), 288)
+        entries = {line: record for line, record in enumerate(records, 3) if record['type'] == 'entry'}
+        raw = entries[cols['line'][index]]['args']
+        self.assertEqual(data['strings'][cols['args'][index]], ', '.join(raw))
+        self.assertEqual(raw[2], '0x200')
+        sites = {(record['tid'], record['time_ns'] + 1): record for record in records
+                 if record['type'] == 'event'}
+        self.assertEqual(len(sources['user_callsites']), len(sites))
+        for line, record in entries.items():
+            if record['space'] != 'user':
+                continue
+            detail = data['uftrace']['user_details'][str(line)]
+            event = sites.get((record['tid'], record['time_ns']))
+            if event is None:
+                self.assertNotIn('callsite', detail)
+                continue
+            site = event['user_callsite']
+            self.assertEqual(detail['callsite'], {key: value for key, value in site.items() if key != 'source'})
+            self.assertEqual(int.from_bytes(bytes.fromhex(event['payload_hex']), 'little'), int(site['retaddr'], 16))
+            position = sources['user_positions'][sources['user_callsites'][str(line)]]
+            self.assertEqual(position, [site['source']['file'], site['source']['line'], ''])
+            if 'source' in record:
+                entry_position = sources['user_positions'][sources['user_lines'][str(line)]]
+                self.assertEqual(entry_position, [record['source']['file'], record['source']['line'], ''])
+        receives = [str(cols['line'][index]) for index, name in enumerate(names) if name == 'receive_frame']
+        self.assertEqual([sources['user_positions'][sources['user_callsites'][line]][1] for line in receives], [47, 49])
+        self.assertEqual([sources['user_positions'][sources['user_lines'][line]][1] for line in receives], [36, 36])
+        for line, number in zip(receives, (47, 49)):
+            excerpt = pool[source_lines[line]]
+            self.assertIn(f'demo_mixed.c:{number} · user call site (recorded return address - 1)', excerpt)
+            self.assertNotIn('function entry (not call site)', excerpt)
 
     def test_pages_stage_preserves_both_examples(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -226,8 +280,8 @@ class MixedSampleBrowserTest(unittest.TestCase):
         self.assertEqual(divider.locator('.tl-stack-space').inner_text(), 'K')
         self.assertEqual(divider.get_attribute('data-context-kind'), 'inline')
         self.assertEqual(divider.evaluate('row => row.previousElementSibling.querySelector(".tl-stack-space").textContent'), 'U')
-        stack.locator('.tl-source-open', has_text='demo_mixed.c:25').click()
-        page.get_by_text('static ssize_t dispatch_datagram(', exact=False).first.wait_for(state='visible')
+        stack.locator('.tl-source-open', has_text='demo_mixed.c:33').click()
+        page.locator('.tl-cs-src .current-line', has_text='return dispatch_datagram').wait_for(state='visible')
         page.evaluate('''() => {
             const model = fgView('timeline').probe();
             const index = Array.from({length: model.N}, (unused, candidate) => candidate)
@@ -311,6 +365,52 @@ class MixedSampleBrowserTest(unittest.TestCase):
         entry.click()
         self.assertIn('do_syscall_64+0xb7/0x580', entry.inner_text())
         page.locator('.expanded-content:visible .current-line', has_text='regs->ax = x64_sys_call').wait_for(state='visible')
+        self.assertEqual(errors, [])
+        self.assertEqual(requests, [REPORT.as_uri()])
+
+    def test_offline_named_kernel_arguments_and_distinct_user_call_sites(self):
+        page, errors, requests = self.open_page(REPORT.as_uri())
+        page.get_by_role('button', name='Timeline', exact=True).click()
+        for occurrence, number in enumerate((47, 49)):
+            line = page.evaluate('''occurrence => {
+                const model = fgView('timeline').probe();
+                const indices = Array.from({length: model.N}, (unused, candidate) => candidate)
+                    .filter(candidate => model.nameOf(candidate) === 'receive_frame');
+                model.select(indices[occurrence]);
+                return fgData.read('tlData').cols.line[indices[occurrence]];
+            }''', occurrence)
+            page.locator('.tl-cs > summary', has_text='User call site source').wait_for(state='visible')
+            self.assertIn(f'demo_mixed.c:{number}', page.locator('.tl-cs-src [data-source-position]').inner_text())
+            stack = page.locator('[data-context-list=stack]')
+            caller = stack.locator('[data-context-kind=traced]', has_text='exchange_loopback')
+            self.assertIn(f'demo_mixed.c:{number}', caller.locator('.tl-source-open').text_content())
+            callee = stack.locator('[data-context-kind=traced]', has_text='receive_frame')
+            self.assertIn('demo_mixed.c:36', callee.text_content())
+            self.assertEqual(callee.locator('.tl-source-open').count(), 0)
+            self.assertEqual(page.locator('.k:has-text("user return") + .v').inner_text(), ('512', '-1')[occurrence])
+            page.get_by_role('button', name='Text', exact=True).click()
+            entry = page.locator(f'#L{line}')
+            entry.click()
+            position = page.locator('.expanded-content:visible [data-source-position]',
+                                    has_text=f'demo_mixed.c:{number}')
+            position.wait_for(state='visible')
+            self.assertIn('user call site', position.inner_text())
+            page.get_by_role('button', name='Timeline', exact=True).click()
+        index = page.evaluate('''() => {
+            const model = fgView('timeline').probe();
+            const index = Array.from({length: model.N}, (unused, candidate) => candidate)
+                .find(candidate => model.nameOf(candidate) === '__sys_sendto');
+            model.select(index);
+            return index;
+        }''')
+        arguments = page.locator('.k:has-text("args (BTF)") + .v')
+        self.assertIn('len=0x200', arguments.inner_text())
+        for name in ('fd', 'buff', 'len', 'flags', 'addr', 'addr_len'):
+            self.assertIn(name + '=', arguments.inner_text())
+        arguments.get_by_text('Raw argument slots', exact=True).click()
+        data = helpers.json_script(REPORT.read_text(encoding='utf-8'), 'tlData')
+        raw = data['strings'][data['cols']['args'][index]]
+        self.assertIn(raw, arguments.locator('details').inner_text())
         self.assertEqual(errors, [])
         self.assertEqual(requests, [REPORT.as_uri()])
 
