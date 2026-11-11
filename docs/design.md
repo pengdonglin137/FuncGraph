@@ -983,6 +983,51 @@ python3 tests/benchmark_folds.py /tmp/fold-before /tmp/fold-after \
 
 最终 `FG_RAW_REQUIRED=1 FG_UFTRACE_REQUIRED=1 FG_SAMPLE_BROWSER_REQUIRED=1 tests/run.sh` 共 768 项，765 通过、3 项可选跳过；暂存导出的冻结源码另跑 29 项模型/浏览器/sidecar 生命周期用例，全部通过。冻结源码构建的原生 wheel 和 sdist 重建的纯 Python wheel 在独立新 venv 安装 `[all]`，使用 `python -I tests/smoke_installed.py` 加 raw 检查：原生含 uftrace 的 13 项全部通过，纯 Python 的 13 项中 12 通过、1 项内置采集器检查按分发类型跳过。两种 wheel 及 sdist 的新 JS 与冻结源码逐字节相同，sdist 包含可复现基准；Twine、JS 语法、Python 编译、依赖锁定、uftrace 补丁和差异空白检查通过。完整回归仍有既有文件/socket ResourceWarning，未顺带修改无关测试。
 
+### Text 网络分块与有界资源缓存（2026-11-11）
+
+此前即使逐个解析 512 行绘制块，浏览器也必须先下载、校验并解码整份 `text.html`；72,176 行 traceB 的单资源为 91,810,464 字节。现在新生成的大型 sidecar 把**传输**与绘制块分开：超过 4,096 条原始 Text 记录（包含表头）时，每个 HTML 网络资源最多包含 4,096 条，保持 512 行绘制块及完整行/源码占位配对。小型 sidecar 和旧报告仍读完整 `fgText` / `text.html`；single 以及 auto 未超过显式字节阈值的结果不使用外部块。这个记录数仅是 sidecar 内部资源分组规则，不新增自动分流默认值。
+
+`ReportSpool.write_sections(..., observer=...)` 将已编码的每个片段及真实起止字节传给观察器，不重新编码、不扫描巨型 HTML 标记、不再次解析/符号化 trace。`TextChunkRanges` 核对生成器原生的开块、行、闭块与连续边界，压缩为网络范围，并与同次生成的完整 Text 索引记录数核对。仅确定采用 sidecar 后，按这些范围有界复制资源；不足阈值不会额外导出网络块。分块结果不重复保留整份 `text.html`，原子发布和旧版本保留约定不变。
+
+分块 manifest 的 `capabilities.text` 为 `chunks-v1`，资源命名 `fgText0`、`fgText4096`……，对应 `text-0.html`、`text-4096.html`……；每份仍有独立精确字节数、SHA-256 及 `format:"text"`。HTML 内嵌 `fgTextChunks`，形如 `{version:1,count:72176,chunk_size:4096,paint_rows:512}`。这里的 `first` 和 `fgData.loadTextChunk(row)` 参数是**从 0 开始的原始记录序号，不是 trace 行号、过滤后的行号或 DOM 展示位置**。提供者核对目录 schema、数值范围、对齐的资源身份、完整资源组集合和文本格式；资源组数与目录不符不能悄悄丢弃整块尾部。传输完成后仍验证大小、摘要及严格 UTF-8，解析时逐绘制块核对记录数量，缺行/多行/错误边界均在挂载前失败。
+
+Text HTML 资源使用独立 LRU：最多 4 块、合计 16 MiB **已校验 UTF-8 字节**。与源码的 8 块 / 16 MiB 预算分开，不淘汰 Timeline、过滤索引或其他数据。读取/命中刷新，ready 探针不刷新，释放归还预算；超预算单块完整返回当前请求但不缓存，也不挤出其他块。行数限制不约束单行字节数；这不是网络并发、JS heap、完整 DOM/模型或整个报告的内存上限。
+
+Text 准备生成器可让出带 `load(signal)` 的等待步骤；调度器在异步成功后只向仍然有效的生成器传入结果。`fgView('text')` 不会同步排空正在等待网络的分块生成器。切标签/返回/Escape 关闭迭代器、释放未挂载节点并取消自己的订阅，底层共享请求由最后一个订阅者取消；即使第三方 loader 忽略取消，旧结果也不得继续准备或激活视图。网络/校验/挂载前解析失败均清理生成器并提供 Retry，最终初始化失败仍要求重载。重入复用仍在缓存的块，被淘汰的块需重新下载；不再承诺保存整份已校验 HTML 以免取消后重读。成功后释放全部 Text HTML 资源及输入索引缓存，切回已挂载 Text 不再下载。
+
+当前消费方式仍顺序获取各网络块，在文档外累计**全部 DOM**，再建立/复用完整记录、折叠和导航模型，最后一次完整挂载。Timeline 初始显示与统一过滤不请求 HTML 块；既有过滤索引可复用，打开 Text 不会为此额外获取索引。跨块折叠/递归/过滤、源码、重排、锚点和窄窗口入口保持完整 trace 语义。已交付的是网络分块、随机块读取与有界 HTML 资源缓存，不是视口 DOM 窗口化；最终布局/完整模型内存及单个复杂块仍需继续优化。
+
+测试覆盖精确 UTF-8 范围和 0 / 1 / 4,095 / 4,096 / 4,097 / 8,192 / 8,199 记录边界、非法/中断生成、索引一致性、混合空间 version-3 字段、故障保留旧报告/旧资源、随机块读取、独立缓存数量/字节/超大块、目录截断与校验错误、共享取消、等待取消/重入、不可取消迟到结果、挂载前 Retry，以及跨块调用树/源码/过滤/顺序/窄窗口锚点。可复现浏览器基准 `tests/benchmark_sidecar.py --text` 同时识别单资源和分块格式，验证完整记录数、缓存释放和返回 Text 后不重复请求全部资源；性能数据不以减少单个资源大小替代完整就绪、长任务和最终 DOM 成本。
+
+实测使用 `/tmp/pi4/traceB.txt` 的 72,176 条记录，旧报告来自 `def33d122c99`，新报告使用本节分块实现。两者均启用 Timeline、折叠、过滤及 sidecar，不传 vmlinux，不解析 BTF；这份输入没有 DWARF/源码块，不能外推到源码丰富报告。18 个新 Text 块拼接后与旧 `text.html` 的 **91,810,464 字节逐字节相同**，完整过滤索引 **34,646,118 字节逐字节相同**；Timeline 只有生成耗时字段不同。全部 manifest 资源大小和摘要均核对通过。
+
+Chromium 145.0.7632.6，1500×900，`fgview` HTTP，同机三对交替测量，每次使用新浏览器/上下文，测量期间无并行测试或构建。先显示 Timeline 再首次打开完整 Text，以下为各三次中位数：
+
+| 指标 | 旧单资源 | 新网络分块 |
+| --- | ---: | ---: |
+| 首批已解析进度的 rAF 反馈 | 948.6 ms | 74.2 ms |
+| 完整 Text 就绪（双 rAF） | 7,119.7 ms | 7,378.9 ms |
+| Text 阶段最长长任务 | 3,320 ms | 3,402 ms |
+| Text 阶段阻塞时间 | 4,067 ms | 4,113 ms |
+| Text 阶段 script / style / layout | 1,575.4 / 994.1 / 2,252.2 ms | 1,799.7 / 1,017.7 / 2,311.5 ms |
+| Text 后 renderer RSS 采样 | 2,905.9 MiB | 2,942.2 MiB |
+| Text 资源请求数 | 1 | 18 |
+
+收益是更早反馈首批解析进度及可独立读取、校验、淘汰的传输单元，**不是首开加速**：完整就绪反而增加 259.2 ms（约 3.6%），最长长任务、脚本/布局成本和采样 RSS 也没有改善。首批反馈排除初始空的 `Preparing Text…` 状态，但仍只是文档外批次解析后的状态绘制代理，不是已经看到 trace 行、物理呈现或交互延迟。RSS 为阶段采样而非峰值；有界 HTML 资源缓存不代表完整模型/DOM/报告内存有界。
+
+六次均准备并挂载全部 72,176 条记录，完整 Text 模型摘要相同；Timeline 的 calls / frames / tracks 均为 55,186 / 55,213 / 12，初始 Timeline 不请求 Text。Text 成功后 HTML 资源缓存全部释放，返回 Text 不再请求资源，浏览器错误及 CSP 违规为零。完整 DOM 的最终同步布局仍是后续窗口化工作的重点，不能用进度提前掩盖这一回退。
+
+复现生成和交替测量（旧报告需先用上述基线代码生成，两个输出必须使用相同输入/参数）：
+
+```bash
+python3 funcgraph.py /tmp/pi4/traceB.txt --no-config --no-btf \
+  --timeline --enable-fold --filter --report-mode sidecar --output /tmp/fg-text-after
+python3 tests/benchmark_text_delivery.py /tmp/fg-text-before /tmp/fg-text-after \
+  --rounds 3 --output /tmp/fg-text-delivery.json
+```
+
+最终验证：`FG_RAW_REQUIRED=1 FG_UFTRACE_REQUIRED=1 FG_SAMPLE_BROWSER_REQUIRED=1 tests/run.sh` 共 **789 项，786 通过、3 项可选跳过**。冻结暂存代码的 `test_textchunks test_data_provider test_output test_sidecar` 专项 **154 项全部通过**。从冻结快照构建原生 wheel、sdist 和由 sdist 重建的纯 Python wheel，安装到独立虚拟环境后以 `python -I tests/smoke_installed.py` 的对应 `--with-extras --with-raw [--with-uftrace]` 模式验证：原生 **14/14 通过**，纯 Python **13 通过、1 项内置 recorder 按包类型跳过**，包含真实 CLI 分块输出及安装态 HTTP 资源校验。三份产物通过 Twine 检查；固定版本、sample HTML/PNG、依赖 pin 和 uftrace 补丁均未更改。
+
 ### 只读回环查看器（2026-11-10）
 
 `fgview` 的安装态入口是 `fglib.viewer:main`，源码目录可用 `./fgview` 或 `python3 -m fglib.viewer`。只绑定 `127.0.0.1`，默认端口 0，由操作系统分配；显式 `--port` 限制为 0–65535，没有全网绑定参数。先打印本次随机路径 URL，只有 `--open` 才调用浏览器，Ctrl+C 关闭监听及目录句柄。选单文件只提供该文件；选目录必须存在 index.html，提供其中的普通非隐藏文件，但不列目录。目录模式需要用户指定独立报告目录，不能当作只允许 manifest 资源的 allowlist。

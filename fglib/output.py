@@ -74,7 +74,7 @@ class ReportSpool:
     def sections(self):
         return tuple(SectionRange(*section) for section in self._ranges)
 
-    def write_sections(self, sections):
+    def write_sections(self, sections, observer=None):
         if self.file is None or self.file.closed or self.started:
             raise RuntimeError('report sections can only be written once to an open spool')
         self.started = True
@@ -88,6 +88,8 @@ class ReportSpool:
             if self.file.write(encoded) != len(encoded):
                 raise OSError('short write while staging the report')
             self.byte_count += len(encoded)
+            if observer is not None:
+                observer(name, encoded, start, self.byte_count)
             if self._ranges and self._ranges[-1][0] == name:
                 self._ranges[-1][2] = self.byte_count
             else:

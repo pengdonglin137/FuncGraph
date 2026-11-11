@@ -4,6 +4,7 @@ import argparse
 import hashlib
 import json
 from pathlib import Path
+import re
 import statistics
 import threading
 
@@ -13,6 +14,10 @@ import helpers
 from fglib.viewer import create_server
 from benchmark_startup import report_info
 from benchmark_text import renderer_memory, settle
+
+
+def text_resource(url):
+    return bool(re.search(r'/(?:text|text-[0-9]+)\.html$', url))
 
 
 def measure(browser, report, timeout, mount_text, filter_query=None, text_queries=None):
@@ -77,12 +82,12 @@ def measure(browser, report, timeout, mount_text, filter_query=None, text_querie
                             hit_sha256=hashlib.sha256(','.join(map(str, hits)).encode('ascii')).hexdigest(),
                             renderer_rss_bytes=sum(process['rss_bytes'] for process in renderer_memory(browser)),
                             index_requests=sum(url.endswith('text-index.json') for url in requests),
-                            text_requests=sum(url.endswith('text.html') for url in requests))
+                            text_requests=sum(text_resource(url) for url in requests))
             if report['mode'] == 'sidecar' and (filtered['rows'] or filtered['text_requests'] or filtered['index_requests'] != 1):
                 raise RuntimeError('Indexed filtering mounted Text or failed to use exactly one index request')
             facts['filter'] = filtered
         if report['mode'] == 'sidecar':
-            if facts['text_rows'] or any(url.endswith(('text.html', 'compare.json')) for url in requests):
+            if facts['text_rows'] or any(text_resource(url) or url.endswith('compare.json') for url in requests):
                 raise RuntimeError('Sidecar initial Timeline unexpectedly materialized Text or fetched Compare')
             if mount_text:
                 if not page.evaluate('fgTextDeferred()'):
@@ -94,7 +99,7 @@ def measure(browser, report, timeout, mount_text, filter_query=None, text_querie
                 mounted = page.evaluate('''async () => {
                     const start = performance.now();
                     const labels = new Set();
-                    let preparationFeedback = null, preparationFrames = 0, finishingFeedback = null;
+                    let preparationFeedback = null, preparationFrames = 0, finishingFeedback = null, parsedFeedback = null;
                     const ready = fgSwitchView('text');
                     function sample() {
                         const status = document.querySelector('#content .fg-loading-status');
@@ -107,6 +112,9 @@ def measure(browser, report, timeout, mount_text, filter_query=None, text_querie
                             if (status.textContent === 'Finishing Text layout…' && finishingFeedback === null) {
                                 finishingFeedback = performance.now() - start;
                             }
+                            if (/^Preparing Text… [0-9]+%$/.test(status.textContent) && parsedFeedback === null) {
+                                parsedFeedback = performance.now() - start;
+                            }
                         }
                         if (document.getElementById('content').hasAttribute('aria-busy')) requestAnimationFrame(sample);
                     }
@@ -114,13 +122,18 @@ def measure(browser, report, timeout, mount_text, filter_query=None, text_querie
                     await ready;
                     await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
                     const tasks = startupTasks.filter(task => task.start >= start).map(task => task.duration);
-                    return {duration_ms:performance.now() - start,
+                    const catalog = fgData.textChunks?.();
+                    const chunks = catalog ? Math.ceil(catalog.count / catalog.chunk_size) : 1;
+                    const cached = catalog ? Array.from({length:chunks}, (unused, index) =>
+                        fgData.ready('fgText' + index * catalog.chunk_size)).some(Boolean) : fgData.ready('fgText');
+                    return {duration_ms:performance.now() - start, expected_text_requests:chunks,
                         preparation_feedback_ms:preparationFeedback, preparation_frames:preparationFrames,
+                        parsed_feedback_ms:parsedFeedback,
                         finishing_feedback_ms:finishingFeedback,
                         labels:Array.from(labels), longest_task_ms:Math.max(0, ...tasks),
                         blocked_ms:tasks.reduce((sum, duration) => sum + Math.max(0, duration - 50), 0),
                         rows:document.querySelectorAll('#content .line-container').length,
-                        cached_html:fgData.ready('fgText')};
+                        cached_html:cached};
                 }''')
                 after = {metric['name']: metric['value']
                          for metric in session.send('Performance.getMetrics')['metrics']}
@@ -132,9 +145,9 @@ def measure(browser, report, timeout, mount_text, filter_query=None, text_querie
                         ('layout_ms', 'LayoutDuration', 1000), ('layout_count', 'LayoutCount', 1),
                         ('style_count', 'RecalcStyleCount', 1)]}
                 page.evaluate('async () => { await fgSwitchView("timeline"); await fgSwitchView("text"); }')
-                mounted['text_requests'] = sum(url.endswith('text.html') for url in requests)
+                mounted['text_requests'] = sum(text_resource(url) for url in requests)
                 mounted['renderer_rss_bytes'] = sum(process['rss_bytes'] for process in renderer_memory(browser))
-                if mounted['cached_html'] or mounted['text_requests'] != 1:
+                if mounted['cached_html'] or mounted['text_requests'] != mounted['expected_text_requests']:
                     raise RuntimeError('Text did not release HTML or reuse its mounted view')
                 facts['first_text'] = mounted
                 facts['text_filters'] = []
@@ -160,8 +173,14 @@ def measure(browser, report, timeout, mount_text, filter_query=None, text_querie
                     if filtered['rows'] != mounted['rows']:
                         raise RuntimeError('Native Text filtering changed the complete row inventory')
                     facts['text_filters'].append(filtered)
-                if sum(url.endswith('text.html') for url in requests) != 1:
+                if sum(text_resource(url) for url in requests) != mounted['expected_text_requests']:
                     raise RuntimeError('Native queries fetched Text again instead of using the mounted report')
+                mounted['model_sha256'] = page.evaluate('''async () => {
+                    const rows = fgGetTextFolding().records.map(record => record.row);
+                    const bytes = new TextEncoder().encode(JSON.stringify(rows));
+                    const digest = await crypto.subtle.digest('SHA-256', bytes);
+                    return Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('');
+                }''')
         violations = page.evaluate('startupViolations')
         if errors or violations:
             raise RuntimeError(json.dumps(dict(errors=errors, violations=violations)))

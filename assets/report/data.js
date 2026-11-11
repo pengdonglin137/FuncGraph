@@ -5,42 +5,49 @@
         return element && element.tagName === 'SCRIPT' && element.type === 'application/json' ? element : null;
     };
     const cache = new Map();
-    const sourceCache = new Map();
-    const SOURCE_CACHE_CHUNKS = 8;
-    const SOURCE_CACHE_BYTES = 16 * 1024 * 1024;
-    let sourceCacheBytes = 0;
+    const sourceCache = { entries: new Map(), bytes: 0, chunks: 8, limit: 16 * 1024 * 1024 };
+    const textCache = { entries: new Map(), bytes: 0, chunks: 4, limit: 16 * 1024 * 1024 };
     const requests = new Map();
     let descriptor = null;
     function cacheRelease(key) {
-        if (sourceCache.has(key)) {
-            sourceCacheBytes -= sourceCache.get(key);
-            sourceCache.delete(key);
+        for (const policy of [sourceCache, textCache]) {
+            if (!policy.entries.has(key)) continue;
+            policy.bytes -= policy.entries.get(key);
+            policy.entries.delete(key);
         }
         return cache.delete(key);
     }
     function cacheRead(key) {
-        if (sourceCache.has(key)) {
-            const bytes = sourceCache.get(key);
-            sourceCache.delete(key);
-            sourceCache.set(key, bytes);
+        for (const policy of [sourceCache, textCache]) {
+            if (!policy.entries.has(key)) continue;
+            const bytes = policy.entries.get(key);
+            policy.entries.delete(key);
+            policy.entries.set(key, bytes);
         }
         return cache.get(key);
     }
     function cacheStore(key, value, bytes) {
         const source = bytes !== undefined && /^data:fgSrc(?:0|[1-9][0-9]*)$/.test(key) && embedded('fgSourceChunks');
+        const text = bytes !== undefined && /^data:fgText(?:0|[1-9][0-9]*)$/.test(key) && embedded('fgTextChunks');
         if (source) {
             const info = sourceInfo(Number(key.slice('data:fgSrc'.length)));
             if ('data:' + info.name !== key) throw new Error('Invalid source chunk identity: ' + key);
             sourceValue(info, value);
         }
+        if (text) {
+            const info = textInfo(Number(key.slice('data:fgText'.length)));
+            if ('data:' + info.name !== key) throw new Error('Invalid Text chunk identity: ' + key);
+            textValue(info, value);
+        }
         cacheRelease(key);
-        if (source) {
-            if (bytes > SOURCE_CACHE_BYTES) return;
-            while (sourceCache.size >= SOURCE_CACHE_CHUNKS || sourceCacheBytes + bytes > SOURCE_CACHE_BYTES) {
-                cacheRelease(sourceCache.keys().next().value);
+        const policy = source ? sourceCache : text ? textCache : null;
+        if (policy) {
+            if (bytes > policy.limit) return;
+            while (policy.entries.size >= policy.chunks || policy.bytes + bytes > policy.limit) {
+                cacheRelease(policy.entries.keys().next().value);
             }
-            sourceCache.set(key, bytes);
-            sourceCacheBytes += bytes;
+            policy.entries.set(key, bytes);
+            policy.bytes += bytes;
         }
         cache.set(key, value);
     }
@@ -193,12 +200,28 @@
         const signal = options.signal;
         try {
             aborted(signal);
+            if (/^fgText[0-9]+$/.test(name) && embedded('fgTextChunks')) {
+                const info = textInfo(Number(name.slice('fgText'.length)));
+                if (info.name !== name) throw new Error('Invalid Text chunk identity: ' + name);
+            }
             if (ready(name)) return Promise.resolve(read(name));
         } catch (error) { return Promise.reject(error); }
         let resourceSize;
         return request('data:' + name, signal, async active => {
             const value = await manifest(active);
             if (!Object.prototype.hasOwnProperty.call(value.resources, name)) throw new Error('Report resource not found: ' + name);
+            if (/^fgText[0-9]+$/.test(name) && embedded('fgTextChunks') && value.resources[name].format !== 'text') {
+                throw new Error('Text chunk resources must use text format');
+            }
+            if (/^fgText[0-9]+$/.test(name) && embedded('fgTextChunks')) {
+                const catalog = textChunks();
+                const names = Object.keys(value.resources).filter(name => /^fgText[0-9]+$/.test(name));
+                if (names.length !== Math.ceil(catalog.count / catalog.chunk_size) || names.some(name => {
+                    const first = Number(name.slice('fgText'.length));
+                    return !/^fgText(?:0|[1-9][0-9]*)$/.test(name) || !Number.isSafeInteger(first) ||
+                        first >= catalog.count || first % catalog.chunk_size;
+                })) throw new Error('Text chunk resources do not match catalog');
+            }
             resourceSize = value.resources[name].bytes;
             const config = settings();
             const url = resourceURL(config.manifest, new URL('.', location.href));
@@ -236,9 +259,40 @@
             return load(info.name, options).then(data => sourceValue(info, data));
         } catch (error) { return Promise.reject(error); }
     }
+    function textChunks() {
+        if (!embedded('fgTextChunks')) return null;
+        const catalog = read('fgTextChunks');
+        if (!catalog || catalog.version !== 1 || !Number.isSafeInteger(catalog.count) || catalog.count < 0 ||
+            !Number.isSafeInteger(catalog.chunk_size) || catalog.chunk_size <= 0 ||
+            !Number.isSafeInteger(catalog.paint_rows) || catalog.paint_rows <= 0 || catalog.chunk_size % catalog.paint_rows) {
+            throw new Error('Invalid Text chunk catalog');
+        }
+        return catalog;
+    }
+    function textInfo(row) {
+        const catalog = textChunks();
+        if (!catalog || !Number.isSafeInteger(row) || row < 0 || row >= catalog.count) throw new Error('Invalid Text row identity');
+        const first = Math.floor(row / catalog.chunk_size) * catalog.chunk_size;
+        return { name: 'fgText' + first, first, count: Math.min(catalog.chunk_size, catalog.count - first), paint_rows: catalog.paint_rows };
+    }
+    function textValue(info, value) {
+        if (typeof value !== 'string') {
+            cacheRelease('data:' + info.name);
+            throw new Error('Invalid Text chunk contents: ' + info.name);
+        }
+        return value;
+    }
+    function loadTextChunk(row, options = {}) {
+        try {
+            const info = textInfo(row);
+            return load(info.name, options).then(value => textValue(info, value));
+        } catch (error) { return Promise.reject(error); }
+    }
     window.fgData = {
         read, load, ready,
         readSource, loadSource, sourceReady: source => ready(sourceInfo(source).name),
+        textChunks, loadTextChunk,
+        releaseTextChunks: () => { for (const key of Array.from(textCache.entries.keys())) cacheRelease(key); },
         release: name => cacheRelease('data:' + name),
         external: name => !!descriptorNode && !embedded(name),
         length: name => {

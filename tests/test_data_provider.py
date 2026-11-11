@@ -94,11 +94,12 @@ class DataProviderTest(unittest.TestCase):
         self.server.server_close()
         self.assertEqual(self.errors, [])
 
-    def publish(self, manifest_change=None, descriptor_change=None, embedded=False, source_catalog=None):
+    def publish(self, manifest_change=None, descriptor_change=None, embedded=False, source_catalog=None, text_catalog=None):
         resources = {}
         for name, body in self.payloads.items():
-            filename = name + ('.txt' if name == 'raw' else '.json')
-            resources[name] = resource(filename, body, 'text' if name == 'raw' else 'json')
+            text = re.fullmatch(r'fgText[0-9]+', name)
+            filename = name + ('.html' if text else '.txt' if name == 'raw' else '.json')
+            resources[name] = resource(filename, body, 'text' if text or name == 'raw' else 'json')
             self.server.responses['/report/data/' + filename] = (200, body, None)
         manifest = dict(version=1, report_id='f' * 32, resources=resources)
         if manifest_change:
@@ -109,6 +110,9 @@ class DataProviderTest(unittest.TestCase):
             descriptor_change(descriptor)
         self.server.responses['/report/data/manifest.json'] = (200, manifest_body, None)
         report = self.html
+        if text_catalog is not None:
+            report = report.replace('</head>', '<script type="application/json" id="fgTextChunks">' +
+                                    encode(text_catalog).decode() + '</script></head>', 1)
         if source_catalog is not None:
             report = re.sub(r'    <script type="application/json" id="fgSrc">.*?</script>\n', '', report, flags=re.S)
             report = report.replace('</head>', '<script type="application/json" id="fgSourceChunks">' +
@@ -126,6 +130,122 @@ class DataProviderTest(unittest.TestCase):
     def count(self, filename):
         with self.server.lock:
             return self.server.counts['/report/data/' + filename]
+
+    def test_text_chunks_load_by_original_row_ordinal_without_mounting_or_fetching_other_chunks(self):
+        self.payloads.update(fgText0='first 中文'.encode(), fgText4096='second 🙂'.encode())
+        self.publish(text_catalog=dict(version=1, count=4203, chunk_size=4096, paint_rows=512))
+        result = self.page.evaluate('''async () => {
+            const second = await fgData.loadTextChunk(4202);
+            const repeated = await fgData.loadTextChunk(4096);
+            return {second, repeated, first:fgData.ready('fgText0'), secondReady:fgData.ready('fgText4096')};
+        }''')
+        self.assertEqual(result, dict(second='second 🙂', repeated='second 🙂', first=False, secondReady=True))
+        self.assertEqual(self.count('fgText4096.html'), 1)
+        self.assertEqual(self.count('fgText0.html'), 0)
+        self.assertEqual(self.count('text-index.json'), 0)
+
+    def test_text_chunk_lru_is_separate_from_sources_and_other_data_and_refreshes_real_reads(self):
+        self.payloads.update({'fgText' + str(index): str(index).encode() for index in range(6)})
+        self.payloads['fgSrc0'] = encode(['source'])
+        self.publish(text_catalog=dict(version=1, count=6, chunk_size=1, paint_rows=1),
+                     source_catalog=dict(version=1, count=1, chunk_size=1))
+        result = self.page.evaluate('''async () => {
+            const notes = await fgData.load('notes');
+            await fgData.loadSource(0);
+            for (let row = 0; row < 4; row++) await fgData.loadTextChunk(row);
+            fgData.read('fgText0');
+            fgData.ready('fgText1');
+            await fgData.loadTextChunk(4);
+            const ready = Array.from({length:5}, (unused, row) => fgData.ready('fgText' + row));
+            fgData.releaseTextChunks();
+            return {ready, released:Array.from({length:5}, (unused, row) => fgData.ready('fgText' + row)),
+                source:fgData.readSource(0), notes:fgData.read('notes') === notes};
+        }''')
+        self.assertEqual(result, dict(ready=[True, False, True, True, True], released=[False] * 5,
+                                      source='source', notes=True))
+
+    def test_text_chunk_cache_limits_verified_bytes_and_does_not_retain_oversized_results(self):
+        limit = 16 * 1024 * 1024
+        self.payloads.update(fgText0=('中' * (3 * 1024 * 1024)).encode(),
+                             fgText1=('🙂' * (2 * 1024 * 1024)).encode(),
+                             fgText2=b'x' * (limit + 1), fgText3=b'y' * limit)
+        self.publish(text_catalog=dict(version=1, count=4, chunk_size=1, paint_rows=1))
+        result = self.page.evaluate('''async () => {
+            await fgData.loadTextChunk(0); await fgData.loadTextChunk(1);
+            const before = [fgData.ready('fgText0'), fgData.ready('fgText1')];
+            const length = (await fgData.loadTextChunk(2)).length;
+            const after = [fgData.ready('fgText1'), fgData.ready('fgText2')];
+            await fgData.loadTextChunk(3);
+            return {before, length, after, final:[fgData.ready('fgText1'), fgData.ready('fgText3')]};
+        }''')
+        self.assertEqual(result, dict(before=[False, True], length=limit + 1, after=[True, False], final=[False, True]))
+
+    def test_invalid_text_catalogs_rows_and_misaligned_generic_resource_names_are_rejected(self):
+        self.payloads.update(fgText0=b'first', fgText1=b'bad identity')
+        catalog = dict(version=1, count=2, chunk_size=2, paint_rows=1)
+        self.publish(text_catalog=catalog)
+        messages = self.page.evaluate('''async () => {
+            const messages = [];
+            for (const row of [-1, 2, 0.5, true, '0', null, NaN, Infinity]) {
+                try { await fgData.loadTextChunk(row); messages.push('accepted'); }
+                catch (error) { messages.push(error.message); }
+            }
+            try { await fgData.load('fgText1'); } catch (error) { messages.push(error.message); }
+            return messages;
+        }''')
+        self.assertTrue(all('Invalid Text row identity' in message for message in messages[:8]))
+        self.assertIn('Invalid Text chunk identity', messages[-1])
+        self.assertFalse(self.page.evaluate('fgData.ready("fgText1")'))
+        for change in [dict(version=2), dict(count=-1), dict(chunk_size=0), dict(paint_rows=0),
+                       dict(paint_rows=3), dict(count=True), dict(chunk_size=1.5)]:
+            invalid = dict(catalog, **change)
+            self.publish(text_catalog=invalid)
+            message = self.page.evaluate('async () => { try { await fgData.loadTextChunk(0); } catch (error) { return error.message; } }')
+            self.assertIn('Invalid Text chunk catalog', message)
+
+    def test_text_chunk_format_and_integrity_failures_do_not_publish_cache_entries(self):
+        self.payloads['fgText0'] = b'correct'
+        catalog = dict(version=1, count=1, chunk_size=1, paint_rows=1)
+        self.publish(text_catalog=catalog, manifest_change=lambda manifest: manifest['resources']['fgText0'].update(format='json'))
+        message = self.page.evaluate('async () => { try { await fgData.loadTextChunk(0); } catch (error) { return error.message; } }')
+        self.assertIn('must use text format', message)
+        self.assertEqual(self.count('fgText0.html'), 0)
+        self.publish(text_catalog=catalog)
+        self.server.responses['/report/data/fgText0.html'] = (200, b'corrupt', None)
+        message = self.page.evaluate('async () => { try { await fgData.loadTextChunk(0); } catch (error) { return error.message; } }')
+        self.assertIn('checksum mismatch', message)
+        self.assertFalse(self.page.evaluate('fgData.ready("fgText0")'))
+        self.server.responses['/report/data/fgText0.html'] = (200, b'correct', None)
+        self.assertEqual(self.page.evaluate('fgData.loadTextChunk(0)'), 'correct')
+
+    def test_shared_text_chunk_subscribers_cancel_independently(self):
+        self.payloads['fgText0'] = b'complete'
+        self.publish(text_catalog=dict(version=1, count=4096, chunk_size=4096, paint_rows=512))
+        gate, event = self.gate('fgText0.html')
+        self.page.evaluate('''() => {
+            window.textController = new AbortController();
+            window.firstText = fgData.loadTextChunk(0, {signal:textController.signal}).catch(error => error.name);
+            window.secondText = fgData.loadTextChunk(4095);
+        }''')
+        self.assertTrue(event.wait(5))
+        self.page.evaluate('textController.abort()')
+        self.assertEqual(self.page.evaluate('firstText'), 'AbortError')
+        gate.set()
+        self.assertEqual(self.page.evaluate('secondText'), 'complete')
+        self.assertEqual(self.count('fgText0.html'), 1)
+        self.assertTrue(self.page.evaluate('fgData.ready("fgText0")'))
+
+    def test_text_catalog_cannot_silently_truncate_whole_chunks_or_skip_resource_groups(self):
+        self.payloads.update(fgText0=b'first', fgText4096=b'second')
+        for count in [0, 4096, 12288]:
+            with self.subTest(count=count):
+                self.publish(text_catalog=dict(version=1, count=count, chunk_size=4096, paint_rows=512))
+                result = self.page.evaluate('''async count => {
+                    try { await fgData.load(count ? 'fgText0' : 'fgText4096'); }
+                    catch (error) { return error.message; }
+                }''', count)
+                self.assertTrue('do not match catalog' in result or 'Invalid Text row identity' in result, result)
+                self.assertFalse(self.page.evaluate('fgData.ready("fgText0")'))
 
     def gate(self, filename):
         path = '/report/data/' + filename

@@ -15,6 +15,7 @@ import tempfile
 import threading
 import unittest
 from urllib.error import HTTPError
+from urllib.parse import urljoin
 from urllib.request import urlopen
 from importlib.metadata import distribution
 
@@ -245,6 +246,43 @@ class InstalledPackageTest(unittest.TestCase):
             self.assertTrue(json.loads(match.group(1)))
         self.assertIn('id="filterInput"', report)
         self.assertTrue(json.loads(exported.read_text(encoding='utf-8'))['functions'])
+
+    def test_large_sidecar_text_chunks_from_installed_package(self):
+        from fglib.viewer import create_server
+
+        trace = Path(self.tmp.name) / 'large.txt'
+        trace.write_text('# tracer: function_graph 中文🙂\n' + ' 3)   0.050 us    |  leaf();\n' * 4500)
+        output = Path(self.tmp.name) / 'chunk-report'
+        self.run_command(self.executable('funcgraph'), '--no-config', '--no-btf', '--timeline',
+                         '--enable-fold', '--filter', '--report-mode', 'sidecar', '--output', str(output), str(trace))
+        html = (output / 'index.html').read_text()
+        catalog = json.loads(re.search(r'<script[^>]+id="fgTextChunks"[^>]*>(.*?)</script>', html, re.S).group(1))
+        descriptor = json.loads(re.search(r'<script[^>]+id="fgDataManifest"[^>]*>(.*?)</script>', html, re.S).group(1))
+        self.assertEqual(catalog, dict(version=1, count=4501, chunk_size=4096, paint_rows=512))
+        server = create_server(output)
+        thread = threading.Thread(target=server.serve_forever, kwargs={'poll_interval': 0.02}, daemon=True)
+        thread.start()
+        try:
+            manifest_url = urljoin(server.url, descriptor['manifest']['file'])
+            with urlopen(manifest_url) as response:
+                payload = response.read()
+            self.assertEqual(len(payload), descriptor['manifest']['bytes'])
+            self.assertEqual(hashlib.sha256(payload).hexdigest(), descriptor['manifest']['sha256'])
+            manifest = json.loads(payload)
+            self.assertNotIn('fgText', manifest['resources'])
+            bodies = []
+            for first in [0, 4096]:
+                resource = manifest['resources']['fgText' + str(first)]
+                with urlopen(urljoin(manifest_url, resource['file'])) as response:
+                    body = response.read()
+                self.assertEqual(len(body), resource['bytes'])
+                self.assertEqual(hashlib.sha256(body).hexdigest(), resource['sha256'])
+                bodies.append(body.decode('utf-8'))
+            self.assertEqual(''.join(bodies).count('class="line-container'), 4501)
+        finally:
+            server.shutdown()
+            thread.join(timeout=5)
+            server.server_close()
 
     def test_sidecar_report_from_installed_package(self):
         output = Path(self.tmp.name, 'sidecar report')

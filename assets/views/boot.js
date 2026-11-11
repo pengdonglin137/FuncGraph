@@ -17,26 +17,47 @@
             staged: window.fgData.external('tlData') || window.fgData.length('tlData') >= 1024 * 1024 };
     }
     if (fgTextDeferred()) {
+        const chunked = !!document.getElementById('fgTextChunks');
         function* textSteps() {
             const content = document.getElementById('content');
             const fragment = document.createDocumentFragment();
             const parser = document.createElement('div');
             try {
                 yield 'Preparing Text…';
-                const html = window.fgData.read('fgText');
-                const marker = html.match(/^<div class="text-chunk" data-chunk-size="[1-9][0-9]*">/)?.[0];
-                if (html && !marker) throw new Error('Unrecognized Text chunk format');
-                let position = 0;
-                while (position < html.length) {
-                    const next = html.indexOf(marker, position + marker.length);
-                    const end = next < 0 ? html.length : next;
-                    parser.innerHTML = html.slice(position, end);
-                    if (parser.childNodes.length !== 1 || !parser.firstElementChild?.classList.contains('text-chunk')) {
-                        throw new Error('Invalid Text chunk boundary');
+                function* append(html, expected, paintRows, first, total) {
+                    const marker = html.match(/^<div class="text-chunk" data-chunk-size="[1-9][0-9]*">/)?.[0];
+                    if (html && !marker || expected && !html || paintRows && marker !== '<div class="text-chunk" data-chunk-size="' + paintRows + '">') {
+                        throw new Error('Unrecognized Text chunk format');
                     }
-                    fragment.appendChild(parser.firstElementChild);
-                    position = end;
-                    yield 'Preparing Text… ' + Math.floor(position / html.length * 100) + '%';
+                    let position = 0, count = 0;
+                    while (position < html.length) {
+                        const next = html.indexOf(marker, position + marker.length);
+                        const end = next < 0 ? html.length : next;
+                        parser.innerHTML = html.slice(position, end);
+                        if (parser.childNodes.length !== 1 || !parser.firstElementChild?.classList.contains('text-chunk')) {
+                            throw new Error('Invalid Text chunk boundary');
+                        }
+                        if (expected !== null) {
+                            const rows = parser.firstElementChild.querySelectorAll('.line-container').length;
+                            if (rows !== Math.min(paintRows, expected - count)) throw new Error('Text chunk row count mismatch');
+                            count += rows;
+                        }
+                        fragment.appendChild(parser.firstElementChild);
+                        position = end;
+                        yield 'Preparing Text… ' + Math.floor(total ? (first + count) / total * 100 : position / html.length * 100) + '%';
+                    }
+                    if (expected !== null && count !== expected) throw new Error('Text chunk row count mismatch');
+                }
+                if (chunked) {
+                    const catalog = window.fgData.textChunks();
+                    for (let first = 0; first < catalog.count; first += catalog.chunk_size) {
+                        const count = Math.min(catalog.chunk_size, catalog.count - first);
+                        const html = yield { label: 'Loading Text rows: ' + (first + 1) + '–' + (first + count) + ' / ' + catalog.count + '…',
+                            load: signal => window.fgData.loadTextChunk(first, { signal }) };
+                        yield* append(html, count, catalog.paint_rows, first, catalog.count);
+                    }
+                } else {
+                    yield* append(window.fgData.read('fgText'), null, null, 0, 0);
                 }
                 const rows = fragment.querySelectorAll('.line-container');
                 const model = yield* fgPrepareTextModel(rows);
@@ -52,6 +73,7 @@
                 }
                 window.fgData.release('fgText');
                 window.fgData.release('fgTextIndex');
+                window.fgData.releaseTextChunks();
                 document.querySelector('.controls').inert = false;
                 return {};
             } finally {
@@ -59,7 +81,7 @@
                 fragment.replaceChildren();
             }
         }
-        views.text = { el: 'content', data: ['fgText'], staged: true, steps: textSteps, init: () => {
+        views.text = { el: 'content', data: chunked ? [] : ['fgText'], asynchronous: chunked, staged: true, steps: textSteps, init: () => {
             const steps = textSteps();
             while (!steps.next().done) {}
             return {};
@@ -106,6 +128,7 @@
     }
     function fail(state, error) {
         stopScheduled(state);
+        if (state.steps) state.steps.return();
         delete apis[state.name];
         delete pending[state.name];
         state.el.removeAttribute('aria-busy');
@@ -141,6 +164,15 @@
         }
         return typeof step !== 'string' && step.paint === true;
     }
+    function waitForStep(state, step) {
+        if (typeof step !== 'object' || typeof step.load !== 'function') return false;
+        Promise.resolve().then(() => step.load(state.controller.signal)).then(value => {
+            if (pending[state.name] !== state) return;
+            state.input = value;
+            schedule(state);
+        }, error => { if (pending[state.name] === state) fail(state, error); });
+        return true;
+    }
     function schedule(state, first) {
         const next = () => {
             state.timer = setTimeout(() => {
@@ -149,9 +181,13 @@
                 try {
                     let result;
                     do {
-                        result = state.steps.next();
+                        const input = state.input;
+                        state.input = undefined;
+                        result = state.steps.next(input);
                         if (result.done) { complete(state, result.value); return; }
-                        if (updateStatus(state, result.value)) { schedule(state, true); return; }
+                        const paint = updateStatus(state, result.value);
+                        if (waitForStep(state, result.value)) return;
+                        if (paint) { schedule(state, true); return; }
                     } while (performance.now() - start < 8);
                     schedule(state);
                 } catch (error) { fail(state, error); }
@@ -169,7 +205,10 @@
             state.steps = views[state.name].steps();
             const first = state.steps.next();
             if (first.done) complete(state, first.value);
-            else { updateStatus(state, first.value); schedule(state, true); }
+            else {
+                updateStatus(state, first.value);
+                if (!waitForStep(state, first.value)) schedule(state, true);
+            }
         } catch (error) { fail(state, error); }
     }
     function missingData(name) {
@@ -197,6 +236,7 @@
     }
     function ensure(name) {
         if (name === 'text' && textFailed) return null;
+        if (views[name].asynchronous) return apis[name] || open(name);
         const state = pending[name];
         if (state) {
             if (!state.steps) return state.promise;

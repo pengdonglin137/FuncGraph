@@ -49,6 +49,8 @@ class _Background:
 class HtmlGenerator:
     """Generates self-contained interactive HTML visualization."""
 
+    text_chunk_rows = TEXT_CHUNK_ROWS
+
     def __init__(self, parsed_lines, vmlinux_path, faddr2line_path,
                  module_dirs=None, base_url=None, module_url=None,
                  kernel_src=None, use_list=False, verbose=False,

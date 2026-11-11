@@ -13,6 +13,7 @@ import uuid
 
 from .output import ReportSpool
 from .textindex import TextIndexWriter
+from .textchunks import TEXT_NETWORK_ROWS, TextChunkRanges
 
 
 MARKER = b'FuncGraph sidecar report v1\n'
@@ -79,7 +80,7 @@ def _json(value):
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(',', ':')).encode('utf-8')
 
 
-def _resource(spool, section_name, path, format):
+def _resource(spool, section_name, path, format, ranges=None):
     digest = hashlib.sha256()
     length = 0
 
@@ -94,8 +95,8 @@ def _resource(spool, section_name, path, format):
             return written
 
     with path.open('xb') as stream:
-        for section in spool.sections:
-            if section.name == section_name:
+        for section in spool.sections if ranges is None else ranges:
+            if ranges is not None or section.name == section_name:
                 _copy(spool, section, ResourceWriter())
         _sync(stream)
     return dict(file=path.name, bytes=length, sha256=digest.hexdigest(), format=format)
@@ -142,11 +143,14 @@ def write_sidecar(path, generator, byte_limit=None):
             index_path = resources_directory / 'text-index.json'
             with index_path.open('xb') if deferred else nullcontext() as index_stream:
                 index = TextIndexWriter(index_stream, include_space='uftrace' in generator.timeline_json) if deferred else None
+                paint_rows = getattr(generator, 'text_chunk_rows', None)
+                chunks = TextChunkRanges(paint_rows) if deferred and paint_rows is not None else None
                 generator.text_index = index
                 try:
-                    spool.write_sections(generator.iter_sections())
+                    spool.write_sections(generator.iter_sections(), observer=chunks.append if chunks else None)
                 finally:
                     generator.text_index = None
+                text_ranges = chunks.finish(index.rows) if chunks else []
                 if index is not None:
                     resources['fgTextIndex'] = index.finish(index_path.name)
                     _sync(index_stream)
@@ -156,8 +160,16 @@ def write_sidecar(path, generator, byte_limit=None):
                 for name, filename in [('tlData', 'timeline.json'), ('cmpData', 'compare.json')]:
                     if any(section.name == 'view_data:' + name for section in spool.sections):
                         resources[name] = _resource(spool, 'view_data:' + name, resources_directory / filename, 'json')
+                chunked_text = bool(chunks and chunks.rows > TEXT_NETWORK_ROWS)
                 if deferred:
-                    resources['fgText'] = _resource(spool, 'text', resources_directory / 'text.html', 'text')
+                    if chunked_text:
+                        for first, count, section in text_ranges:
+                            resources['fgText' + str(first)] = _resource(
+                                spool, 'text', resources_directory / ('text-' + str(first) + '.html'), 'text', [section])
+                    else:
+                        resources['fgText'] = _resource(spool, 'text', resources_directory / 'text.html', 'text')
+                text_catalog = _json(dict(version=1, count=chunks.rows, chunk_size=TEXT_NETWORK_ROWS,
+                                          paint_rows=paint_rows)) if chunked_text else None
                 source_count = 0
                 for first, sources in generator.iter_source_chunks(SOURCE_CHUNK_ROWS):
                     payload = _json(sources)
@@ -170,7 +182,7 @@ def write_sidecar(path, generator, byte_limit=None):
                     source_count += len(sources)
                 source_catalog = _json(dict(version=1, count=source_count, chunk_size=SOURCE_CHUNK_ROWS))
                 manifest = _json(dict(version=1, report_id=report_id, resources=resources,
-                                      capabilities=dict(text='deferred-full' if deferred else 'omitted', sources='chunks-v1',
+                                      capabilities=dict(text='chunks-v1' if chunked_text else 'deferred-full' if deferred else 'omitted', sources='chunks-v1',
                                                         text_filter='index-v1' if deferred else 'omitted')))
                 with (resources_directory / 'manifest.json').open('xb') as stream:
                     stream.write(manifest)
@@ -189,6 +201,8 @@ def write_sidecar(path, generator, byte_limit=None):
                         if section.name == 'report_script':
                             stream.write(b'    <script type="application/json" id="fgDataManifest">' + descriptor + b'</script>\n')
                             stream.write(b'    <script type="application/json" id="fgSourceChunks">' + source_catalog + b'</script>\n')
+                            if text_catalog is not None:
+                                stream.write(b'    <script type="application/json" id="fgTextChunks">' + text_catalog + b'</script>\n')
                         if deferred and section.name == 'chrome':
                             _copy(spool, section, stream, (
                                 (b'<div id="content"', b'<div id="content" data-fg-text="true" data-fg-text-index="true"'),
