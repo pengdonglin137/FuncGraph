@@ -203,6 +203,43 @@ int main(void)
         self.assertNotIn('user_retval', entry)
         self.assertNotIn('user_args', exit_record)
 
+    def test_automatic_dwarf_scalar_arguments_and_returns_are_exported(self):
+        self.capture = Path(self.workspace.name) / 'automatic'
+        subprocess.run([str(EXECUTABLE), 'record', '--no-sched', '--no-libcall', '--auto-args',
+                        *RECORD_FLAGS, '-d', str(self.capture), str(self.binary)],
+                       check=True, capture_output=True)
+        calls = [record for record in self.records() if record.get('name') == 'child']
+        self.assertEqual(calls[0]['user_args'], ['1'])
+        self.assertEqual(calls[1]['user_retval'], '2')
+        self.assertTrue(all(record['payload_hex'] for record in calls))
+
+    def test_automatic_scalar_format_matches_replay_without_losing_64bit_values(self):
+        source = Path(self.workspace.name) / 'automatic.c'
+        values = [0, 1, 100000, 100001, -1, -100000, -100001,
+                  0xfffffff5, 0xffff0000, 0x123456789abcdef0]
+        source.write_text('__attribute__((noinline)) long child(long value) { return value; }\n'
+                          'int main(void) {\n' + ''.join(f'child({value}L);\n' for value in values) +
+                          'return 0; }\n')
+        binary = source.with_suffix('')
+        subprocess.run(['gcc', *COMPILE_FLAGS, '-g', '-O0', '-o', str(binary), str(source)],
+                       check=True, capture_output=True)
+        self.capture = Path(self.workspace.name) / 'automatic-values'
+        subprocess.run([str(EXECUTABLE), 'record', '--no-sched', '--no-libcall', *RECORD_FLAGS,
+                        '-A', 'child@arg1', '-R', 'child@retval', '-d', str(self.capture), str(binary)],
+                       check=True, capture_output=True)
+        records = self.records()
+        expected = ['0', '1', '100000', '0x186a1', '-1', '-100000', '0xfffffffffffe795f',
+                    '-11', '0xffff0000', '0x123456789abcdef0']
+        self.assertEqual([record['user_args'] for record in records
+                          if record.get('name') == 'child' and record['type'] == 'entry'],
+                         [[value] for value in expected])
+        self.assertEqual([record['user_retval'] for record in records
+                          if record.get('name') == 'child' and record['type'] == 'exit'], expected)
+        replay = subprocess.run([str(EXECUTABLE), 'replay', '-d', str(self.capture)],
+                                check=True, capture_output=True, text=True)
+        for value in expected:
+            self.assertIn('child(' + value + ')', replay.stdout)
+
     def test_unsupported_user_format_keeps_raw_bytes_only(self):
         entry, exit_record = self.record_user_with_spec('child@arg1/o32')
         self.assertIn('payload_hex', entry)

@@ -1,0 +1,50 @@
+From d6d5844b7b7e548d5f8b2689cd567b00babf94a9 Mon Sep 17 00:00:00 2001
+From: pengdonglin <pengdonglin@xiaomi.com>
+Date: Wed, 11 Nov 2026 21:34:10 +0800
+Subject: [PATCH] dump: decode recorded automatic scalar arguments and returns
+
+The saved DWARF argument specifications commonly use ARG_FMT_AUTO. Export these scalar payloads with the same small-integer, zero-extended negative int and hexadecimal selection used by native replay rather than silently dropping user_args/user_retval for every automatically captured function.
+
+Keep size/padding/endian validation and the complete original payload. Unsupported string, floating-point, enum and aggregate layouts still fall back to their raw bytes without inventing scalar values.
+---
+ cmds/dump.c | 18 ++++++++++++++----
+ 1 file changed, 14 insertions(+), 4 deletions(-)
+
+diff --git a/cmds/dump.c b/cmds/dump.c
+index 016378d72e99..cd1423c6494d 100644
+--- a/cmds/dump.c
++++ b/cmds/dump.c
+@@ -1697,6 +1697,7 @@ static void fgraph_user_values(struct uftrace_task_reader *task, bool retval)
+ 		unsigned size = spec->size;
+ 		unsigned padded = (size + 3) & ~3U;
+ 		uint64_t value = 0, sign, mask;
++		int64_t signed_value;
+ 
+ 		if (retval != (spec->idx == RETVAL_IDX))
+ 			continue;
+@@ -1707,12 +1708,21 @@ static void fgraph_user_values(struct uftrace_task_reader *task, bool retval)
+ 			unsigned shift = endian == ELFDATA2LSB ? index : size - 1 - index;
+ 			value |= (uint64_t)bytes[offset + index] << (8 * shift);
+ 		}
++		sign = UINT64_C(1) << (8 * size - 1);
++		mask = sign | (sign - 1);
++		signed_value = value & sign ? -(int64_t)(mask ^ value) - 1 : (int64_t)value;
+ 		switch (spec->fmt) {
++		case ARG_FMT_AUTO:
++			if (value <= 100000 || value >= UINT64_MAX - 99999)
++				snprintf(values[count], sizeof(values[count]), "%" PRId64, signed_value);
++			else if (value > UINT64_C(0xffff0000) && value <= UINT32_MAX)
++				snprintf(values[count], sizeof(values[count]), "%" PRId64,
++					 -(int64_t)(UINT32_MAX ^ value) - 1);
++			else
++				snprintf(values[count], sizeof(values[count]), "0x%" PRIx64, value);
++			break;
+ 		case ARG_FMT_SINT:
+-			sign = UINT64_C(1) << (8 * size - 1);
+-			mask = sign | (sign - 1);
+-			snprintf(values[count], sizeof(values[count]), "%" PRId64,
+-				 value & sign ? -(int64_t)(mask ^ value) - 1 : (int64_t)value);
++			snprintf(values[count], sizeof(values[count]), "%" PRId64, signed_value);
+ 			break;
+ 		case ARG_FMT_UINT:
+ 			snprintf(values[count], sizeof(values[count]), "%" PRIu64, value);

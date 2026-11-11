@@ -16,6 +16,7 @@ are generated from committed changes in `build/uftrace-dev`, never hand-edited.
 | 0008 | Preserve complete executable/library paths through recording, build-ID annotation and replay, including whitespace, long paths and explicit empty build IDs. | Not submitted. Remove when upstream preserves the same map-path and build-ID boundaries and the recording/offline-export regressions pass. |
 | 0009 | Enable ARM64 two-NOP patchable entries without Capstone, reject ordinary-instruction relocation without a disassembler, and report the limited capability as `patchable`. | Not submitted. Remove when upstream offers the same bounded support and the native entry/argument regressions pass. |
 | 0010 | Export native user CALLSITE events with original bytes/return PCs, saved-session caller symbols and exact `PC - 1` source positions; keep callee entries separate. | Not submitted. Remove when upstream's structured export preserves the same evidence and the call-site regressions pass. |
+| 0011 | Decode saved automatic scalar argument/return specifications using native replay's integer/hexadecimal formatting, while retaining original bytes and unsupported-format fallbacks. | Not submitted. Remove when upstream's structured export supports automatic scalar values and the native regressions pass. |
 
 The full base SHA is `842ed731248a9daded38774d8fb26c7b09474461`, locked in both
 the gitlink and `third_party/versions.json`. Build scripts reject mismatches;
