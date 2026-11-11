@@ -34,8 +34,8 @@ def report(name, *args):
 PROBE = "fgView('timeline').probe()"
 
 
-def open_page(b, path, view=None, height=H, width=W, notes=False):
-    pg = b.new_page(viewport={'width': width, 'height': height})
+def open_page(b, path, view=None, height=H, width=W, notes=False, touch=False):
+    pg = b.new_page(viewport={'width': width, 'height': height}, is_mobile=touch, has_touch=touch)
     errs = []
     pg.on('pageerror', lambda e: errs.append(str(e)))
     pg.goto('file://' + path, wait_until='load')
@@ -158,7 +158,7 @@ def tl_errors(b, rep):
 
 
 def tl_compact(b, rep):
-    pg = open_page(b, rep['sched'], 'timeline', width=390, height=844, notes=True)
+    pg = open_page(b, rep['sched'], 'timeline', width=390, height=844, touch=True)
     pg.evaluate(f"{PROBE}.select(0)")
     pg.wait_for_timeout(400)
     shot(pg, 'tl_compact')
