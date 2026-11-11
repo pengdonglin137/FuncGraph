@@ -2,6 +2,29 @@
 function pill(cls, txt, title) { return '<span class="tl-pill ' + cls + '"' + (title ? ' title="' + esc(title) + '"' : '') + '>' + esc(txt) + '</span>'; }
 function kv(k, v, cls) { return '<span class="k">' + k + '</span><span class="v' + (cls ? ' ' + cls : '') + '">' + v + '</span>'; }
 function lineLink(n, label) { return '<a class="tl-link" data-line="' + n + '">' + (label || 'line ' + n) + '</a>'; }
+function detailToken(kind, value) { return '<span class="tl-code-' + kind + '">' + esc(value) + '</span>'; }
+function detailSymbolHtml(value) {
+    const site = value.match(/^(.+?)(\+0[xX][\da-fA-F]+\/0[xX][\da-fA-F]+)(.*)$/);
+    if (site) return detailToken('symbol', site[1]) + detailToken('offset', site[2]) + esc(site[3]);
+    const address = value.match(/^(0[xX][\da-fA-F]+)(.*)$/);
+    if (address) return detailToken('raw', address[1]) + esc(address[2]);
+    return detailToken('symbol', value);
+}
+function detailValueHtml(value, parameters = false) {
+    const tokens = /"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|\b[A-Za-z_]\w*(?=\s*=(?!=))|(?<![\w.])[-+]?(?:0[xX][\da-fA-F]+|\d+(?:\.\d*)?(?:[eE][-+]?\d+)?)(?![\w.])|\b(?:NULL|nullptr|true|false|void)\b/g;
+    let html = '', offset = 0;
+    for (const match of value.matchAll(tokens)) {
+        const token = match[0], end = match.index + token.length;
+        let kind = null;
+        if (token[0] === '"' || token[0] === "'") kind = 'string';
+        else if (/^[A-Za-z_]/.test(token) && /^\s*=/.test(value.slice(end))) kind = parameters ? 'parameter' : null;
+        else if (/^[A-Za-z_]/.test(token)) kind = 'keyword';
+        else kind = 'number';
+        html += esc(value.slice(offset, match.index)) + (kind ? detailToken(kind, token) : esc(token));
+        offset = end;
+    }
+    return html + esc(value.slice(offset));
+}
 const PROCESS_PAGE = 100;
 const processView = { page: 0 };
 function showProcessEvents(reset = true) {
@@ -191,9 +214,9 @@ function detailRowsHtml(list, rows) {
         const title = row.name + (suffix ? ' — ' + suffix : '') + (row.kind === 'untraced' ? ' (not traced: skipped depth)' : '');
         const main = '<' + (traced ? 'button type="button"' : 'div') + ' class="tl-crumb tl-context-select' + (current ? ' cur' : '') + '"' + (traced ? ' data-slice="' + row.index + '"' : '') +
             ' title="' + esc(title) + '"><span class="tl-context-value">' + esc(label) + '</span><span class="tl-context-text">' +
-            (rowSpace ? '<span class="tl-stack-space">' + (rowSpace === 'user' ? 'U' : 'K') + '</span>' : '') + esc(row.name) +
+            (rowSpace ? '<span class="tl-stack-space">' + (rowSpace === 'user' ? 'U' : 'K') + '</span>' : '') + detailSymbolHtml(row.name) +
             (traced && tailJumpOf(row.index) ? ' <span class="tl-tail-tag" title="' + esc(callerRelationText(row.index)) + '">⇢ tail jump</span>' : '') +
-            (suffix ? ' <span class="d">' + esc(suffix) + '</span>' : '') + '</span></' + (traced ? 'button' : 'div') + '>';
+            (suffix ? ' <span class="' + (eRole[row.index] >= 0 ? 'tl-code-error' : 'd') + '">' + detailValueHtml(suffix) + '</span>' : '') + '</span></' + (traced ? 'button' : 'div') + '>';
         let source = '';
         if (row.kind !== 'outside') {
             const at = row.file ? row.file + ':' + row.line : 'Source unavailable';
@@ -276,12 +299,12 @@ function exportDetailCsv(kind) {
 
 function showInlineDetail(i) {
     const f = detailContextData(i).facts;
-    let h = '<div class="tl-detail-head tl-slice-head"><span class="tl-detail-title" title="' + esc(f.fn) + '">' + esc(f.fn) + '</span>' + pill('mute', 'inlined') +
+    let h = '<div class="tl-detail-head tl-slice-head"><span class="tl-detail-title" title="' + esc(f.fn) + '">' + detailSymbolHtml(f.fn) + '</span>' + pill('mute', 'inlined') +
         pill('mute', 'into ' + f.intoFn) + '<span class="sp"></span>' + lineLink(sLine[f.kids[0]], 'Open first call in text view ↵') +
         '<button class="tl-close" title="Close (Esc)">×</button></div>' + callNavigationHtml(i) + '<div class="tl-detail-body"><div class="tl-kv">';
     h += kv('traced extent', fmtDur(f.span) + ' &nbsp;<span class="d">from the first traced call inside to the end of the last one</span>');
     h += kv('start / end', fmtDur(sStart[i]) + ' → ' + fmtDur(sEnd[i]));
-    h += kv('inlined into', esc(f.intoFn) + ' at ' + esc(f.atFile) + ':' + f.atLine);
+    h += kv('inlined into', detailSymbolHtml(f.intoFn) + ' at ' + esc(f.atFile) + ':' + f.atLine);
     h += kv('defined in', esc(f.file));
     h += kv('traced calls', f.kids.length + ', together ' + fmtDur(f.covered));
     h += kv('between them', fmtDur(f.gap) + ' <span class="d">own inlined code, untraced callees, interrupts</span>');
@@ -293,7 +316,7 @@ function showInlineDetail(i) {
 function showGhostDetail(i) {
     const f = detailContextData(i).facts, y = f.y;
     const nm = y.name === '?' ? 'unknown frame' : y.name;
-    let h = '<div class="tl-detail-head tl-slice-head"><span class="tl-detail-title" title="' + esc(nm) + '">' + esc(nm) + '</span>' + pill('mute', 'not traced') +
+    let h = '<div class="tl-detail-head tl-slice-head"><span class="tl-detail-title" title="' + esc(nm) + '">' + detailSymbolHtml(nm) + '</span>' + pill('mute', 'not traced') +
         '<span class="sp"></span>' + lineLink(sLine[f.kids[0]], 'Open first call in text view ↵') +
         '<button class="tl-close" title="Close (Esc)">×</button></div>' + callNavigationHtml(i) + '<div class="tl-detail-body"><div class="tl-kv">';
     h += kv('extent', fmtDur(f.span) + ' &nbsp;<span class="d">from the first call inside to the end of the last one</span>');
@@ -330,7 +353,7 @@ function showDetail(i) {
     if (f & FL.TRUNC) pills += pill('mute', 'no exit');
     if (f & FL.ORPHAN) pills += pill('mute', 'no entry');
     if (f & FL.EST) pills += pill('mute', 'estimated');
-    let h = '<div class="tl-detail-head tl-slice-head"><span class="tl-detail-title" title="' + esc(nameOf(i)) + '">' + esc(nameOf(i)) +
+    let h = '<div class="tl-detail-head tl-slice-head"><span class="tl-detail-title" title="' + esc(nameOf(i)) + '">' + detailSymbolHtml(nameOf(i)) +
         (modOf(i) ? ' [' + esc(modOf(i)) + ']' : '') + '</span>' + pills + '<span class="sp"></span>' +
         '<a class="tl-link" data-dist="' + sName[i] + '">Duration distribution (H)</a>&nbsp;&nbsp;' +
         lineLink(sLine[i], 'Open in text view ↵') + '<button class="tl-close" title="Close (Esc)">×</button></div>';
@@ -345,44 +368,45 @@ function showDetail(i) {
         ((f >> FL.PR_SHIFT) & 15 ? ' <span class="d">(baseline ' + PBASE + ': ' + (pd > 0 ? 'preemption disabled ' + pd + ' level' + (pd > 1 ? 's' : '') : 'preemptible') + ')</span>' : ''));
     const r = retOf(i), rawReturn = rawRetOf(i), typedReturn = kernelTypesOf(i)?.ret;
     if (r !== null) {
-        let rv = esc(r);
+        let rv = detailValueHtml(r);
         if (eRole[i] >= 0) rv += ' ' + esc(errName(eErr[i])) + ' · ' + esc(errRoleText(i));
-        else if (f & FL.NULLRET) rv += ' (NULL)';
+        else if (f & FL.NULLRET) rv += ' (' + detailToken('keyword', 'NULL') + ')';
         h += kv(typedReturn ? 'return (BTF)' : D.uftrace ? 'raw return' : 'return', rv, eRole[i] >= 0 ? 'err' : '');
     }
     if (typedReturn && rawReturn !== null) h += kv('raw return',
         '<details class="tl-context-note"><summary>' + (typedReturn[0] === 'void' ? 'void (BTF) · original bits' : 'Original return bits') +
-        '</summary>' + esc(rawReturn) + '</details>');
+        '</summary>' + detailToken('raw', rawReturn) + '</details>');
     const c = callerOf(i);
-    if (c) h += kv('caller site', esc(c) + '<span class="tl-cs-at"></span>' + (f & FL.MISMATCH ? '<div class="tl-context-note tl-tail-note">' + esc(callerRelationText(i)) + '</div>' : ''));
+    if (c) h += kv('caller site', detailSymbolHtml(c) + '<span class="tl-cs-at"></span>' + (f & FL.MISMATCH ? '<div class="tl-context-note tl-tail-note">' + esc(callerRelationText(i)) + '</div>' : ''));
     const tailJump = tailJumpOf(i);
     if (tailJump) h += kv('tail jump', tailJump.sites.map(site => {
         const source = site.source;
         const url = source && safeSourceUrl(source[2]);
         const position = source ? esc(source[0] + ':' + source[1]) : 'Source unavailable';
-        return '<div>' + esc(site.symbol || site.address) + ' · ' + esc(site.mnemonic) + ' → ' + esc(nameOf(i)) +
+        return '<div>' + detailSymbolHtml(site.symbol || site.address) + ' · ' + esc(site.mnemonic) + ' → ' + detailSymbolHtml(nameOf(i)) +
             ' · ' + (url ? '<a class="tl-link" href="' + esc(url) + '" target="_blank" rel="noopener noreferrer">' + position + '</a>' : position) + '</div>';
     }).join('') + '<div class="tl-context-note tl-tail-note">Static sites in supplied binary; actual branch site not captured.</div>');
     const a = argsOf(i);
     const userDetail = f & FL.USER ? D.uftrace?.user_details?.[sLine[i]] : null;
     if (userDetail) {
-        h += kv('recorded address', esc(userDetail.address) + '<div class="tl-context-note">Function entry address, not the call site.</div>');
+        h += kv('recorded address', detailToken('raw', userDetail.address) + '<div class="tl-context-note">Function entry address, not the call site.</div>');
         const callAddress = userCallAddress(i);
         const userSite = userCallSite(i);
-        if (callAddress) h += kv('caller site', esc(callAddress) +
+        if (callAddress) h += kv('caller site', detailSymbolHtml(callAddress) +
             '<span class="tl-cs-at">' + (userSite ? '<br><span data-callsite-position>' + esc(userSite[0] + ':' + userSite[1]) + '</span>' : '') + '</span>' +
             (!userSite ? '<div class="tl-context-note">Call-site source unavailable; function entry is a fallback.</div>' : ''));
         else h += kv('caller site', '<span class="tl-muted">Not recorded · capture with -T &apos;.@callsite&apos;</span>');
-        if (userDetail.args !== undefined) h += kv('user args', esc(userDetail.args) +
+        if (userDetail.args !== undefined) h += kv('user args', detailValueHtml(userDetail.args, true) +
             (userDetail.arg_names ? '<div class="tl-context-note">Names from recorded user DWARF; values follow the saved capture specification.</div>' : '') +
-            (a ? '<details class="tl-context-note"><summary>Original argument bytes</summary>' + esc(a) + '</details>' : ''));
-        else if (a) h += kv('raw argument bytes', esc(a));
-        if (userDetail.retval !== undefined) h += kv('user return', esc(userDetail.retval));
-        else if (userDetail.return_payload) h += kv('raw return bytes', esc(userDetail.return_payload));
+            (a ? '<details class="tl-context-note"><summary>Original argument bytes</summary>' + detailToken('raw', a) + '</details>' : ''));
+        else if (a) h += kv('raw argument bytes', detailToken('raw', a));
+        if (userDetail.retval !== undefined) h += kv('user return', detailValueHtml(userDetail.retval));
+        else if (userDetail.return_payload) h += kv('raw return bytes', detailToken('raw', userDetail.return_payload));
     } else if (a) {
         const namedArgs = namedArgsOf(i);
-        if (namedArgs) h += kv('args (BTF)', esc(namedArgs) + '<details class="tl-context-note"><summary>Raw argument slots</summary>' + esc(a) + '</details>');
-        else h += kv(D.uftrace ? (f & FL.USER ? 'raw payload' : 'raw args') : 'args', esc(a));
+        if (namedArgs) h += kv('args (BTF)', detailValueHtml(namedArgs, true) + '<details class="tl-context-note"><summary>Raw argument slots</summary>' + detailToken('raw', a) + '</details>');
+        else h += kv(D.uftrace ? (f & FL.USER ? 'raw payload' : 'raw args') : 'args',
+            D.uftrace ? detailToken('raw', a) : detailValueHtml(a, true));
     }
     if (ATOMIC.has(i)) h += kv('context', 'called with ' + esc(atomicText(ATOMIC.get(i))) + ' (sleeping function in atomic context)', 'err');
     h += kv('trace lines', lineLink(sLine[i]) + (sEline && sEline[i] && sEline[i] !== sLine[i] ? ' → ' + lineLink(sEline[i]) : ''));
