@@ -270,6 +270,20 @@
             color: var(--summary-text);
             background: var(--fold-bg);
         }
+        @media (any-pointer: coarse) and (max-width: 640px), (any-pointer: coarse) and (max-height: 480px) {
+            #content.has-fold-controls { --fold-touch-width: 44px; }
+            #content.has-fold-controls .line-container { padding-inline-start: calc(2px + var(--fold-touch-width)); }
+            #content.has-fold-controls .fold-entry { position: relative; }
+            #content.has-fold-controls .fold-marker { position: static; }
+            #content.has-fold-controls .fold-icon {
+                inset-inline-start: 0;
+                top: 0;
+                width: var(--fold-touch-width);
+                height: 100%;
+                transform: none;
+            }
+            #content.has-fold-controls .fold-icon:focus-visible { outline-offset: -2px; }
+        }
         .fold-guide-layer {
             position: fixed;
             top: 0;
@@ -1903,7 +1917,7 @@ document.documentElement.setAttribute('data-theme', currentTheme);
                 <div class="info-item"><div class="info-label">OS:</div><div class="info-value">Linux 6.8.0-138-generic</div></div>
                 <div class="info-item"><div class="info-label">Hostname:</div><div class="info-value">pengdl-pc</div></div>
                 <div class="info-item"><div class="info-label">Processor:</div><div class="info-value">x86_64</div></div>
-                <div class="info-item"><div class="info-label">Generated At:</div><div class="info-value">2026-11-11 08:36:59</div></div>
+                <div class="info-item"><div class="info-label">Generated At:</div><div class="info-value">2026-11-11 08:49:15</div></div>
                 <div class="info-section-divider"></div>
                 <div class="info-section-title">Processing Stats</div>
                 <div class="info-item"><div class="info-label">Parse Time:</div><div class="info-value">0.04s</div></div>
@@ -2037,6 +2051,7 @@ document.documentElement.setAttribute('data-theme', currentTheme);
         <h3>Function Call Folding</h3>
         <ul>
             <li>Click <strong>▶</strong> to fold/unfold; <kbd>Shift</kbd>+Click for recursive fold/unfold</li>
+            <li>On a phone, tap the left gutter to fold without scrolling to the function name</li>
             <li><kbd>1</kbd>-<kbd>9</kbd>: Fold to depth N (hide calls deeper than N)</li>
             <li><kbd>0</kbd>: Unfold all fold blocks</li>
             <li>Folded blocks show summary: call count, total time, return value</li>
@@ -2854,6 +2869,7 @@ document.documentElement.setAttribute('data-theme', currentTheme);
             const content = document.getElementById('content');
             if (!content) return;
             const guideStyle = document.getElementById('fgTreeGuides');
+            content.classList.toggle('has-fold-controls', !!guideStyle);
             const guideButton = document.getElementById('foldGuidesBtn');
             if (guideStyle && guideButton) {
                 const updateGuideButton = () => {

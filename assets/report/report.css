@@ -263,6 +263,20 @@
             color: var(--summary-text);
             background: var(--fold-bg);
         }
+        @media (any-pointer: coarse) and (max-width: 640px), (any-pointer: coarse) and (max-height: 480px) {
+            #content.has-fold-controls { --fold-touch-width: 44px; }
+            #content.has-fold-controls .line-container { padding-inline-start: calc(2px + var(--fold-touch-width)); }
+            #content.has-fold-controls .fold-entry { position: relative; }
+            #content.has-fold-controls .fold-marker { position: static; }
+            #content.has-fold-controls .fold-icon {
+                inset-inline-start: 0;
+                top: 0;
+                width: var(--fold-touch-width);
+                height: 100%;
+                transform: none;
+            }
+            #content.has-fold-controls .fold-icon:focus-visible { outline-offset: -2px; }
+        }
         .fold-guide-layer {
             position: fixed;
             top: 0;

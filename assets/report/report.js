@@ -365,6 +365,7 @@
             const content = document.getElementById('content');
             if (!content) return;
             const guideStyle = document.getElementById('fgTreeGuides');
+            content.classList.toggle('has-fold-controls', !!guideStyle);
             const guideButton = document.getElementById('foldGuidesBtn');
             if (guideStyle && guideButton) {
                 const updateGuideButton = () => {

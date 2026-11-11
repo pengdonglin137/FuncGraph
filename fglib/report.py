@@ -287,6 +287,7 @@ class HtmlGenerator:
         <h3>Function Call Folding</h3>
         <ul>
             <li>Click <strong>▶</strong> to fold/unfold; <kbd>Shift</kbd>+Click for recursive fold/unfold</li>
+            <li>On a phone, tap the left gutter to fold without scrolling to the function name</li>
             <li><kbd>1</kbd>-<kbd>9</kbd>: Fold to depth N (hide calls deeper than N)</li>
             <li><kbd>0</kbd>: Unfold all fold blocks</li>
             <li>Folded blocks show summary: call count, total time, return value</li>

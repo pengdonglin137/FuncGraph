@@ -927,6 +927,60 @@ class BrowserSmokeTest(unittest.TestCase):
             self.assertAlmostEqual(after['icon'] - before['icon'], after['indent'] - before['indent'], delta=1)
         self.assertEqual(self.page.locator('.line-container > .fold-marker').count(), 0)
 
+    def test_phone_fold_gutter_reaches_nested_calls_without_panning_or_overlap(self):
+        entries = self.nested_fold_rows()[:3]
+        for width, height, theme in [(320, 700, 'dark'), (390, 844, 'light'), (844, 390, 'dark')]:
+            with self.subTest(width=width, height=height), self.browser.new_context(
+                    viewport=dict(width=width, height=height), is_mobile=True, has_touch=True) as context:
+                page = context.new_page()
+                page.on('pageerror', lambda error: self.errors.append(str(error)))
+                page.goto(self.url, wait_until='load')
+                page.evaluate("theme => document.documentElement.setAttribute('data-theme', theme)", theme)
+                facts = page.evaluate('''entries => entries.map(entry => {
+                    const row = document.getElementById(entry.row);
+                    const icon = row.querySelector('.fold-icon');
+                    const bounds = row.getBoundingClientRect();
+                    const button = icon.getBoundingClientRect();
+                    const number = row.querySelector('.line-number').getBoundingClientRect();
+                    return {left: button.left, right: button.right, width: button.width,
+                        height: button.height, rowHeight: bounds.height, number: number.left,
+                        controls: row.querySelectorAll('.fold-icon').length};
+                })''', entries)
+                for fact in facts:
+                    self.assertEqual(fact['controls'], 1)
+                    self.assertGreaterEqual(fact['width'], 44)
+                    self.assertLessEqual(fact['right'], fact['number'])
+                    self.assertAlmostEqual(fact['height'], fact['rowHeight'], delta=1)
+                    self.assertAlmostEqual(fact['left'], facts[0]['left'], delta=1)
+
+                outer = page.locator('#' + entries[0]['row'] + ' .fold-icon')
+                inner = page.locator('#' + entries[1]['row'] + ' .fold-icon')
+                outer.evaluate('''node => window.scrollTo({left: 0,
+                    top: window.scrollY + node.getBoundingClientRect().top - visualViewport.height * 0.55,
+                    behavior: 'instant'})''')
+                inner.tap(position=dict(x=3, y=10))
+                self.assertEqual(inner.get_attribute('aria-expanded'), 'false')
+                self.assertEqual(outer.get_attribute('aria-expanded'), 'true')
+                self.assertFalse(page.locator('#' + entries[2]['row']).is_visible())
+                outer.tap(position=dict(x=41, y=10))
+                self.assertFalse(inner.is_visible())
+                outer.tap(position=dict(x=3, y=10))
+                self.assertTrue(inner.is_visible())
+                self.assertEqual(inner.get_attribute('aria-expanded'), 'false')
+                inner.tap(position=dict(x=41, y=10))
+                self.assertTrue(page.locator('#' + entries[2]['row']).is_visible())
+                self.assertEqual(page.evaluate('window.scrollX'), 0)
+
+                row = page.locator('#' + entries[0]['row'])
+                number = row.locator('.line-number')
+                number.tap()
+                self.assertEqual(outer.get_attribute('aria-expanded'), 'true')
+                self.assertEqual(page.evaluate('location.hash'), '#' + entries[0]['row'])
+                page.set_viewport_size(dict(width=1100, height=800))
+                self.assertLess(outer.bounding_box()['width'], 44)
+                self.assertAlmostEqual(outer.bounding_box()['x'] + outer.bounding_box()['width'],
+                                       row.locator('.func-name-link, .hl-func').first.bounding_box()['x'], delta=1)
+
     def test_fold_braces_are_independent_native_controls_with_truthful_summary(self):
         parent, child, grandchild, outside = self.nested_fold_rows()
         self.expand_fold_source(grandchild)
