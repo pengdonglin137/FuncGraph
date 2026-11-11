@@ -1042,9 +1042,13 @@ class BrowserSmokeTest(unittest.TestCase):
                 self.assertEqual(outer.get_attribute('aria-expanded'), 'true')
                 self.assertEqual(page.evaluate('location.hash'), '#' + entries[0]['row'])
                 page.set_viewport_size(dict(width=1100, height=800))
-                self.assertLess(outer.bounding_box()['width'], 44)
-                self.assertAlmostEqual(outer.bounding_box()['x'] + outer.bounding_box()['width'],
-                                       row.locator('.func-name-link, .hl-func').first.bounding_box()['x'], delta=1)
+                geometry = row.evaluate('''node => {
+                    const icon = node.querySelector('.fold-icon').getBoundingClientRect();
+                    const name = node.querySelector('.func-name-link, .hl-func').getBoundingClientRect();
+                    return {width: icon.width, right: icon.right, name: name.left};
+                }''')
+                self.assertLess(geometry['width'], 44)
+                self.assertAlmostEqual(geometry['right'], geometry['name'], delta=1)
 
     def test_fold_braces_are_independent_native_controls_with_truthful_summary(self):
         parent, child, grandchild, outside = self.nested_fold_rows()
