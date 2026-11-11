@@ -553,15 +553,15 @@ When recorded, **Exec / exit** lists kernel lifecycle events and links to Text;
 
 From top to bottom:
 
-1. **Toolbar, first row**: Color (color mode), Overlay (layer switches), function search, error navigation.
-2. **Toolbar, second row**: Fit (show all), Tracks (expand / collapse all tracks), Tasks (task navigator, 7.7), Go to… (precise positioning, 6.10), Overhead (measured / subtracted), Inline (inline frames), Errors, Sections, Sched latency (the analysis panels), Notes (collapse / expand the notes), Max (hide the page header and tabs, `M`), then **Filter**: the filter expression shared with the text view, see 6.6. Use the shared header **?** for help; only maximized layouts show a toolbar fallback. Narrow windows wrap the toolbar into more rows.
+1. **Primary toolbar**: function Search and match navigation, zoom / **Fit trace**, **Notes**, and **Full screen** (`M`). Full screen is always visible, not hidden in a menu; on phones it sits beside Search, with zoom / Fit trace / Notes / **Tools** below.
+2. **View and analysis tools**: Color, Overlay, error navigation, Tracks (expand / collapse), Tasks (7.7), Go to… (6.10), Overhead, Inline, Errors, **Critical sections**, **Scheduling latency**, and the **Filter** shared with Text (6.6). Desktop and phone layouts put these controls in the grouped **Tools ▾** dropdown instead of spreading buttons across the chart. Opening it does not resize the canvas; click outside or press Escape to close it. Tab navigates its controls. Related navigation and analysis buttons are grouped separately. Use the header **?** for help; full screen provides a toolbar fallback.
 3. **Notes**: what this trace lacks and what that means ("No timestamps…", "Arguments are not printed…"). Blue notes are information, yellow ones need attention.
 4. **Overview strip**: the whole trace in miniature. Blue bars show how busy each moment is, red lines are error origins (tall: reached user space, short orange: handled by a caller), the blue frame is the visible range. Click or drag to jump, use the wheel to zoom.
 5. **Time axis**: the right side shows the visible span (`span`) and the absolute start time (`start`), plus `selected` for a range selection; the time under the cursor is shown next to it.
 6. **CPU tracks** (only with timestamps) and **task tracks**. Time counts from the earliest event in the trace (possibly a scheduler event before the first call), so the first call need not be at 0; the initial view and Fit show the first call to the last recorded call, run, wait boundary, wakeup or critical/latency-window boundary. Pan left to see earlier events. Scheduler events after the last call remain reachable; open waits end geometrically at this report boundary, not at an observed resume.
 7. **Bottom panel**: opens when a slice is clicked or an analysis panel is opened; drag the bar above it to resize (6.5).
 
-In narrow or short windows, toolbar buttons wrap, and the toolbar and notes scroll vertically within their own areas instead of pushing the canvas and detail panel off screen. Slice details use one column on narrow screens. Collapse **Notes**, or use **Max / M**, for more canvas space; the preferred panel height remains remembered.
+In narrow or short windows, toolbar buttons wrap, and the toolbar and notes scroll vertically within their own areas instead of pushing the canvas and detail panel off screen. Slice details use one column on narrow screens. Collapse **Notes**, or use **Full screen / M**, for more canvas space; the preferred panel height remains remembered.
 
 ![tl_compact](img/tl_compact.png)
 
@@ -714,7 +714,7 @@ New reports use the compact call-site position index for this tooltip, including
 **Clicking a slice** opens the detail panel below:
 
 - Tags next to the title: context (`?` if inferred), irqs off, BH off, need-resched, preempt off (preempt count above the trace's baseline, `×N` for N extra levels; hover the tag for the numbers. function_graph disables preemption itself while recording, so on `CONFIG_PREEMPTION` kernels every line's preempt digit is one too high: the baseline is the lowest value seen in task context, capped at 1, so a trace that lies entirely in a preempt-off region is not hidden. Preempt off, Sections, atomic sleeps, the Preempt depth overlay and Sched latency's max preempt off all subtract it; the text view shows the raw digit, so filter with e.g. `preempt:>1` there), migrate off, error origin/propagated, may sleep in atomic context, no exit, no entry, estimated.
-- Left column: duration, self (and its share), start, task, depth, flags, return, call site, args, trace lines (entry and exit line numbers; click to open the text view).
+- Left column: duration, self (and its share), start, task, depth, flags, return, caller site, args, trace lines (entry and exit line numbers; click to open the text view).
   - Below **call site**: the source position of the call (`file:line`, click to open the online source); `in FUNC (inlined)` when the call sits in inlined code.
   - **Call site source**: the call site's source block, the same as when expanding the line in the text view (highlighting, `>line<` marks the call, inline chain in the chain/flat layout of the Source button). Click the title to collapse it; the choice is remembered. Text and Timeline share one de-duplicated source pool and a trace-line → source-ID index; the corresponding Text row does not need to exist in the DOM. Without `--kernel-src` / `--source-rev` / `--source-url` only the position link is shown. Plain `--no-text-view` omits both; add `--keep-source` to retain available source/position/inline information in Timeline-only reports.
 - Right column:
@@ -753,9 +753,9 @@ The list contents retain complete context independently of the shared filter. A 
 
 The detail panel and the analysis panels share the bottom area. Drag the bar above the panel to change its height; the canvas grows or shrinks accordingly. Double-click the bar to restore the default (32% of the window height, between 180 and 400 px). The height is stored in the browser as a fraction of the window, so other reports and other window sizes keep the same split.
 
-When the panel is shorter than 140px, such as phone landscape or a manually reduced split, a subdued **expand icon** appears beside Close. It temporarily borrows the chart area for details; press it again to restore the split, or close the panel / press Esc to restore the chart. Unlike **Max / M**, this does not hide the page header. It does not change the saved split, query, current task page or call selection. Expansion survives view changes, resizing and panel navigation in this session, but is not saved for the next report load. Help remains available, and extremely short windows can still scroll the details.
+When the panel is shorter than 140px, such as phone landscape or a manually reduced split, a subdued **expand icon** appears beside Close. It temporarily borrows the chart area for details; press it again to restore the split, or close the panel / press Esc to restore the chart. Unlike **Full screen / M**, this does not hide the page header. It does not change the saved split, query, current task page or call selection. Expansion survives view changes, resizing and panel navigation in this session, but is not saved for the next report load. Help remains available, and extremely short windows can still scroll the details.
 
-For a larger canvas: **Max** in the toolbar (`M`) hides the page header and the view tabs, press it again to restore them. **Notes N** collapses or expands the notes about this trace below the toolbar (missing options, overhead estimate, ...); the choice is remembered.
+For a larger canvas, select **Full screen** (`M`). It hides page chrome and requests browser full screen; **Exit full screen**, `M`, or `Escape` restores the page. Unsupported or denied native full screen falls back to filling the page viewport, with a brief status message. Browser-initiated exits update the button as well. Switching to Text exits full screen; reopening Timeline does not enter it automatically. Zoom, call selection, filters, model identity and the saved detail split do not change. The detail-expansion control is independent: it borrows the chart area rather than entering full screen. **Notes N** toggles capture notes and remembers that preference. Regenerate existing reports to get these controls.
 
 ### 6.6 Search and filter
 
@@ -831,15 +831,15 @@ Inline and untraced details cache the selected frame's raw extent facts, so refr
 | `H` | duration distribution of the selected function |
 | `O` | measured / overhead subtracted |
 | `I` | hide / show inline frames |
-| `M` | maximize (hide page header and tabs) / restore |
+| `M` | enter / exit full screen; Escape also exits |
 | drag / double-click the bar above the panel | resize the bottom panel / reset it |
 | Enter | open the selected call in the text view |
-| Esc | close the help; clear selection and range |
+| Esc | close an open menu/help first; otherwise exit full screen, or clear selection and range in normal mode |
 | `?` | help and legend |
 
 ### 6.10 Precise positioning (Go to…)
 
-Click **Go to…**, or press `G` outside an input in Timeline. Compact layouts put the button inside **More**.
+Click **Go to…**, or press `G` outside an input in Timeline. The button is inside **Tools** on desktop and phones.
 Enter a coordinate in **Start / center**. A blank **End** keeps the current zoom and centers the coordinate,
 subject to the existing pan limits near trace edges. Supplying both fields shows the exact interval,
 for example `100 us` to `0.2 ms`. This changes only the viewport: it does not select a nearby function

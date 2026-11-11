@@ -17,7 +17,7 @@ while changing the saved split would affect other reports and window sizes.
   Normally sized panels have no additional visible control. Touch targets are
   at least 44 × 44px; long call names reserve space for both icons.
 - Expanding temporarily borrows the main chart area and its event-only banner.
-  The toolbar and page header remain available. This differs from **Max / M**,
+  The toolbar and page header remain available. This differs from **Full screen / M**,
   which hides page chrome rather than allocating chart space to details.
 - Pressing the same icon restores the split. Closing details also restores the
   chart. Keyboard Enter/Space activate the native button; Escape retains the
@@ -62,7 +62,7 @@ python3 funcgraph.py samples/sample_mixed.jsonl --no-config \
 ```
 
 Open a generated report in a short landscape window, select a call or open
-**Tasks** from **More**, and press the expand icon beside Close. Check the same
+**Tasks** from **Tools**, and press the expand icon beside Close. Check the same
 icon, Close, help, paging and orientation changes. For a desktop reproduction,
 drag the divider until the detail pane is shorter than 140px, then expand it.
 The example command is for layout verification without source resolution; it
@@ -78,7 +78,7 @@ Eleven dedicated browser tests cover:
   sidecar delivery, visible rows/pager, native paging and preserved task page.
 - Header/keyboard help, Escape/Close, switching Text and back, reload semantics,
   and navigation among error, section, latency, exec/exit, task and call panels.
-- Resizing, independent **Max** behavior, responsive duration histograms, long
+- Resizing, independent **Full screen** behavior, responsive duration histograms, long
   function names without overlapping touch controls, and byte-identical CSV.
 
 The final focused regression runs 59 tests in 33.778 s, all passing, including

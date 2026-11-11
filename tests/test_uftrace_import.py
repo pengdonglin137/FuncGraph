@@ -323,7 +323,7 @@ class UftraceBrowserTest(unittest.TestCase):
                     page.on('request', lambda request: requests.append(request.url))
                     page.goto(server.url)
                     page.locator('.tl-space-key').wait_for()
-                    page.get_by_role('button', name='Exec / exit').click()
+                    helpers.click_timeline_tool(page, '[data-act=process-events]')
                     page.get_by_text('exit (task exiting)', exact=True).wait_for(state='visible')
                     self.assertEqual(page.get_by_text('exec (new image installed)', exact=True).count(), 0)
                     page.evaluate('''() => {
@@ -360,6 +360,7 @@ class UftraceBrowserTest(unittest.TestCase):
                     }'''))
                     user_twin.click()
                     page.locator('.tl-cs-src .current-line', has_text='int user_work(void) {}').wait_for()
+                    helpers.open_timeline_tools(page)
                     page.locator('.tl-ftext').fill('space:user')
                     page.locator('.tl-ftext').press('Enter')
                     page.locator('.tl-fcount', has_text='2 of 6 calls').wait_for()

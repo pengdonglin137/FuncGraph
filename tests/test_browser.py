@@ -567,9 +567,7 @@ class BrowserSmokeTest(unittest.TestCase):
                 self.ev("fgSwitchView('text')")
                 self.assertTrue(header.is_visible())
                 self.ev("fgSwitchView('timeline')")
-                self.assertFalse(header.is_visible())
-                self.assertTrue(fallback.is_visible())
-                self.page.locator('[data-act=max]').click()
+                self.page.wait_for_function('() => !document.fullscreenElement')
                 self.assertTrue(header.is_visible())
                 self.assertFalse(fallback.is_visible())
 
@@ -912,8 +910,10 @@ class BrowserSmokeTest(unittest.TestCase):
                 page.locator('.tl-notes').wait_for()
                 self.assertEqual(notes.get_attribute('aria-pressed'), 'true')
                 page.set_viewport_size(dict(width=1100, height=800))
+                self.assertFalse(options.is_visible())
+                self.assertTrue(more.is_visible())
+                more.click()
                 options.wait_for()
-                self.assertFalse(more.is_visible())
                 self.assertEqual(page.evaluate("localStorage.getItem('fgTl.notes')"), None)
 
     def test_timeline_compact_controls_resize_and_maximize_in_both_themes(self):
@@ -940,6 +940,7 @@ class BrowserSmokeTest(unittest.TestCase):
                     self.assertLessEqual(detail['y'] + detail['height'], height + 1)
                     self.page.dblclick('.tl-resizer')
                     self.page.click('[data-act=max]')
+                    self.page.wait_for_function('() => !document.fullscreenElement')
                     self.page.click('[data-act=notes]')
                     self.assertTrue(self.page.locator('.view-tabs').is_visible())
                     self.assertTrue(self.page.locator('.tl-notes').is_visible())
@@ -2101,12 +2102,12 @@ class BrowserSmokeTest(unittest.TestCase):
         self.page.mouse.click(*point)
         self.assertEqual(self.ev("fgView('timeline').probe().sel()"), target)
         self.page.click('.tl-detail .tl-close')
-        self.page.click('[data-act=expand]')
+        helpers.click_timeline_tool(self.page, '[data-act=expand]')
         self.assertTrue(self.ev("fgView('timeline').probe().TRACKS.every(track => track.collapsed)"))
-        self.page.click('[data-act=expand]')
+        helpers.click_timeline_tool(self.page, '[data-act=expand]')
         self.assertFalse(self.ev("fgView('timeline').probe().TRACKS.some(track => track.collapsed)"))
         self.ev('target => fgNotifyFilter("chosen task", new Set([target + 1]))', target)
-        self.page.click('[data-act=fhide]')
+        helpers.click_timeline_tool(self.page, '[data-act=fhide]')
         self.assertEqual(self.ev("fgView('timeline').probe().TRACKS.filter(track => track.h > 0).map(track => track.id)"), [target])
         self.ev("document.querySelector('.tl-scroll').scrollTop = 0")
         point = self.ev('target => fgView("timeline").probe().xyOf(target)', target)
@@ -2187,7 +2188,7 @@ class BrowserSmokeTest(unittest.TestCase):
                                     'wakeups': [[-1, 250000, 2, 0, -1, -1]],
                                     'chains': [[1, 0, 12, 0, 2, 1, 1]], 'errnames': {'12': 'ENOMEM'},
                                     'overhead': {'child': 10, 'self': 5, 'source': 'test'}})
-        self.page.click('[data-act=an-tasks]')
+        helpers.click_timeline_tool(self.page, '[data-act=an-tasks]')
 
     def test_tasks_paginate_export_all_and_preserve_focused_pager_on_refresh(self):
         self.open_tasks_data()
@@ -2205,7 +2206,7 @@ class BrowserSmokeTest(unittest.TestCase):
         self.assertEqual(rows[2]['end_ns'], '250000')
         self.assertEqual(rows[-3]['start_ns'], '')
         self.assertEqual(rows[-2]['cpus'], '0')
-        self.page.click('[data-act=adj]')
+        helpers.click_timeline_tool(self.page, '[data-act=adj]')
         self.assertEqual(self.page.locator('.an-task-table tbody tr').count(), 100)
         self.assertEqual(self.page.locator('.an-task-footer [role=status]').inner_text(), 'Tasks 101–200 of 233')
         self.assertEqual(self.download_csv('[data-act=tasks-csv]'), rows)
@@ -2266,7 +2267,7 @@ class BrowserSmokeTest(unittest.TestCase):
         self.page.type('[data-task-query]', '0')
         self.assertEqual(self.ev("document.activeElement.hasAttribute('data-task-query')"), True)
         self.assertEqual(len(self.download_csv('[data-act=tasks-csv]')), 229)
-        self.page.click('[data-act=adj]')
+        helpers.click_timeline_tool(self.page, '[data-act=adj]')
         self.ev("fgNotifyFilter('child', new Set([2]))")
         self.page.check('[data-task-matching]')
         self.assertEqual(self.page.locator('.an-task-table tbody tr').count(), 0)
@@ -2276,7 +2277,7 @@ class BrowserSmokeTest(unittest.TestCase):
     def test_tasks_compact_layout_preserves_controls_during_horizontal_scroll(self):
         tasks = [dict(pid=1, comm='<script>long_name_' + 'x' * 600, kind=0, cpu=0)]
         self.open_range_data(['root'], extra={'tasks': tasks})
-        self.page.click('[data-act=an-tasks]')
+        helpers.click_timeline_tool(self.page, '[data-act=an-tasks]')
         for theme in ['light', 'dark']:
             for width, height in [(320, 700), (390, 844), (800, 420), (1500, 900)]:
                 with self.subTest(theme=theme, width=width, height=height):
@@ -2316,7 +2317,7 @@ class BrowserSmokeTest(unittest.TestCase):
                 self.assertIn('inside 400 ns', self.page.locator(rows).first.inner_text())
                 self.assertNotIn('same_window', self.page.locator(rows).first.locator('td').nth(5).inner_text())
                 raw = self.download_csv('[data-act=window-csv]')[0]
-                self.page.click('[data-act=adj]')
+                helpers.click_timeline_tool(self.page, '[data-act=adj]')
                 adjusted = self.download_csv('[data-act=window-csv]')[0]
                 self.assertEqual(float(raw['top_1_self_estimate_ns']), 400)
                 self.assertEqual(float(adjusted['top_1_self_estimate_ns']), 200)
@@ -2332,7 +2333,7 @@ class BrowserSmokeTest(unittest.TestCase):
                     self.assertEqual(adjusted['ended_in'], 'same_window')
                     self.assertEqual(self.page.locator('[data-sk="0"]').inner_text(), 'irqs off (1)')
                     self.assertEqual(self.page.locator('[data-sk="1"]').inner_text(), 'preempt off (0)')
-                self.page.click('[data-act=adj]')
+                helpers.click_timeline_tool(self.page, '[data-act=adj]')
         self.ev("fgNotifyFilter('no calls', new Set())")
         for action in ['latency', 'sections']:
             self.ev(f"fgView('timeline').probe().{action}()")
@@ -2529,7 +2530,7 @@ class BrowserSmokeTest(unittest.TestCase):
         self.assertEqual(self.ev("fgView('timeline').probe().sel()"), 51)
         self.page.locator('tr[data-chains] [data-error-step="-1"]').press('Enter')
         self.assertEqual(self.ev("fgView('timeline').probe().sel()"), 50)
-        self.page.click('[data-act=adj]')
+        helpers.click_timeline_tool(self.page, '[data-act=adj]')
         self.page.locator('th[data-esort=origin] button').press('Enter')
         self.assertIn('51 / 60', self.page.locator('tr[data-chains]').inner_text())
         self.page.locator('tr[data-chains] [data-error-step="1"]').press('Enter')
@@ -2665,7 +2666,7 @@ class BrowserSmokeTest(unittest.TestCase):
             self.assertEqual(row['time_mode'], mode)
             self.assertEqual(float(row['origin_duration_' + unit]), 1 if mode == 'count' else 1000)
             if mode == 'abs':
-                self.page.click('[data-act=adj]')
+                helpers.click_timeline_tool(self.page, '[data-act=adj]')
                 adjusted = self.download_csv('[data-act=error-occurrences-csv]')[0]
                 self.assertEqual(float(adjusted['origin_duration_ns']), 500)
                 self.assertEqual(adjusted['duration_basis'], 'overhead_subtracted_estimate')
@@ -2700,7 +2701,7 @@ class BrowserSmokeTest(unittest.TestCase):
         self.page.press('.tl-search', 'Enter')
         for action in ('an-errors', 'an-lat', 'an-sec'):
             with self.subTest(action=action):
-                self.page.click(f'[data-act={action}]')
+                helpers.click_timeline_tool(self.page, f'[data-act={action}]')
                 self.drag_range()
                 self.assertTrue(self.page.locator('.tl-detail-title').inner_text().startswith('Range '))
                 self.assertEqual(self.page.locator('.tl-count').inner_text(), f'{total} calls')
@@ -2712,7 +2713,7 @@ class BrowserSmokeTest(unittest.TestCase):
         total = self.ev("fgView('timeline').probe().N")
         self.page.fill('.tl-search', '.*')
         self.page.press('.tl-search', 'Enter')
-        self.page.click('[data-act=an-errors]')
+        helpers.click_timeline_tool(self.page, '[data-act=an-errors]')
         self.page.locator('tr[data-chains]').first.click()
         selected = self.ev("fgView('timeline').probe().sel()")
         self.assertEqual(self.page.locator('.tl-count').inner_text(), f'{selected + 1} / {total} calls')
@@ -3047,7 +3048,7 @@ class BrowserSmokeTest(unittest.TestCase):
         self.page.mouse.click(bounds['x'] + 40 + (int(last) + 0.5) * (bounds['width'] - 48) / bucket_count,
                               bounds['y'] + 50)
         self.assertEqual(self.page.locator('[data-act=dist-bucket]').input_value(), last)
-        self.page.click('[data-act=adj]')
+        helpers.click_timeline_tool(self.page, '[data-act=adj]')
         self.assertEqual(self.page.locator('[data-act=dist-bucket]').input_value(), '-1')
         self.assertEqual(len(self.download_csv('[data-act=dist-csv]')), 240)
         self.page.select_option('[data-act=dist-bucket]', self.page.locator('[data-act=dist-bucket] option').last.get_attribute('value'))
@@ -3064,7 +3065,7 @@ class BrowserSmokeTest(unittest.TestCase):
         self.assertEqual(values['mean'], '4.500 us')
         self.assertEqual(self.page.locator('tr[data-site="a"] td').nth(2).inner_text(), '2.000 us')
         self.page.locator('tr[data-site="a"] button').click()
-        self.page.click('[data-act=adj]')
+        helpers.click_timeline_tool(self.page, '[data-act=adj]')
         adjusted = self.download_csv('[data-act=dist-csv]')
         self.assertEqual([float(row['duration_ns']) for row in adjusted], [1000, 500])
         self.assertEqual([(float(row['start_ns']), float(row['end_ns'])) for row in adjusted], [(1000, 3000), (0, 1000)])
@@ -3072,7 +3073,7 @@ class BrowserSmokeTest(unittest.TestCase):
         self.assertEqual({row['call_site_filter'] for row in adjusted}, {'a'})
         self.ev("fgNotifyFilter('one call', new Set([1]))")
         self.assertEqual(len(self.download_csv('[data-act=dist-csv]')), 1)
-        self.page.click('[data-act=adj]')
+        helpers.click_timeline_tool(self.page, '[data-act=adj]')
         self.assertEqual(float(self.download_csv('[data-act=dist-csv]')[0]['duration_ns']), 1000)
 
     def test_distribution_exports_truthful_units_in_each_time_mode(self):
@@ -3150,7 +3151,7 @@ class BrowserSmokeTest(unittest.TestCase):
         self.assertEqual(rows['parent']['max_call_ns'], '10000')
         self.assertEqual(rows['parent']['calls'], '0')
         self.assertEqual(rows['zero-start']['calls'], '1')
-        self.page.click('[data-act=adj]')
+        helpers.click_timeline_tool(self.page, '[data-act=adj]')
         adjusted = {row['function']: row for row in self.download_range_csv()}
         self.assertEqual(float(adjusted['parent']['self_estimate_ns']), 600)
         self.assertEqual(adjusted['parent']['duration_basis'], 'overhead_subtracted_estimate')
@@ -3520,12 +3521,13 @@ class BrowserSmokeTest(unittest.TestCase):
 
     def test_timeline_follows_text_filter(self):
         self.open_timeline()
+        helpers.open_timeline_tools(self.page)
         self.page.fill('.tl-ftext', 'comm:sh')
         self.page.press('.tl-ftext', 'Enter')
         self.page.wait_for_timeout(400)
         count = self.ev("document.querySelector('.tl-fcount').textContent")
         self.assertRegex(count, r'^\d+ of \d+ calls$')
-        self.page.click('.tl-filterbar [data-act=fclear]')
+        helpers.click_timeline_tool(self.page, '.tl-filterbar [data-act=fclear]')
         self.page.wait_for_timeout(300)
         self.assertEqual(self.ev("document.querySelector('.tl-fcount').textContent"), '')
 
@@ -3547,6 +3549,7 @@ class BrowserSmokeTest(unittest.TestCase):
         self.assertEqual(self.page.locator('.header-calls').inner_text(), f'{count:,} recorded calls')
         self.assertIn('Not a count of unique functions or trace lines', self.page.locator('.header-calls').get_attribute('title'))
         self.open_timeline()
+        helpers.open_timeline_tools(self.page)
         self.page.fill('.tl-ftext', 'no such function')
         self.page.press('.tl-ftext', 'Enter')
         self.assertEqual(self.page.locator('.header-calls').inner_text(), f'{count:,} recorded calls')
@@ -3789,7 +3792,7 @@ class BrowserSmokeTest(unittest.TestCase):
         self.page.locator('[data-call-nav=child]').press('Enter')
         self.assertEqual(self.ev("fgView('timeline').probe().sel()"), 3)
         targets = self.page.locator('[data-call-nav]').evaluate_all('buttons => buttons.map(button => button.title)')
-        self.page.click('[data-act=adj]')
+        helpers.click_timeline_tool(self.page, '[data-act=adj]')
         self.ev("fgView('timeline').probe().inline(true)")
         self.ev("fgNotifyFilter('keep selected', new Set([5]))")
         self.assertEqual(self.page.locator('[data-call-nav]').evaluate_all('buttons => buttons.map(button => button.title)'), targets)
@@ -4192,7 +4195,7 @@ class BrowserSmokeTest(unittest.TestCase):
 
     def test_detail_panel_resize_and_maximize(self):
         self.open_timeline()
-        self.page.click('[data-act=an-errors]')
+        helpers.click_timeline_tool(self.page, '[data-act=an-errors]')
         self.page.wait_for_timeout(200)
         box = lambda sel: self.page.locator(sel).bounding_box()
         h0, st0 = box('.tl-detail')['height'], box('.tl-stage')['height']
@@ -4221,13 +4224,13 @@ class BrowserSmokeTest(unittest.TestCase):
 
     def test_analysis_panels(self):
         self.open_timeline()
-        self.page.click('[data-act=an-errors]')
+        helpers.click_timeline_tool(self.page, '[data-act=an-errors]')
         self.page.wait_for_timeout(200)
         self.assertGreater(self.ev("document.querySelectorAll('.an-tbl tbody tr[data-chains]').length"), 0)
         self.page.click('.an-tbl tbody tr[data-chains]')
         self.page.wait_for_timeout(200)
         self.assertIn('occurrence 1', self.ev("document.querySelector('.tl-toast').textContent"))
-        self.page.click('[data-act=an-lat]')
+        helpers.click_timeline_tool(self.page, '[data-act=an-lat]')
         self.page.wait_for_timeout(200)
         self.assertIn('Scheduling latency', self.ev("document.querySelector('.tl-detail-title').textContent"))
         self.page.keyboard.press('e')
@@ -4310,7 +4313,7 @@ class BrowserSmokeTest(unittest.TestCase):
         self.ev("fgNotifyFilter('root only', new Set([1]))")
         self.page.locator('[data-call-nav=child]').click()
         self.assertEqual(self.ev("fgView('timeline').probe().sel()"), 1)
-        self.page.click('[data-act=adj]')
+        helpers.click_timeline_tool(self.page, '[data-act=adj]')
         self.ev("fgView('timeline').probe().inline(true)")
         self.page.locator('[data-call-nav=next]').click()
         self.assertEqual(self.ev("fgView('timeline').probe().sel()"), 3)
@@ -4527,7 +4530,7 @@ class BrowserSmokeTest(unittest.TestCase):
         selected = int(expected[0])
         self.page.locator('[data-child-show]').first.click()
         for unused in range(3):
-            self.page.click('[data-act=adj]')
+            helpers.click_timeline_tool(self.page, '[data-act=adj]')
             self.assertEqual(self.page.locator('[data-child-call]').evaluate_all('rows => rows.map(row => row.dataset.childCall)'), expected)
             self.assertEqual(self.ev("fgView('timeline').probe().sel()"), selected)
         self.ev("async () => { await fgSwitchView('text'); await fgSwitchView('timeline'); }")
@@ -4663,7 +4666,7 @@ class BrowserSmokeTest(unittest.TestCase):
         self.open_child_groups()
         self.page.click('[data-child-open]')
         self.page.click('[data-child-page="1"]')
-        self.page.click('[data-act=adj]')
+        helpers.click_timeline_tool(self.page, '[data-act=adj]')
         self.assertEqual(self.page.locator('.an-child-table tbody tr').count(), 100)
         self.assertEqual(self.page.locator('.an-child-footer [role=status]').inner_text(), 'Showing 101–200 of 225 functions')
         rows = self.download_csv('[data-child-csv=groups]')
@@ -5037,7 +5040,7 @@ class BrowserSmokeTest(unittest.TestCase):
         self.page.locator('[data-sf-example]').first.press('Enter')
         self.assertEqual(self.page.locator('.tl-detail-title').inner_text(), 'target')
         self.assertGreater(self.ev("fgView('timeline').probe().sel()"), 0)
-        self.page.locator('[data-act=adj]').click()
+        helpers.click_timeline_tool(self.page, '[data-act=adj]')
         adjusted = self.download_csv('[data-act=slowfast-csv]')
         child = next(row for row in adjusted if row['function'] == 'child_0001')
         self.assertEqual(float(child['slow_self_per_root_ns']), 100.5)
@@ -5226,7 +5229,7 @@ class BrowserSmokeTest(unittest.TestCase):
         self.page.click('[data-act=slowfast]')
         self.page.wait_for_timeout(300)
         self.assertRegex(self.ev("document.querySelector('.tl-detail').innerText"), r'Slow vs fast')
-        self.page.click('[data-act=an-sec]')
+        helpers.click_timeline_tool(self.page, '[data-act=an-sec]')
         self.page.wait_for_timeout(200)
         self.assertGreater(self.ev("document.querySelectorAll('tr[data-sec]').length"), 0)
 
@@ -5557,7 +5560,7 @@ class BrowserSmokeTest(unittest.TestCase):
                 self.page.fill('.tl-search', '')
                 self.page.wait_for_timeout(80)
                 self.assertEqual(self.canvas_pixel(synthetic, at_start=True)['color'], bright)
-                self.page.click('[data-act=adj]')
+                helpers.click_timeline_tool(self.page, '[data-act=adj]')
                 self.page.wait_for_timeout(80)
                 self.assertEqual(self.canvas_pixel(synthetic, at_start=True)['color'], bright)
 
@@ -5581,7 +5584,7 @@ class BrowserSmokeTest(unittest.TestCase):
                 for step in range(6):
                     point = self.canvas_pixel(synthetic)['point']
                     self.page.mouse.move(point[0] + step, point[1])
-                self.page.click('[data-act=adj]')
+                helpers.click_timeline_tool(self.page, '[data-act=adj]')
                 self.page.set_viewport_size({'width': 1400, 'height': 850})
                 self.page.wait_for_timeout(80)
                 point = self.canvas_pixel(synthetic)['point']
@@ -5679,8 +5682,8 @@ class BrowserSmokeTest(unittest.TestCase):
     def test_wakeup_overlay_toggle(self):
         self.open_timeline()
         self.assertFalse(self.ev("document.querySelector('[data-ov=wk]').classList.contains('na')"))
-        self.page.click('[data-ov=wk]')
-        self.page.click('[data-ov=wk]')
+        helpers.click_timeline_tool(self.page, '[data-ov=wk]')
+        helpers.click_timeline_tool(self.page, '[data-ov=wk]')
 
     def test_scheduling_overlays_keep_boundary_geometry_and_first_hit(self):
         for ordered in (True, False):
@@ -5735,11 +5738,11 @@ class BrowserSmokeTest(unittest.TestCase):
                               self.page.locator('.an-wait-head').inner_text())
                 self.page.click('.an-wait-head .tl-close')
                 for overlay in ('off', 'rs', 'irq'):
-                    self.page.click(f'[data-ov={overlay}]')
+                    helpers.click_timeline_tool(self.page, f'[data-ov={overlay}]')
                 self.assertEqual(self.ev('schedulingGeometry()')['rects'], dict(resched=[], irq=[], waits=[]))
                 self.page.mouse.click(*point)
                 self.assertFalse(self.page.locator('.an-wait-head').is_visible())
-                self.page.click('[data-ov=off]')
+                helpers.click_timeline_tool(self.page, '[data-ov=off]')
                 open_point = self.ev('''() => {
                     const probe = fgView('timeline').probe();
                     probe.zoomTo(35000, 38000, -1);
@@ -5882,7 +5885,7 @@ class BrowserSmokeTest(unittest.TestCase):
         self.assertGreater(self.ev("document.querySelectorAll('table.tl-sum tbody tr').length"), 5)
         self.ev('toggleTheme()')
         for mode in ('name', 'heat', 'cpu', 'ctx'):
-            self.page.click(f'[data-role=color] button[data-v={mode}]')
+            helpers.click_timeline_tool(self.page, f'[data-role=color] button[data-v={mode}]')
         self.page.wait_for_timeout(200)
 
 

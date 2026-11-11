@@ -107,7 +107,7 @@ fgreport -p qemu-pigz --uftrace capture-mixed -- --user-src "$PWD"
 这仍能显示混合调用栈和跨态分界线，但**不会生成内核源码位置、链接或片段**。
 仅用户态采集使用前两节的命令，不需要任何内核源码参数。
 
-切到 Timeline，点击 **Fit**，再点 **Exec / exit**。面板可跳到 Text 里的原始记录；
+切到 Timeline，点击 **Fit trace**，再打开 **Tools ▾ → Exec / exit**。面板可跳到 Text 里的原始记录；
 **Markers** 在任务轨道标记事件时间。`sched_process_exec` 表示新程序镜像已装载，
 不是 `execve` 系统调用入口；`sched_process_exit` 表示任务退出，不是父进程回收。
 没有采到的端点不会补画。

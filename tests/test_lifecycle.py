@@ -148,6 +148,7 @@ class LifecycleBrowserTest(unittest.TestCase):
         self.page.evaluate("() => fgView('timeline').probe().select(0)")
         self.open_panel()
         self.page.locator('[data-process-page="1"]').click()
+        helpers.open_timeline_tools(self.page)
         self.page.fill('.tl-ftext', 'space:user')
         self.page.press('.tl-ftext', 'Enter')
         self.page.wait_for_function("document.querySelector('.tl-filterbar').classList.contains('on')")
@@ -176,6 +177,7 @@ class LifecycleBrowserTest(unittest.TestCase):
     def test_time_jump_keeps_filtered_kernel_tracks_hidden(self):
         self.open_report(metadata=dict(HEADER, clock=None))
         self.open_panel()
+        helpers.open_timeline_tools(self.page)
         self.page.fill('.tl-ftext', 'space:user')
         self.page.press('.tl-ftext', 'Enter')
         self.page.locator('[data-act=fhide]').click()

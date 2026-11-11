@@ -56,6 +56,20 @@ def fixture(name):
     return os.path.join(ROOT, 'ftrace.txt') if name == 'x86' else os.path.join(DATA, name + '.txt')
 
 
+def open_timeline_tools(page):
+    if not page.locator('.tl-options').is_visible():
+        page.locator('[data-act=options]').click()
+
+
+def click_timeline_tool(page, selector):
+    target = page.locator(selector)
+    if not target.is_visible():
+        open_timeline_tools(page)
+    target.click()
+    if page.locator('.tl-options').is_visible():
+        page.locator('[data-act=options]').click()
+
+
 class FakeKernel:
     """A fake kernel with optional listed-source resolver/capability stubs."""
 

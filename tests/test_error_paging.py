@@ -217,7 +217,7 @@ class ErrorPagingTest(unittest.TestCase):
         self.button(True).click()
         before = self.ids(), self.ids(True), self.status(), self.status(True)
         raw = {kind: self.rows(kind) for kind in ('groups', 'occurrences', 'atomic')}
-        self.page.locator('[data-act=adj]').click()
+        helpers.click_timeline_tool(self.page, '[data-act=adj]')
         self.assertEqual((self.ids(), self.ids(True), self.status(), self.status(True)), before)
         for kind in ('occurrences', 'atomic'):
             adjusted = self.rows(kind)

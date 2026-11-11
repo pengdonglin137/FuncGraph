@@ -244,7 +244,7 @@ class WindowPagingTest(unittest.TestCase):
                 self.open_report(panel=panel, update=update)
                 before = self.rows()
                 self.next()
-                self.page.locator('[data-act=adj]').click()
+                helpers.click_timeline_tool(self.page, '[data-act=adj]')
                 self.assertIn(f'1–{size} of 650', self.status())
                 after = self.rows()
                 for raw, adjusted in zip(before, after):

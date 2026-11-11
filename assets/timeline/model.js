@@ -673,6 +673,7 @@ yield 'Drawing Timeline…';
 // ---- DOM skeleton ----
 tlRoot.innerHTML = `
 <div class="tl-toolbar">
+  <div class="tl-primary" role="group" aria-label="Timeline navigation and display">
   <span class="tl-group tl-search-group">
     <input class="tl-search" placeholder="/ search function (regex)" spellcheck="false" aria-label="Search traced function names (regular expression)" aria-describedby="tlSearchStatus" aria-invalid="false">
     <span class="tl-search-nav">
@@ -685,14 +686,17 @@ tlRoot.innerHTML = `
     <span class="tl-group tl-zoom-group" role="group" aria-label="Timeline zoom">
       <button class="tl-btn tl-touch-zoom" data-act="zoomout" aria-label="Zoom timeline out">−</button>
       <button class="tl-btn tl-touch-zoom" data-act="zoomin" aria-label="Zoom timeline in">+</button>
-      <button class="tl-btn" data-act="fit" title="Show the whole trace (0)">Fit</button>
+      <button class="tl-btn" data-act="fit" title="Show the whole trace (0)">Fit trace</button>
     </span>
     <button class="tl-btn" data-act="notes" title="Show / hide the notes about this trace" aria-pressed="false">Notes</button>
-    <button class="tl-btn tl-more" data-act="options" aria-expanded="false" aria-controls="tlOptions">More<span class="tl-more-filter" hidden> · Filter on</span></button>
+    <button class="tl-btn tl-more" data-act="options" title="Filters, colors, overlays and analysis tools" aria-haspopup="dialog" aria-expanded="false" aria-controls="tlOptions">Tools<span class="tl-more-filter" hidden> · Filter on</span></button>
   </span>
+  <button class="tl-btn tl-fullscreen-button" data-act="max" title="Enter full screen (M); Escape to exit" aria-label="Full screen" aria-pressed="false">Full screen</button>
+  <button class="tl-btn" data-act="help" title="Timeline help (?)" aria-label="Timeline help" hidden>?</button>
+  </div>
   ${MIXED ? '<span class="tl-group tl-space-key" aria-label="Address space legend"><span class="tl-space-user">User</span><span>Kernel</span>' +
     (D.stats.user_kernel_boundaries ? '<span class="tl-space-edge" title="Boundary spans the recorded kernel call">User → kernel</span>' : '') + '</span>' : ''}
-  <div class="tl-options" id="tlOptions">
+  <div class="tl-options" id="tlOptions" role="dialog" aria-label="Timeline tools">
   <span class="tl-group"><span class="tl-label">Color</span>
     <span class="tl-seg" data-role="color">
       <button data-v="ctx" class="on" title="Execution context (task / softirq / hardirq / NMI)">Context</button>
@@ -715,18 +719,23 @@ tlRoot.innerHTML = `
     <button class="tl-btn" data-act="errmode" title="Toggle: user-visible errors only / all errors"><span class="err-label"></span></button>
     <button class="tl-btn" data-act="errnext" title="Next error origin (E)">▶</button>
   </span>
-  <span class="tl-group">
+  <span class="tl-group" role="group" aria-label="Timeline navigation">
+    <span class="tl-label tl-menu-heading">Navigate</span>
     <button class="tl-btn" data-act="expand" title="Expand / collapse all tracks">Tracks</button>
     <button class="tl-btn" data-act="an-tasks" title="Find and navigate all recorded tasks, including scheduling-only tasks">Tasks</button>
     <button class="tl-btn" data-act="position" title="Go to a coordinate or interval without changing selection (G)">Go to…</button>
+  </span>
+  <span class="tl-group" role="group" aria-label="Timeline display">
+    <span class="tl-label tl-menu-heading">Display</span>
     <button class="tl-btn" data-act="adj" title="Subtract the estimated tracing overhead from durations (O)">Overhead: measured</button>
     <button class="tl-btn" data-act="inl" title="Show inlined functions as frames between the traced calls (I)">Inline: hidden</button>
+  </span>
+  <span class="tl-group tl-menu-wide" role="group" aria-label="Timeline analysis">
+    <span class="tl-label tl-menu-heading">Analyze</span>
     <button class="tl-btn" data-act="an-errors" title="Error summary by syscall / origin / errno">Errors</button>
-    <button class="tl-btn" data-act="an-sec" title="Critical sections: irqs-off / preempt-off / BH-off regions">Sections</button>
-    <button class="tl-btn" data-act="an-lat" title="Scheduling latency: need-resched windows and what delayed them">Sched latency</button>
+    <button class="tl-btn" data-act="an-sec" title="Critical sections: irqs-off / preempt-off / BH-off regions">Critical sections</button>
+    <button class="tl-btn" data-act="an-lat" title="Scheduling latency: need-resched windows and what delayed them">Scheduling latency</button>
     ${PROCESS_EVENTS.length ? '<button class="tl-btn" data-act="process-events" title="Recorded kernel exec and exit events">Exec / exit</button>' : ''}
-    <button class="tl-btn" data-act="max" title="Maximize: hide the page header and tabs (M)">Max</button>
-    <button class="tl-btn" data-act="help" title="Timeline help (?)" aria-label="Timeline help" hidden>?</button>
   </span>
   <span class="tl-group tl-filterbar"><span class="tl-label">Filter</span>
   <input class="tl-ftext" placeholder="e.g. pid:1234" aria-label="Filter trace lines" title="Uses the same filter syntax as Text" spellcheck="false">

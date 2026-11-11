@@ -1155,6 +1155,7 @@ class SidecarBrowserTest(unittest.TestCase):
         self.assertEqual(icon.get_attribute('aria-expanded'), 'false')
 
     def test_timeline_unified_filter_uses_all_rows_without_loading_text_or_switching_views(self):
+        helpers.open_timeline_tools(self.page)
         self.page.locator('.tl-ftext').fill('duration:>1')
         self.page.locator('.tl-ftext').press('Enter')
         self.page.locator('.tl-fcount').filter(has_text='of').wait_for()
@@ -1203,6 +1204,7 @@ class SidecarBrowserTest(unittest.TestCase):
     def test_clearing_a_pending_filter_does_not_apply_or_report_a_cancelled_filter(self):
         routes = []
         self.page.route('**/text-index.json', lambda route: routes.append(route))
+        helpers.open_timeline_tools(self.page)
         self.page.locator('.tl-ftext').fill('duration:>1')
         with self.page.expect_request('**/text-index.json'):
             self.page.locator('.tl-ftext').press('Enter')
@@ -1428,6 +1430,7 @@ class SidecarBrowserTest(unittest.TestCase):
         previous = self.apply_query('duration:>1')
         self.page.evaluate('fgData.release("fgTextIndex")')
         self.page.route('**/text-index.json', lambda route: route.fulfill(status=404, body='missing'))
+        helpers.open_timeline_tools(self.page)
         self.page.locator('.tl-ftext').fill('graph:do_sys_openat2')
         self.page.locator('.tl-ftext').press('Enter')
         status = self.page.locator('.tl-fcount[role=alert]')
@@ -1448,6 +1451,7 @@ class SidecarBrowserTest(unittest.TestCase):
         self.page.evaluate('fgData.release("fgTextIndex")')
         routes = []
         self.page.route('**/text-index.json', lambda route: routes.append(route))
+        helpers.open_timeline_tools(self.page)
         self.page.locator('.tl-ftext').fill('graph:do_sys_openat2')
         with self.page.expect_request('**/text-index.json'):
             self.page.locator('.tl-ftext').press('Enter')
@@ -1466,6 +1470,7 @@ class SidecarBrowserTest(unittest.TestCase):
         routes = []
         self.page.route('**/text-index.json', lambda route: routes.append(route))
         for query in ['graph:do_sys_openat2', 'duration:>1']:
+            helpers.open_timeline_tools(self.page)
             self.page.locator('.tl-ftext').fill(query)
             with self.page.expect_request('**/text-index.json'):
                 self.page.locator('.tl-ftext').press('Enter')
@@ -1482,6 +1487,7 @@ class SidecarBrowserTest(unittest.TestCase):
         self.page.evaluate('fgData.release("fgTextIndex"); clearFilter()')
         routes = []
         self.page.route('**/text-index.json', lambda route: routes.append(route))
+        helpers.open_timeline_tools(self.page)
         self.page.locator('.tl-ftext').fill('duration:>1')
         with self.page.expect_request('**/text-index.json'):
             self.page.locator('.tl-ftext').press('Enter')

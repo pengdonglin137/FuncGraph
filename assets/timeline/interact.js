@@ -706,7 +706,16 @@ window.addEventListener('keydown', ev => {
     }
     if (ev.key === 'Escape' && elOptions.classList.contains('open')) {
         ev.stopPropagation(); ev.preventDefault();
+        if (ev.target === elFtext) {
+            if (window.fgFilterProgress) fgCancelPendingFilter();
+            elFtext.value = (window.fgFilterState || {}).text || '';
+        }
         setToolbarOptions(false, true);
+        return;
+    }
+    if (ev.key === 'Escape' && tlRoot.classList.contains('tl-fullscreen') && !elHelp.classList.contains('show')) {
+        ev.stopPropagation(); ev.preventDefault();
+        leaveFullscreen();
         return;
     }
     if (ev.target.matches && ev.target.matches('input, textarea, select')) return;
@@ -736,8 +745,8 @@ window.addEventListener('keydown', ev => {
         case 'h': case 'H': if (sel >= 0) showDist(sName[sel]); break;
         case 'o': case 'O': toggleAdjusted(); break;
         case 'i': case 'I': toggleInlineView(); break;
-        case 'm': case 'M': setMax(!document.body.classList.contains('tl-max')); break;
-        case '?': elHelp.classList.toggle('show'); break;
+        case 'm': case 'M': toggleFullscreen(); break;
+        case '?': setToolbarOptions(false); elHelp.classList.toggle('show'); break;
         case 'Escape':
             if (elHelp.classList.contains('show')) elHelp.classList.remove('show');
             else { range = null; select(-1); }

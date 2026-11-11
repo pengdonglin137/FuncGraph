@@ -167,16 +167,19 @@ function detailDefault() { return Math.round(Math.min(400, Math.max(180, window.
 function detailPx() { const v = +prefGet('detailFrac'); return v > 0 && v < 1 ? Math.round(v * window.innerHeight) : detailDefault(); }
 let detailExpanded = false;
 function clampDetailH(h) {
-    const notesMin = elNotes.classList.contains('hide') ? 0 : 28;
-    const controlsHeight = compactToolbar.matches ? elToolbar.offsetHeight : 32 + notesMin;
-    return Math.round(Math.max(60, Math.min(h, tlRoot.clientHeight - 160 - controlsHeight - elResizer.offsetHeight)));
+    const controlsHeight = elToolbar.offsetHeight + (compactToolbar.matches ? 0 : elNotes.offsetHeight) +
+        (tlRoot.querySelector('.tl-event-only')?.offsetHeight || 0);
+    const style = getComputedStyle(tlRoot);
+    const padding = parseFloat(style.paddingTop) + parseFloat(style.paddingBottom);
+    return Math.round(Math.max(60, Math.min(h, tlRoot.clientHeight - padding - 160 - controlsHeight - elResizer.offsetHeight)));
 }
 
 // ---- main canvas ----
 function resize() {
     DPR = window.devicePixelRatio || 1;
     const top = Math.max(0, tlRoot.getBoundingClientRect().top);
-    tlRoot.style.height = Math.max(detailExpanded ? 60 : 288, window.innerHeight - top - 12) + 'px';
+    const fullscreen = tlRoot.classList.contains('tl-fullscreen');
+    tlRoot.style.height = Math.max(fullscreen ? 0 : detailExpanded ? 60 : 288, window.innerHeight - top - (fullscreen ? 0 : 12)) + 'px';
     if (compactToolbar.matches) tlRoot.style.setProperty('--tl-toolbar-height', elToolbar.offsetHeight + 'px');
     if (detailExpanded) {
         elDetail.classList.toggle('tl-detail-short', elDetail.clientHeight < 140);

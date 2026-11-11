@@ -301,6 +301,7 @@ class EventOnlyBrowserTest(unittest.TestCase):
         self.open_report([lifecycle_event('exec', 10), *scheduling(), lifecycle_event('exit', 400)])
         self.action('process-events')
         before = self.page.evaluate("fgView('timeline').probe().TRACKS.map(task => task.hidden)")
+        helpers.open_timeline_tools(self.page)
         self.page.locator('.tl-ftext').fill('pid:99999')
         self.page.locator('.tl-ftext').press('Enter')
         self.page.wait_for_function("window.fgFilterState && window.fgFilterState.lines !== null && !window.fgFilterProgress")

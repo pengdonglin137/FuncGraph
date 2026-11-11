@@ -590,17 +590,18 @@ function setNotes(on) {
     if (!compactToolbar.matches) resize();
 }
 function setToolbarOptions(on, restoreFocus = false) {
-    const open = on && compactToolbar.matches;
-    if (open && !elNotes.classList.contains('hide')) setNotes(false);
+    const open = !!on;
+    if (open && compactToolbar.matches && !elNotes.classList.contains('hide')) setNotes(false);
     elOptions.classList.toggle('open', open);
     elMore.setAttribute('aria-expanded', String(open));
+    if (open) elOptions.querySelector('button:not([disabled]), input:not([disabled])')?.focus({ preventScroll: true });
     if (restoreFocus) elMore.focus({ preventScroll: true });
 }
 function syncToolbar() {
     const compact = compactToolbar.matches;
     const focusInOptions = elOptions.contains(document.activeElement);
     tlRoot.classList.toggle('tl-compact', compact);
-    setToolbarOptions(false, compact && focusInOptions);
+    setToolbarOptions(false, focusInOptions);
     updateNotes(compact ? prefGet('notesCompact') === '1' : prefGet('notes') !== '0');
 }
 function dismissToolbarOptions(event) {
@@ -614,14 +615,67 @@ compactToolbar.addEventListener('change', () => {
     syncToolbar();
     if (window.fgCurrentView() === 'timeline') resize();
 });
-function setMax(on) {
-    // only in the timeline; the classes sit on the elements (see views.css)
+let fullscreenPending = false, nativeFullscreen = false;
+const fullscreenButton = tlRoot.querySelector('[data-act=max]');
+function setMax(on, restoreFocus = false) {
+    if (!on) setToolbarOptions(false);
     document.body.classList.toggle('tl-max', on);
+    tlRoot.classList.toggle('tl-fullscreen', on);
     window.fgPageChrome().top.forEach(e => e.classList.toggle('fg-off', on));
-    tlRoot.querySelector('[data-act=max]').classList.toggle('on', on);
+    fullscreenButton.setAttribute('aria-pressed', String(on));
+    fullscreenButton.textContent = on ? 'Exit full screen' : 'Full screen';
+    fullscreenButton.setAttribute('aria-label', fullscreenButton.textContent);
+    fullscreenButton.title = on ? 'Exit full screen (M / Escape)' : 'Enter full screen (M); Escape to exit';
     tlRoot.querySelector('[data-act=help]').hidden = !on;
     resize();
+    sizeDetailHead();
+    if (restoreFocus && window.fgCurrentView() === 'timeline') fullscreenButton.focus({ preventScroll: true });
 }
+function leaveFullscreen(restoreFocus = true) {
+    setMax(false, restoreFocus);
+    if (document.fullscreenElement === tlRoot) {
+        document.exitFullscreen().catch(() => {
+            if (document.fullscreenElement === tlRoot && window.fgCurrentView() === 'timeline') {
+                setMax(true);
+                toast('Use Escape or the browser controls to exit full screen.');
+            }
+        });
+    }
+}
+async function toggleFullscreen() {
+    setToolbarOptions(false);
+    if (tlRoot.classList.contains('tl-fullscreen')) { leaveFullscreen(); return; }
+    if (fullscreenPending) return;
+    setMax(true);
+    if (!tlRoot.requestFullscreen || document.fullscreenEnabled === false) {
+        toast('Using page full screen; browser full screen is unavailable.');
+        return;
+    }
+    fullscreenPending = true;
+    fullscreenButton.disabled = true;
+    try {
+        await tlRoot.requestFullscreen();
+    } catch (_) {
+        if (tlRoot.classList.contains('tl-fullscreen') && window.fgCurrentView() === 'timeline')
+            toast('Using page full screen; browser full screen was not permitted.');
+    } finally {
+        fullscreenPending = false;
+        fullscreenButton.disabled = false;
+        if (!tlRoot.classList.contains('tl-fullscreen') || window.fgCurrentView() !== 'timeline') {
+            leaveFullscreen(false);
+        }
+    }
+}
+document.addEventListener('fullscreenchange', () => {
+    if (document.fullscreenElement === tlRoot) {
+        nativeFullscreen = true;
+        if (window.fgCurrentView() !== 'timeline' || !tlRoot.classList.contains('tl-fullscreen')) leaveFullscreen(false);
+        else { resize(); sizeDetailHead(); }
+    } else if (nativeFullscreen) {
+        nativeFullscreen = false;
+        setMax(false, true);
+    }
+});
 elDetail.addEventListener('click', ev => {
     if (ev.target.closest('[data-detail-expand]')) {
         setDetailExpanded(!detailExpanded);
@@ -984,7 +1038,7 @@ elToolbar.addEventListener('click', ev => {
         case 'fit': fitAll(); break;
         case 'help': elHelp.classList.toggle('show'); break;
         case 'notes': setNotes(elNotes.classList.contains('hide')); break;
-        case 'max': setMax(!document.body.classList.contains('tl-max')); break;
+        case 'max': toggleFullscreen(); break;
         case 'adj': toggleAdjusted(); break;
         case 'inl': toggleInlineView(); break;
         case 'an-errors': showErrors(); break;
@@ -1082,11 +1136,11 @@ elHelp.innerHTML = `
 <li><kbd>0</kbd> fit all · <kbd>F</kbd> zoom to selection · double-click: zoom to slice</li>
 <li><kbd>Shift</kbd>+drag: summarize a range in this track (<kbd>Shift</kbd>+<kbd>Alt</kbd>: all tracks)</li></ul>
 <p>Range summaries use <b>Previous / Next</b> for 300-function pages. Sorting or changing the range, shared filter or Overhead resets the page; <b>Export CSV</b> includes every function in that scope.</p>
-<p><b>Sections</b> uses 200-row pages; <b>Sched latency</b> uses 300-row pages. <b>Previous / Next</b> does not grow the table. Each section kind remembers its page; sort, shared-filter or Overhead changes reset it. CSV always exports the complete sorted scope, not just the page.</p>
+<p><b>Critical sections</b> uses 200-row pages; <b>Scheduling latency</b> uses 300-row pages. <b>Previous / Next</b> does not grow the table. Each section kind remembers its page; sort, shared-filter or Overhead changes reset it. CSV always exports the complete sorted scope, not just the page.</p>
 <h4>Touch</h4><ul>
 <li>Tap a call or track header. Swipe horizontally on the tracks to pan; swipe vertically to scroll.</li>
-<li>Pinch the tracks to zoom around your fingers, or use <b>−</b>, <b>+</b> and <b>Fit</b> on touch devices.</li>
-<li>On phones, <b>More</b> opens the filter, overlays and analysis tools without resizing the tracks. <b>Notes</b> shows capture limitations.</li></ul>
+<li>Pinch the tracks to zoom around your fingers, or use <b>−</b>, <b>+</b> and <b>Fit trace</b> on touch devices.</li>
+<li><b>Tools</b> opens grouped navigation, display, analysis and filter controls without resizing the tracks. Click outside or press <kbd>Escape</kbd> to close it. <b>Notes</b> shows capture limitations. On phones, <b>Full screen</b> stays visible beside Search.</li></ul>
 <h4>Search and filter</h4><ul>
 <li><b>Search</b>: function-name regex; highlights matches and navigates between calls with Enter / Shift+Enter.</li>
 <li><b>Filter</b>: conditions such as <code>pid:1234 AND graph:vfs_read</code>, applied with Enter and shared with Text. Analysis panels use this filter, not the search expression.</li>
@@ -1102,10 +1156,11 @@ ${N ? '' : '<p>No function calls were recorded. Search has no call matches; shar
 <li><b>Duration distribution</b>: browse 50 slowest-first calls per page. Previous / Next do not change percentiles or histogram scope; CSV includes all calls in the selected function, call site and duration bucket, not just the page. Toggle <b>Histogram</b> to give calls more room while keeping all six statistics; this report-local choice does not change the saved panel split.</li>
 <li><b>Explore all children</b> in call details: complete parent-scoped groups/calls, longest-call navigation and full CSV</li>
 <li><kbd>I</kbd>: show / hide inlined functions as dashed frames (extent = first to last traced call inside)</li>
-<li><kbd>M</kbd> or <b>Max</b>: maximize (hide the page header and tabs); drag the bar above the bottom panel to resize it, double-click it to reset</li>
+<li><kbd>M</kbd> or <b>Full screen</b>: give Timeline the whole screen; <b>Exit full screen</b> or <kbd>Escape</kbd> restores the page. If the browser disallows native full screen, the page viewport is used instead. Zoom, selection, filters and the panel split stay unchanged.</li>
+<li>Drag the bar above the bottom panel to resize it; double-click it to reset.</li>
 <li>In a very short detail panel, the expand icon next to Close borrows the chart area. Press it again to restore the split; closing the panel restores the chart too. The saved panel height, query and current task page are not changed.</li>
 <li><kbd>O</kbd>: durations as measured / with the tracing overhead subtracted</li>
-<li><kbd>H</kbd>: duration distribution of the selected function · toolbar <b>Errors</b> / <b>Sched latency</b>: summaries</li>
+<li><kbd>H</kbd>: duration distribution of the selected function · toolbar <b>Errors</b> / <b>Scheduling latency</b>: summaries</li>
 <li><kbd>Enter</kbd>: open in text view · <kbd>Alt</kbd>+click a text line: show it here</li></ul>
 <h4>Legend</h4><div class="tl-legend">
 ${HAS_USER ? '<i style="background:#9bcdbf"></i><span>user space (Context color)</span>' : ''}
@@ -1144,6 +1199,7 @@ if (!D.resched.length && !D.caps.latency) tlRoot.querySelector('[data-ov=rs]').c
 if (!D.offcpu.length) tlRoot.querySelector('[data-ov=off]').classList.add('na');
 if (!sDurAdj) tlRoot.querySelector('[data-act=adj]').style.display = 'none';
 if (!HAS_INL) tlRoot.querySelector('[data-act=inl]').style.display = 'none';
+if (!sDurAdj && !HAS_INL) tlRoot.querySelector('[aria-label="Timeline display"]').style.display = 'none';
 else if (typeof lsGet === 'function' && lsGet('tlInline') === '1') toggleInlineView(true);
 const noteCount = elNotes.children.length;
 if (noteCount) elNotesButton.textContent = 'Notes ' + noteCount;
@@ -1182,4 +1238,4 @@ const probe = () => ({ N, NA, SYN, S, sName, sStart, sEnd, sDepth, sParent, sTas
     errors: showErrors, latency: showLatency, sections: showSections, dist: showDist, wait: showWaitChain,
     inline: (on) => { if (!!on !== inlineView) toggleInlineView(); } });
 return { resize: resize, revealLine: revealLine, draw: draw, probe: probe,
-    suspend: () => { if (elPosition.open) elPosition.close(); setToolbarOptions(false); hideTip(); discardSceneCache(); }, showHelp: () => elHelp.classList.add('show') };
+    suspend: () => { if (elPosition.open) elPosition.close(); if (tlRoot.classList.contains('tl-fullscreen') || document.fullscreenElement === tlRoot) leaveFullscreen(false); setToolbarOptions(false); hideTip(); discardSceneCache(); }, showHelp: () => elHelp.classList.add('show') };

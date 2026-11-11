@@ -125,7 +125,7 @@ It retains mixed stacks and boundaries, but **does not generate kernel source
 positions, links or excerpts**. The user-only run in the first two sections needs
 no kernel source options.
 
-In Timeline, click **Fit** and then **Exec / exit**. The panel links each
+In Timeline, click **Fit trace** and then **Tools ▾ → Exec / exit**. The panel links each
 milestone to its original Text record. The **Markers** overlay draws ticks
 on the task track. `sched_process_exec` means the new executable image was
 installed, not the start of the `execve` syscall; `sched_process_exit` marks

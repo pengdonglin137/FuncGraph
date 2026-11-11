@@ -195,7 +195,7 @@ class RangePagingTest(unittest.TestCase):
         self.page.evaluate("fgView('timeline').probe().range(0, 649000, 0)")
         self.assertIn('1–300 of 649', self.status())
         self.next()
-        self.page.locator('[data-act=adj]').click()
+        helpers.click_timeline_tool(self.page, '[data-act=adj]')
         self.assertIn('1–300 of 649', self.status())
         self.assertEqual({row['duration_basis'] for row in self.rows()}, {'overhead_subtracted_estimate'})
         self.next()
