@@ -80,11 +80,32 @@ const SYN = [];               // per synthetic slice: {k, chain, kids: [real chi
 let NA = N;
 const sLd = new Int32Array(N);  // depth in the inline view (traced frames + inline frames above)
 let sLdAll = sLd;
+const PREPARE_BATCH = 8192;
+function* growFrameColumn(column, Type, label) {
+    const grown = new Type(NA);
+    for (let offset = 0; offset < column.length; offset += PREPARE_BATCH) {
+        if (offset) yield label;
+        grown.set(column.subarray(offset, offset + PREPARE_BATCH), offset);
+    }
+    return grown;
+}
+function* growFrameColumns(label) {
+    sStart = yield* growFrameColumn(sStart, Float64Array, label);
+    sEnd = yield* growFrameColumn(sEnd, Float64Array, label);
+    sDepth = yield* growFrameColumn(sDepth, Uint16Array, label);
+    sTask = yield* growFrameColumn(sTask, Int32Array, label);
+    sFlags = yield* growFrameColumn(sFlags, Uint32Array, label);
+    sName = yield* growFrameColumn(sName, Int32Array, label);
+    sParent = yield* growFrameColumn(sParent, Int32Array, label);
+    sLine = yield* growFrameColumn(sLine, Int32Array, label);
+    sLdAll = yield* growFrameColumn(sLdAll, Int32Array, label);
+}
 yield* (function* buildInline() {
     const open = new Map();   // parent key -> [{key, sid}] per inline level (index k-1)
     const synth = [];         // [task, start, end, nameStr, depthLevel, ctxFlags, firstLine, p, chain, k]
+    let prepared = 0;
     for (let i = 0; i < N; i++) {
-        if (i > 0 && (i & 8191) === 0) yield 'Building inline frames…';
+        if ((++prepared & (PREPARE_BATCH - 1)) === 0) yield 'Building inline frames…';
         const p = sParent[i];
         const ch = inlChain(i);
         const n = ch ? ch.length - 1 : 0;
@@ -96,6 +117,7 @@ yield* (function* buildInline() {
         if (!runs) { runs = []; open.set(pk, runs); }
         let key = '';
         for (let k = 1; k <= n; k++) {
+            if ((++prepared & (PREPARE_BATCH - 1)) === 0) yield 'Building inline frames…';
             key += ch[k - 1][0] + ':' + ch[k - 1][2] + '>' + ch[k][0] + '|';
             const r = runs[k - 1];
             if (r && r.key === key) {
@@ -114,23 +136,18 @@ yield* (function* buildInline() {
     }
     if (!synth.length) return;
     NA = N + synth.length;
-    const grow = (a, T) => { const b = new T(NA); b.set(a); return b; };
-    sStart = grow(sStart, Float64Array); sEnd = grow(sEnd, Float64Array);
-    sDepth = grow(sDepth, Uint16Array); sTask = grow(sTask, Int32Array);
-    sFlags = grow(sFlags, Uint32Array); sName = grow(sName, Int32Array);
-    sParent = grow(sParent, Int32Array); sLine = grow(sLine, Int32Array);
-    const ld = new Int32Array(NA); ld.set(sLd);
+    yield* growFrameColumns('Building inline frames…');
     const nameIdx = new Map();
-    synth.forEach((y, j) => {
-        const i = N + j;
-        sTask[i] = y[0]; sStart[i] = y[1]; sEnd[i] = y[2];
-        let si = nameIdx.get(y[3]);
-        if (si === undefined) { si = S.length; S.push(y[3]); nameIdx.set(y[3], si); }
-        sName[i] = si; sFlags[i] = FL.INL | y[5]; sLine[i] = y[6]; sParent[i] = y[7];
-        sDepth[i] = y[7] >= 0 ? sDepth[y[7]] : 0;
-        ld[i] = y[4];
-    });
-    sLdAll = ld;
+    for (let offset = 0; offset < synth.length; offset++) {
+        if (offset && (offset & (PREPARE_BATCH - 1)) === 0) yield 'Building inline frames…';
+        const frame = synth[offset], index = N + offset;
+        sTask[index] = frame[0]; sStart[index] = frame[1]; sEnd[index] = frame[2];
+        let name = nameIdx.get(frame[3]);
+        if (name === undefined) { name = S.length; S.push(frame[3]); nameIdx.set(frame[3], name); }
+        sName[index] = name; sFlags[index] = FL.INL | frame[5]; sLine[index] = frame[6]; sParent[index] = frame[7];
+        sDepth[index] = frame[7] >= 0 ? sDepth[frame[7]] : 0;
+        sLdAll[index] = frame[4];
+    }
 })();
 yield 'Building untraced frames…';
 // ---- untraced frames (depth gaps) ----
@@ -164,12 +181,14 @@ function callerRelationText(index) {
     return text;
 }
 function gapOf(i) { const p = i < N ? sParent[i] : -1; return p >= 0 ? sDepth[i] - sDepth[p] - 1 : 0; }
-(function buildGhosts() {
+yield* (function* buildGhosts() {
     if (D.uftrace) return;
     const runs = new Map();   // parent -> open runs per missing level
     const gh = [];            // [task, start, end, name, depth, ld, ctxFlags, line, p]
     const meta = [];
+    let prepared = 0;
     for (let i = 0; i < N; i++) {
+        if ((++prepared & (PREPARE_BATCH - 1)) === 0) yield 'Building untraced frames…';
         const p = sParent[i];
         if (p < 0) continue;
         const gap = sDepth[i] - sDepth[p] - 1;
@@ -178,6 +197,7 @@ function gapOf(i) { const p = i < N ? sParent[i] : -1; return p >= 0 ? sDepth[i]
         if (!r) { r = []; runs.set(p, r); }
         const fn = callerFn(i);
         for (let L = 1; L <= gap; L++) {
+            if ((++prepared & (PREPARE_BATCH - 1)) === 0) yield 'Building untraced frames…';
             const name = L === gap ? fn : '?';
             const cur = r[L - 1];
             if (cur && cur.name === name) {
@@ -197,22 +217,18 @@ function gapOf(i) { const p = i < N ? sParent[i] : -1; return p >= 0 ? sDepth[i]
     if (!gh.length) return;
     const base = NA;
     NA += gh.length;
-    const grow = (a, T) => { const b = new T(NA); b.set(a); return b; };
-    sStart = grow(sStart, Float64Array); sEnd = grow(sEnd, Float64Array);
-    sDepth = grow(sDepth, Uint16Array); sTask = grow(sTask, Int32Array);
-    sFlags = grow(sFlags, Uint32Array); sName = grow(sName, Int32Array);
-    sParent = grow(sParent, Int32Array); sLine = grow(sLine, Int32Array);
-    const ld = new Int32Array(NA); ld.set(sLdAll);
+    yield* growFrameColumns('Building untraced frames…');
     const nameIdx = new Map();
-    gh.forEach((y, j) => {
-        const i = base + j;
-        sTask[i] = y[0]; sStart[i] = y[1]; sEnd[i] = y[2];
-        let si = nameIdx.get(y[3]);
-        if (si === undefined) { si = S.length; S.push(y[3]); nameIdx.set(y[3], si); }
-        sName[i] = si; sDepth[i] = y[4]; ld[i] = y[5]; sFlags[i] = FL.GHOST | y[6]; sLine[i] = y[7]; sParent[i] = y[8];
-        SYN.push(meta[j]);
-    });
-    sLdAll = ld;
+    for (let offset = 0; offset < gh.length; offset++) {
+        if (offset && (offset & (PREPARE_BATCH - 1)) === 0) yield 'Building untraced frames…';
+        const frame = gh[offset], index = base + offset;
+        sTask[index] = frame[0]; sStart[index] = frame[1]; sEnd[index] = frame[2];
+        let name = nameIdx.get(frame[3]);
+        if (name === undefined) { name = S.length; S.push(frame[3]); nameIdx.set(frame[3], name); }
+        sName[index] = name; sDepth[index] = frame[4]; sLdAll[index] = frame[5];
+        sFlags[index] = FL.GHOST | frame[6]; sLine[index] = frame[7]; sParent[index] = frame[8];
+        SYN.push(meta[offset]);
+    }
 })();
 function isGhost(i) { return i >= N && !!SYN[i - N].ghost; }
 let inlineView = false;
@@ -262,6 +278,7 @@ function firstProcessEventAt(events, time) {
     return low;
 }
 for (let i = 0; i < N; i++) {
+    if (i && (i & (PREPARE_BATCH - 1)) === 0) yield 'Indexing task tracks…';
     const t = TRACKS[sTask[i]];
     if (t.lo < 0) t.lo = i;
     t.hi = i + 1;
@@ -269,27 +286,79 @@ for (let i = 0; i < N; i++) {
     if (sParent[i] < 0) t.busy += sEnd[i] - sStart[i];
     if (sCpu && sCpu[i] >= 0) t.cpus.add(sCpu[i]);
 }
-function buildRows(ids, depthOf) {
+function* sortTimelineRow(row) {
+    const compare = (left, right) => sStart[left] - sStart[right] || left - right;
+    let ordered = true;
+    for (let index = 1; index < row.length; index++) {
+        if ((index & (PREPARE_BATCH - 1)) === 0) yield 'Indexing task tracks…';
+        if (compare(row[index - 1], row[index]) > 0) { ordered = false; break; }
+    }
+    if (ordered) return;
+    for (let start = 0; start < row.length; start += PREPARE_BATCH) {
+        row.subarray(start, start + PREPARE_BATCH).sort(compare);
+        yield 'Indexing task tracks…';
+    }
+    if (row.length <= PREPARE_BATCH) return;
+    const buffer = new Int32Array(row.length);
+    let source = row, target = buffer;
+    for (let width = PREPARE_BATCH; width < row.length; width *= 2) {
+        for (let start = 0; start < row.length; start += width * 2) {
+            const middle = Math.min(start + width, row.length), end = Math.min(start + width * 2, row.length);
+            let left = start, right = middle;
+            for (let index = start; index < end; index++) {
+                if (index && (index & (PREPARE_BATCH - 1)) === 0) yield 'Indexing task tracks…';
+                target[index] = left < middle && (right >= end || compare(source[left], source[right]) <= 0)
+                    ? source[left++] : source[right++];
+            }
+        }
+        [source, target] = [target, source];
+    }
+    if (source !== row) for (let start = 0; start < row.length; start += PREPARE_BATCH) {
+        row.set(source.subarray(start, start + PREPARE_BATCH), start);
+        yield 'Indexing task tracks…';
+    }
+}
+function* buildRows(ids, depthOf) {
     let mx = -1;
-    for (const i of ids) if (depthOf(i) > mx) mx = depthOf(i);
+    let prepared = 0;
+    for (const i of ids) {
+        if ((++prepared & (PREPARE_BATCH - 1)) === 0) yield 'Indexing task tracks…';
+        if (depthOf(i) > mx) mx = depthOf(i);
+    }
     const cnt = new Int32Array(mx + 1);
-    for (const i of ids) cnt[depthOf(i)]++;
+    for (const i of ids) {
+        if ((++prepared & (PREPARE_BATCH - 1)) === 0) yield 'Indexing task tracks…';
+        cnt[depthOf(i)]++;
+    }
     const rows = [];
-    for (let d = 0; d <= mx; d++) rows.push(new Int32Array(cnt[d]));
+    for (let d = 0; d <= mx; d++) {
+        if ((++prepared & (PREPARE_BATCH - 1)) === 0) yield 'Indexing task tracks…';
+        rows.push(new Int32Array(cnt[d]));
+    }
     cnt.fill(0);
-    for (const i of ids) { const d = depthOf(i); rows[d][cnt[d]++] = i; }
-    for (const r of rows) r.sort((a, b) => sStart[a] - sStart[b] || a - b);
+    for (const i of ids) {
+        if ((++prepared & (PREPARE_BATCH - 1)) === 0) yield 'Indexing task tracks…';
+        const d = depthOf(i); rows[d][cnt[d]++] = i;
+    }
+    for (const row of rows) yield* sortTimelineRow(row);
     return [rows, mx];
 }
 const synByTask = new Map();
-for (let i = N; i < NA; i++) { if (!synByTask.has(sTask[i])) synByTask.set(sTask[i], []); synByTask.get(sTask[i]).push(i); }
+for (let i = N; i < NA; i++) {
+    if ((i - N) && ((i - N) & (PREPARE_BATCH - 1)) === 0) yield 'Indexing task tracks…';
+    if (!synByTask.has(sTask[i])) synByTask.set(sTask[i], []);
+    synByTask.get(sTask[i]).push(i);
+}
 for (const t of TRACKS) {
     if (t.lo < 0) continue;
     const real = [];
-    for (let i = t.lo; i < t.hi; i++) real.push(i);
+    for (let i = t.lo; i < t.hi; i++) {
+        if ((i - t.lo) && ((i - t.lo) & (PREPARE_BATCH - 1)) === 0) yield 'Indexing task tracks…';
+        real.push(i);
+    }
     const syn = synByTask.get(t.id) || [];
-    [t.rowsT, t.maxDT] = buildRows(real.concat(syn.filter(isGhost)), i => sDepth[i]);
-    if (HAS_INL) [t.rowsI, t.maxDI] = buildRows(real.concat(syn), i => sLdAll[i]);
+    [t.rowsT, t.maxDT] = yield* buildRows(real.concat(syn.filter(isGhost)), i => sDepth[i]);
+    if (HAS_INL) [t.rowsI, t.maxDI] = yield* buildRows(real.concat(syn), i => sLdAll[i]);
     else { t.rowsI = t.rowsT; t.maxDI = t.maxDT; }
 }
 for (const r of D.offcpu) {   // [task, start, end, depth, reason, state, cpuOut, cpuIn, preempted, waker]
