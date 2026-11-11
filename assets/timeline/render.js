@@ -179,6 +179,7 @@ function resize() {
     if (compactToolbar.matches) tlRoot.style.setProperty('--tl-toolbar-height', elToolbar.offsetHeight + 'px');
     if (elDetail.classList.contains('show')) {
         elDetail.style.height = clampDetailH(detailPx()) + 'px';
+        elDetail.classList.toggle('tl-detail-short', elDetail.clientHeight < 140);
     }
     W = elScroll.clientWidth;
     H = elScroll.clientHeight;
@@ -347,6 +348,25 @@ function drawSelSpan(vs, k) {
     hctx.textBaseline = 'top';
 }
 
+function drawProcessMarkers(events, top, start, end, scale) {
+    for (let index = firstProcessEventAt(events, start); index < events.length;) {
+        const time = events[index][1];
+        if (time > end) break;
+        const position = Math.min(W - 1, Math.max(0, Math.round((time - start) * scale)));
+        ctx.fillRect(position, top - 6, 1, 6);
+        if (position >= W - 1) break;
+        let next = index + 1;
+        if (next < events.length && Math.round((events[next][1] - start) * scale) <= position) {
+            let high = events.length;
+            while (next < high) {
+                const middle = (next + high) >>> 1;
+                if (Math.round((events[middle][1] - start) * scale) <= position) next = middle + 1;
+                else high = middle;
+            }
+        }
+        index = next;
+    }
+}
 function drawTrack(t, y, vs, ve, k) {
     ctx.fillStyle = P.hdr;
     ctx.fillRect(0, y, W, HDR);
@@ -370,11 +390,7 @@ function drawTrack(t, y, vs, ve, k) {
     const top = y + HDR;
     if (ov.mk && PROCESS_BY_TASK.has(t.id)) {
         ctx.fillStyle = P.hdrText;
-        for (const [, time] of PROCESS_BY_TASK.get(t.id)) {
-            if (time < vs || time > ve) continue;
-            const position = Math.min(W - 1, Math.max(0, Math.round((time - vs) * k)));
-            ctx.fillRect(position, top - 6, 1, 6);
-        }
+        drawProcessMarkers(PROCESS_BY_TASK.get(t.id), top, vs, ve, k);
     }
     if (t.kind === 9) { if (!t.collapsed) drawCpuTrack(top, vs, ve, k); return; }
     if (t.collapsed) {

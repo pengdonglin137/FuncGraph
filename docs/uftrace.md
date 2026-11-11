@@ -153,6 +153,22 @@ and compressed input. Use one recording or JSONL per report. `--compare BASE`
 accepts JSONL or a legacy trace file; Compare and `--export` group user and
 kernel names separately, even when their symbols have identical spelling.
 
+- **Lifecycle milestones:** when `sched_process_exec` / `sched_process_exit` records exist,
+  Timeline's **Exec / exit** panel lists every recorded event in pages of at most 100 rows.
+  **Previous page** / **Next page** replace the rows rather than accumulating DOM nodes.
+  Click a **Trace time** to center its recorded position at the current zoom, within report
+  bounds, without requiring Text, changing filters or inventing a function selection.
+  The list is unfiltered; a hidden kernel track stays hidden when locating its event.
+  **Export CSV** includes all pages, task identities, trace lines, relative nanoseconds and
+  recording-clock status. Absolute `timestamp_ns` adds a safe integer offset to the string
+  origin without floating-point conversion; an unsafe offset leaves this field empty.
+  Exec means the new image is installed; exit means a task is exiting, not its final reap.
+  Missing milestones are not inferred. Unverified user/kernel clocks remain separate and
+  CSV explicitly records `clock_aligned=false`. Track markers visit only the visible range
+  and coalesce identical pixels per track without removing any original event.
+  Pagination bounds panel DOM, not total report or CSV-export memory; all events and their
+  index remain in memory. See the [lifecycle performance record](performance-lifecycle.md)
+  for the reproducible synthetic benchmark and its measurement limits.
 - **Mixed:** Timeline's default Context colors distinguish user code from
   kernel execution. The thin line along a linked kernel root's top edge spans
   exactly that recorded interval, at the depth where it occurred. Text uses

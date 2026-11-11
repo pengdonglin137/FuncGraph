@@ -2,14 +2,65 @@
 function pill(cls, txt, title) { return '<span class="tl-pill ' + cls + '"' + (title ? ' title="' + esc(title) + '"' : '') + '>' + esc(txt) + '</span>'; }
 function kv(k, v, cls) { return '<span class="k">' + k + '</span><span class="v' + (cls ? ' ' + cls : '') + '">' + v + '</span>'; }
 function lineLink(n, label) { return '<a class="tl-link" data-line="' + n + '">' + (label || 'line ' + n) + '</a>'; }
-function showProcessEvents() {
-    const rows = PROCESS_EVENTS.map(([task, time, phase, line]) => '<tr><td>' +
-        (phase === 'exec' ? 'exec (new image installed)' : 'exit (task exiting)') + '</td><td>' +
-        esc(trackLabel(TRACKS[task])) + '</td><td>+' + fmtDur(time) + '</td><td>' + lineLink(line) + '</td></tr>');
-    openDetail('<div class="tl-detail-head"><b>Recorded exec / exit</b><span class="sp"></span>' +
+const PROCESS_PAGE = 100;
+const processView = { page: 0 };
+function showProcessEvents(reset = true) {
+    const reuse = AN.kind === 'process' && elDetail.classList.contains('show') && elDetail.querySelector('.tl-process-table');
+    AN.kind = 'process';
+    range = null;
+    if (reset) processView.page = 0;
+    if (!reuse) openDetail('<div class="tl-detail-head tl-process-head"><span class="tl-detail-title">Recorded exec / exit</span>' +
+        '<span class="sp"></span><button class="tl-btn" data-process-export>Export CSV</button>' +
         '<button class="tl-close" title="Close (Esc)">×</button></div>' +
-        '<table class="tl-table"><thead><tr><th>Event</th><th>Task</th><th>Trace time</th><th>Text</th></tr></thead>' +
-        '<tbody>' + rows.join('') + '</tbody></table>');
+        '<div class="tl-process-tools"><span role="status" aria-live="polite" aria-atomic="true"></span>' +
+        '<span role="group" aria-label="Process event pages"><button class="tl-btn" data-process-page="-1">Previous page</button> ' +
+        '<button class="tl-btn" data-process-page="1">Next page</button></span></div>' +
+        '<div class="tl-process-note tl-context-note">Unfiltered recorded kernel milestones. CSV includes every event.' +
+        '<details><summary>Timing and event meanings</summary>These milestones are not inferred task lifetimes. ' +
+        'Exec marks the installed image; exit marks a task exiting, not its final reap. ' +
+        'Click a trace time to center the timeline without changing zoom or filters.</details></div>' +
+        '<table class="tl-process-table"><thead><tr><th scope="col">Event</th><th scope="col">Task</th>' +
+        '<th scope="col">Trace time</th><th scope="col">Text</th></tr></thead><tbody></tbody></table>');
+    renderProcessEvents();
+    if (reset) elDetail.scrollTop = 0;
+    draw();
+}
+function renderProcessEvents() {
+    const count = PROCESS_EVENTS.length;
+    processView.page = Math.max(0, Math.min(processView.page, Math.ceil(count / PROCESS_PAGE) - 1));
+    const start = processView.page * PROCESS_PAGE, end = Math.min(start + PROCESS_PAGE, count), rows = [];
+    for (let index = start; index < end; index++) {
+        const [task, time, phase, line] = PROCESS_EVENTS[index];
+        rows.push('<tr data-process-index="' + index + '"><td>' +
+            (phase === 'exec' ? 'exec (new image installed)' : 'exit (task exiting)') + '</td><td>' +
+            esc(trackLabel(TRACKS[task])) + '</td><td><button class="tl-link tl-process-link" data-process-time="' + index +
+            '" title="Center timeline at this recorded event">+' + fmtDur(time) + '</button></td><td>' +
+            '<button class="tl-link tl-process-link" data-line="' + line + '">line ' + line + '</button></td></tr>');
+    }
+    elDetail.querySelector('.tl-process-table tbody').innerHTML = rows.join('');
+    elDetail.querySelector('.tl-process-tools [role=status]').textContent = count ? 'Events ' + (start + 1) + '–' + end + ' of ' + count : 'No recorded events';
+    elDetail.querySelector('[data-process-page="-1"]').disabled = start === 0;
+    elDetail.querySelector('[data-process-page="1"]').disabled = end >= count;
+}
+function focusProcessEvent(index) {
+    const event = PROCESS_EVENTS[index];
+    if (!event) return;
+    range = null;
+    setSelection(-1);
+    const task = TRACKS[event[0]];
+    if (!task.hidden && task.h > 0) elScroll.scrollTop = Math.max(0, task.y - H / 3);
+    panBy(event[1] - (view.s + view.e) / 2);
+}
+function exportProcessEvents() {
+    function* rows() {
+        for (let index = 0; index < PROCESS_EVENTS.length; index++) {
+            const [task, time, phase, line] = PROCESS_EVENTS[index], identity = TRACKS[task];
+            const timestamp = Number.isSafeInteger(time) ? String(BigInt(D.uftrace.origin_ns) + BigInt(time)) : '';
+            yield [index, phase, task, identity.pid, identity.comm, time, timestamp, line, D.uftrace.clock || '', D.uftrace.aligned];
+        }
+    }
+    downloadTimelineCsv('funcgraph-process-events.csv', ['event_index', 'event', 'task_index', 'pid', 'comm',
+        'trace_time_ns', 'timestamp_ns', 'trace_line', 'clock', 'clock_aligned'], rows());
 }
 function safeSourceUrl(href) {
     if (!href) return '';
@@ -540,6 +591,14 @@ function setMax(on) {
     resize();
 }
 elDetail.addEventListener('click', ev => {
+    const processPage = ev.target.closest('[data-process-page]');
+    if (processPage && AN.kind === 'process') {
+        processView.page += +processPage.dataset.processPage;
+        renderProcessEvents(); elDetail.scrollTop = 0; return;
+    }
+    const processTime = ev.target.closest('[data-process-time]');
+    if (processTime && AN.kind === 'process') { focusProcessEvent(+processTime.dataset.processTime); return; }
+    if (ev.target.closest('[data-process-export]') && AN.kind === 'process') { exportProcessEvents(); return; }
     const navigation = ev.target.closest('[data-call-nav]');
     if (navigation) { navigateCall(navigation.dataset.callNav, true); return; }
     const children = ev.target.closest('[data-child-open]');
@@ -905,7 +964,8 @@ function toggleAdjusted() {
 }
 function refreshPanel() {
     if (!elDetail.classList.contains('show')) return;
-    if (AN.kind === 'errors') showErrors();
+    if (AN.kind === 'process') showProcessEvents(false);
+    else if (AN.kind === 'errors') showErrors();
     else if (AN.kind === 'lat') showLatency();
     else if (AN.kind === 'sec') showSections();
     else if (AN.kind === 'dist') showDist(AN.func);

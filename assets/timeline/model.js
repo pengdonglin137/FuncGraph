@@ -241,10 +241,25 @@ const TRACKS = D.tasks.map((t, i) => ({
 }));
 const PROCESS_EVENTS = D.uftrace?.lifecycle || [];
 const PROCESS_BY_TASK = new Map();
+const unorderedProcessTasks = new Set();
+let processedProcessEvents = 0;
 for (const event of PROCESS_EVENTS) {
     const task = event[0];
     if (!PROCESS_BY_TASK.has(task)) PROCESS_BY_TASK.set(task, []);
-    PROCESS_BY_TASK.get(task).push(event);
+    const events = PROCESS_BY_TASK.get(task);
+    if (events.length && events[events.length - 1][1] > event[1]) unorderedProcessTasks.add(task);
+    events.push(event);
+    if ((++processedProcessEvents & 16383) === 0) yield 'Indexing process milestones…';
+}
+for (const task of unorderedProcessTasks) PROCESS_BY_TASK.get(task).sort((left, right) => left[1] - right[1]);
+function firstProcessEventAt(events, time) {
+    let low = 0, high = events.length;
+    while (low < high) {
+        const middle = (low + high) >>> 1;
+        if (events[middle][1] < time) low = middle + 1;
+        else high = middle;
+    }
+    return low;
 }
 for (let i = 0; i < N; i++) {
     const t = TRACKS[sTask[i]];
