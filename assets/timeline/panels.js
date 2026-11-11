@@ -1078,6 +1078,7 @@ ${N ? '' : '<p>No function calls were recorded. Search has no call matches; shar
 <li><kbd>E</kbd>/<kbd>Shift+E</kbd> next/prev error · <kbd>/</kbd> search, <kbd>N</kbd>/<kbd>Shift+N</kbd> next/prev match</li>
 <li>Click an off-CPU segment: wait chain (who woke the task, wake latency, and who woke the waker)</li>
 <li><b>Tasks</b>: find recorded tasks by name / PID / CPU, including tasks without traced calls; browse 100 identities per page with Previous / Next and export all matching rows, not just this page</li>
+<li><b>Duration distribution</b>: browse 50 slowest-first calls per page. Previous / Next do not change percentiles or histogram scope; CSV includes all calls in the selected function, call site and duration bucket, not just the page.</li>
 <li><b>Explore all children</b> in call details: complete parent-scoped groups/calls, longest-call navigation and full CSV</li>
 <li><kbd>I</kbd>: show / hide inlined functions as dashed frames (extent = first to last traced call inside)</li>
 <li><kbd>M</kbd> or <b>Max</b>: maximize (hide the page header and tabs); drag the bar above the bottom panel to resize it, double-click it to reset</li>

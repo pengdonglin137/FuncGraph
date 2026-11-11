@@ -2967,9 +2967,9 @@ class BrowserSmokeTest(unittest.TestCase):
         }""")
         self.page.locator('tr[data-site] button').first.press('Enter')
         self.assertEqual(self.page.locator('tr[data-site] button[aria-pressed=true]').count(), 1)
-        self.assertIn('4 of 4 calls', self.page.locator('.an-dist-count').inner_text())
+        self.assertIn('1–4 of 4', self.page.locator('.an-dist-count').inner_text())
         self.page.locator('tr[data-site] button[aria-pressed=true]').press('Space')
-        self.assertIn('15 of 80 calls', self.page.locator('.an-dist-count').inner_text())
+        self.assertIn('1–50 of 80', self.page.locator('.an-dist-count').inner_text())
         self.assertEqual(self.ev('window.distributionSortLengths'), [])
 
     def test_distribution_empty_site_can_be_cleared_after_filtering(self):
@@ -2991,11 +2991,11 @@ class BrowserSmokeTest(unittest.TestCase):
         self.open_range_data(['=SUM(1,2)'] * 320, durations=list(range(1000, 1320)),
                              callers=['\tcaller,"\n函数'] * 320)
         self.open_distribution()
-        self.assertEqual(self.page.locator('.an-list tr').count(), 15)
+        self.assertEqual(self.page.locator('.an-list tr').count(), 50)
         first = self.page.locator('.an-list tr').first.element_handle()
-        self.page.click('[data-act=dist-more]')
-        self.assertTrue(first.evaluate('(node) => node.isConnected'))
-        self.assertEqual(self.page.locator('.an-list tr').count(), 65)
+        self.page.click('[data-act=dist-next]')
+        self.assertFalse(first.evaluate('(node) => node.isConnected'))
+        self.assertEqual(self.page.locator('.an-list tr').count(), 50)
         rows = self.download_csv('[data-act=dist-csv]')
         self.assertEqual(len(rows), 320)
         self.assertEqual([int(row['duration_ns']) for row in rows], list(range(1319, 999, -1)))
@@ -3003,9 +3003,9 @@ class BrowserSmokeTest(unittest.TestCase):
         self.assertEqual({row['caller'] for row in rows}, {"'\tcaller,\"\n函数"})
         self.assertEqual({row['duration_basis'] for row in rows}, {'measured'})
         self.assertEqual([int(row['trace_line']) for row in rows], list(range(320, 0, -1)))
-        while self.page.locator('[data-act=dist-more]').is_enabled():
-            self.page.click('[data-act=dist-more]')
-        self.assertEqual(self.page.locator('.an-list tr').count(), 320)
+        while self.page.locator('[data-act=dist-next]').is_enabled():
+            self.page.click('[data-act=dist-next]')
+        self.assertEqual(self.page.locator('.an-list tr').count(), 20)
 
     def test_distribution_histogram_bucket_filters_list_and_export_then_resets(self):
         self.open_range_data(['target'] * 240, durations=[10 ** (index // 60 + 1) for index in range(240)])
@@ -3014,9 +3014,9 @@ class BrowserSmokeTest(unittest.TestCase):
         self.assertEqual(len(options), 5)
         last = options[-1]
         self.page.select_option('[data-act=dist-bucket]', last)
-        self.assertIn('50 of 60 calls', self.page.locator('.an-dist-count').inner_text())
-        self.page.click('[data-act=dist-more]')
-        self.assertEqual(self.page.locator('.an-list tr').count(), 60)
+        self.assertIn('1–50 of 60', self.page.locator('.an-dist-count').inner_text())
+        self.page.click('[data-act=dist-next]')
+        self.assertEqual(self.page.locator('.an-list tr').count(), 10)
         rows = self.download_csv('[data-act=dist-csv]')
         self.assertEqual(len(rows), 60)
         for row in rows:
@@ -3024,7 +3024,7 @@ class BrowserSmokeTest(unittest.TestCase):
             self.assertGreaterEqual(float(row['duration_ns']), float(row['bucket_lower_ns']))
             self.assertLess(float(row['duration_ns']), float(row['bucket_upper_ns']))
         self.page.click('[data-act=dist-reset-bucket]')
-        self.assertIn('15 of 240 calls', self.page.locator('.an-dist-count').inner_text())
+        self.assertIn('1–50 of 240', self.page.locator('.an-dist-count').inner_text())
         self.page.focus('[data-act=dist-bucket]')
         self.page.keyboard.press('End')
         self.page.keyboard.press('Enter')

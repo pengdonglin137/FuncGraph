@@ -499,6 +499,7 @@ function distBucketLabel(index) {
     return (index ? fmtDur(bounds[0]) + ' – < ' : '< ') + fmtDur(bounds[1]) + ' (' + distView.histogram.buckets[index].ids.length + ' calls)';
 }
 function showDist(nameIdx) {
+    const focusedAction = elDetail.contains(document.activeElement) ? document.activeElement.dataset.act : null;
     const keepSlowFast = distView && distView.data.name === nameIdx && distView.slowFastOpen;
     AN.kind = 'dist';
     if (AN.func !== nameIdx) AN.site = null;
@@ -509,7 +510,7 @@ function showDist(nameIdx) {
     if (changedPopulation) {
         const siteVisible = distView && distView.data === data ? distView.siteVisible : DIST_SITE_PAGE;
         distView = { data, site: AN.site, population, histogram: distributionHistogram(population.ids),
-            bucket: -1, visible: Math.min(15, population.ids.length), siteVisible, slowFastOpen: !!keepSlowFast };
+            bucket: -1, page: 0, siteVisible, slowFastOpen: !!keepSlowFast };
     }
     const ids = population.ids;
     AN.distIds = ids;
@@ -526,20 +527,27 @@ function showDist(nameIdx) {
         '</div><div class="an-hist-wrap"><canvas class="an-hist" height="120" role="img" aria-label="Duration histogram; use the duration bucket menu to filter calls"></canvas>' +
         '<div class="an-hint">Log-scale buckets; click a bar or choose a duration bucket to filter the call list and export, not these statistics.</div></div></div>';
     if (!ids.length) h += '<div class="an-hint">No calls match this function' + (AN.site !== null ? ' and call site' : '') + ' with the current filter.</div>';
-    h += '<div class="an-dist-tools"><label>Duration bucket <select data-act="dist-bucket"' + (ids.length ? '' : ' disabled') + '><option value="-1">All durations</option>';
+    h += '<section class="an-dist-call-browser" aria-label="Duration calls"><div class="an-dist-tools"><label>Duration bucket <select data-act="dist-bucket"' + (ids.length ? '' : ' disabled') + '><option value="-1">All durations</option>';
     distView.histogram.buckets.forEach((bucket, index) => {
         if (bucket.ids.length) h += '<option value="' + index + '">' + esc(distBucketLabel(index)) + '</option>';
     });
     h += '</select></label><button class="tl-btn" data-act="dist-reset-bucket">All durations</button>' +
-        '<span class="an-dist-count" role="status"></span><button class="tl-btn" data-act="dist-more">Load more</button>' +
         '<button class="tl-btn" data-act="dist-csv">Export calls CSV</button></div>';
     h += '<table class="tl-sum an-tbl"><thead><tr><th>duration</th><th>self</th><th style="text-align:left">task</th><th>start</th><th style="text-align:left">caller</th><th>×p50</th></tr></thead><tbody class="an-list">' +
-        slowRows(distCallIds().slice(0, distView.visible), quantile(0.5)) + '</tbody></table>' +
+        slowRows(distCallIds().slice(distView.page * DIST_PAGE, (distView.page + 1) * DIST_PAGE), quantile(0.5)) + '</tbody></table>' +
+        '<div class="an-dist-pager"><span class="an-dist-count" role="status" aria-live="polite" aria-atomic="true"></span>' +
+        '<span class="an-dist-pages" role="group" aria-label="Duration call pages">' +
+        '<button class="tl-btn" type="button" data-act="dist-prev" aria-label="Previous page of calls">Previous</button>' +
+        '<button class="tl-btn" type="button" data-act="dist-next" aria-label="Next page of calls">Next</button></span></div></section>' +
         '<div class="an-slowfast">' + slowFastHtml() + '</div>' +
         callSiteTable(data);
     openDetail(h);
     if (changedPopulation) elDetail.scrollTop = 0;
     updateDistControls();
+    if (!changedPopulation && focusedAction) {
+        const control = Array.from(elDetail.querySelectorAll('[data-act]')).find(button => button.dataset.act === focusedAction);
+        if (control && !control.disabled) control.focus({ preventScroll: true });
+    }
 }
 function slowRows(list, p50) {
     return list.map(i => `<tr data-slice="${i}"><td>${fmtDur(durOf(i))}</td><td>${fmtDur(sSelf[i])}</td>` +
@@ -548,9 +556,15 @@ function slowRows(list, p50) {
         `<td>${p50 ? (durOf(i) / p50).toFixed(1) : ''}</td></tr>`).join('');
 }
 function updateDistControls() {
-    const ids = distCallIds();
-    elDetail.querySelector('.an-dist-count').textContent = 'Showing ' + distView.visible + ' of ' + ids.length + ' calls (slowest first)';
-    elDetail.querySelector('[data-act=dist-more]').disabled = distView.visible >= ids.length;
+    const ids = distCallIds(), start = distView.page * DIST_PAGE, end = Math.min(start + DIST_PAGE, ids.length);
+    const previous = elDetail.querySelector('[data-act=dist-prev]'), next = elDetail.querySelector('[data-act=dist-next]');
+    const focused = document.activeElement;
+    elDetail.querySelector('.an-dist-count').textContent = ids.length ?
+        'Calls ' + (start + 1) + '–' + end + ' of ' + ids.length + ' (slowest first)' : 'No matching calls';
+    previous.disabled = distView.page === 0;
+    next.disabled = end >= ids.length;
+    if (focused === next && next.disabled && !previous.disabled) previous.focus({ preventScroll: true });
+    else if (focused === previous && previous.disabled && !next.disabled) next.focus({ preventScroll: true });
     elDetail.querySelector('[data-act=dist-csv]').disabled = !ids.length;
     elDetail.querySelector('[data-act=dist-reset-bucket]').hidden = distView.bucket < 0;
     elDetail.querySelector('[data-act=dist-bucket]').value = distView.bucket;
@@ -559,15 +573,20 @@ function selectDistBucket(index) {
     if (!distView || !Number.isInteger(index) || index < -1 || index >= distView.histogram.buckets.length ||
         (index >= 0 && !distView.histogram.buckets[index].ids.length)) return;
     distView.bucket = index;
-    distView.visible = Math.min(index < 0 ? 15 : DIST_PAGE, distCallIds().length);
-    elDetail.querySelector('.an-list').innerHTML = slowRows(distCallIds().slice(0, distView.visible), distQuantile(distView.population.ids, 0.5));
+    distView.page = 0;
+    elDetail.querySelector('.an-list').innerHTML = slowRows(distCallIds().slice(0, DIST_PAGE), distQuantile(distView.population.ids, 0.5));
     updateDistControls();
     scheduleDistHistogram();
 }
-function appendDistCalls() {
-    const ids = distCallIds(), start = distView.visible;
-    distView.visible = Math.min(start + DIST_PAGE, ids.length);
-    elDetail.querySelector('.an-list').insertAdjacentHTML('beforeend', slowRows(ids.slice(start, distView.visible), distQuantile(distView.population.ids, 0.5)));
+function changeDistPage(direction) {
+    if (!distView || AN.kind !== 'dist') return;
+    const ids = distCallIds(), last = Math.max(0, Math.ceil(ids.length / DIST_PAGE) - 1);
+    distView.page = Math.max(0, Math.min(last, distView.page + direction));
+    const browser = elDetail.querySelector('.an-dist-call-browser'), head = elDetail.querySelector('.an-dist-head');
+    const style = getComputedStyle(head), pinned = style.position === 'sticky' && style.top !== 'auto' ? head.offsetHeight : 0;
+    elDetail.scrollTop += browser.getBoundingClientRect().top - elDetail.getBoundingClientRect().top - pinned;
+    const start = distView.page * DIST_PAGE;
+    elDetail.querySelector('.an-list').innerHTML = slowRows(ids.slice(start, start + DIST_PAGE), distQuantile(distView.population.ids, 0.5));
     updateDistControls();
 }
 function scheduleDistHistogram() {
@@ -647,7 +666,7 @@ elDetail.addEventListener('click', event => {
     const button = event.target.closest('[data-act]');
     if (!button || AN.kind !== 'dist') return;
     const action = button.dataset.act;
-    if (action === 'dist-more') appendDistCalls();
+    if (action === 'dist-next' || action === 'dist-prev') changeDistPage(action === 'dist-next' ? 1 : -1);
     else if (action === 'dist-reset-bucket') selectDistBucket(-1);
     else if (action === 'dist-reset-site') { AN.site = null; showDist(AN.func); }
     else if (action === 'dist-csv') exportDistCsv();
