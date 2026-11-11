@@ -77,3 +77,21 @@ Text loading, timeline-only positioning, clock separation, filter refresh,
 64-bit timestamp export, CSV formula escaping, both themes, touch portrait
 and landscape, and manually shortened panels. Timing thresholds are not
 used as correctness assertions.
+
+## Verification on the working tree
+
+All 14 lifecycle browser tests pass. The complete suite was also run with
+native uftrace and the mixed-sample browser checks required:
+
+```bash
+FG_UFTRACE_REQUIRED=1 FG_SAMPLE_BROWSER_REQUIRED=1 tests/run.sh
+```
+
+Result: **846 tests, 842 passed, 3 skipped, 1 failed**, in 430.221 seconds.
+The sole failure is the existing uncommitted Text optimization's
+`test_native_layout_skips_offscreen_blocks_without_dropping_complete_records`:
+Chromium serializes intrinsic sizes as `auto 13056px` / `auto 2728.5px`, while
+the assertion expects the lengths without `auto`. The preceding full-suite
+log contains the same failure. Those staged and unstaged Text patches were
+verified byte-for-byte unchanged before and after the lifecycle commit.
+This work does not alter that assertion or claim the full suite is green.
