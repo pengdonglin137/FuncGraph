@@ -213,7 +213,7 @@ class RangePagingTest(unittest.TestCase):
         self.assertIn('1–300 of 649', self.status())
 
     def test_all_four_time_modes_keep_complete_csv_bytes_during_paging(self):
-        for mode in ('abs', 'relative', 'compressed', 'count'):
+        for mode in ('abs', 'rel', 'compressed', 'count'):
             with self.subTest(mode=mode):
                 self.page.close()
                 self.page = self.context.new_page()

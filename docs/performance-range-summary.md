@@ -129,3 +129,11 @@ browser download-rate state leaking between independent cases.
   rather than claiming the earlier audit retested that follow-up.
 - Existing Text work is preserved separately. No dependency pin, native payload,
   public capture, public sample HTML or version change is part of this work.
+
+## Canonical-mode follow-up
+
+A later window-panel audit found that the range paging test used `relative`
+instead of the parser's actual `rel` mode. The fixture now exercises the canonical
+`abs`, `rel`, `compressed` and `count` values. The window CSV regression likewise
+replaces its synthetic `packed` label with `compressed`. This strengthens the
+validation inputs without changing the model or report format.

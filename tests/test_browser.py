@@ -2361,9 +2361,9 @@ class BrowserSmokeTest(unittest.TestCase):
                 self.ev(f"fgView('timeline').probe().{action}()")
                 self.assertEqual(self.page.locator(selector).count(), page_size)
                 first = self.page.locator(selector).first.element_handle()
-                self.page.click('[data-act=window-more]')
-                self.assertTrue(first.evaluate('(node) => node.isConnected'))
-                self.assertEqual(self.page.locator(selector).count(), page_size * 2)
+                self.page.click('[data-act=window-next]')
+                self.assertFalse(first.evaluate('(node) => node.isConnected'))
+                self.assertEqual(self.page.locator(selector).count(), page_size)
                 exported = self.download_csv('[data-act=window-csv]')
                 self.assertEqual(len(exported), count)
                 self.ev("""() => {
@@ -2378,9 +2378,11 @@ class BrowserSmokeTest(unittest.TestCase):
                 self.assertEqual(self.ev('window.windowAggregateWrites'), 0)
                 self.assertEqual(self.page.locator(selector).count(), page_size)
                 self.assertEqual(self.page.locator(f'th[data-{sort_attr}=start]').get_attribute('aria-sort'), 'ascending')
-                while self.page.locator('[data-act=window-more]').is_enabled():
-                    self.page.click('[data-act=window-more]')
-                self.assertEqual(self.page.locator(selector).count(), count)
+                while self.page.locator('[data-act=window-next]').is_enabled():
+                    self.page.click('[data-act=window-next]')
+                self.assertEqual(self.page.locator(selector).count(), count % page_size)
+                self.page.click('[data-act=window-prev]')
+                self.assertEqual(self.page.locator(selector).count(), page_size)
         self.ev("fgNotifyFilter('last call', new Set([650]))")
         self.assertEqual(self.page.locator('tr[data-sec]').count(), 1)
         self.assertEqual(len(self.download_csv('[data-act=window-csv]')), 1)
@@ -2444,7 +2446,7 @@ class BrowserSmokeTest(unittest.TestCase):
         self.assertEqual(self.page.locator('tr[data-win]').count(), 0)
 
     def test_window_csv_units_quoting_and_compact_actions(self):
-        for mode in ['abs', 'rel', 'packed', 'count']:
+        for mode in ['abs', 'rel', 'compressed', 'count']:
             if mode != 'abs':
                 self.ev("fgSwitchView('text')")
                 self.page.reload()
@@ -2457,8 +2459,8 @@ class BrowserSmokeTest(unittest.TestCase):
                 self.assertEqual(row['top_1_function'], "'=SUM(1,2)")
                 self.assertEqual(row['time_mode'], mode)
                 self.assertEqual(row['self_duration_basis'], 'call_order' if mode == 'count' else 'measured')
-                self.assertEqual(row['window_duration_basis'], 'call_order' if mode == 'count' else 'packed_estimate' if mode == 'packed' else 'timestamp_span')
-                if mode in ['count', 'packed']:
+                self.assertEqual(row['window_duration_basis'], 'call_order' if mode == 'count' else 'packed_estimate' if mode == 'compressed' else 'timestamp_span')
+                if mode in ['count', 'compressed']:
                     self.assertIn('not measured scheduling latency', self.page.locator('.tl-detail').inner_text())
                 unit = 'units' if mode == 'count' else 'ns'
                 self.assertEqual(float(row['window_duration_' + unit]), 1 if mode == 'count' else 1000)
@@ -2473,7 +2475,8 @@ class BrowserSmokeTest(unittest.TestCase):
                         self.assertGreaterEqual(bounds['y'], 0)
                         self.assertLessEqual(bounds['y'] + bounds['height'], height)
                     self.ev("() => { const detail = document.querySelector('.tl-detail'); detail.scrollLeft = detail.scrollWidth; }")
-                    for selector in ['[data-act=window-csv]', '[data-act=window-more]', '.tl-close']:
+                    self.assertEqual(self.page.locator('[data-act=window-next], [data-act=window-prev]').count(), 0)
+                    for selector in ['[data-act=window-csv]', '.tl-close']:
                         bounds = self.page.locator(selector).bounding_box()
                         self.assertGreaterEqual(bounds['x'], 0)
                         self.assertLessEqual(bounds['x'] + bounds['width'], width)

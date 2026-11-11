@@ -394,7 +394,11 @@ table.tl-sum td.err { color: #c62828; }
 .an-occurrence [data-error-position] { display: inline-block; min-width: 64px; text-align: center; color: var(--text-muted); }
 .an-window-head { flex-wrap: wrap; z-index: 2; left: 0; }
 .an-window-actions { display: flex; align-items: center; gap: 8px; margin-left: auto; flex-shrink: 0; }
-.an-window-footer { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; padding: 8px 12px; color: var(--text-muted); position: sticky; left: 0; }
+.an-window-footer { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 8px; padding: 6px 12px; color: var(--text-muted); position: sticky; bottom: 0; left: 0; z-index: 1; background: var(--container-bg); border-top: 1px solid var(--border-color); }
+.an-window-pages { display: flex; gap: 8px; }
+.tl-detail-short .an-window-head, .tl-compact .an-window-head { top: auto; }
+.tl-detail-short .an-window-footer { bottom: auto; }
+.tl-detail-short .an-window-table th { position: static; }
 .an-window-table th[aria-sort="ascending"] .tl-sum-sort, .an-window-table th[aria-sort="descending"] .tl-sum-sort { color: var(--text-color); text-decoration: underline; text-underline-offset: 3px; }
 .an-wait-head { flex-wrap: wrap; z-index: 2; left: 0; }
 .an-wait-head .tl-detail-title { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; max-width: 100%; }
@@ -522,6 +526,7 @@ table.tl-sum td.err { color: #c62828; }
 .tl-compact .an-dist-pager .tl-btn, .tl-compact .an-dist-head [data-act="dist-histogram"], .tl-compact .an-dist-tools :is(.tl-btn, select) { min-height: 44px; }
 .tl-compact .an-dist-tools select { font-size: 16px; }
 .tl-compact .tl-range-actions .tl-btn, .tl-compact .tl-range-footer .tl-btn, .tl-compact .tl-range-table .tl-sum-sort { min-height: 44px; }
+.tl-compact .an-window-actions .tl-btn, .tl-compact .an-window-footer .tl-btn, .tl-compact .an-seckind button, .tl-compact .an-window-table .tl-sum-sort { min-height: 44px; }
 .tl-compact .an-dist-heading { gap: 4px 8px; }
 .tl-compact .an-dist-heading .tl-detail-title { flex-basis: 100%; }
 .tl-compact .an-dist-order, .tl-compact .an-dist-compact ~ .an-dist-call-browser .an-dist-tools label > span { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; }

@@ -1085,6 +1085,7 @@ elHelp.innerHTML = `
 <li><kbd>0</kbd> fit all · <kbd>F</kbd> zoom to selection · double-click: zoom to slice</li>
 <li><kbd>Shift</kbd>+drag: summarize a range in this track (<kbd>Shift</kbd>+<kbd>Alt</kbd>: all tracks)</li></ul>
 <p>Range summaries use <b>Previous / Next</b> for 300-function pages. Sorting or changing the range, shared filter or Overhead resets the page; <b>Export CSV</b> includes every function in that scope.</p>
+<p><b>Sections</b> uses 200-row pages; <b>Sched latency</b> uses 300-row pages. <b>Previous / Next</b> does not grow the table. Each section kind remembers its page; sort, shared-filter or Overhead changes reset it. CSV always exports the complete sorted scope, not just the page.</p>
 <h4>Touch</h4><ul>
 <li>Tap a call or track header. Swipe horizontally on the tracks to pan; swipe vertically to scroll.</li>
 <li>Pinch the tracks to zoom around your fingers, or use <b>−</b>, <b>+</b> and <b>Fit</b> on touch devices.</li>

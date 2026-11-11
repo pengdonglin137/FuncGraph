@@ -875,7 +875,7 @@ python3 funcgraph.py --timeline --tail-calls --fast --func-links \
 
 ![an_sections](img/an_sections.png)
 
-*Sections 面板（sample.html）：irqs off / preempt off / BH off 三类区间，每行是一段区间，带开始、结束的位置和其中自身耗时最多的函数。*
+*Sections 面板（tests/data/pi4_sched.txt）：irqs off / preempt off / BH off 三类区间，每行是一段区间，带开始、结束的位置和其中自身耗时最多的函数。*
 
 列出进程上下文中每一段**关中断**、**关抢占**、**关软中断**的区间，用顶部的按钮在三类之间切换，按钮上显示各类的数量：
 
@@ -893,9 +893,11 @@ preempt 深度是相对基线计算的。trace 中进程上下文的最小 preem
 
 **过滤与耗时口径**：应用共享过滤条件后，只保留与匹配的真实调用重叠的区间；三类按钮的数量、当前类别的 total / max 都按这些完整区间计算，而不是按整条任务轨道是否有命中判断。未过滤时，即使没有被跟踪的调用覆盖，记录到的区间也会保留。开始 / 结束位置及对应函数始终保留原记录，不会被过滤条件裁剪。自身耗时只累计匹配调用，按调用与区间重叠的比例分摊；它不是精确的 on-CPU 耗时，也不能证明因果归属。Overhead 会更新自身耗时估算，**不会改变区间的起止和长度**。
 
-**排序、分页与导出**：duration、自身耗时和（preempt off 类的）max depth 降序，start / task 升序；可用键盘 Enter / Space 激活表头按钮。默认加载 200 行，**Load more** 每次追加 200 行；排序重置到第一页，已计算的估算复用缓存。**Export CSV** 导出当前类别、当前过滤条件和排序下的**全部区间**，不受已加载行数限制。CSV 包含原始 `section_index`、任务、起止位置、区间长度、开始 / 结束函数及行号、前三函数的自身耗时估算、`time_mode`、`self_duration_basis`、`window_duration_basis` 和 `filter`；没有贡献的函数留空。
+**排序、分页与导出**：duration、自身耗时和（preempt off 类的）max depth 降序，start / task 升序；可用键盘 Enter / Space 激活表头按钮。每页最多 200 行，**Previous / Next** 替换当前页，不累积保留旧行。三类区间分别记住各自的页码，普通刷新、重开和 Text 往返保留当前页；排序、共享过滤器或 Overhead 改变时回到首页。已准备的统计和估算复用缓存，新访问的区间按需计算自身耗时估算。**Export CSV** 导出当前类别、过滤条件和排序下的**全部区间**，不受页码限制。CSV 包含原始 `section_index`、任务、起止位置、区间长度、开始 / 结束函数及行号、前三函数的自身耗时估算、`time_mode`、`self_duration_basis`、`window_duration_basis` 和 `filter`；没有贡献的函数留空。
 
 CSV 的时间列在时间模式使用 `_ns`；count 模式使用 `_units`（调用顺序单位），不是纳秒。`window_duration_basis` 区分 `timestamp_span`、`packed_estimate`、`call_order`；`self_duration_basis` 区分实测 `measured`、扣除开销估算 `overhead_subtracted_estimate`、调用顺序 `call_order`。没有时间戳的 packed / count 坐标不能当作真实调度延迟或临界区墙钟长度。窄窗口中标题栏换行，导出与关闭按钮仍可访问，标题随详情一起滚动，避免遮住表格。
+
+不超过一页时不展示翻页按钮。分页条仅在面板高度足够时停靠在底部，极短面板恢复普通纵向滚动；横向滚动宽表时，标题和分页控件仍留在视窗内。触控翻页、类别、排序及导出控件至少 44px 高。翻页不改变当前时间轴定位或窗口选择，详细实测见[窗口分页记录](performance-window-paging.md)。
 
 ### 7.4 错误汇总（Errors）
 
@@ -983,7 +985,7 @@ trace 结束时仍未闭合的等待，在时长前显示 **≥**，表示下界
 - 标题标签：窗口数量、总时长、最长的一个。下方标签按所有保留窗口内**全部匹配函数**的估算总量列出前 8 名，不只累计每个窗口的前三名；这些是排查线索，不是"该函数造成调度延迟"的证明。
 - 表格列：latency（真实时间模式超过 100 us 的标红）、start、task、max preempt off（窗口内的最大抢占深度，已扣除 trace 基线）、irqs-off self (est.)（入口带关中断标志的匹配调用自身耗时的比例估算，**不是精确的关中断区间长度**）、top self (est.)（前三函数及自身耗时估算）、ended by（flag cleared 标志被清除 / switched out 被换出 / trace end 采集结束）。所有表头都可排序：start / task / ended by 升序，其余降序；相同值保持原窗口索引顺序。
 - 点击一行，会在时间轴上框选这个窗口。
-- 默认显示 300 行，**Load more** 每次追加 300 行；**Export CSV** 导出当前过滤和排序下的全部窗口，包括未加载行。导出包含 `window_index`、原始窗口起止与长度、最大抢占深度、是否观察到关中断、`irqoff_self_estimate_ns`、结束原因、前三函数自身耗时估算，以及与 Sections 相同的模式、估算口径和过滤元数据；count 模式的耗时列改为 `_units`。
+- 每页最多 300 个窗口，**Previous / Next** 替换当前页，不累积旧行；重开与 Text 往返保留页码，排序、共享过滤器或 Overhead 改变时回到首页。**Export CSV** 导出当前过滤和排序下的全部窗口，不限于当前页。导出包含 `window_index`、原始窗口起止与长度、最大抢占深度、是否观察到关中断、`irqoff_self_estimate_ns`、结束原因、前三函数自身耗时估算，以及与 Sections 相同的模式、估算口径和过滤元数据；count 模式的耗时列改为 `_units`。
 - 与 Sections 相同，过滤逐窗口检查重叠的真实调用，统计数量 / total / max 使用保留窗口的原始长度；自身耗时只来自匹配调用。Overhead 仅更新自身耗时估算。每轨道按调用深度建立重叠索引，排序和追加行复用统计，不为每个窗口反复扫描整条轨道。
 
 需要 `latency-format` 和时间戳才能计算。

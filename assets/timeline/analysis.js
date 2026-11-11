@@ -803,9 +803,9 @@ function windowSortValue(record, key) {
     const profile = windowProfile(record);
     return key === 'irq' ? profile.irq : profile.top.length ? profile.top[0][1] : 0;
 }
-function windowOrder(data, kind, key, page) {
+function windowOrder(data, kind, key, pageSize) {
     let order = data.orders[kind];
-    if (!order) { order = { rows: data.groups[kind].slice(), key: null, visible: 0 }; data.orders[kind] = order; }
+    if (!order) { order = { rows: data.groups[kind].slice(), key: null, page: 0, pageSize }; data.orders[kind] = order; }
     if (order.key !== key) {
         const direction = windowSortAscending(key) ? 1 : -1;
         order.rows.sort((left, right) => {
@@ -813,7 +813,7 @@ function windowOrder(data, kind, key, page) {
             return (leftValue < rightValue ? -direction : leftValue > rightValue ? direction : 0) || left.index - right.index;
         });
         order.key = key;
-        order.visible = Math.min(page, order.rows.length);
+        order.page = 0;
     }
     return order;
 }
@@ -827,9 +827,26 @@ function windowActions(enabled) {
         '>Export CSV</button><button class="tl-close" title="Close (Esc)">×</button></span></div>';
 }
 function windowFooter(order, section) {
-    return '<div class="an-window-footer"><span role="status">Showing ' + order.visible + ' of ' + order.rows.length +
-        (section ? ' sections' : ' windows') + '</span><button class="tl-btn" data-act="window-more"' +
-        (order.visible >= order.rows.length ? ' disabled' : '') + '>Load more</button></div>';
+    return '<div class="an-window-footer"><span role="status" aria-live="polite" aria-atomic="true">' + windowPageStatus(order, section) + '</span>' +
+        (order.rows.length > order.pageSize ? '<span class="an-window-pages"><button class="tl-btn" type="button" data-act="window-prev" ' +
+            'aria-label="Previous page of ' + (section ? 'sections' : 'windows') + '"' + (order.page ? '' : ' disabled') + '>Previous</button>' +
+            '<button class="tl-btn" type="button" data-act="window-next" aria-label="Next page of ' + (section ? 'sections' : 'windows') + '"' +
+            ((order.page + 1) * order.pageSize >= order.rows.length ? ' disabled' : '') + '>Next</button></span>' : '') + '</div>';
+}
+function windowPageStatus(order, section) {
+    const start = order.page * order.pageSize, end = Math.min(start + order.pageSize, order.rows.length);
+    return 'Showing ' + (order.rows.length ? start + 1 + '–' + end : '0') + ' of ' + order.rows.length + (section ? ' sections' : ' windows');
+}
+function visibleWindowRows(order) {
+    const start = order.page * order.pageSize;
+    return order.rows.slice(start, start + order.pageSize);
+}
+function openWindowPanel(html) {
+    const action = elDetail.contains(document.activeElement) ? document.activeElement.dataset.act : null;
+    openDetail(html);
+    if (!['window-prev', 'window-next', 'window-csv'].includes(action)) return;
+    const control = elDetail.querySelector('[data-act="' + action + '"]');
+    (control && !control.disabled ? control : elDetail.querySelector('.tl-close'))?.focus({ preventScroll: true });
 }
 function windowTimeHint() {
     return TIMED ? '' : '<div class="an-hint">No timestamps: ' + (MODE === 'count' ? 'call-order units' : 'packed coordinates') +
@@ -848,16 +865,25 @@ function latencyRows(rows) {
             '<td>' + (WINDOW_ENDS[record.raw[5]] || '') + '</td></tr>';
     }).join('');
 }
-function appendWindowRows() {
+function changeWindowPage(direction) {
+    if (AN.kind !== 'lat' && AN.kind !== 'sec') return;
     const section = AN.kind === 'sec';
     const data = section ? sectionWindows() : latencyWindows();
     const order = windowOrder(data, section ? AN.secKind : 0, section ? AN.secSort : AN.latSort, section ? 200 : 300);
-    const start = order.visible;
-    order.visible = Math.min(start + (section ? 200 : 300), order.rows.length);
-    const rows = order.rows.slice(start, order.visible);
-    elDetail.querySelector('.an-window-table tbody').insertAdjacentHTML('beforeend', section ? sectionRows(rows) : latencyRows(rows));
-    elDetail.querySelector('.an-window-footer [role=status]').textContent = 'Showing ' + order.visible + ' of ' + order.rows.length + (section ? ' sections' : ' windows');
-    elDetail.querySelector('[data-act=window-more]').disabled = order.visible >= order.rows.length;
+    const last = Math.max(0, Math.ceil(order.rows.length / order.pageSize) - 1);
+    order.page = Math.max(0, Math.min(last, order.page + direction));
+    const table = elDetail.querySelector('.an-window-table'), head = elDetail.querySelector('.an-window-head');
+    const style = getComputedStyle(head), pinned = style.position === 'sticky' && style.top !== 'auto' ? head.offsetHeight : 0;
+    elDetail.scrollTop += table.getBoundingClientRect().top - elDetail.getBoundingClientRect().top - pinned;
+    const rows = visibleWindowRows(order);
+    table.querySelector('tbody').innerHTML = section ? sectionRows(rows) : latencyRows(rows);
+    elDetail.querySelector('.an-window-footer [role=status]').textContent = windowPageStatus(order, section);
+    const previous = elDetail.querySelector('[data-act=window-prev]'), next = elDetail.querySelector('[data-act=window-next]');
+    const focused = document.activeElement;
+    previous.disabled = order.page === 0;
+    next.disabled = order.page === last;
+    if (focused === next && next.disabled && !previous.disabled) previous.focus({ preventScroll: true });
+    else if (focused === previous && previous.disabled && !next.disabled) next.focus({ preventScroll: true });
 }
 function exportWindowCsv() {
     const section = AN.kind === 'sec';
@@ -894,7 +920,7 @@ function showLatency() {
     if (!order.rows.length) {
         h += '<div class="an-hint">' + (!D.caps.latency ? 'Needs <code>options/latency-format</code> (need-resched flag) and timestamps.' :
             textHits ? 'No need-resched windows overlap calls matching the current filter.' : 'No pending need-resched windows in this trace.') + '</div>';
-        openDetail(h); return;
+        openWindowPanel(h); return;
     }
     h += windowTimeHint() + '<div class="an-hint" style="padding:6px 12px 0">Window = need-resched set until the task schedules (or is switched out). ' +
         'Self times are proportional overlap estimates from matching calls, not exact on-CPU or causal attribution. ' +
@@ -902,8 +928,8 @@ function showLatency() {
         '<div class="an-blame">' + data.top.map(([name, value]) => '<span class="an-chip"><span class="k">' + esc(S[name]) + '</span>' + fmtDur(value) + '</span>').join('') + '</div>';
     h += '<table class="tl-sum an-tbl an-window-table"><thead>' + windowTableHead([['dur', 'latency'], ['start', 'start'], ['task', 'task', 1],
         ['pre', 'max preempt off'], ['irq', 'irqs-off self (est.)'], ['top', 'top self (est.)', 1], ['end', 'ended by']], AN.latSort, 'lsort') +
-        '</thead><tbody>' + latencyRows(order.rows.slice(0, order.visible)) + '</tbody></table>' + windowFooter(order, false);
-    openDetail(h);
+        '</thead><tbody>' + latencyRows(visibleWindowRows(order)) + '</tbody></table>' + windowFooter(order, false);
+    openWindowPanel(h);
 }
 
 elDetail.addEventListener('change', ev => {
@@ -923,7 +949,9 @@ elDetail.addEventListener('click', ev => {
         }
     }
     if (action && (AN.kind === 'lat' || AN.kind === 'sec')) {
-        if (action.dataset.act === 'window-more') { appendWindowRows(); ev.stopImmediatePropagation(); return; }
+        if (action.dataset.act === 'window-prev' || action.dataset.act === 'window-next') {
+            changeWindowPage(action.dataset.act === 'window-next' ? 1 : -1); ev.stopImmediatePropagation(); return;
+        }
         if (action.dataset.act === 'window-csv') { exportWindowCsv(); ev.stopImmediatePropagation(); return; }
     }
     const th = ev.target.closest('th[data-esort], th[data-lsort]');
@@ -1543,20 +1571,20 @@ function showSections() {
     h += '</span>' + pill('mute', 'total ' + fmtDur(data.totals[AN.secKind])) + pill('warn', 'max ' + fmtDur(data.maxima[AN.secKind])) +
         (textHits ? pill('warn', 'filtered') : '') + (adjOn ? pill('warn', 'self: overhead subtracted') : '') + windowActions(order.rows.length);
     if (!D.caps.latency) {
-        openDetail(h + '<div class="an-hint">Needs <code>options/latency-format</code> (irqs-off / preempt-depth / BH flags).</div>'); return;
+        openWindowPanel(h + '<div class="an-hint">Needs <code>options/latency-format</code> (irqs-off / preempt-depth / BH flags).</div>'); return;
     }
     h += windowTimeHint() + '<div class="an-hint" style="padding:6px 12px 0">Regions where a task ran with ' + SEC_NAMES[AN.secKind] + ' (task context; preempt depth above the trace baseline ' + (D.preempt_base || 0) + '). ' +
         'The flag changes inside untraced code, so start/end are the traced frames around the change. ' +
         'Self times are proportional overlap estimates from matching calls, not exact on-CPU or causal attribution. Overhead changes self estimates, not section positions or lengths.</div>';
     if (!order.rows.length) {
-        openDetail(h + '<div class="an-hint">' + (textHits ? 'No sections overlap calls matching the current filter.' : 'No sections of this kind in this trace.') + '</div>'); return;
+        openWindowPanel(h + '<div class="an-hint">' + (textHits ? 'No sections overlap calls matching the current filter.' : 'No sections of this kind in this trace.') + '</div>'); return;
     }
     const columns = [['dur', 'duration'], ['start', 'start'], ['task', 'task', 1], [null, 'started in', 1], [null, 'ended in', 1]];
     if (AN.secKind === 1) columns.push(['pre', 'max depth']);
     columns.push(['top', 'top self (est.)', 1]);
     h += '<table class="tl-sum an-tbl an-window-table"><thead>' + windowTableHead(columns, AN.secSort, 'ssort') +
-        '</thead><tbody>' + sectionRows(order.rows.slice(0, order.visible)) + '</tbody></table>' + windowFooter(order, true);
-    openDetail(h);
+        '</thead><tbody>' + sectionRows(visibleWindowRows(order)) + '</tbody></table>' + windowFooter(order, true);
+    openWindowPanel(h);
 }
 elDetail.addEventListener('click', ev => {
     const sk = ev.target.closest('[data-sk]');
