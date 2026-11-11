@@ -387,6 +387,11 @@ table.tl-sum td.err { color: #c62828; }
 .an-error-actions { display: flex; align-items: center; gap: 8px; margin-left: auto; flex-shrink: 0; }
 .an-error-head .an-minor { display: flex; align-items: center; gap: 4px; margin-left: 0; }
 .an-error-section, .an-error-footer { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; padding: 8px 12px; color: var(--text-muted); position: sticky; left: 0; }
+.an-error-pages { display: flex; gap: 8px; }
+.tl-compact .an-error-actions .tl-btn, .tl-compact .an-error-footer .tl-btn, .tl-compact .an-error-section .tl-btn, .tl-compact .an-error-table .tl-sum-sort { min-height: 44px; }
+.tl-compact .an-occurrence .tl-btn { min-width: 44px; min-height: 44px; }
+.tl-detail-short .an-error-head, .tl-compact .an-error-head { top: auto; }
+.tl-detail-short .an-error-table th, .tl-detail-short .an-atomic-table th { position: static; }
 .an-error-section .tl-sec { color: #c62828; }
 .an-error-table th[aria-sort="ascending"] .tl-sum-sort, .an-error-table th[aria-sort="descending"] .tl-sum-sort { color: var(--text-color); text-decoration: underline; text-underline-offset: 3px; }
 .an-atomic-table th:nth-child(-n+3) { text-align: left; }
