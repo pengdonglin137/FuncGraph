@@ -283,6 +283,8 @@ On long scheduling traces, zoom into the interval you are investigating. The off
 
 For traces with many tasks, scrolling draws only the tracks intersecting the vertical viewport. Hidden or offscreen tracks remain available in **Tasks**, analysis and exports; collapsing or hiding a track does not discard its calls.
 
+Moving the pointer within the same call, wait, CPU segment or empty area reuses the current scene and updates only the time cursor. Changing the hovered record or display state redraws the scene normally. Two viewport-sized backing bitmaps are retained while the cursor is active and released when it leaves or you switch views; this does not reduce trace memory or the cost of a full-view redraw.
+
 The tool adapts to the options the trace was captured with and tells you what is missing:
 
 | Missing option | Effect in the timeline |

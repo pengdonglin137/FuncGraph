@@ -1023,4 +1023,4 @@ const probe = () => ({ N, NA, SYN, S, sName, sStart, sEnd, sDepth, sParent, sTas
     errors: showErrors, latency: showLatency, sections: showSections, dist: showDist, wait: showWaitChain,
     inline: (on) => { if (!!on !== inlineView) toggleInlineView(); } });
 return { resize: resize, revealLine: revealLine, draw: draw, probe: probe,
-    suspend: () => { setToolbarOptions(false); hideTip(); }, showHelp: () => elHelp.classList.add('show') };
+    suspend: () => { setToolbarOptions(false); hideTip(); discardSceneCache(); }, showHelp: () => elHelp.classList.add('show') };

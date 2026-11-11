@@ -37,19 +37,19 @@ def fixture(source, destination, count, tracks=0):
     destination.write_text(html.replace(hook, 'window.fgBenchmarkHit = hitTest;\n' + hook), encoding='utf-8')
 
 
-def measure(browser, report, count, frames, overview_frames, tracks=0):
+def measure(browser, report, count, frames, overview_frames, tracks=0, cursor_frames=0):
     page = browser.new_page(viewport={'width': 1500, 'height': 900})
     errors = []
     page.on('pageerror', lambda error: errors.append(str(error)))
     try:
         page.goto(report.as_uri())
         page.evaluate("async () => { await fgSwitchView('timeline'); }")
-        samples = page.evaluate('''async ({count, frames, overviewFrames, tracks}) => {
+        samples = page.evaluate('''async ({count, frames, overviewFrames, tracks, cursorFrames}) => {
             const probe = fgView('timeline').probe(), task = Math.floor(tracks * 0.9), track = probe.TRACKS[task];
             const canvas = document.querySelector('.tl-canvas'), raf = window.requestAnimationFrame;
             const settle = () => new Promise(resolve => raf(() => raf(resolve)));
             const results = {narrow_redraw: [], hit: []};
-            const redraw = (start, end) => new Promise((resolve, reject) => {
+            const frameFor = action => new Promise((resolve, reject) => {
                 let scheduled = false;
                 window.requestAnimationFrame = callback => {
                     scheduled = true;
@@ -59,10 +59,11 @@ def measure(browser, report, count, frames, overview_frames, tracks=0):
                         resolve(performance.now() - began);
                     });
                 };
-                try { probe.zoomTo(start, end, -1); }
+                try { action(); }
                 finally { window.requestAnimationFrame = raf; }
-                if (!scheduled) reject(new Error('Expected redraw after zoom'));
+                if (!scheduled) reject(new Error('Expected redraw after action'));
             });
+            const redraw = (start, end) => frameFor(() => probe.zoomTo(start, end, -1));
             if (tracks) document.querySelector('.tl-scroll').scrollTop = track.y - 5;
             await settle();
             for (let index = 0; index < frames + 5; index++) {
@@ -85,8 +86,19 @@ def measure(browser, report, count, frames, overview_frames, tracks=0):
                 await redraw(0, count * 1000);
                 for (let index = 0; index < overviewFrames; index++) results.overview_redraw.push(await redraw(0, count * 1000));
             }
+            if (cursorFrames) {
+                results.cursor_redraw = [];
+                await redraw(0, count * 1000);
+                const [pageX, pageY] = probe.xyOf(task);
+                for (let index = 0; index < cursorFrames + 5; index++) {
+                    const duration = await frameFor(() => canvas.dispatchEvent(new MouseEvent('mousemove', {
+                        bubbles: true, clientX: pageX + (index % 2 ? 2 : -2), clientY: pageY
+                    })));
+                    if (index >= 5) results.cursor_redraw.push(duration);
+                }
+            }
             return results;
-        }''', dict(count=count, frames=frames, overviewFrames=overview_frames, tracks=tracks))
+        }''', dict(count=count, frames=frames, overviewFrames=overview_frames, tracks=tracks, cursorFrames=cursor_frames))
         if errors:
             raise RuntimeError('; '.join(errors))
         return samples
@@ -102,10 +114,11 @@ def main():
     parser.add_argument('--frames', type=int, default=20)
     parser.add_argument('--rounds', type=int, default=3)
     parser.add_argument('--overview-frames', type=int, default=0)
+    parser.add_argument('--cursor-frames', type=int, default=0, help='also time same-call cursor moves in the full time view')
     parser.add_argument('--output', type=Path, required=True)
     args = parser.parse_args()
-    if args.intervals < 1000 or not 1 <= args.frames <= args.intervals // 4 or args.rounds < 1 or args.overview_frames < 0 or args.tracks < 0:
-        parser.error('require at least 1000 intervals, positive rounds, 1 to intervals/4 frames and nonnegative overview frames/tracks')
+    if args.intervals < 1000 or not 1 <= args.frames <= args.intervals // 4 or args.rounds < 1 or min(args.overview_frames, args.cursor_frames, args.tracks) < 0:
+        parser.error('require at least 1000 intervals, positive rounds, 1 to intervals/4 frames and nonnegative optional frame/track counts')
     with tempfile.TemporaryDirectory(prefix='fg-scheduling-') as directory, sync_playwright() as playwright:
         browser = playwright.chromium.launch()
         output = dict(browser=browser.version, intervals_per_overlay=0 if args.tracks else args.intervals,
@@ -115,7 +128,7 @@ def main():
             fixture(source, destination, args.intervals, args.tracks)
         for iteration in range(args.rounds):
             for source, destination in reports if iteration % 2 == 0 else reversed(reports):
-                samples = measure(browser, destination, args.intervals, args.frames, args.overview_frames, args.tracks)
+                samples = measure(browser, destination, args.intervals, args.frames, args.overview_frames, args.tracks, args.cursor_frames)
                 output['runs'].append(dict(report=str(source), round=iteration + 1, samples_ms=samples))
                 args.output.write_text(json.dumps(output, indent=2) + '\n', encoding='utf-8')
                 print(source, {key: round(median(values), 4) for key, values in samples.items()}, flush=True)

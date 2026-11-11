@@ -3737,6 +3737,126 @@ class BrowserSmokeTest(unittest.TestCase):
         self.assertRegex(self.page.locator('.tl-cs-at .tl-link').inner_text(), r'\.[ch]:\d+$')
         self.assertTrue(self.page.locator('.tl-cs-at a').get_attribute('href').startswith('https://example.org/src/'))
 
+    def test_timeline_cursor_reuses_scene_until_hover_or_display_state_changes(self):
+        self.check_cursor_scene()
+
+    def test_timeline_cursor_scene_preserves_fractional_and_high_dpi_pixels(self):
+        original = self.page
+        try:
+            for ratio in (1.25, 2):
+                with self.subTest(ratio=ratio), self.browser.new_context(device_scale_factor=ratio) as context:
+                    self.page = context.new_page()
+                    self.page.on('pageerror', lambda error: self.errors.append(str(error)))
+                    self.page.goto(self.url)
+                    self.check_cursor_scene()
+        finally:
+            self.page = original
+
+    def check_cursor_scene(self):
+        self.open_range_data(['root', 'first', 'second'], starts=[0, 1000, 9000],
+                             durations=[20000, 5000, 6000], parents=[-1, 0, 0], columns={'depth': [0, 1, 1]},
+                             extra=dict(offcpu=[[0, 3000, 6000, 2, 0, -1, 0, 0, 0, -1]],
+                                 tasks=[dict(pid=1, comm='worker', kind=0, cpu=0,
+                                             runs=[[0, 8000, 0], [8000, 20000, 0]])]))
+        self.ev('''() => {
+            const canvas = document.querySelector('.tl-canvas'), ctx = canvas.getContext('2d');
+            const fill = ctx.fillRect, image = ctx.drawImage;
+            const create = document.createElement.bind(document);
+            window.cursorCanvases = [];
+            document.createElement = function (name, ...args) {
+                const node = create(name, ...args);
+                if (name === 'canvas') cursorCanvases.push(node);
+                return node;
+            };
+            window.sceneWork = {full: 0, restore: 0};
+            ctx.fillRect = function (...args) {
+                if (args[0] === 0 && args[1] === 0 && args[2] === canvas.width && args[3] === canvas.height) sceneWork.full++;
+                return fill.apply(this, args);
+            };
+            ctx.drawImage = function (...args) { sceneWork.restore++; return image.apply(this, args); };
+            window.settleCursor = () => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+            window.scenePixels = () => ['.tl-canvas', '.tl-head-canvas'].map(selector => document.querySelector(selector).toDataURL());
+        }''')
+        points = self.ev('''() => {
+            const probe = fgView('timeline').probe(), box = document.querySelector('.tl-canvas').getBoundingClientRect();
+            return [probe.xyOf(1), probe.offXY(probe.TRACKS[0].off[0]),
+                [box.left + box.width * 0.1, box.top + 28], [box.left + 50, box.bottom - 10]];
+        }''')
+        for target, point in zip(('slice', 'wait', 'cpu', 'empty'), points):
+            with self.subTest(target=target):
+                self.page.mouse.move(*point)
+                self.ev('settleCursor()')
+                self.ev('sceneWork.full = sceneWork.restore = 0')
+                self.page.mouse.move(point[0] + 2, point[1])
+                self.ev('settleCursor()')
+                self.assertEqual(self.ev('sceneWork.full'), 0, 'same-hover cursor move rebuilt the scene')
+                self.assertEqual(self.ev('sceneWork.restore'), 1)
+                fast = self.ev('scenePixels()')
+                self.ev("fgView('timeline').draw()")
+                self.ev('settleCursor()')
+                self.assert_cursor_pixels(fast)
+        self.ev('sceneWork.full = 0')
+        self.ev('''() => {
+            const canvas = document.querySelector('.tl-canvas'), box = canvas.getBoundingClientRect();
+            canvas.dispatchEvent(new MouseEvent('mousemove', {bubbles:true, clientX:box.left + 60, clientY:box.bottom - 10}));
+            fgView('timeline').draw();
+        }''')
+        self.ev('settleCursor()')
+        self.assertEqual(self.ev('sceneWork.full'), 1, 'cursor request swallowed a pending scene redraw')
+        self.ev('sceneWork.full = 0; toggleTheme()')
+        self.ev('settleCursor()')
+        self.assertGreater(self.ev('sceneWork.full'), 0)
+        self.page.set_viewport_size(dict(width=1100, height=760))
+        self.ev('settleCursor()')
+        point = self.ev("fgView('timeline').probe().xyOf(2)")
+        self.page.mouse.move(*point)
+        self.ev('settleCursor()')
+        self.ev('sceneWork.full = sceneWork.restore = 0')
+        self.page.mouse.move(point[0] + 2, point[1])
+        self.ev('settleCursor()')
+        self.assertEqual(self.ev('sceneWork.full'), 0)
+        self.assertEqual(self.ev('sceneWork.restore'), 1)
+        fast = self.ev('scenePixels()')
+        self.ev("fgView('timeline').draw()")
+        self.ev('settleCursor()')
+        self.assert_cursor_pixels(fast)
+        self.assertEqual(self.ev('cursorCanvases.filter(canvas => canvas.width > 6).length'), 2)
+        self.page.mouse.move(0, 0)
+        self.ev('settleCursor()')
+        self.assertTrue(self.ev('cursorCanvases.filter(canvas => canvas.width !== 6).every(canvas => canvas.width === 0 && canvas.height === 0)'))
+        self.page.mouse.move(*point)
+        self.ev('settleCursor()')
+        self.assertEqual(self.ev('cursorCanvases.filter(canvas => canvas.width > 6).length'), 2)
+        self.ev('''async () => {
+            fgView('timeline').draw();
+            await fgSwitchView('text');
+            await settleCursor();
+        }''')
+        self.assertTrue(self.ev('cursorCanvases.filter(canvas => canvas.width !== 6).every(canvas => canvas.width === 0 && canvas.height === 0)'))
+
+    def assert_cursor_pixels(self, expected):
+        actual = self.ev('scenePixels()')
+        if actual == expected:
+            return
+        differences = self.ev('''async ({actual, expected}) => Promise.all(actual.map(async (url, index) => {
+            const decode = async source => {
+                const image = new Image(); image.src = source; await image.decode();
+                const canvas = document.createElement('canvas'); canvas.width = image.width; canvas.height = image.height;
+                const context = canvas.getContext('2d'); context.drawImage(image, 0, 0);
+                return {width: canvas.width, pixels: context.getImageData(0, 0, canvas.width, canvas.height).data};
+            };
+            const [left, right] = await Promise.all([decode(url), decode(expected[index])]);
+            const samples = []; let count = 0;
+            for (let pixel = 0; pixel < left.pixels.length; pixel += 4) {
+                if (left.pixels.slice(pixel, pixel + 4).every((value, channel) => value === right.pixels[pixel + channel])) continue;
+                count++;
+                if (samples.length < 5) samples.push({position:[pixel / 4 % left.width, Math.floor(pixel / 4 / left.width)],
+                    actual:Array.from(left.pixels.slice(pixel, pixel + 4)), expected:Array.from(right.pixels.slice(pixel, pixel + 4))});
+            }
+            return {count, samples};
+        }))''', dict(actual=actual, expected=expected))
+        self.assertEqual(differences, [dict(count=0, samples=[]), dict(count=0, samples=[])])
+
     def test_timeline_hover_uses_compact_positions_without_reading_source_html(self):
         self.ev('''() => {
             fgData.readSource = fgData.loadSource = () => { throw new Error('Tooltip read source body'); };

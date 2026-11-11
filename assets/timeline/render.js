@@ -221,11 +221,49 @@ function firstTrackEndingAfter(position) {
     return low;
 }
 
-let rafPending = false;
+let rafPending = false, sceneDirty = true, sceneCache = null;
 function draw() {
+    sceneDirty = true;
+    drawCursor();
+}
+function discardSceneCache() {
+    if (!sceneCache) return;
+    for (const canvas of sceneCache) canvas.width = canvas.height = 0;
+    sceneCache = null;
+}
+function saveScene() {
+    if (!sceneCache) sceneCache = [document.createElement('canvas'), document.createElement('canvas')];
+    for (const [index, source] of [elCv, elHead].entries()) {
+        const target = sceneCache[index];
+        if (target.width !== source.width) target.width = source.width;
+        if (target.height !== source.height) target.height = source.height;
+        const context = target.getContext('2d');
+        context.globalCompositeOperation = 'copy';
+        context.drawImage(source, 0, 0);
+    }
+}
+function restoreScene() {
+    for (const [index, context] of [ctx, hctx].entries()) {
+        context.setTransform(1, 0, 0, 1, 0, 0);
+        context.globalCompositeOperation = 'copy';
+        context.drawImage(sceneCache[index], 0, 0);
+        context.globalCompositeOperation = 'source-over';
+        context.setTransform(DPR, 0, 0, DPR, 0, 0);
+    }
+}
+function drawCursor() {
     if (rafPending) return;
     rafPending = true;
-    requestAnimationFrame(() => { rafPending = false; render(); renderHead(); });
+    requestAnimationFrame(() => {
+        rafPending = false;
+        if (sceneDirty || !sceneCache) {
+            sceneDirty = false;
+            render(); renderHead();
+            if (cursorX >= 0 && window.fgCurrentView() === 'timeline') saveScene();
+        } else restoreScene();
+        renderCursor();
+        if (cursorX < 0 || window.fgCurrentView() !== 'timeline') discardSceneCache();
+    });
 }
 
 function niceStep(raw) {
@@ -236,9 +274,10 @@ function niceStep(raw) {
 
 function render() {
     matchingState();
-    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.fillStyle = P.bg;
-    ctx.fillRect(0, 0, W, H);
+    ctx.fillRect(0, 0, elCv.width, elCv.height);
+    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
     const vs = view.s, ve = view.e, k = W / (ve - vs), sy = elScroll.scrollTop;
     // grid
     const step = niceStep((ve - vs) / Math.max(1, W / 110));
@@ -273,7 +312,6 @@ function render() {
             if (x1 <= W && x1 - x0 >= 1) ctx.fillRect(Math.round(x1), 0, 1, H);
         }
     }
-    if (cursorX >= 0) { ctx.fillStyle = P.cursor; ctx.fillRect(Math.round(cursorX), 0, 1, H); }
 }
 function drawSelSpan(vs, k) {
     // ruler: bracket from start to end of the selected slice with its duration (and position in the overview)
@@ -718,9 +756,10 @@ function buildOverview() {
 }
 function renderHead() {
     if (ovDirty) buildOverview();
-    hctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+    hctx.setTransform(1, 0, 0, 1, 0, 0);
     hctx.fillStyle = P.hdr;
-    hctx.fillRect(0, 0, W, HEAD_H);
+    hctx.fillRect(0, 0, elHead.width, elHead.height);
+    hctx.setTransform(DPR, 0, 0, DPR, 0, 0);
     hctx.fillStyle = P.ovBar;
     hctx.globalAlpha = 0.55;
     for (let p = 0; p < ovDens.length; p++) {
@@ -759,8 +798,12 @@ function renderHead() {
     hctx.fillText((range ? 'selected ' + fmtDur(range.e - range.s) + '   ' : '') + span, W - 8, OV_H + 18);
     hctx.textAlign = 'left';
     drawSelSpan(vs, k);
+}
+function renderCursor() {
     if (cursorX >= 0) {
-        const tc = vs + cursorX / k;
+        ctx.fillStyle = P.cursor;
+        ctx.fillRect(Math.round(cursorX), 0, 1, H);
+        const k = W / (view.e - view.s), tc = view.s + cursorX / k;
         hctx.fillStyle = P.hdrText;
         hctx.fillText(fmtDur(tc), Math.min(W - 70, cursorX + 4), OV_H + 18);
     }

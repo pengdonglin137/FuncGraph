@@ -332,14 +332,17 @@ window.addEventListener('mousemove', ev => {
     if (hoverSourceRequest && hoverSourceRequest.index !== nh) {
         hoverSourceRequest.controller.abort(); hoverSourceRequest = null;
     }
-    if (nh !== hov || h.off !== hovOff) { hov = nh; hovOff = h.off; }
-    hovCpu = h.cpuSeg || null;
+    const nextCpu = h.cpuSeg || null;
+    const changed = nh !== hov || h.off !== hovOff || nextCpu?.cpu !== hovCpu?.cpu || nextCpu?.j !== hovCpu?.j;
+    hov = nh; hovOff = h.off;
+    hovCpu = nextCpu;
     elCv.classList.toggle('ptr', nh >= 0 || h.header || !!hovCpu);
     if (hovCpu) showTip(tipCpu(hovCpu), ev);
     else if (nh >= 0) showTip(tipSlice(nh) + (h.dense ? tipDense(h.dense) : ''), ev);
     else if (h.off) showTip(tipOff(h.off), ev);
     else hideTip();
-    draw();
+    if (changed) draw();
+    else drawCursor();
 });
 window.addEventListener('mouseup', ev => {
     if (!drag) return;
@@ -354,7 +357,12 @@ window.addEventListener('mouseup', ev => {
     if (d.mode !== 'pan' || d.moved || ev.target !== elCv) return;
     activateCanvas(...localXY(ev, elCv));
 });
-elCv.addEventListener('mouseleave', () => { cursorX = -1; hov = -1; hovOff = null; hovCpu = null; hideTip(); draw(); });
+elCv.addEventListener('mouseleave', () => {
+    const changed = hov >= 0 || hovOff !== null || hovCpu !== null;
+    cursorX = -1; hov = -1; hovOff = null; hovCpu = null; hideTip();
+    if (changed) draw();
+    else drawCursor();
+});
 elCv.addEventListener('dblclick', ev => {
     const [mx, my] = localXY(ev, elCv);
     const h = hitTest(mx, my);
