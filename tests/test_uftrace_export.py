@@ -94,6 +94,12 @@ class UftraceExportTest(unittest.TestCase):
         site = event['user_callsite']
         self.assertEqual(site['name'], 'main')
         self.assertGreater(int(site['retaddr'], 16), 0)
+        symbol = site['symbol']
+        self.assertEqual(int(symbol['address'], 16) + symbol['offset'], int(site['retaddr'], 16) - 1)
+        self.assertLess(symbol['offset'], symbol['size'])
+        symbols = subprocess.run(['nm', '-S', str(self.binary)], check=True, capture_output=True, text=True)
+        main = next(line.split() for line in symbols.stdout.splitlines() if line.endswith(' main'))
+        self.assertEqual(symbol['size'], int(main[1], 16))
         self.assertEqual(Path(site['source']['file']).name, 'workload.c')
         self.assertEqual(site['source']['line'], 2)
         child = next(record for record in records if record.get('name') == 'child' and record['type'] == 'entry')
@@ -109,6 +115,43 @@ class UftraceExportTest(unittest.TestCase):
         position = data['sources']['user_positions'][data['sources']['user_callsites'][line]]
         self.assertEqual(Path(position[0]).name, 'workload.c')
         self.assertEqual(position[1], 2)
+
+    def test_callsite_symbol_offsets_survive_relocation_and_dlopen(self):
+        root = Path(self.workspace.name)
+        library_source = root / 'caller.c'
+        library_source.write_text('int child(int value) { return value + 1; }\n'
+                                  'int wrapper(void) { return child(1) != 2; }\n')
+        shared = root / 'libcaller.so'
+        subprocess.run(['gcc', *COMPILE_FLAGS, '-g', '-O0', '-fPIC', '-shared', '-o', str(shared),
+                        str(library_source)], check=True, capture_output=True)
+        for kind, flags in [('pie', ['-fPIE', '-pie']), ('exec', ['-fno-pie', '-no-pie']), ('dlopen', [])]:
+            with self.subTest(kind=kind):
+                source = root / (kind + '.c')
+                if kind == 'dlopen':
+                    source.write_text('#include <dlfcn.h>\nint main(void) {\n'
+                                      'void *handle = dlopen("' + str(shared) + '", RTLD_NOW);\n'
+                                      'int (*run)(void) = dlsym(handle, "wrapper"); return run(); }\n')
+                    sources = [str(source), '-ldl']
+                    caller_image, caller_name = shared, 'wrapper'
+                else:
+                    source.write_text('int child(int); int main(void) { return child(1) != 2; }\n')
+                    sources = [str(source), str(library_source)]
+                    caller_image, caller_name = root / kind, 'main'
+                binary = root / kind
+                subprocess.run(['gcc', *COMPILE_FLAGS, '-g', '-O0', *flags, '-o', str(binary), *sources],
+                               check=True, capture_output=True)
+                self.capture = root / (kind + '.data')
+                subprocess.run([str(EXECUTABLE), 'record', '--no-sched', '--no-libcall', '--srcline',
+                                *RECORD_FLAGS, '-T', 'child@callsite', '-d', str(self.capture), str(binary)],
+                               check=True, capture_output=True)
+                site = next(record['user_callsite'] for record in self.records() if 'user_callsite' in record)
+                self.assertEqual(site['name'], caller_name)
+                symbol = site['symbol']
+                self.assertEqual(int(symbol['address'], 16) + symbol['offset'], int(site['retaddr'], 16) - 1)
+                symbols = subprocess.run(['nm', '-S', str(caller_image)], check=True, capture_output=True, text=True)
+                definition = next(line.split() for line in symbols.stdout.splitlines() if line.endswith(' ' + caller_name))
+                self.assertEqual(symbol['size'], int(definition[1], 16))
+                self.assertLess(symbol['offset'], symbol['size'])
 
     def test_two_user_invocations_keep_distinct_exact_call_lines(self):
         source = Path(self.workspace.name) / 'two-sites.c'

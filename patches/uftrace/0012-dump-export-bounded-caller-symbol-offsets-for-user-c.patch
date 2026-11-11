@@ -1,0 +1,80 @@
+From 4a9f4c6c3895c1c10e1c0da9bac64ca7a57597a9 Mon Sep 17 00:00:00 2001
+From: pengdonglin <pengdonglin@xiaomi.com>
+Date: Thu, 12 Nov 2026 05:42:23 +0800
+Subject: [PATCH] dump: export bounded caller symbol offsets for user call
+ sites
+
+Resolve the recorded return PC minus one in its capture session and active module, preserving PIE and dlopen relocation. Export the original return PC alongside the runtime symbol base, call-site offset and symbol size. Omit bounds rather than fabricate them for unresolved or unbounded symbols.
+---
+ cmds/dump.c     |  7 +++++++
+ uftrace.h       |  3 +++
+ utils/session.c | 15 +++++++++++++++
+ 3 files changed, 25 insertions(+)
+
+diff --git a/cmds/dump.c b/cmds/dump.c
+index cd1423c6494d..1269231c743e 100644
+--- a/cmds/dump.c
++++ b/cmds/dump.c
+@@ -1791,8 +1791,11 @@ static void dump_fgraph_task(struct uftrace_dump_ops *ops, struct uftrace_task_r
+ 	if (callsite) {
+ 		struct uftrace_dbg_loc position;
+ 		if (retaddr) {
++			uint64_t caller_offset = 0;
+ 			struct uftrace_symbol *caller = task_find_sym_addr(&task->h->sessions, task,
+ 								 record->time, retaddr - 1);
++			struct uftrace_symbol *bounded = task_find_sym_offset(&task->h->sessions, task,
++							 record->time, retaddr - 1, &caller_offset);
+ 
+ 			pr_out(",\"user_callsite\":{\"retaddr\":\"0x%" PRIx64 "\"", retaddr);
+ 			if (caller) {
+@@ -1801,6 +1804,10 @@ static void dump_fgraph_task(struct uftrace_dump_ops *ops, struct uftrace_task_r
+ 				fgraph_string(caller_name);
+ 				symbol_putname(caller, caller_name);
+ 			}
++			if (bounded && bounded == caller)
++				pr_out(",\"symbol\":{\"address\":\"0x%" PRIx64 "\",\"offset\":%" PRIu64
++				       ",\"size\":%u}", retaddr - 1 - caller_offset, caller_offset,
++				       bounded->size);
+ 			if (task_find_exact_loc_addr(&task->h->sessions, task, record->time,
+ 					     retaddr - 1, &position) && position.file && position.line > 0) {
+ 				pr_out(",\"source\":{\"file\":");
+diff --git a/uftrace.h b/uftrace.h
+index 2bf843592bd2..90da9dd357ed 100644
+--- a/uftrace.h
++++ b/uftrace.h
+@@ -517,6 +517,9 @@ struct uftrace_symbol *task_find_sym_addr(struct uftrace_session_link *sess,
+ struct uftrace_dbg_loc *task_find_loc_addr(struct uftrace_session_link *sess,
+ 					   struct uftrace_task_reader *task, uint64_t time,
+ 					   uint64_t addr);
++struct uftrace_symbol *task_find_sym_offset(struct uftrace_session_link *sess,
++					   struct uftrace_task_reader *task, uint64_t time,
++					   uint64_t addr, uint64_t *offset);
+ bool task_find_exact_loc_addr(struct uftrace_session_link *sess, struct uftrace_task_reader *task,
+ 			      uint64_t time, uint64_t addr, struct uftrace_dbg_loc *out);
+ 
+diff --git a/utils/session.c b/utils/session.c
+index 3f3b8113ef38..9cc1d16f18e1 100644
+--- a/utils/session.c
++++ b/utils/session.c
+@@ -835,6 +835,21 @@ static int task_find_addr_module(struct uftrace_session_link *sessions,
+ 	return 0;
+ }
+ 
++struct uftrace_symbol *task_find_sym_offset(struct uftrace_session_link *sessions,
++					   struct uftrace_task_reader *task, uint64_t time,
++					   uint64_t addr, uint64_t *offset)
++{
++	struct uftrace_module *mod;
++	struct uftrace_symbol *sym;
++	uint64_t mod_addr;
++
++	if (task_find_addr_module(sessions, task, time, addr, &mod, &sym, &mod_addr) < 0 ||
++	    mod_addr < sym->addr || mod_addr - sym->addr >= sym->size)
++		return NULL;
++	*offset = mod_addr - sym->addr;
++	return sym;
++}
++
+ struct uftrace_dbg_loc *task_find_loc_addr(struct uftrace_session_link *sessions,
+ 					   struct uftrace_task_reader *task, uint64_t time,
+ 					   uint64_t addr)

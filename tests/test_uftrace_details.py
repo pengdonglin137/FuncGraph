@@ -279,6 +279,28 @@ class KernelArgumentNamesTest(unittest.TestCase):
 
 
 class UserCallSiteTest(unittest.TestCase):
+    def test_symbol_offset_uses_call_pc_and_preserves_original_return_pc(self):
+        records = recorded_calls()
+        records[1]['user_callsite']['symbol'] = {'address': '0x1200', 'offset': 0x33, 'size': 0x80}
+        builder = build(records)
+        detail = builder.to_data()['uftrace']['user_details'][builder.s_line[1]]
+        self.assertEqual(detail['callsite']['retaddr'], '0x1234')
+        self.assertEqual(detail['callsite']['symbol'], records[1]['user_callsite']['symbol'])
+        text = builder.parsed[builder.s_line[1] - 1].raw_line
+        self.assertIn('caller site main+0x33/0x80', text)
+        self.assertNotIn('caller return address', text)
+
+    def test_invalid_symbol_metadata_is_rejected(self):
+        for symbol in [None, {}, {'address': '0x1200', 'offset': True, 'size': 0x80},
+                       {'address': '0x1200', 'offset': 0x34, 'size': 0x80},
+                       {'address': '0x1200', 'offset': 0x33, 'size': 0x33},
+                       {'address': 0x1200, 'offset': 0x33, 'size': 0x80}]:
+            with self.subTest(symbol=symbol):
+                records = recorded_calls()
+                records[1]['user_callsite']['symbol'] = symbol
+                with self.assertRaises(uftrace.UftraceInputError):
+                    build(records)
+
     def test_real_site_is_separate_from_entry_and_paired_only_with_its_thread(self):
         builder = build(recorded_calls())
         data = builder.to_data()
@@ -427,8 +449,8 @@ class UftraceDetailBrowserTest(unittest.TestCase):
                                 panel.locator('.tl-cs > summary', has_text='User call site source').wait_for()
                                 self.assertIn('demo.c:5', panel.locator('.tl-cs-src').inner_text())
                                 self.assertIn('user call site', panel.locator('.tl-cs-src').inner_text())
-                                self.assertIn('0x1234', panel.locator('.k:has-text("caller return address") + .v').inner_text())
-                                self.assertIn('0x1233', panel.locator('.k:text-is("call site address") + .v').inner_text())
+                                self.assertIn('main (offset unavailable)', panel.locator('.k:text-is("caller site") + .v').inner_text())
+                                self.assertEqual(panel.locator('.k:text-is("caller return address"), .k:text-is("call site address")').count(), 0)
                                 self.assertEqual(panel.locator('[data-callsite-position]').count(), 1)
                                 stack = panel.locator('[data-context-list=stack]')
                                 main_source = stack.locator('.tl-context-source', has_text='demo.c:5')
@@ -522,6 +544,7 @@ class UftraceDetailBrowserTest(unittest.TestCase):
             records = recorded_calls()
             records[1]['user_callsite']['name'] = 'untraced_wrapper'
             records[1]['user_callsite']['retaddr'] = '0xfedcba9876543210'
+            records[1]['user_callsite']['symbol'] = {'address': '0xfedcba9876543200', 'offset': 15, 'size': 0x20}
             records[1]['payload_hex'] = bytes.fromhex('fedcba9876543210')[::-1].hex()
             trace = root / 'trace.jsonl'
             trace.write_text(stream(records))
@@ -535,8 +558,9 @@ class UftraceDetailBrowserTest(unittest.TestCase):
                 page.evaluate('() => fgSwitchView("timeline")')
                 page.evaluate('() => fgView("timeline").probe().select(1)')
                 panel = page.locator('.tl-detail')
-                self.assertIn('demo.c:5', panel.locator('.k:has-text("caller return address") + .v').text_content())
-                self.assertIn('0xfedcba987654320f', panel.locator('.k:text-is("call site address") + .v').text_content())
+                self.assertIn('demo.c:5', panel.locator('.k:text-is("caller site") + .v').text_content())
+                self.assertIn('untraced_wrapper+0xf/0x20', panel.locator('.k:text-is("caller site") + .v').text_content())
+                self.assertEqual(panel.locator('.k:text-is("caller return address"), .k:text-is("call site address")').count(), 0)
                 self.assertEqual(panel.locator('.tl-cs').count(), 0)
                 stack = panel.locator('[data-context-list=stack]')
                 self.assertIn('demo.c:2', stack.text_content())

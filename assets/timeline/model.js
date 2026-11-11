@@ -598,8 +598,11 @@ function retOf(index) {
     return raw === null || !format ? raw : scalarValue(raw, format, true);
 }
 function userCallAddress(index) {
-    const address = D.uftrace?.user_details?.[sLine[index]]?.callsite?.retaddr;
-    try { return address ? '0x' + (BigInt(address) - 1n).toString(16) : null; } catch (_) { return null; }
+    const site = D.uftrace?.user_details?.[sLine[index]]?.callsite;
+    if (!site) return null;
+    if (site.symbol) return site.name + '+0x' + site.symbol.offset.toString(16) + '/0x' + site.symbol.size.toString(16);
+    if (site.name) return site.name + ' (offset unavailable)';
+    try { return '0x' + (BigInt(site.retaddr) - 1n).toString(16) + ' (symbol unavailable)'; } catch (_) { return null; }
 }
 function callerOf(i) { return sCaller && sCaller[i] >= 0 ? S[sCaller[i]] : null; }
 function argsOf(i) { return sArgs && sArgs[i] >= 0 ? S[sArgs[i]] : null; }

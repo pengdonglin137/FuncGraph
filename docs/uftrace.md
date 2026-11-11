@@ -234,14 +234,20 @@ kernel names separately, even when their symbols have identical spelling.
 
   The updated patched exporter preserves the event bytes and return PC, resolving
   `PC - 1` with the recorded session's module maps and matching debug images.
-  Details show this exact value as **call site address**, keeping the original
-  PC as **caller return address** and the callee entry as **recorded address**.
-  These distinct addresses are never substituted for one another; `PC - 1`
+  Text and details show one **caller site**, formatted as `function+0xoffset/0xsize`
+  like kernel callers. Its offset uses `PC - 1` and the correct session's
+  executable/library mapping, including PIE and dlopen relocation. The original
+  return PC remains in export/report metadata, not a separate detail row;
+  **recorded address** still identifies the callee entry. These addresses are
+  never substituted for one another; `PC - 1`
   identifies a position inside the call, not necessarily its instruction start.
   An event is paired only with the next user record of the same thread when that
   record is an entry exactly one ns later. Loss or mismatches never invent a site.
   Text and details prefer **User call site source**. A stack's parent row uses
   the child's site only when the captured caller symbol matches that parent.
+  Older JSONL without symbol bounds shows `offset unavailable`, never a guessed
+  offset; re-export its original capture with the updated bundled uftrace to
+  obtain symbol bounds. Without a symbol, show the call PC as an unresolved site.
   Otherwise the explicitly labeled function-entry fallback and original addresses
   remain. Re-record old captures without call-site events: regenerating HTML cannot
   recover a caller PC that was never recorded.
@@ -349,6 +355,12 @@ This does not select a project-wide license. Full commands and relocation tests
 are in the [release checklist](releasing.md).
 
 ## Native export contract
+
+User CALLSITE events may contain `user_callsite.symbol` with a runtime hexadecimal
+`address`, integer `offset` and positive `size`. Bounds are valid only when
+`address + offset == retaddr - 1` and `0 <= offset < size`; the importer rejects
+contradictions. The event's `name` identifies that caller symbol. This optional
+extension keeps old v1 streams readable and never replaces the original return PC.
 
 ```bash
 fguftrace dump --fgraph --srcline -d CAPTURE > capture.jsonl

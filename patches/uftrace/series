@@ -9,3 +9,4 @@
 0009-fix-aarch64-trace-patchable-entries-without-a-disass.patch
 0010-dump-export-captured-user-callsite-positions.patch
 0011-dump-decode-recorded-automatic-scalars.patch
+0012-dump-export-bounded-caller-symbol-offsets-for-user-c.patch

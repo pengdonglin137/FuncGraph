@@ -354,10 +354,7 @@ function showDetail(i) {
         '<details class="tl-context-note"><summary>' + (typedReturn[0] === 'void' ? 'void (BTF) · original bits' : 'Original return bits') +
         '</summary>' + esc(rawReturn) + '</details>');
     const c = callerOf(i);
-    const capturedCaller = D.uftrace?.caller_symbols?.[sCaller?.[i]];
-    if (c) h += kv(D.uftrace && !capturedCaller ? 'caller address' : 'call site', esc(c) + '<span class="tl-cs-at"></span>' + (f & FL.MISMATCH ? '<div class="tl-context-note tl-tail-note">' + esc(callerRelationText(i)) + '</div>' : ''));
-    if (capturedCaller) h += kv('return address', esc(D.uftrace.kernel_details?.[sLine[i]]?.retaddr || '') +
-        '<div class="tl-context-note">Symbol from captured kallsyms; range ends at the next saved symbol.</div>');
+    if (c) h += kv('caller site', esc(c) + '<span class="tl-cs-at"></span>' + (f & FL.MISMATCH ? '<div class="tl-context-note tl-tail-note">' + esc(callerRelationText(i)) + '</div>' : ''));
     const tailJump = tailJumpOf(i);
     if (tailJump) h += kv('tail jump', tailJump.sites.map(site => {
         const source = site.source;
@@ -371,12 +368,11 @@ function showDetail(i) {
     if (userDetail) {
         h += kv('recorded address', esc(userDetail.address) + '<div class="tl-context-note">Function entry address, not the call site.</div>');
         const callAddress = userCallAddress(i);
-        if (callAddress) h += kv('call site address', esc(callAddress) + '<div class="tl-context-note">Recorded caller return address − 1.</div>');
         const userSite = userCallSite(i);
-        if (userDetail.callsite) h += kv('caller return address', esc(userDetail.callsite.retaddr) +
+        if (callAddress) h += kv('caller site', esc(callAddress) +
             '<span class="tl-cs-at">' + (userSite ? '<br><span data-callsite-position>' + esc(userSite[0] + ':' + userSite[1]) + '</span>' : '') + '</span>' +
             (!userSite ? '<div class="tl-context-note">Call-site source unavailable; function entry is a fallback.</div>' : ''));
-        else h += kv('call site', '<span class="tl-muted">Not recorded · capture with -T &apos;.@callsite&apos;</span>');
+        else h += kv('caller site', '<span class="tl-muted">Not recorded · capture with -T &apos;.@callsite&apos;</span>');
         if (userDetail.args !== undefined) h += kv('user args', esc(userDetail.args));
         else if (a) h += kv('raw argument bytes', esc(a));
         if (userDetail.retval !== undefined) h += kv('user return', esc(userDetail.retval));

@@ -112,6 +112,14 @@ def _check_record(record):
                 ('name' not in site or isinstance(site['name'], str) and bool(site['name'])) and
                 ('source' not in site or _source_position(site['source']))):
             raise UftraceInputError('invalid recorded user call site')
+        if 'symbol' in site:
+            symbol = site['symbol']
+            if not (site.get('name') and isinstance(symbol, dict) and
+                    isinstance(symbol.get('address'), str) and HEX.fullmatch(symbol['address']) and
+                    _uint(symbol.get('offset')) and _uint(symbol.get('size')) and
+                    symbol['offset'] < symbol['size'] and
+                    int(symbol['address'], 16) + symbol['offset'] == int(site['retaddr'], 16) - 1):
+                raise UftraceInputError('invalid recorded user caller symbol')
 
 
 def _caller_info(record):
@@ -120,6 +128,15 @@ def _caller_info(record):
         return None
     module = ' [' + symbol['module'] + ']' if symbol.get('module') else ''
     return f'{symbol["name"]}+0x{symbol["offset"]:x}/0x{symbol["size"]:x}{module}'
+
+
+def _user_caller_info(site):
+    symbol = site.get('symbol')
+    if symbol:
+        return f'{_display(site["name"])}+0x{symbol["offset"]:x}/0x{symbol["size"]:x}'
+    if site.get('name'):
+        return _display(site['name']) + ' (offset unavailable)'
+    return f'0x{int(site["retaddr"], 16) - 1:x} (symbol unavailable)'
 
 
 def read_export(stream):
@@ -280,6 +297,8 @@ class UftraceTimeline(TimelineBuilder):
                 detail['callsite'] = {'retaddr': user_site['retaddr']}
                 if 'name' in user_site:
                     detail['callsite']['name'] = _display(user_site['name'])
+                if 'symbol' in user_site:
+                    detail['callsite']['symbol'] = dict(user_site['symbol'])
                 if 'source' in user_site:
                     site = user_site['source']
                     position = (_display(site['file']), site['line'], '')
@@ -559,7 +578,7 @@ class UftraceTimeline(TimelineBuilder):
                         source = (_display(pos['file']), pos['line'])
                         source_kind = 'user function entry'
                     if space == 'user' and 'callsite' in self.user_details[lineno]:
-                        body += ' /* caller return address ' + self.user_details[lineno]['callsite']['retaddr'] + ' */'
+                        body += ' /* caller site ' + _user_caller_info(self.user_details[lineno]['callsite']) + ' */'
                         position_id = self.callsite_positions.get(lineno)
                         if position_id is not None:
                             source = positions[position_id][:2]
