@@ -1186,9 +1186,10 @@ function directChildren(root) {
     return children;
 }
 const CHILD_PAGE = 100;
-let childFacts = null, childFiltered = null;
+let childFacts = null, childFiltered = null, childScope = null;
 const childOrders = { groups: null, calls: null };
-const childView = { root: -1, mode: 'groups', name: null, query: '', groupSort: 'inclusive', callSort: 'inclusive' };
+const childView = { root: -1, mode: 'groups', name: null, query: '', groupSort: 'inclusive', callSort: 'inclusive', pages: { groups: 0, calls: 0 } };
+function resetChildPages() { childView.pages.groups = 0; childView.pages.calls = 0; }
 function childData(root, hits) {
     if (!childFacts || childFacts.root !== root) {
         childFacts = { root, ids: directChildren(root), bases: new Map() };
@@ -1231,6 +1232,9 @@ function childPreviewHtml(root) {
 }
 function childOrder(mode) {
     const data = childData(childView.root, textHits), sort = mode === 'groups' ? childView.groupSort : childView.callSort;
+    if (childScope && childScope.root === childView.root && childScope.ids !== data.ids &&
+            (childScope.ids.length !== data.ids.length || childScope.ids.some((index, position) => data.ids[position] !== index))) resetChildPages();
+    childScope = { root: childView.root, ids: data.ids };
     const key = JSON.stringify([childView.name, childView.query, sort]), cached = childOrders[mode];
     if (cached && cached.data === data && cached.key === key) return cached;
     const query = childView.query.trim().toLowerCase();
@@ -1246,8 +1250,7 @@ function childOrder(mode) {
         return (typeof first === 'string' ? first.localeCompare(second) : (sort === 'start' ? first - second : second - first)) ||
             (mode === 'groups' ? left.ids[0] - right.ids[0] : left - right);
     });
-    const retain = cached && cached.key === key && cached.data.raw === data.raw && cached.data.hits === data.hits;
-    childOrders[mode] = { data, key, rows, visible: Math.min(rows.length, retain ? cached.visible : CHILD_PAGE) };
+    childOrders[mode] = { data, key, rows };
     return childOrders[mode];
 }
 function childRows(rows, mode) {
@@ -1262,14 +1265,29 @@ function childRows(rows, mode) {
         '">Show</button> <button class="tl-btn" data-child-details="' + index + '">Details</button></td></tr>').join('');
 }
 function updateChildFooter(order) {
-    elDetail.querySelector('.an-child-footer [role=status]').textContent = 'Showing ' + order.visible + ' of ' + order.rows.length +
-        (childView.mode === 'groups' ? ' functions' : ' calls');
-    elDetail.querySelector('[data-child-more]').disabled = order.visible >= order.rows.length;
+    const mode = childView.mode, page = childView.pages[mode], start = page * CHILD_PAGE;
+    const end = Math.min(start + CHILD_PAGE, order.rows.length), kind = mode === 'groups' ? 'functions' : 'calls';
+    const previous = elDetail.querySelector('[data-child-page="-1"]'), next = elDetail.querySelector('[data-child-page="1"]');
+    const focused = document.activeElement;
+    elDetail.querySelector('.an-child-footer [role=status]').textContent = order.rows.length ?
+        'Showing ' + (start + 1) + '–' + end + ' of ' + order.rows.length + ' ' + kind : 'No matching ' + kind;
+    previous.disabled = page === 0;
+    next.disabled = end >= order.rows.length;
+    elDetail.querySelector('.an-child-pages').hidden = order.rows.length <= CHILD_PAGE;
+    if (focused === previous && previous.disabled || focused === next && next.disabled) {
+        (!next.disabled ? next : !previous.disabled ? previous : elDetail.querySelector('[data-child-mode="' + mode + '"]')).focus({ preventScroll: true });
+    }
 }
-function appendChildRows() {
-    const order = childOrder(childView.mode), start = order.visible;
-    order.visible = Math.min(start + CHILD_PAGE, order.rows.length);
-    elDetail.querySelector('.an-child-table tbody').insertAdjacentHTML('beforeend', childRows(order.rows.slice(start, order.visible), childView.mode));
+function changeChildPage(direction) {
+    if (AN.kind !== 'children') return;
+    const mode = childView.mode, order = childOrder(mode), last = Math.max(0, Math.ceil(order.rows.length / CHILD_PAGE) - 1);
+    childView.pages[mode] = Math.max(0, Math.min(last, childView.pages[mode] + direction));
+    const start = childView.pages[mode] * CHILD_PAGE, table = elDetail.querySelector('.an-child-table');
+    const head = elDetail.querySelector('.an-child-head'), style = getComputedStyle(head);
+    const pinned = style.position === 'sticky' && style.top !== 'auto' ? head.offsetHeight : 0;
+    elDetail.scrollTop += table.getBoundingClientRect().top - elDetail.getBoundingClientRect().top - pinned;
+    table.querySelector('tbody').innerHTML = childRows(order.rows.slice(start, start + CHILD_PAGE), mode);
+    table._childPage = childView.pages[mode];
     updateChildFooter(order);
 }
 function showChildCall(index) {
@@ -1301,11 +1319,12 @@ function exportChildrenCsv(mode) {
     downloadTimelineCsv('funcgraph-children-' + mode + '.csv', columns, rows());
 }
 function showChildren(root) {
-    if (root !== undefined && childView.root !== root) Object.assign(childView, { root, mode: 'groups', name: null, query: '', groupSort: 'inclusive', callSort: 'inclusive' });
+    if (root !== undefined && childView.root !== root) Object.assign(childView, { root, mode: 'groups', name: null, query: '', groupSort: 'inclusive', callSort: 'inclusive', pages: { groups: 0, calls: 0 } });
     if (childView.root < 0 || childView.root >= N) return;
     const reuse = AN.kind === 'children' && elDetail.classList.contains('show') && elDetail.querySelector('.an-child-table');
     AN.kind = 'children';
     const order = childOrder(childView.mode), data = order.data;
+    childView.pages[childView.mode] = Math.min(childView.pages[childView.mode], Math.max(0, Math.ceil(order.rows.length / CHILD_PAGE) - 1));
     if (!reuse) {
         openDetail('<div class="tl-detail-head an-child-head"><span class="tl-detail-title">Direct recorded children</span>' +
             '<button class="tl-btn an-child-parent" data-child-parent title="' + esc(nameOf(childView.root)) + '">' + esc(nameOf(childView.root)) +
@@ -1315,26 +1334,27 @@ function showChildren(root) {
             '<label>Find <input type="search" data-child-query placeholder="Literal function name" spellcheck="false"></label>' +
             '<span class="an-child-scope"></span><button class="tl-btn" data-child-reset>All functions / reset</button></div>' +
             '<div class="an-child-status"></div><table class="tl-sum an-child-table"></table><div class="an-child-footer"><span role="status" aria-live="polite"></span>' +
-            '<button class="tl-btn" data-child-more>Load more</button></div><div class="an-hint">Children use the nearest recorded real parent, including depth gaps, ' +
+            '<span class="an-child-pages"><button class="tl-btn" data-child-page="-1">Previous 100</button><button class="tl-btn" data-child-page="1">Next 100</button></span></div><div class="an-hint">Children use the nearest recorded real parent, including depth gaps, ' +
             'not a complete runtime callee inventory. Synthetic frames and grandchildren are excluded. The shared filter matches child calls, not the parent. ' +
             'Groups use function names; inclusive sums can overlap and are not a partition of the parent. Self excludes each child\'s own recorded descendants. ' +
             'Longest/Show highlights a call without leaving this panel; Details or the parent button opens slice details. ' +
             'Overhead updates duration/self estimates, never recorded positions. ' + (MODE === 'count' ? 'Values use call-order units, not nanoseconds. ' :
                 TIMED ? '' : 'Positions use packed durations, not elapsed time. ') + 'CSV includes all sorted scoped rows, including unloaded pages.</div>');
         elDetail.querySelector('[data-child-parent]').onclick = () => select(childView.root, { reveal: true });
-        elDetail.querySelector('[data-child-query]').addEventListener('input', event => { childView.query = event.target.value; showChildren(); });
-        elDetail.querySelector('[data-child-reset]').onclick = () => { childView.query = ''; childView.name = null; showChildren(); };
+        elDetail.querySelector('[data-child-query]').addEventListener('input', event => { childView.query = event.target.value; resetChildPages(); showChildren(); });
+        elDetail.querySelector('[data-child-reset]').onclick = () => { childView.query = ''; childView.name = null; resetChildPages(); showChildren(); };
         elDetail.querySelectorAll('[data-child-mode]').forEach(button => { button.onclick = () => { childView.mode = button.dataset.childMode; showChildren(); }; });
         elDetail.querySelectorAll('[data-child-csv]').forEach(button => { button.onclick = () => exportChildrenCsv(button.dataset.childCsv); });
-        elDetail.querySelector('[data-child-more]').onclick = appendChildRows;
+        elDetail.querySelectorAll('[data-child-page]').forEach(button => { button.onclick = () => changeChildPage(+button.dataset.childPage); });
         elDetail.querySelector('.an-child-table').onclick = event => {
             const sort = event.target.closest('[data-child-sort]'), scope = event.target.closest('[data-child-function]');
             const show = event.target.closest('[data-child-show]'), details = event.target.closest('[data-child-details]');
             if (sort) {
+                childView.pages[childView.mode] = 0;
                 childView[childView.mode === 'groups' ? 'groupSort' : 'callSort'] = sort.dataset.childSort; showChildren();
                 elDetail.querySelector('[data-child-sort="' + sort.dataset.childSort + '"]').focus({ preventScroll: true });
             } else if (scope) {
-                childView.name = +scope.dataset.childFunction; childView.mode = 'calls'; showChildren();
+                childView.name = +scope.dataset.childFunction; childView.mode = 'calls'; resetChildPages(); showChildren();
                 elDetail.querySelector('[data-child-mode=calls]').focus({ preventScroll: true });
             }
             else if (show) showChildCall(+show.dataset.childShow);
@@ -1351,14 +1371,16 @@ function showChildren(root) {
         button.classList.toggle('on', selected); button.setAttribute('aria-pressed', String(selected));
     });
     const table = elDetail.querySelector('.an-child-table');
-    if (!reuse || table._childOrder !== order) {
+    if (!reuse || table._childOrder !== order || table._childPage !== childView.pages[childView.mode]) {
         const columns = childView.mode === 'groups' ? [['name', 'function'], ['calls', 'calls'], ['inclusive', 'inclusive sum'], ['self', 'self sum'],
             ['mean', 'mean'], ['max', 'max']] : [['name', 'function'], ['inclusive', 'inclusive'], ['self', 'self'], ['start', 'start'], ['', 'CPU'], ['', 'call site']];
         const sort = childView.mode === 'groups' ? childView.groupSort : childView.callSort;
         table.innerHTML = '<thead><tr>' + columns.map(([key, label]) => '<th' + (key ? ' aria-sort="' + (key === sort ?
             (key === 'name' || key === 'start' ? 'ascending' : 'descending') : 'none') + '"><button class="tl-sum-sort" data-child-sort="' + key + '">' + label + '</button>' : '>' + label) +
-            '</th>').join('') + '<th>navigate</th></tr></thead><tbody>' + childRows(order.rows.slice(0, order.visible), childView.mode) + '</tbody>';
+            '</th>').join('') + '<th>navigate</th></tr></thead><tbody>' + childRows(order.rows.slice(childView.pages[childView.mode] * CHILD_PAGE,
+                (childView.pages[childView.mode] + 1) * CHILD_PAGE), childView.mode) + '</tbody>';
         table._childOrder = order;
+        table._childPage = childView.pages[childView.mode];
         if (reuse) elDetail.scrollTop = 0;
     }
     let empty = elDetail.querySelector('.an-child-empty');
