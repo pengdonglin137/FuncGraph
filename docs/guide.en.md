@@ -193,6 +193,23 @@ python3 funcgraph.py --timeline --pid 1234 --graph vfs_read --vmlinux vmlinux --
 
 Use `--source-browser github --source-browser-rev v7.4-rc2` for version-pinned GitHub links, or select `elixir` with a version available there. Text, source blocks and Timeline CALL STACK share this setting; no source download is added. These options only change outgoing links: they do not select embedded files or automatically detect the kernel version. Pin the actual upstream tag/commit when possible; custom local patches can shift line numbers. `--source-rev` below is independent and is never silently copied into web links. An explicit CLI `--source-browser` replaces a config/preset `base-url`; an explicit `--base-url` takes precedence over built-in settings. Existing module URL mappings retain priority.
 
+Module discovery respects `--module-dirs` order and matches complete module
+names, treating hyphens and underscores, including mixed spellings, as equivalent.
+`demo_extra.ko` cannot supply `demo`. Within one root, the requested spelling wins,
+then `.ko`, `.ko.debug`, `.ko.gz`, `.ko.xz` and `.ko.zst`; equal candidates use
+shallower paths, then lexical path order. An exact `.ko` in the first valid root
+is a direct hit. Otherwise, a lazy directory index and positive/negative lookups
+are shared by BTF, function entries and call sites for this report, without
+spawning `find`. Missing modules leave sources unresolved rather than stopping
+the report; `--verbose` shows selections. Timeline-only reports with no module
+BTF or source requirements do not scan module trees.
+
+Filename matching does not prove the binary matches the recorded kernel: narrow
+multi-version trees to the actual kernel build/install directory. Recognizing a
+compressed suffix does not add decompression support; source resolution still
+needs a readable module containing DWARF. The index is run-scoped, so regenerate
+the report after changing build artifacts to perform a fresh lookup.
+
 **Source origin** (default: the local files faddr2line finds)
 
 Source paths are literal filenames: spaces, Unicode, colons, `#`, `?` and `%`

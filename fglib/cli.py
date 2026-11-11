@@ -14,12 +14,13 @@ import lzma
 
 from . import config, inputs, prefilter
 from .parser import parse_ftrace_file
+from .modules import ModuleIndex
 from .report import write_html
 from .uftrace import UftraceInputError
-from .util import SOURCE_BROWSERS, check_gawk_available, find_module_path, source_browser_url, verbose_print
+from .util import SOURCE_BROWSERS, check_gawk_available, source_browser_url, verbose_print
 
 
-def build_compare_data(args, parsed_lines, timeline_json, vmlinux_path, module_dirs):
+def build_compare_data(args, parsed_lines, timeline_json, vmlinux_path, module_dirs, module_index=None):
     """Compare tab data: per-function statistics of --compare BASE vs. this trace."""
     from . import compare, timeline as tlmod
     t0 = time.time()
@@ -30,7 +31,7 @@ def build_compare_data(args, parsed_lines, timeline_json, vmlinux_path, module_d
         if isinstance(base_lines, inputs.UftraceInput):
             raise UftraceInputError('CLI pre-filters are not supported for uftrace; use the report filters')
         base_lines, _ = prefilter.apply(base_lines, pre)     # same filter on both sides
-    rettypes = load_rettypes(parsed_lines, vmlinux_path, module_dirs, args)
+    rettypes = load_rettypes(parsed_lines, vmlinux_path, module_dirs, args, module_index=module_index)
     if timeline_json is not None:
         cur = timeline_json
     else:
@@ -56,7 +57,7 @@ def parse_overhead(text):
 _RETTYPES = {}
 
 
-def load_rettypes(parsed_lines, vmlinux_path, module_dirs, args):
+def load_rettypes(parsed_lines, vmlinux_path, module_dirs, args, module_index=None):
     """BTF return-type database (cached per run); None with --no-btf or when no BTF exists."""
     if args.no_btf or (not vmlinux_path and not args.btf):
         return None
@@ -65,10 +66,11 @@ def load_rettypes(parsed_lines, vmlinux_path, module_dirs, args):
     from . import btf as btfmod
     modules = sorted({l.get('module_name') for l in parsed_lines if l.get('module_name')})
     mod_paths = []
-    for m in modules:
-        mp = find_module_path(m, module_dirs, args.verbose)
-        if mp:
-            mod_paths.append(mp)
+    lookup = module_index if module_index is not None else ModuleIndex(module_dirs, args.verbose)
+    for module_name in modules:
+        module_path = lookup.find(module_name)
+        if module_path:
+            mod_paths.append(module_path)
     rettypes = btfmod.build_return_db(vmlinux_path, extra_paths=args.btf or [], module_paths=mod_paths)
     for err in rettypes.errors:
         verbose_print(f"BTF: {err}", args.verbose)
@@ -81,12 +83,12 @@ def load_rettypes(parsed_lines, vmlinux_path, module_dirs, args):
     return rettypes
 
 
-def build_timeline_data(parsed_lines, vmlinux_path, module_dirs, args, structured_data=None):
+def build_timeline_data(parsed_lines, vmlinux_path, module_dirs, args, structured_data=None, module_index=None):
     """Build the Timeline tab data set. Returns a JSON-serializable dict or None on failure."""
     from . import timeline as tlmod
     t0 = time.time()
     if structured_data is None:
-        rettypes = load_rettypes(parsed_lines, vmlinux_path, module_dirs, args)
+        rettypes = load_rettypes(parsed_lines, vmlinux_path, module_dirs, args, module_index=module_index)
         lines = [l.raw_line for l in parsed_lines]
         builder = tlmod.build_timeline(lines, rettypes=rettypes, errno_map=ERROR_CODE_MAP, verbose=args.verbose,
                                        overhead=parse_overhead(args.overhead))
@@ -490,6 +492,7 @@ def main():
         print(f"[INFO] Using fast mode: {args.fast}", file=sys.stderr)
 
     module_dirs = collect_module_dirs(args)
+    module_index = ModuleIndex(module_dirs, args.verbose)
     if args.vmlinux:
         faddr2line_path, cross_compile, llvm, util_prefix, util_suffix = find_faddr2line(args)
         faddr2line_path = os.path.abspath(faddr2line_path)
@@ -550,7 +553,7 @@ def main():
             sys.exit(1)
         builder = raw_lines.build(enable_fold=args.enable_fold, verbose=args.verbose, errno_map=ERROR_CODE_MAP,
                                   include_text=not args.no_text_view or args.keep_source,
-                                  rettypes=load_rettypes([], vmlinux_path, module_dirs, args),
+                                  rettypes=load_rettypes([], vmlinux_path, module_dirs, args, module_index=module_index),
                                   overhead=parse_overhead(args.overhead))
         parsed_lines = builder.parsed
         structured_data = builder.to_data()
@@ -574,12 +577,14 @@ def main():
     # 构建时间轴数据（可选）
     timeline_json = None
     if args.timeline:
-        timeline_json = build_timeline_data(parsed_lines, vmlinux_path, module_dirs, args, structured_data)
+        timeline_json = build_timeline_data(parsed_lines, vmlinux_path, module_dirs, args, structured_data,
+                                            module_index=module_index)
 
     if args.export:
         from . import export, timeline as tlmod
         data = timeline_json or structured_data or tlmod.build_timeline([l.raw_line for l in parsed_lines],
-                                                     rettypes=load_rettypes(parsed_lines, vmlinux_path, module_dirs, args),
+                                                     rettypes=load_rettypes(parsed_lines, vmlinux_path, module_dirs, args,
+                                                                            module_index=module_index),
                                                      errno_map=ERROR_CODE_MAP,
                                                      overhead=parse_overhead(args.overhead)).to_data()
         ex = export.write(args.export, data, ERROR_CODE_MAP, input_name(args))
@@ -589,7 +594,8 @@ def main():
     compare_json = None
     if args.compare:
         try:
-            compare_json = build_compare_data(args, parsed_lines, timeline_json or structured_data, vmlinux_path, module_dirs)
+            compare_json = build_compare_data(args, parsed_lines, timeline_json or structured_data, vmlinux_path,
+                                               module_dirs, module_index=module_index)
         except (OSError, EOFError, lzma.LZMAError, inputs.raw.RawInputError, UftraceInputError, UnicodeError) as error:
             print(f"Error: cannot read comparison input: {error}", file=sys.stderr)
             sys.exit(1)
@@ -635,6 +641,7 @@ def main():
             omit_text=args.no_text_view and args.keep_source,
             user_src=args.user_src,
             module_dirs=module_dirs,  # 传递原始模块目录列表（用于auto-search）
+            module_index=module_index,
             base_url=args.base_url,
             module_url=args.module_url,  # 传递模块URL
             kernel_src=kernel_src_abs,  # 传递单个绝对路径

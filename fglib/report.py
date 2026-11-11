@@ -4,7 +4,6 @@ import re
 import os
 import sys
 import html
-import glob
 import threading
 import time
 import json
@@ -15,11 +14,12 @@ from itertools import islice
 from .assets import COMPARE_CSS, COMPARE_JS, REPORT_CSS, REPORT_DATA_JS, REPORT_FILTER_INDEX_JS, REPORT_JS, REPORT_TREE_CSS, TIMELINE_CSS, VIEWS_BOOT_JS, VIEWS_CSS, VIEWS_EARLY_JS, read_asset, timeline_script
 from .constants import APP_AUTHOR, APP_TITLE, APP_VERSION, ERROR_CODE_MAP, PROJECT_DIR
 from .inline import parse_chain, timeline_inline_map
+from .modules import ModuleIndex
 from .output import ReportSpool
 from .sources import rewrite as rewrite_sources
 from .highlight import highlight_c_code, highlight_ftrace_line
 from .resolver import call_faddr2line_batch, call_faddr2line_for_func_names, create_source_link, parse_list_output, parse_module_url
-from .util import build_source_url, clean_file_path, escape_html_preserve_spaces, find_module_path, format_args_info, get_environment_info, get_relative_path, remove_compiler_suffix, verbose_print
+from .util import build_source_url, clean_file_path, escape_html_preserve_spaces, format_args_info, get_environment_info, get_relative_path, remove_compiler_suffix, verbose_print
 
 
 TEXT_CHUNK_ROWS = 512
@@ -56,7 +56,7 @@ class HtmlGenerator:
                  module_src=None, module_srcs=None, script_args=None,
                  enable_filter=False, parse_time=0, total_time=0,
                  func_links=False, entry_offset=0, enable_fold=False,
-                 timeline_json=None, compare_json=None, source_provider=None, omit_text=False, user_src=None):
+                 timeline_json=None, compare_json=None, source_provider=None, omit_text=False, user_src=None, module_index=None):
         # Store all parameters as instance attributes
         self.parsed_lines = parsed_lines
         self.address_spaces = bool(parsed_lines and parsed_lines[0].get('record_type') == 'metadata')
@@ -75,6 +75,7 @@ class HtmlGenerator:
         self.vmlinux_path = vmlinux_path
         self.faddr2line_path = faddr2line_path
         self.module_dirs = module_dirs or []
+        self.module_index = module_index if module_index is not None else ModuleIndex(self.module_dirs, verbose)
         self.base_url = base_url
         self.module_url = module_url
         self.kernel_src = kernel_src
@@ -477,8 +478,6 @@ class HtmlGenerator:
         self.filter_html, self.combined_module_url_map, self.default_module_url,
         self.func_locations_map, self.vmlinux_funcs, self.module_funcs.
         """
-        module_dirs = self.module_dirs if self.module_dirs is not None else []
-
         # 初始化时间统计
         vmlinux_time = 0
         module_time = 0
@@ -505,75 +504,10 @@ class HtmlGenerator:
                         func_module_map[raw_func_name] = module_name
 
             # 如果有模块函数，需要查找模块文件路径
-            if func_module_map and module_dirs:
-                for module_name in set(func_module_map.values()):
-                    found = False
-                    # 在 module_dirs 中查找模块文件
-                    for module_dir in module_dirs:
-                        # 尝试多种可能的模块名格式
-                        # 内核加载模块时会将 - 替换为 _，所以需要双向查找
-                        module_name_variants = [module_name]
-
-                        # 如果模块名包含下划线，尝试替换为中划线
-                        if '_' in module_name:
-                            module_name_variants.append(module_name.replace('_', '-'))
-
-                        # 如果模块名包含中划线，尝试替换为下划线
-                        if '-' in module_name:
-                            module_name_variants.append(module_name.replace('-', '_'))
-
-                        # 去重
-                        module_name_variants = list(dict.fromkeys(module_name_variants))
-
-                        for variant in module_name_variants:
-                            # 方法1: 直接查找精确的 .ko 文件
-                            module_path = os.path.join(module_dir, f"{variant}.ko")
-                            if os.path.exists(module_path):
-                                module_paths[module_name] = module_path
-                                found = True
-                                break
-
-                            # 方法2: 查找带版本号的模块（优先匹配精确名称）
-                            # 先查找精确匹配
-                            exact_files = glob.glob(os.path.join(module_dir, f"{variant}.ko"))
-                            if exact_files:
-                                module_paths[module_name] = exact_files[0]
-                                found = True
-                                break
-
-                            # 再查找带后缀的模块，但优先选择最短的（最接近精确匹配的）
-                            module_files = glob.glob(os.path.join(module_dir, f"{variant}*.ko"))
-                            if module_files:
-                                # 按文件名长度排序，优先选择最短的
-                                module_files.sort(key=lambda x: len(os.path.basename(x)))
-                                module_paths[module_name] = module_files[0]
-                                found = True
-                                break
-
-                            # 方法3: 递归查找子目录
-                            for root, dirs, files in os.walk(module_dir):
-                                # 先查找精确匹配
-                                if f"{variant}.ko" in files:
-                                    full_path = os.path.join(root, f"{variant}.ko")
-                                    module_paths[module_name] = full_path
-                                    found = True
-                                    break
-
-                                # 再查找带后缀的模块
-                                matching_files = [f for f in files if f.startswith(f"{variant}") and f.endswith(".ko")]
-                                if matching_files:
-                                    # 按文件名长度排序
-                                    matching_files.sort(key=lambda x: len(x))
-                                    full_path = os.path.join(root, matching_files[0])
-                                    module_paths[module_name] = full_path
-                                    found = True
-                                    break
-
-                            if found:
-                                break
-
-                        if found:
-                            break
+            for module_name in sorted(set(func_module_map.values())):
+                module_path = self.module_index.find(module_name)
+                if module_path:
+                    module_paths[module_name] = module_path
 
             if unique_func_names and self.vmlinux_path and self.faddr2line_path:
                 verbose_print(f"收集到 {len(unique_func_names)} 个唯一函数名用于解析", self.verbose)
@@ -958,7 +892,7 @@ class HtmlGenerator:
         for module_name, funcs in module_funcs.items():
             verbose_print(f"Processing module {module_name} with {len(funcs)} functions", self.verbose)
             # 查找模块文件
-            module_path = find_module_path(module_name, self.module_dirs, self.verbose)
+            module_path = self.module_index.find(module_name)
 
             if not module_path or not os.path.isfile(module_path):
                 verbose_print(f"Module file not found for {module_name}", self.verbose)
@@ -1538,7 +1472,7 @@ class HtmlGenerator:
         return read_asset(REPORT_CSS)
 
 
-def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None, base_url=None, module_url=None, kernel_src=None, use_list=False, verbose=False, fast_mode=False, highlight_code=False, path_prefix=None, module_src=None, module_srcs=None, script_args=None, enable_filter=False, parse_time=0, total_time=0, func_links=False, entry_offset=0, enable_fold=False, timeline_json=None, compare_json=None, source_provider=None, omit_text=False):
+def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None, base_url=None, module_url=None, kernel_src=None, use_list=False, verbose=False, fast_mode=False, highlight_code=False, path_prefix=None, module_src=None, module_srcs=None, script_args=None, enable_filter=False, parse_time=0, total_time=0, func_links=False, entry_offset=0, enable_fold=False, timeline_json=None, compare_json=None, source_provider=None, omit_text=False, module_index=None):
     """Generate interactive HTML page. Wrapper for backward compatibility."""
     generator = HtmlGenerator(
         parsed_lines, vmlinux_path, faddr2line_path,
@@ -1550,7 +1484,7 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
         parse_time=parse_time, total_time=total_time,
         func_links=func_links, entry_offset=entry_offset,
         enable_fold=enable_fold, timeline_json=timeline_json, compare_json=compare_json,
-        source_provider=source_provider, omit_text=omit_text
+        source_provider=source_provider, omit_text=omit_text, module_index=module_index
     )
     return generator.generate()
 

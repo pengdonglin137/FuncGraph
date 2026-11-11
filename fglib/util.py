@@ -5,7 +5,6 @@ import os
 import subprocess
 import sys
 import html
-import fnmatch
 from urllib.parse import quote
 
 
@@ -39,96 +38,9 @@ def check_gawk_available():
 
 
 def find_module_path(module_name, module_dirs, verbose=False):
-    """在给定目录及其子目录中递归查找模块文件"""
-    if not module_dirs:
-        verbose_print(f"No module directories provided for {module_name}", verbose)
-        return None
-
-    verbose_print(f"Searching for module '{module_name}' in {len(module_dirs)} directories", verbose)
-
-    # 尝试多种可能的模块文件名模式
-    patterns = [
-        f"{module_name}.ko",
-        f"{module_name}.ko.debug",
-        f"{module_name}.ko.gz",
-        f"{module_name}.ko.xz",
-        f"{module_name}.ko.zst",
-        "*.ko",  # 通配符匹配
-        "*.ko.debug"
-    ]
-
-    # 递归搜索所有目录
-    for module_dir in module_dirs:
-        if not os.path.isdir(module_dir):
-            verbose_print(f"Skipping non-existent directory: {module_dir}", verbose)
-            continue
-
-        verbose_print(f"Searching in directory: {module_dir}", verbose)
-
-        # 遍历目录及其所有子目录
-        for root, dirs, files in os.walk(module_dir):
-            for pattern in patterns:
-                # 处理通配符模式
-                if '*' in pattern:
-                    for filename in files:
-                        if fnmatch.fnmatch(filename, pattern):
-                            full_path = os.path.join(root, filename)
-                            # 检查文件名是否包含模块名
-                            if module_name in filename:
-                                verbose_print(f"Found module match: {full_path}", verbose)
-                                return os.path.abspath(full_path)
-                else:
-                    # 直接匹配文件名
-                    candidate = os.path.join(root, pattern)
-                    if os.path.exists(candidate):
-                        verbose_print(f"Found exact match: {candidate}", verbose)
-                        return os.path.abspath(candidate)
-
-    # 尝试使用find命令进行深度搜索（如果可用）
-    try:
-        verbose_print("Trying find command for deeper search", verbose)
-        for module_dir in module_dirs:
-            if not os.path.isdir(module_dir):
-                continue
-
-            # 使用find命令搜索
-            cmd = ['find', module_dir, '-type', 'f',
-                   '(', '-name', f'{module_name}.ko',
-                   '-o', '-name', f'{module_name}.ko.debug',
-                   '-o', '-name', f'*{module_name}*.ko', ')']
-            verbose_print(f"Running find command: {' '.join(cmd)}", verbose)
-            result = subprocess.run(cmd, capture_output=True, text=True, check=True)
-            files = result.stdout.strip().split('\n')
-            if files and files[0]:
-                verbose_print(f"Find command found: {files[0]}", verbose)
-                return os.path.abspath(files[0])  # 返回第一个匹配项的绝对路径
-    except (subprocess.CalledProcessError, FileNotFoundError) as e:
-        verbose_print(f"Find command failed: {str(e)}", verbose)
-        pass
-
-    # 尝试处理模块名中下划线和中划线的转换
-    # 内核模块加载时会将中划线(-)替换为下划线(_)
-    # 所以需要尝试反向转换
-    if '_' in module_name:
-        module_name_hyphen = module_name.replace('_', '-')
-        verbose_print(f"Trying with hyphenated name: {module_name_hyphen}", verbose)
-
-        # 递归调用查找函数
-        result = find_module_path(module_name_hyphen, module_dirs, verbose)
-        if result:
-            return result
-
-    if '-' in module_name:
-        module_name_underscore = module_name.replace('-', '_')
-        verbose_print(f"Trying with underscored name: {module_name_underscore}", verbose)
-
-        # 递归调用查找函数
-        result = find_module_path(module_name_underscore, module_dirs, verbose)
-        if result:
-            return result
-
-    verbose_print(f"Module '{module_name}' not found in any directory", verbose)
-    return None
+    """Find one exact module; use ModuleIndex directly to share a report snapshot."""
+    from .modules import ModuleIndex
+    return ModuleIndex(module_dirs, verbose).find(module_name)
 
 
 def source_browser_url(browser, revision=None):
