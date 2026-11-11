@@ -89,6 +89,22 @@ Reading saved JSONL needs none of these native runtime libraries or executables.
 `fgcapture.sh` remains the kernel-only tracefs recorder; it does not accept
 uftrace user/mixed recording options.
 
+Spaces in workload executable/shared-library paths, recording directories and
+user source paths are supported; quote their shell arguments. Captured mapping
+names retain internal tabs and trailing spaces too. Export uses saved symbols
+and source metadata even after the original executable/library is moved away.
+Older recordings whose mapping paths were already truncated must be recorded
+again; neither re-export nor HTML generation can recover missing capture data.
+
+**Open ARM64 argument limitation:** on the Raspberry Pi with GCC 14.2.0,
+`-pg` overwrites `x0` before `_mcount`; the captured `arg1` is not the original
+first argument. The native recorder builds, but its ARM64 export regression run
+has five failing assertions/subcases in three tests for this issue. Do not treat
+those values as trustworthy or skip the failing checks. Patchable function entry
+needs a separately validated dynamic-tracing build; the current release build
+disables Capstone and did not record the probed patchable workload. The argument
+examples remain verified on x86_64, not a claim of ARM64 argument correctness.
+
 ## Generate a report
 
 ```bash

@@ -124,6 +124,10 @@ also prefer the bundled executable, then patched `uftrace` on `PATH`.
 `--uftrace-bin PATH` is an optional explicit override, not a required argument.
 Saved JSONL needs no native recorder during report generation.
 
+The argument-bearing `-pg` example below is verified on x86_64. ARM64/GCC first
+argument capture has an [open correctness limitation](docs/uftrace.md#install-and-select-the-recorder);
+do not treat its `arg1` as trustworthy until that issue is resolved.
+
 ```bash
 cc -pg -g -O0 -fno-omit-frame-pointer -o demo_mixed samples/demo_mixed.c
 printf 'FuncGraph demo\n' > demo-input.txt

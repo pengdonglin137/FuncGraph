@@ -106,6 +106,7 @@ jobs:
           scripts/uftrace.sh check
           FG_UFTRACE_RELEASE=1 JOBS=2 scripts/uftrace.sh build
           build/uftrace-${{ matrix.arch }}/bin/uftrace --version | grep 'uftrace v0.20 '
+          GIT_CEILING_DIRECTORIES="$PWD/build" make -C build/uftrace-src-${{ matrix.arch }} -j2 unittest UNITTESTARG=session_map
           test -z "$(git -C third_party/uftrace status --porcelain)"
       - name: Verify export fields without root or tracefs
         env:

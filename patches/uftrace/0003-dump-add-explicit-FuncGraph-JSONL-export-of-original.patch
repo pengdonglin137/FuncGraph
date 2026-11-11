@@ -1,7 +1,7 @@
 From a8dea10b162e35df5a39923a732e0bb9e02e306a Mon Sep 17 00:00:00 2001
 From: pengdonglin <pengdonglin@xiaomi.com>
 Date: Wed, 11 Nov 2026 05:25:49 +0800
-Subject: [PATCH 3/7] dump: add explicit FuncGraph JSONL export of original
+Subject: [PATCH 3/8] dump: add explicit FuncGraph JSONL export of original
  stream records
 
 Expose dump --fgraph / --format=fgraph with a versioned ns-integer schema. Export each user task and kernel CPU stream without replay lookahead or synthetic entry/exit completion; declare stream ordering and native address-space depth so consumers merge records explicitly. Keep user CPU unknown, preserve full kernel addresses, optional raw context, scheduler event common PID, event payloads, loss records and available user DWARF locations. Escape strings without fixed-size symbol buffers. Export actual recorded kernel settings rather than inspecting the exporter host. This is JSONL, not ftrace text; chronological merging and continuous mixed depth are importer responsibilities.

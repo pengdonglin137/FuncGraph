@@ -1,7 +1,7 @@
 From 9046c1b2e99a7ebdaee8a6842d68ef9d51236999 Mon Sep 17 00:00:00 2001
 From: pengdonglin <pengdonglin@xiaomi.com>
 Date: Wed, 11 Nov 2026 05:23:35 +0800
-Subject: [PATCH 1/7] kernel: probe full function-graph context and save
+Subject: [PATCH 1/8] kernel: probe full function-graph context and save
  effective settings
 
 Add --kernel-full-info to enable optional args, retval and return-address options plus available scheduler switch/waking/wakeup events. Missing optional capabilities do not prevent a capture. Save the actual trace clock, running kernel release and option/event readbacks beside every kernel capture, including unsupported states, rather than assuming requested options took effect. Leave default kernel-only recording options unchanged.

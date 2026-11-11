@@ -80,14 +80,17 @@ class InstalledPackageTest(unittest.TestCase):
 
     @unittest.skipUnless(WITH_UFTRACE, 'native uftrace wheel not requested')
     def test_bundled_recorder_and_directory_reports_outside_checkout(self):
-        source = Path(self.tmp.name, 'program.c')
+        directory = Path(self.tmp.name, 'workload with spaces')
+        directory.mkdir()
+        source = directory / 'program with spaces.c'
         binary = source.with_suffix('')
-        capture = Path(self.tmp.name, 'recording.data')
+        capture = directory / 'recording with spaces.data'
         source.write_text('int work(int value) { return value + 1; }\n'
                           'int main(void) { return work(41) != 42; }\n')
         self.run_command('cc', '-pg', '-g', '-O0', '-fno-omit-frame-pointer', '-o', str(binary), str(source))
         self.run_command(self.executable('fguftrace'), 'record', '--no-sched', '--no-libcall', '--srcline',
                          '-A', 'work@arg1/i32', '-R', 'work@retval/i32', '-d', str(capture), str(binary))
+        binary.rename(binary.with_name('moved program'))
         records = [json.loads(line) for line in self.run_command(
             self.executable('fguftrace'), 'dump', '--fgraph', '--srcline', '-d', str(capture)).splitlines()]
         self.assertEqual(records[0]['schema'], 'funcgraph.uftrace.v1')
@@ -95,6 +98,9 @@ class InstalledPackageTest(unittest.TestCase):
         work = [record for record in records if record.get('name') == 'work']
         self.assertEqual(work[0]['user_args'], ['41'])
         self.assertEqual(work[1]['user_retval'], '42')
+        self.assertEqual((Path(self.tmp.name) / work[0]['source']['file']).resolve(), source.resolve())
+        self.assertEqual(work[0]['source']['line'], 1)
+        self.assertGreater(int(work[0]['address'], 16), 0)
         for command in ('funcgraph', 'fgreport'):
             output = Path(self.tmp.name, command + '.html')
             arguments = ['--no-config', '--timeline', '--user-src', self.tmp.name] if command == 'funcgraph' else ['-P']

@@ -5,3 +5,4 @@
 0005-dump-export-user-scalar-values-from-recorded-argumen.patch
 0006-kernel-decode-relative-argument-locations-with-older.patch
 0007-dump-symbolize-original-kernel-return-PCs-using-capt.patch
+0008-fix-session-preserve-whitespace-in-captured-executab.patch

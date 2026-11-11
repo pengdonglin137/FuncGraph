@@ -10,10 +10,10 @@ provides `fguftrace`. A patched development build can be supplied explicitly.
 
 From the FuncGraph checkout, choose a new work directory:
 
-Keep the executable's build path free of spaces. With the pinned uftrace v0.20,
-a path containing spaces is truncated in saved executable mappings; recording
-may complete but function names, typed arguments and source resolution are lost.
-Quoting the shell arguments does not repair those saved mappings.
+The maintained uftrace patches preserve spaces in executable, library and source
+paths; the script quotes those paths. If an older recorder already truncated a
+saved mapping, record again with the current build: re-exporting the old capture
+cannot recreate its missing path, function names, typed arguments or source.
 
 ```bash
 bash samples/pigz_case.sh /tmp/fg-pigz

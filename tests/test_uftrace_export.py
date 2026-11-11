@@ -99,6 +99,58 @@ class UftraceExportTest(unittest.TestCase):
         self.assertNotIn('user_args', entry)
         self.assertEqual(exit_record['user_retval'], '2')
 
+    def test_executable_and_source_paths_with_spaces_survive_offline_export(self):
+        cases = [('build with spaces', 'application with spaces', []),
+                 ('构建 \t tabs', '应用程序 \t name  ', []),
+                 ('without build id', 'program build-id:deadbeef', ['-Wl,--build-id=none'])]
+        for folder, filename, options in cases:
+            with self.subTest(filename=filename):
+                directory = Path(self.workspace.name) / folder
+                directory.mkdir()
+                source = directory / 'source with spaces.c'
+                source.write_text('int child(int value) { return value + 1; }\n'
+                                  'int main(void) { return child(1) != 2; }\n')
+                binary = directory / filename
+                subprocess.run(['gcc', '-pg', '-g', '-O0', *options, '-o', str(binary), str(source)],
+                               check=True, capture_output=True)
+                self.capture = directory / 'recording with spaces'
+                subprocess.run([str(EXECUTABLE), 'record', '--no-sched', '--no-libcall', '--srcline',
+                                '-A', 'child@arg1/i32', '-R', 'child@retval/i32',
+                                '-d', str(self.capture), str(binary)], check=True, capture_output=True)
+                self.assertTrue(any(str(binary) in path.read_text() for path in self.capture.glob('*.map')))
+                binary.rename(binary.with_name('moved application'))
+                calls = [record for record in self.records() if record.get('name') == 'child']
+                self.assertEqual([record['type'] for record in calls], ['entry', 'exit'])
+                self.assertEqual(calls[0]['user_args'], ['1'])
+                self.assertEqual(calls[1]['user_retval'], '2')
+                self.assertEqual(calls[0]['source'], {'file': str(source), 'line': 1})
+                self.assertGreater(int(calls[0]['address'], 16), 0)
+
+    def test_shared_library_paths_with_spaces_preserve_symbols_and_sources(self):
+        directory = Path(self.workspace.name) / 'library build with spaces'
+        directory.mkdir()
+        source = directory / 'library source.c'
+        source.write_text('int shared_child(int value) { return value + 1; }\n')
+        library = directory / 'libwith spaces.so'
+        subprocess.run(['gcc', '-pg', '-g', '-O0', '-fPIC', '-shared', '-o', str(library), str(source)],
+                       check=True, capture_output=True)
+        main = directory / 'main.c'
+        main.write_text('int shared_child(int);\nint main(void) { return shared_child(1) != 2; }\n')
+        binary = directory / 'workload'
+        subprocess.run(['gcc', '-pg', '-g', '-O0', '-o', str(binary), str(main), str(library),
+                        '-Wl,-rpath,' + str(directory)], check=True, capture_output=True)
+        self.capture = directory / 'capture'
+        subprocess.run([str(EXECUTABLE), 'record', '--no-sched', '--no-libcall', '--srcline',
+                        '-A', 'shared_child@arg1/i32', '-R', 'shared_child@retval/i32',
+                        '-d', str(self.capture), str(binary)], check=True, capture_output=True)
+        self.assertTrue(any(str(library) in path.read_text() for path in self.capture.glob('*.map')))
+        library.rename(library.with_name('moved library.so'))
+        calls = [record for record in self.records() if record.get('name') == 'shared_child']
+        self.assertEqual([record['type'] for record in calls], ['entry', 'exit'])
+        self.assertEqual(calls[0]['user_args'], ['1'])
+        self.assertEqual(calls[1]['user_retval'], '2')
+        self.assertEqual(calls[0]['source'], {'file': str(source), 'line': 1})
+
     def test_recorded_settings_not_export_host(self):
         (self.capture / 'kernel-funcgraph.info').write_text(
             'kernel_release=fixture-kernel\ntrace_clock=local [mono]\n'

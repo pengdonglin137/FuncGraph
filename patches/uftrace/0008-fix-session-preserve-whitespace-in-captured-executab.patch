@@ -1,0 +1,232 @@
+From 2e6a42260d5fd616e814e2176a29a82458a163e3 Mon Sep 17 00:00:00 2001
+From: pengdonglin <pengdonglin@xiaomi.com>
+Date: Wed, 11 Nov 2026 12:41:33 +0800
+Subject: [PATCH 8/8] fix(session): preserve whitespace in captured executable
+ and library paths
+
+Parse only the fixed /proc/maps header with scanf and keep its complete
+pathname remainder when recording, annotating and reading session maps.
+Bound protection fields and allow space for a PATH_MAX pathname plus its
+mapping header and optional build-id suffix.
+
+Recognize a bounded hexadecimal build-id trailer only at the end of the
+saved pathname. Emit an explicit empty trailer for ELF objects without a
+build ID so a legitimate filename ending in build-id:deadbeef is not
+mistaken for metadata. Preserve tabs and trailing spaces in filenames.
+
+Add native map-reader coverage for ordinary/whitespace library names,
+legacy mappings without a trailer, explicit empty IDs, long paths and a
+final line without a newline. Real FuncGraph recording regressions also
+exercise Unicode filenames, offline export after moving the executable
+or shared library, typed arguments, return values and source positions.
+---
+ libmcount/record.c |  14 ++++--
+ utils/session.c    | 103 +++++++++++++++++++++++++++++++++++++--------
+ 2 files changed, 96 insertions(+), 21 deletions(-)
+
+diff --git a/libmcount/record.c b/libmcount/record.c
+index f83d1f3abf1b..b838c9955caf 100644
+--- a/libmcount/record.c
++++ b/libmcount/record.c
+@@ -1196,7 +1196,7 @@ struct uftrace_mmap *new_map(const char *path, uint64_t start, uint64_t end, con
+ void record_proc_maps(char *dirname, const char *sess_id, struct uftrace_sym_info *sinfo)
+ {
+ 	FILE *ifp, *ofp;
+-	char buf[PATH_MAX];
++	char buf[PATH_MAX + 256];
+ 	struct uftrace_mmap *prev_map = NULL;
+ 	bool prev_written = false;
+ 
+@@ -1219,12 +1219,18 @@ void record_proc_maps(char *dirname, const char *sess_id, struct uftrace_sym_inf
+ 		unsigned char prev_major = 0, prev_minor = 0;
+ 		uint32_t ino, prev_ino = 0;
+ 		uint64_t off, prev_off = 0;
+-		char path[PATH_MAX];
++		char *path;
++		int path_offset = 0;
+ 		struct uftrace_mmap *map;
+ 
+ 		/* skip anon mappings */
+-		if (sscanf(buf, "%lx-%lx %s %" SCNx64 " %hhx:%hhx %u %s\n", &start, &end, prot,
+-			   &off, &major, &minor, &ino, path) != 8)
++		if (sscanf(buf, "%lx-%lx %4s %" SCNx64 " %hhx:%hhx %u %n", &start, &end, prot,
++			   &off, &major, &minor, &ino, &path_offset) != 7 ||
++		    !path_offset || !buf[path_offset])
++			continue;
++		path = buf + path_offset;
++		path[strcspn(path, "\n")] = '\0';
++		if (!*path || strlen(path) >= PATH_MAX)
+ 			continue;
+ 
+ 		/*
+diff --git a/utils/session.c b/utils/session.c
+index fea5dba3e05a..3f3b8113ef38 100644
+--- a/utils/session.c
++++ b/utils/session.c
+@@ -27,7 +27,7 @@ static void delete_tasks(struct uftrace_session_link *sessions);
+ void read_session_map(char *dirname, struct uftrace_sym_info *sinfo, char *sid)
+ {
+ 	FILE *fp;
+-	char buf[PATH_MAX];
++	char buf[PATH_MAX + 256];
+ 	const char *last_libname = NULL;
+ 	struct uftrace_mmap **maps = &sinfo->maps;
+ 	struct uftrace_mmap *last_map = NULL;
+@@ -41,20 +41,36 @@ void read_session_map(char *dirname, struct uftrace_sym_info *sinfo, char *sid)
+ 	while (fgets(buf, sizeof(buf), fp) != NULL) {
+ 		uint64_t start, end;
+ 		char prot[5];
+-		char path[PATH_MAX];
+-		char build_id[BUILD_ID_STR_SIZE + sizeof(build_id_prefix)];
++		char *path, *build_id = NULL, *build_id_marker;
++		int path_offset = 0;
+ 		size_t namelen;
+ 		struct uftrace_mmap *map;
+ 
+-		/* prevent to reuse previous iteration's result */
+-		build_id[0] = '\0';
+-
+ 		/* skip anon mappings */
+-		if (sscanf(buf, "%" PRIx64 "-%" PRIx64 " %s %*x %*x:%*x %*d %s %s", &start, &end,
+-			   prot, path, build_id) < 4) {
++		if (sscanf(buf, "%" PRIx64 "-%" PRIx64 " %4s %*x %*x:%*x %*d %n", &start, &end,
++			   prot, &path_offset) != 3 ||
++		    !path_offset || !buf[path_offset]) {
+ 			pr_dbg("sscanf failed\n");
+ 			continue;
+ 		}
++		path = buf + path_offset;
++		path[strcspn(path, "\n")] = '\0';
++		if (!*path)
++			continue;
++		build_id_marker = strrchr(path, ' ');
++		if (build_id_marker &&
++		    !strncmp(build_id_marker + 1, build_id_prefix, strlen(build_id_prefix))) {
++			char *value = build_id_marker + 1 + strlen(build_id_prefix);
++			size_t length = strlen(value);
++
++			if (length < BUILD_ID_STR_SIZE &&
++			    strspn(value, "0123456789abcdefABCDEF") == length) {
++				build_id = value;
++				*build_id_marker = '\0';
++			}
++		}
++		if (strlen(path) >= PATH_MAX)
++			continue;
+ 
+ 		/* skip the [stack] mapping */
+ 		if (path[0] == '[') {
+@@ -82,10 +98,8 @@ void read_session_map(char *dirname, struct uftrace_sym_info *sinfo, char *sid)
+ 		memcpy(map->libname, path, namelen);
+ 		map->libname[strlen(path)] = '\0';
+ 
+-		if (!strncmp(build_id, build_id_prefix, strlen(build_id_prefix))) {
+-			memcpy(map->build_id, build_id + strlen(build_id_prefix),
+-			       sizeof(build_id) - sizeof(build_id_prefix));
+-		}
++		if (build_id)
++			memcpy(map->build_id, build_id, strlen(build_id) + 1);
+ 
+ 		/* set mapping of main executable */
+ 		if (sinfo->exec_map == NULL && sinfo->filename && !strcmp(path, sinfo->filename)) {
+@@ -133,7 +147,7 @@ void delete_session_map(struct uftrace_sym_info *sinfo)
+ void update_session_map(const char *filename)
+ {
+ 	FILE *ifp, *ofp;
+-	char buf[PATH_MAX];
++	char buf[PATH_MAX + 256];
+ 	const char build_id_prefix[] = "build-id:";
+ 
+ 	ifp = fopen(filename, "r");
+@@ -146,9 +160,10 @@ void update_session_map(const char *filename)
+ 		pr_err("cannot create new map file: %s", buf);
+ 
+ 	while (fgets(buf, sizeof(buf), ifp) != NULL) {
+-		char path[PATH_MAX];
++		char *path;
+ 		char build_id[BUILD_ID_STR_SIZE];
+ 		int len;
++		int path_offset = 0;
+ 
+ 		len = strlen(buf);
+ 		if (len > 0 && buf[len - 1] == '\n')
+@@ -156,15 +171,18 @@ void update_session_map(const char *filename)
+ 		fwrite_all(buf, len, ofp);
+ 
+ 		/* skip anon mappings */
+-		if (sscanf(buf, "%*x-%*x %*s %*x %*x:%*x %*d %s", path) != 1)
++		sscanf(buf, "%*x-%*x %*s %*x %*x:%*x %*d %n", &path_offset);
++		if (!path_offset || !buf[path_offset])
+ 			goto next;
++		path = buf + path_offset;
+ 
+ 		/* skip the special mappings like [stack] */
+ 		if (path[0] == '[')
+ 			goto next;
+ 
+-		if (read_build_id(path, build_id, sizeof(build_id)) == 0)
+-			fprintf(ofp, " %s%s", build_id_prefix, build_id);
++		if (read_build_id(path, build_id, sizeof(build_id)) != 0)
++			build_id[0] = '\0';
++		fprintf(ofp, " %s%s", build_id_prefix, build_id);
+ 
+ next:
+ 		fputc('\n', ofp);
+@@ -1345,6 +1363,57 @@ TEST_CASE(session_map_build_id)
+ 	return TEST_OK;
+ }
+ 
++TEST_CASE(session_map_whitespace_paths)
++{
++	const char *paths[] = {
++		"/tmp/application with spaces",
++		"/tmp/library with spaces.so",
++		"/tmp/library\twith\ttabs.so",
++		"/tmp/trailing spaces  ",
++		"/tmp/file build-id:not-metadata",
++		"/tmp/file build-id:deadbeef",
++	};
++	char long_path[PATH_MAX];
++	struct uftrace_sym_info test_sinfo = {
++		.filename = "/tmp/application with spaces",
++	};
++	struct uftrace_mmap *map;
++	size_t index;
++	FILE *fp;
++
++	fp = fopen("sid-whitespace.map", "w");
++	TEST_NE(fp, NULL);
++	for (index = 0; index < ARRAY_SIZE(paths); index++)
++		fprintf(fp, "%zx-%zx r-xp 00000000 08:03 4096 %s%s\n", (index + 1) * 4096,
++			(index + 2) * 4096, paths[index],
++			index + 1 == ARRAY_SIZE(paths) ? " build-id:"
++						     : index % 2 ? "" : " build-id:1234567890abcdef");
++	memset(long_path, 'a', sizeof(long_path) - 1);
++	long_path[0] = '/';
++	long_path[PATH_MAX / 2] = ' ';
++	long_path[sizeof(long_path) - 1] = '\0';
++	fprintf(fp, "100000-101000 r-xp 00000000 08:03 4096 %s build-id:1234567890abcdef",
++		long_path);
++	fclose(fp);
++
++	read_session_map(".", &test_sinfo, "whitespace");
++	remove("sid-whitespace.map");
++	map = test_sinfo.maps;
++	TEST_EQ(test_sinfo.exec_map, map);
++	for (index = 0; index < ARRAY_SIZE(paths); index++) {
++		TEST_NE(map, NULL);
++		TEST_STREQ(map->libname, paths[index]);
++		TEST_STREQ(map->build_id, index % 2 ? "" : "1234567890abcdef");
++		map = map->next;
++	}
++	TEST_NE(map, NULL);
++	TEST_STREQ(map->libname, long_path);
++	TEST_STREQ(map->build_id, "1234567890abcdef");
++	TEST_EQ(map->next, NULL);
++	delete_session_map(&test_sinfo);
++	return TEST_OK;
++}
++
+ TEST_CASE(session_autoarg_dlopen)
+ {
+ 	struct uftrace_session *sess;
