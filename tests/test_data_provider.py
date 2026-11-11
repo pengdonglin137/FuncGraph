@@ -161,6 +161,226 @@ class DataProviderTest(unittest.TestCase):
         self.assertEqual(self.page.evaluate('async () => await fgData.loadSource(3)'), 'fourth')
         self.assertEqual(self.count('fgSrc2.json'), 1)
 
+    def test_source_cache_evicts_old_chunks_without_evicting_other_report_data(self):
+        self.payloads.update({'fgSrc' + str(index): encode(['source ' + str(index)]) for index in range(12)})
+        self.publish(source_catalog=dict(version=1, count=12, chunk_size=1))
+        result = self.page.evaluate('''async () => {
+            const notes = await fgData.load('notes');
+            const timeline = await fgData.load('tlData');
+            const sources = [];
+            for (let index = 0; index < 12; index++) sources.push(await fgData.loadSource(index));
+            return {sources, ready:Array.from({length:12}, (unused, index) => fgData.sourceReady(index)),
+                notes:fgData.read('notes') === notes, timeline:fgData.read('tlData') === timeline};
+        }''')
+        self.assertEqual(result, dict(sources=['source ' + str(index) for index in range(12)],
+                                      ready=[False] * 4 + [True] * 8, notes=True, timeline=True))
+        self.assertEqual(self.count('manifest.json'), 1)
+        self.assertEqual(self.count('notes.json'), 1)
+        self.assertEqual(self.count('tlData.json'), 1)
+
+    def test_source_cache_refreshes_reads_and_loads_but_not_readiness_probes(self):
+        self.payloads.update({'fgSrc' + str(index): encode(['source ' + str(index), 'next ' + str(index)])
+                              for index in range(0, 18, 2)})
+        for access in ['readSource', 'loadSource', 'read', 'load']:
+            with self.subTest(access=access):
+                self.publish(source_catalog=dict(version=1, count=18, chunk_size=2))
+                result = self.page.evaluate('''async access => {
+                    for (let index = 0; index < 16; index += 2) await fgData.loadSource(index);
+                    await fgData[access](access.endsWith('Source') ? 1 : 'fgSrc0');
+                    fgData.sourceReady(2);
+                    fgData.ready('fgSrc2');
+                    await fgData.loadSource(16);
+                    return Array.from({length:9}, (unused, index) => fgData.sourceReady(index * 2));
+                }''', access)
+                self.assertEqual(result, [True, False] + [True] * 7)
+
+    def test_source_cache_counts_verified_utf8_bytes_not_string_characters(self):
+        self.payloads.update(fgSrc0=encode(['中' * (3 * 1024 * 1024)]),
+                             fgSrc1=encode(['🙂' * (2 * 1024 * 1024)]))
+        self.publish(source_catalog=dict(version=1, count=2, chunk_size=1))
+        result = self.page.evaluate('''async () => {
+            const first = (await fgData.loadSource(0)).length;
+            const second = (await fgData.loadSource(1)).length;
+            return {first, second, ready:[fgData.sourceReady(0), fgData.sourceReady(1)]};
+        }''')
+        self.assertEqual(result, dict(first=3 * 1024 * 1024, second=4 * 1024 * 1024, ready=[False, True]))
+
+    def test_source_cache_accepts_exact_budget_and_delivers_oversized_chunks_without_retaining_them(self):
+        limit = 16 * 1024 * 1024
+        self.payloads.update(fgSrc0=encode(['x' * (limit - 4)]), fgSrc1=encode(['y' * (limit - 3)]))
+        self.assertEqual(len(self.payloads['fgSrc0']), limit)
+        self.assertEqual(len(self.payloads['fgSrc1']), limit + 1)
+        self.publish(source_catalog=dict(version=1, count=2, chunk_size=1))
+        result = self.page.evaluate('''async () => {
+            const first = (await fgData.loadSource(0)).length;
+            const second = (await fgData.loadSource(1)).length;
+            const repeated = (await fgData.load('fgSrc1'))[0].length;
+            return {first, second, repeated, ready:[fgData.sourceReady(0), fgData.sourceReady(1)]};
+        }''')
+        self.assertEqual(result, dict(first=limit - 4, second=limit - 3, repeated=limit - 3, ready=[True, False]))
+        self.assertEqual(self.count('fgSrc0.json'), 1)
+        self.assertEqual(self.count('fgSrc1.json'), 2)
+        self.assertEqual(self.count('manifest.json'), 1)
+
+    def test_releasing_a_source_chunk_returns_its_byte_budget(self):
+        self.payloads.update(fgSrc0=encode(['中' * (3 * 1024 * 1024)]), fgSrc1=encode(['small']),
+                             fgSrc2=encode(['新' * (3 * 1024 * 1024)]))
+        self.publish(source_catalog=dict(version=1, count=3, chunk_size=1))
+        result = self.page.evaluate('''async () => {
+            await fgData.loadSource(0);
+            await fgData.loadSource(1);
+            fgData.release('fgSrc0');
+            const length = (await fgData.loadSource(2)).length;
+            return {length, ready:[fgData.sourceReady(0), fgData.sourceReady(1), fgData.sourceReady(2)]};
+        }''')
+        self.assertEqual(result, dict(length=3 * 1024 * 1024, ready=[False, True, True]))
+
+    def test_embedded_and_legacy_source_pools_keep_their_existing_cache_behavior(self):
+        self.payloads['fgSrc'] = encode(['legacy source'])
+        self.payloads.update({'fgSrc' + str(index): encode(['chunk ' + str(index)]) for index in range(9)})
+        self.publish(embedded=True)
+        result = self.page.evaluate('''async () => {
+            const embedded = fgData.read('fgSrc');
+            const original = await fgData.loadSource(0);
+            const preserved = original === embedded[0] && fgData.read('fgSrc') === embedded;
+            document.getElementById('fgSrc').remove();
+            fgData.release('fgSrc');
+            const legacy = await fgData.loadSource(0);
+            for (let index = 0; index < 9; index++) await fgData.load('fgSrc' + index);
+            return {preserved, legacy, ready:fgData.sourceReady(0),
+                chunks:Array.from({length:9}, (unused, index) => fgData.ready('fgSrc' + index))};
+        }''')
+        self.assertEqual(result, dict(preserved=True, legacy='legacy source', ready=True, chunks=[True] * 9))
+        self.assertEqual(self.count('fgSrc.json'), 1)
+
+    def test_released_and_invalid_source_chunks_do_not_consume_cache_slots(self):
+        self.payloads.update({'fgSrc' + str(index): encode(['source ' + str(index)]) for index in range(11)})
+        self.payloads['fgSrc0'] = encode([7])
+        self.publish(source_catalog=dict(version=1, count=11, chunk_size=1))
+        result = self.page.evaluate('''async () => {
+            await fgData.loadSource(0).catch(() => {});
+            for (let index = 1; index < 9; index++) await fgData.loadSource(index);
+            const released = fgData.release('fgSrc4');
+            const again = fgData.release('fgSrc4');
+            await fgData.loadSource(9);
+            const before = fgData.sourceReady(1);
+            await fgData.loadSource(10);
+            return {released, again, before,
+                ready:Array.from({length:11}, (unused, index) => fgData.sourceReady(index))};
+        }''')
+        self.assertEqual(result, dict(released=True, again=False, before=True,
+                                      ready=[False, False, True, True, False] + [True] * 6))
+
+    def test_invalid_source_contents_do_not_displace_valid_cached_chunks(self):
+        self.payloads.update({'fgSrc' + str(index): encode(['source ' + str(index)]) for index in range(8)})
+        self.payloads['fgSrc8'] = encode([7])
+        self.publish(source_catalog=dict(version=1, count=9, chunk_size=1))
+        result = self.page.evaluate('''async () => {
+            for (let index = 0; index < 8; index++) await fgData.loadSource(index);
+            const error = await fgData.loadSource(8).catch(error => error.message);
+            return {error, ready:Array.from({length:9}, (unused, index) => fgData.sourceReady(index))};
+        }''')
+        self.assertIn('Invalid source chunk contents', result['error'])
+        self.assertEqual(result['ready'], [True] * 8 + [False])
+
+    def test_direct_loads_cannot_cache_source_names_outside_catalog_chunk_boundaries(self):
+        self.payloads.update(fgSrc0=encode(['first', 'second']), fgSrc1=encode(['misaligned']),
+                             fgSrc9007199254740992=encode(['unsafe identity']))
+        self.publish(source_catalog=dict(version=1, count=2, chunk_size=2))
+        result = self.page.evaluate('''async () => {
+            await fgData.loadSource(0);
+            const errors = [];
+            for (const name of ['fgSrc1', 'fgSrc9007199254740992']) {
+                try { await fgData.load(name); } catch (error) { errors.push(error.message); }
+            }
+            return {errors, first:fgData.readSource(0),
+                ready:['fgSrc0', 'fgSrc1', 'fgSrc9007199254740992'].map(name => fgData.ready(name))};
+        }''')
+        self.assertIn('Invalid source chunk identity', result['errors'][0])
+        self.assertIn('Invalid source identity', result['errors'][1])
+        self.assertEqual(result['first'], 'first')
+        self.assertEqual(result['ready'], [True, False, False])
+
+    def test_evicted_source_chunks_are_reverified_and_failed_reloads_preserve_other_entries(self):
+        self.payloads.update({'fgSrc' + str(index): encode(['source ' + str(index)]) for index in range(9)})
+        self.publish(source_catalog=dict(version=1, count=9, chunk_size=1))
+        self.page.evaluate('''async () => {
+            for (let index = 0; index < 9; index++) await fgData.loadSource(index);
+        }''')
+        self.server.responses['/report/data/fgSrc0.json'] = (200, encode(['broken 0']), None)
+        error = self.page.evaluate('''async () => {
+            try { await fgData.loadSource(0); } catch (error) { return error.message; }
+        }''')
+        self.assertIn('checksum mismatch', error)
+        self.assertFalse(self.page.evaluate('fgData.sourceReady(0)'))
+        self.assertTrue(self.page.evaluate('fgData.sourceReady(1)'))
+        self.server.responses['/report/data/fgSrc0.json'] = (200, self.payloads['fgSrc0'], None)
+        self.assertEqual(self.page.evaluate('async () => await fgData.loadSource(0)'), 'source 0')
+        self.assertFalse(self.page.evaluate('fgData.sourceReady(1)'))
+        self.assertEqual(self.count('fgSrc0.json'), 3)
+        self.assertEqual(self.count('manifest.json'), 1)
+
+    def test_concurrent_source_consumers_receive_values_even_when_other_completions_evict_their_chunk(self):
+        self.payloads.update({'fgSrc' + str(index): encode(['source ' + str(index), 'source ' + str(index + 1)])
+                              for index in range(0, 20, 2)})
+        self.publish(source_catalog=dict(version=1, count=20, chunk_size=2))
+        result = self.page.evaluate('''async () => {
+            const values = await Promise.all(Array.from({length:20}, (unused, index) => fgData.loadSource(index)));
+            const ready = Array.from({length:20}, (unused, index) => fgData.sourceReady(index));
+            return {values, ready};
+        }''')
+        self.assertEqual(result['values'], ['source ' + str(index) for index in range(20)])
+        self.assertEqual(sum(result['ready']), 16)
+        self.assertEqual(result['ready'][::2], result['ready'][1::2])
+        self.assertTrue(all(self.count('fgSrc' + str(index) + '.json') == 1 for index in range(0, 20, 2)))
+
+    def test_canceled_source_loads_do_not_evict_or_reorder_cached_chunks(self):
+        self.payloads.update({'fgSrc' + str(index): encode(['source ' + str(index)]) for index in range(9)})
+        self.publish(source_catalog=dict(version=1, count=9, chunk_size=1))
+        self.page.evaluate('''async () => {
+            for (let index = 0; index < 8; index++) await fgData.loadSource(index);
+        }''')
+        gate, requested = self.gate('fgSrc8.json')
+        self.page.evaluate('''() => {
+            window.sourceController = new AbortController();
+            window.pendingSource = fgData.loadSource(8, {signal:sourceController.signal}).catch(error => error.name);
+        }''')
+        self.assertTrue(requested.wait(10), 'source chunk was not requested')
+        self.page.evaluate('sourceController.abort()')
+        self.assertEqual(self.page.evaluate('async () => await pendingSource'), 'AbortError')
+        gate.set()
+        result = self.page.evaluate('''async () => {
+            const canceled = await fgData.loadSource(0, {signal:sourceController.signal}).catch(error => error.name);
+            const before = Array.from({length:9}, (unused, index) => fgData.sourceReady(index));
+            const value = await fgData.loadSource(8);
+            return {canceled, before, value, ready:fgData.sourceReady(0)};
+        }''')
+        self.assertEqual(result, dict(canceled='AbortError', before=[True] * 8 + [False], value='source 8', ready=False))
+        self.assertEqual(self.count('fgSrc8.json'), 2)
+
+    def test_source_eviction_keeps_rendered_panels_and_refetches_for_new_consumers(self):
+        self.payloads.update({'fgSrc' + str(index): encode(['<div>source ' + str(index) + '</div>'])
+                              for index in range(9)})
+        self.publish(source_catalog=dict(version=1, count=9, chunk_size=1))
+        result = self.page.evaluate('''async () => {
+            const first = document.createElement('div');
+            first.dataset.src = '0';
+            document.body.appendChild(first);
+            await fgFill(first);
+            for (let index = 1; index < 9; index++) await fgData.loadSource(index);
+            const evicted = !fgData.sourceReady(0);
+            await fgFill(first);
+            const unchanged = !fgData.sourceReady(0);
+            const second = document.createElement('div');
+            second.dataset.src = '0';
+            document.body.appendChild(second);
+            await fgFill(second);
+            return {evicted, unchanged, first:first.textContent, second:second.textContent,
+                ready:fgData.sourceReady(0), busy:second.hasAttribute('aria-busy')};
+        }''')
+        self.assertEqual(result, dict(evicted=True, unchanged=True, first='source 0', second='source 0', ready=True, busy=False))
+        self.assertEqual(self.count('fgSrc0.json'), 2)
+
     def test_source_catalog_rejects_invalid_identities_without_fetching_chunks(self):
         self.payloads['fgSrc0'] = encode(['source'])
         for catalog, identity in [(dict(version=2, count=1, chunk_size=1), 0),

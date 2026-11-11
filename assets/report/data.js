@@ -5,8 +5,45 @@
         return element && element.tagName === 'SCRIPT' && element.type === 'application/json' ? element : null;
     };
     const cache = new Map();
+    const sourceCache = new Map();
+    const SOURCE_CACHE_CHUNKS = 8;
+    const SOURCE_CACHE_BYTES = 16 * 1024 * 1024;
+    let sourceCacheBytes = 0;
     const requests = new Map();
     let descriptor = null;
+    function cacheRelease(key) {
+        if (sourceCache.has(key)) {
+            sourceCacheBytes -= sourceCache.get(key);
+            sourceCache.delete(key);
+        }
+        return cache.delete(key);
+    }
+    function cacheRead(key) {
+        if (sourceCache.has(key)) {
+            const bytes = sourceCache.get(key);
+            sourceCache.delete(key);
+            sourceCache.set(key, bytes);
+        }
+        return cache.get(key);
+    }
+    function cacheStore(key, value, bytes) {
+        const source = bytes !== undefined && /^data:fgSrc(?:0|[1-9][0-9]*)$/.test(key) && embedded('fgSourceChunks');
+        if (source) {
+            const info = sourceInfo(Number(key.slice('data:fgSrc'.length)));
+            if ('data:' + info.name !== key) throw new Error('Invalid source chunk identity: ' + key);
+            sourceValue(info, value);
+        }
+        cacheRelease(key);
+        if (source) {
+            if (bytes > SOURCE_CACHE_BYTES) return;
+            while (sourceCache.size >= SOURCE_CACHE_CHUNKS || sourceCacheBytes + bytes > SOURCE_CACHE_BYTES) {
+                cacheRelease(sourceCache.keys().next().value);
+            }
+            sourceCache.set(key, bytes);
+            sourceCacheBytes += bytes;
+        }
+        cache.set(key, value);
+    }
     function aborted(signal) {
         if (signal && signal.aborted) throw new DOMException('Data request canceled', 'AbortError');
     }
@@ -86,16 +123,16 @@
         const text = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
         return resource.format === 'json' ? JSON.parse(text) : text;
     }
-    function request(key, signal, loader) {
+    function request(key, signal, loader, store = cacheStore) {
         try { aborted(signal); } catch (error) { return Promise.reject(error); }
-        if (cache.has(key)) return Promise.resolve(cache.get(key));
+        if (cache.has(key)) return Promise.resolve(cacheRead(key));
         let flight = requests.get(key);
         if (!flight) {
             flight = { controller: new AbortController(), users: 0, promise: null };
             requests.set(key, flight);
             flight.promise = Promise.resolve().then(() => loader(flight.controller.signal)).then(value => {
                 aborted(flight.controller.signal);
-                if (requests.get(key) === flight) cache.set(key, value);
+                if (requests.get(key) === flight) store(key, value);
                 return value;
             }).finally(() => {
                 if (requests.get(key) === flight) requests.delete(key);
@@ -145,11 +182,11 @@
     }
     function read(name) {
         const key = 'data:' + name;
-        if (cache.has(key)) return cache.get(key);
+        if (cache.has(key)) return cacheRead(key);
         const element = embedded(name);
         if (!element) throw new Error('Report data ' + name + ' is not ready; await fgData.load() first');
         const value = JSON.parse(element.textContent);
-        cache.set(key, value);
+        cacheStore(key, value);
         return value;
     }
     function load(name, options = {}) {
@@ -158,13 +195,15 @@
             aborted(signal);
             if (ready(name)) return Promise.resolve(read(name));
         } catch (error) { return Promise.reject(error); }
+        let resourceSize;
         return request('data:' + name, signal, async active => {
             const value = await manifest(active);
             if (!Object.prototype.hasOwnProperty.call(value.resources, name)) throw new Error('Report resource not found: ' + name);
+            resourceSize = value.resources[name].bytes;
             const config = settings();
             const url = resourceURL(config.manifest, new URL('.', location.href));
             return verified(value.resources[name], new URL('.', url), active);
-        });
+        }, (key, value) => cacheStore(key, value, resourceSize));
     }
     function sourceInfo(source) {
         if (!Number.isSafeInteger(source) || source < 0) throw new Error('Invalid source identity');
@@ -181,7 +220,7 @@
     function sourceValue(info, data) {
         if (!Array.isArray(data) || info.count !== null && data.length !== info.count ||
             !checkedSources.has(data) && data.some(value => typeof value !== 'string')) {
-            cache.delete('data:' + info.name);
+            cacheRelease('data:' + info.name);
             throw new Error('Invalid source chunk contents: ' + info.name);
         }
         checkedSources.add(data);
@@ -200,7 +239,7 @@
     window.fgData = {
         read, load, ready,
         readSource, loadSource, sourceReady: source => ready(sourceInfo(source).name),
-        release: name => cache.delete('data:' + name),
+        release: name => cacheRelease('data:' + name),
         external: name => !!descriptorNode && !embedded(name),
         length: name => {
             const element = embedded(name);

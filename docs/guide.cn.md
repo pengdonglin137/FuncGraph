@@ -2,7 +2,7 @@
 
 **raw 采集文件**：自动识别 trace-cmd 二进制容器：`funcgraph trace.dat --timeline --output trace.html`。原生依赖、固定子模块、buffer 选择及边界见 [raw 输入文档](raw-input.cn.md)；不支持独立 trace_pipe_raw 裸页。
 
-报告加载：普通报告仍为离线单文件。大报告可显式运行 `funcgraph TRACE --timeline --report-mode sidecar --output REPORT_DIRECTORY`，再用 `fgview REPORT_DIRECTORY` 打开。默认 Timeline 不加载 Text 行，Compare 按需读取；统一过滤按需加载完整 Text 过滤索引，不挂载 Text DOM，提供进度、取消及失败保留旧结果后的重试。首次进入 Text 或跳转 trace 行号/锚点时才**完整加载 Text**，在文档外分批准备、显示进度并支持取消，随后重新应用当前过滤。最终布局仍可能阻塞，完整 DOM 仍常驻；不是虚拟列表，也不保证打开总时间更短。保存的 Text 偏好和行号锚点优先于初始 Timeline。sidecar 源码正文按最多 64 条记录分块按需读取，支持校验、共享请求、加载/Retry 反馈和取消；访问过的块缓存保留，尚无 LRU 或字节上限。已解析悬停位置不请求源码正文，单文件源码仍内嵌。可选 `--report-mode auto --sidecar-threshold BYTES` 仅在完整 HTML 严格超过显式字节阈值时选择 sidecar，没有默认阈值。共享、更新和错误恢复见[查看器指南](viewer.cn.md)。
+报告加载：普通报告仍为离线单文件。大报告可显式运行 `funcgraph TRACE --timeline --report-mode sidecar --output REPORT_DIRECTORY`，再用 `fgview REPORT_DIRECTORY` 打开。默认 Timeline 不加载 Text 行，Compare 按需读取；统一过滤按需加载完整 Text 过滤索引，不挂载 Text DOM，提供进度、取消及失败保留旧结果后的重试。首次进入 Text 或跳转 trace 行号/锚点时才**完整加载 Text**，在文档外分批准备、显示进度并支持取消，随后重新应用当前过滤。最终布局仍可能阻塞，完整 DOM 仍常驻；不是虚拟列表，也不保证打开总时间更短。保存的 Text 偏好和行号锚点优先于初始 Timeline。sidecar 源码正文按最多 64 条记录分块按需读取，支持校验、共享请求、加载/Retry 反馈和取消；资源缓存采用最多 8 块、合计 16 MiB 已校验 UTF-8 JSON 字节数的 LRU。被淘汰的块可重新读取，已展示源码不消失；超大单块可查看但不缓存，这不是整个报告的内存上限。已解析悬停位置不请求源码正文，单文件源码仍内嵌。旧报告需重新生成才能使用新缓存策略。可选 `--report-mode auto --sidecar-threshold BYTES` 仅在完整 HTML 严格超过显式字节阈值时选择 sidecar，没有默认阈值。共享、更新和错误恢复见[查看器指南](viewer.cn.md)。
 
 本文介绍从采集 trace 到阅读报告的完整流程，并逐一说明报告中每个视图的字段和配色。命令行参数的完整列表见 `python3 funcgraph.py --help`，实现细节见 [design.md](design.md)。English: [guide.en.md](guide.en.md).
 
