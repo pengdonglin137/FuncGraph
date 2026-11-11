@@ -145,7 +145,9 @@ def cmd_report(argv):
         argv, extra = argv[:i], argv[i + 1:]
     ap = argparse.ArgumentParser(
         prog='fgreport', description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument('traces', nargs='+', metavar='TRACE', help="trace file(s); '-' for stdin, .gz/.xz/.bz2 work")
+    ap.add_argument('traces', nargs='*', metavar='TRACE', help="trace file(s); '-' for stdin, .gz/.xz/.bz2 work")
+    ap.add_argument('--uftrace', metavar='DIR', help='recording directory (uses bundled uftrace by default)')
+    ap.add_argument('--uftrace-bin', metavar='PATH', help='override the bundled / PATH uftrace executable')
     ap.add_argument('-p', '--preset', help='preset with kernel paths (default: $FG_PRESET or the default preset)')
     ap.add_argument('-P', '--no-preset', action='store_true', help='use no preset (no vmlinux: no source, links or BTF)')
     ap.add_argument('-o', '--output', help='output HTML or report directory (default: next to the first trace, .html or .report)')
@@ -157,6 +159,12 @@ def cmd_report(argv):
     ap.add_argument('-c', '--compare', metavar='BASE', help='add a Compare tab against this trace')
     ap.add_argument('-n', '--dry-run', action='store_true', help='print the funcgraph.py command and exit')
     a = ap.parse_args(argv)
+    if bool(a.uftrace) == bool(a.traces):
+        ap.error('supply trace file(s) or --uftrace DIR, not both')
+    if a.uftrace:
+        extra = ['--uftrace', a.uftrace] + extra
+    if a.uftrace_bin:
+        extra = ['--uftrace-bin', a.uftrace_bin] + extra
 
     cp = read_config()
     preset = None if a.no_preset else (a.preset or default_preset(cp))
@@ -191,7 +199,7 @@ def cmd_report(argv):
         die('report mode must be single, sidecar or auto')
 
     big = False
-    if not a.text and mode == 'single':
+    if a.traces and not a.text and mode == 'single':
         n = count_lines(a.traces[0], BIG) if os.path.isfile(a.traces[0]) else None
         if n is not None and n > BIG and '--no-text-view' not in extra:
             big = True
@@ -200,7 +208,7 @@ def cmd_report(argv):
     out = selection.output
     if not out:
         suffix = '.html' if mode == 'single' else '.report'
-        first = a.traces[0]
+        first = a.uftrace.rstrip(os.sep) if a.uftrace else a.traces[0]
         if first == '-':
             out = 'stdin' + suffix
         else:
@@ -208,7 +216,7 @@ def cmd_report(argv):
             for ext in ('.gz', '.xz', '.bz2'):
                 if base.endswith(ext):
                     base = base[:-len(ext)]
-            out = os.path.splitext(base)[0] + suffix
+            out = (base if a.uftrace else os.path.splitext(base)[0]) + suffix
     cmd += ['--output', out] + extra + a.traces
 
     print('fgreport: ' + ' '.join(shlex.quote(c) for c in cmd[1:]), file=sys.stderr)

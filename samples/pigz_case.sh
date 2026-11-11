@@ -1,12 +1,16 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [[ $# != 2 ]]; then
-    echo 'Usage: bash samples/pigz_case.sh NEW_WORK_DIRECTORY PATCHED_UFTRACE' >&2
+if [[ $# -lt 1 || $# -gt 2 ]]; then
+    echo 'Usage: bash samples/pigz_case.sh NEW_WORK_DIRECTORY [PATCHED_UFTRACE=fguftrace]' >&2
     exit 2
 fi
 root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
-tracer=$(realpath -- "$2")
+tracer=$(command -v -- "${2:-fguftrace}") || {
+    echo 'Install the native FuncGraph wheel, or supply a patched uftrace path.' >&2
+    exit 1
+}
+tracer=$(realpath -- "$tracer")
 test -x "$tracer"
 mkdir -- "$1"
 cd -- "$1"

@@ -30,6 +30,9 @@ if WITH_EXTRAS:
 WITH_RAW = '--with-raw' in sys.argv
 if WITH_RAW:
     sys.argv.remove('--with-raw')
+WITH_UFTRACE = '--with-uftrace' in sys.argv
+if WITH_UFTRACE:
+    sys.argv.remove('--with-uftrace')
 
 
 class InstalledPackageTest(unittest.TestCase):
@@ -59,6 +62,47 @@ class InstalledPackageTest(unittest.TestCase):
                 self.assertEqual(read_asset(asset), (ROOT / 'assets' / asset).read_text(encoding='utf-8'))
         self.assertTrue(Path(PROJECT_DIR, 'fastfaddr2line.py').is_file())
         self.assertTrue(Path(PROJECT_DIR, 'fglib', 'native', 'raw.c').is_file())
+
+    def test_native_payload_matches_distribution_kind(self):
+        from fglib import uftrace_runtime
+
+        self.assertEqual(uftrace_runtime.PAYLOAD.exists(), WITH_UFTRACE)
+        metadata = distribution('funcgraph').read_text('WHEEL')
+        self.assertIn('Root-Is-Purelib: ' + ('false' if WITH_UFTRACE else 'true'), metadata)
+        self.assertTrue(self.run_command(self.executable('fguftrace'), '--help'))
+        if WITH_UFTRACE:
+            self.assertIn('Tag: py3-none-linux_', metadata)
+            manifest = json.loads((uftrace_runtime.PAYLOAD / 'manifest.json').read_text())
+            self.assertEqual(manifest['architecture'], platform.machine())
+            for name, checksum in manifest['files'].items():
+                self.assertEqual(hashlib.sha256((uftrace_runtime.PAYLOAD / name).read_bytes()).hexdigest(), checksum)
+            self.assertIn('GNU GENERAL PUBLIC LICENSE', (uftrace_runtime.PAYLOAD / 'COPYING').read_text())
+
+    @unittest.skipUnless(WITH_UFTRACE, 'native uftrace wheel not requested')
+    def test_bundled_recorder_and_directory_reports_outside_checkout(self):
+        source = Path(self.tmp.name, 'program.c')
+        binary = source.with_suffix('')
+        capture = Path(self.tmp.name, 'recording.data')
+        source.write_text('int work(int value) { return value + 1; }\n'
+                          'int main(void) { return work(41) != 42; }\n')
+        self.run_command('cc', '-pg', '-g', '-O0', '-fno-omit-frame-pointer', '-o', str(binary), str(source))
+        self.run_command(self.executable('fguftrace'), 'record', '--no-sched', '--no-libcall', '--srcline',
+                         '-A', 'work@arg1/i32', '-R', 'work@retval/i32', '-d', str(capture), str(binary))
+        records = [json.loads(line) for line in self.run_command(
+            self.executable('fguftrace'), 'dump', '--fgraph', '--srcline', '-d', str(capture)).splitlines()]
+        self.assertEqual(records[0]['schema'], 'funcgraph.uftrace.v1')
+        self.assertEqual(records[-1], {'type': 'end', 'complete': True})
+        work = [record for record in records if record.get('name') == 'work']
+        self.assertEqual(work[0]['user_args'], ['41'])
+        self.assertEqual(work[1]['user_retval'], '42')
+        for command in ('funcgraph', 'fgreport'):
+            output = Path(self.tmp.name, command + '.html')
+            arguments = ['--no-config', '--timeline', '--user-src', self.tmp.name] if command == 'funcgraph' else ['-P']
+            self.run_command(self.executable(command), *arguments, '--uftrace', str(capture), '--output', str(output))
+            report = output.read_text()
+            model = json.loads(re.search(r'<script[^>]+id="tlData"[^>]*>(.*?)</script>', report, re.S).group(1))
+            self.assertEqual(model['uftrace']['spaces'], ['user'])
+            self.assertIn('work', model['strings'])
 
     @unittest.skipUnless(os.open in os.supports_dir_fd and hasattr(os, 'O_NOFOLLOW'), 'safe viewer file access unavailable')
     def test_installed_viewer_serves_only_the_selected_report(self):

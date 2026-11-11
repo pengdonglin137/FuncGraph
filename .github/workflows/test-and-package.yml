@@ -80,7 +80,15 @@ jobs:
           done
 
   uftrace:
-    runs-on: ubuntu-24.04
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-22.04
+            arch: x86_64
+          - runner: ubuntu-22.04-arm
+            arch: aarch64
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -92,17 +100,61 @@ jobs:
         run: |
           sudo apt-get update -q
           sudo apt-get install -y -q build-essential pkg-config libtraceevent-dev libelf-dev libdw-dev
+          python -m pip install build twine
       - name: Check and build the maintained patch series
         run: |
           scripts/uftrace.sh check
-          JOBS=2 scripts/uftrace.sh build
-          build/uftrace-x86_64/bin/uftrace --version | grep 'uftrace v0.20 '
+          FG_UFTRACE_RELEASE=1 JOBS=2 scripts/uftrace.sh build
+          build/uftrace-${{ matrix.arch }}/bin/uftrace --version | grep 'uftrace v0.20 '
           test -z "$(git -C third_party/uftrace status --porcelain)"
       - name: Verify export fields without root or tracefs
         env:
           FG_UFTRACE_REQUIRED: "1"
+          FG_UFTRACE: ${{ github.workspace }}/build/uftrace-${{ matrix.arch }}/bin/uftrace
           PYTHONPATH: tests
-        run: python -m unittest test_uftrace_build test_uftrace_export -v
+        run: python -m unittest test_uftrace_build test_uftrace_export test_uftrace_dist test_uftrace_runtime -v
+      - name: Build the platform wheel with recorder, libraries, license and patched source
+        env:
+          FG_UFTRACE_PREFIX: ${{ github.workspace }}/build/uftrace-${{ matrix.arch }}
+        run: |
+          python -m build --wheel --outdir native-dist
+          python -m twine check native-dist/*.whl
+      - name: Test installed native wheel without its original build prefix
+        shell: bash
+        run: |
+          workspace="$PWD"
+          mv "build/uftrace-${{ matrix.arch }}" "$RUNNER_TEMP/uftrace-original-prefix"
+          virtualenv="$(mktemp -d)"
+          python -m venv "$virtualenv"
+          "$virtualenv/bin/python" -m pip install "$workspace"/native-dist/*.whl
+          cd "$(mktemp -d)"
+          "$virtualenv/bin/python" -I "$workspace/tests/smoke_installed.py" --with-uftrace
+          for package in "$workspace"/native-dist/*.whl; do
+            "$virtualenv/bin/python" -m pip install "${package}[all]"
+          done
+          "$virtualenv/bin/python" -I "$workspace/tests/smoke_installed.py" --with-uftrace --with-extras
+      - name: Export the corresponding source attachment
+        if: matrix.arch == 'x86_64'
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          from zipfile import ZipFile
+          from fglib.constants import APP_VERSION
+          with ZipFile(next(Path('native-dist').glob('*.whl'))) as wheel:
+              source = wheel.read('fglib/_native/uftrace/source.tar.gz')
+          Path(f'native-dist/funcgraph-uftrace-{APP_VERSION}-source.tar.gz').write_bytes(source)
+          PY
+      - name: Create native artifact checksums
+        shell: bash
+        run: |
+          cd native-dist
+          shopt -s nullglob
+          sha256sum -- *.whl *.tar.gz > SHA256SUMS-linux_${{ matrix.arch }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: native-linux_${{ matrix.arch }}-dist
+          path: native-dist/*
+          if-no-files-found: error
 
   package:
     needs: [test, raw, uftrace]

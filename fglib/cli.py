@@ -119,7 +119,8 @@ def build_parser():
     parser.add_argument('--input-format', choices=('auto', 'text', 'raw', 'uftrace'), default='auto',
                         help='Primary input format: auto-detect ftrace text, trace-cmd trace.dat or uftrace JSONL')
     parser.add_argument('--uftrace', metavar='DIR', help='Read a recording directory using patched uftrace dump --fgraph')
-    parser.add_argument('--uftrace-bin', metavar='PATH', help='Patched uftrace executable (default: uftrace on PATH)')
+    parser.add_argument('--uftrace-bin', metavar='PATH',
+                        help='Override patched uftrace (default: bundled executable, then uftrace on PATH)')
     parser.add_argument('--user-src', metavar='DIR', help='Embed recorded user source from this local source root')
     parser.add_argument('--raw-instance', metavar='NAME',
                         help='Select this named trace-cmd buffer instead of the top-level buffer (also for --compare)')

@@ -29,7 +29,8 @@ class UftraceInput:
 
 def read_uftrace_directory(directory, executable=None):
     from .uftrace import UftraceInputError
-    with subprocess.Popen([executable or 'uftrace', 'dump', '--fgraph', '--srcline', '-d', os.path.abspath(directory)],
+    from .uftrace_runtime import command
+    with subprocess.Popen(command(executable) + ['dump', '--fgraph', '--srcline', '-d', os.path.abspath(directory)],
                           stdout=subprocess.PIPE, text=True, encoding='utf-8') as process:
         try:
             trace = UftraceInput(process.stdout)

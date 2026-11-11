@@ -145,6 +145,22 @@ class FgreportTest(unittest.TestCase):
         self.assertNotIn('--no-text-view', command)
         self.assertIn('--input-format', command)
 
+    def test_uftrace_directory_does_not_need_positional_trace_or_executable(self):
+        capture = os.path.join(self.tmp.name, 'recording.data')
+        os.mkdir(capture)
+        command = self.command('-P', '--uftrace', capture)
+        self.assertEqual(command[command.index('--uftrace') + 1], capture)
+        self.assertEqual(command[command.index('--output') + 1], capture + '.html')
+        self.assertNotIn('--uftrace-bin', command)
+        self.assertNotIn('--no-text-view', command)
+        command = self.command('-P', '--uftrace', capture, '--uftrace-bin', '/custom/uftrace')
+        self.assertEqual(command[command.index('--uftrace-bin') + 1], '/custom/uftrace')
+        for arguments in [[], ['--uftrace', capture, 'trace.txt']]:
+            with self.subTest(arguments=arguments):
+                result = self.run_fg(*arguments, check=False)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn('supply trace file(s) or --uftrace', result.stderr)
+
     def test_real_report(self):
         out = os.path.join(self.tmp.name, 'r.html')
         self.run_fg('-P', '-o', out, helpers.fixture('pi4_sched'))

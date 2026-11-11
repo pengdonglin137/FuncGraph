@@ -99,17 +99,59 @@ FG_CONFIG=/dev/null python3 docs/img/make_shots.py
 从 GitHub Releases 下载 wheel，安装时可以一并启用可选依赖：
 
 ```bash
-python3 -m pip install './funcgraph-<version>-py3-none-any.whl[all]'
+python3 -m pip install './funcgraph-<version>-py3-none-linux_x86_64.whl[all]'
+fguftrace --version
 fgreport -P trace.txt
 ```
 
 将 `<version>` 替换为实际下载文件名中的版本；源码升版并不表示已经发布 GitHub Release。
 
-安装后可使用 `funcgraph`、`fgreport`、`fastfaddr2line` 和 `fgcapture.sh`。
+Linux x86_64 / aarch64 的 wheel **内含带补丁的 uftrace 可执行程序和 libmcount 采集库**，
+不是让用户另行下载；ARM64 请选择文件名中的 `linux_aarch64`。它们在 Ubuntu 22.04 上构建，
+属于 Linux 平台包，不冒充 manylinux；需要兼容的 glibc 和系统库（Ubuntu 上为
+`libelf1`、`libdw1`、`libtraceevent1`、`liblzma5`、`libstdc++6`）。
+`py3-none-any` wheel 与源码包仍作为不含原生程序的 Python-only 回退版本。
+
+安装后可使用 `funcgraph`、`fgreport`、`fguftrace`、`fastfaddr2line` 和 `fgcapture.sh`。
 基础包不依赖第三方 Python 库，`[all]` 额外安装 pyelftools 和 Pygments。
 推送与代码版本一致的 `vX.Y.Z` 标签，会自动测试、构建 wheel 和源码包，
 并发布到 GitHub Release（不发布到 PyPI）。构建及发布步骤见
 [中文发布操作清单](docs/releasing.cn.md)（含版本标签、自动打包、发布验证和故障处理）。
+
+### 仅用户态与混合模式
+
+`fguftrace` 默认调用安装包内的采集程序，并自动设置随包采集库的位置。
+`funcgraph --uftrace DIR` 和 `fgreport --uftrace DIR` 同样优先使用内置版本，其次查找
+`PATH` 上带补丁的 uftrace；`--uftrace-bin PATH` 仅用于手动覆盖，**不必每次传路径**。
+导入已保存的 JSONL 不需要 uftrace 可执行程序。
+
+```bash
+cc -pg -g -O0 -fno-omit-frame-pointer -o demo_mixed samples/demo_mixed.c
+printf 'FuncGraph demo\n' > demo-input.txt
+: > demo-output.txt
+fguftrace record --no-sched --srcline -d user.data ./demo_mixed demo-input.txt demo-output.txt
+funcgraph --no-config --uftrace user.data --timeline --enable-fold --filter \
+    --user-src samples --output user.html
+fgreport -P --uftrace user.data -- --user-src samples
+```
+
+**混合采集**使用 `fguftrace record -K 30 --clock=mono --kernel-full-info ...`，完整参数及
+tracefs 保护步骤见 [uftrace 指南](docs/uftrace.cn.md) 或 [pigz + zlib 实战](docs/pigz.cn.md)。
+只能在有快照 / 恢复保护的空闲专用实验环境做内核采集；目前 `fgcapture.sh` 仍是仅内核态
+function_graph 采集脚本，尚未实现保护 tracefs 的 uftrace 包装。仅用户态或仅内核态输入
+无需特殊转换，混合展示会在两态之间显示分界线。
+
+混合报告需要**分别配置两套源码**；下面的内核镜像和提交必须替换为采集时运行的版本：
+
+```bash
+funcgraph --no-config --uftrace mixed.data --timeline --enable-fold --filter \
+    --user-src /path/to/user/build --vmlinux /path/to/matching/vmlinux \
+    --kernel-src /path/to/linux --source-rev KERNEL_COMMIT --func-links --highlight-code \
+    --source-browser github --source-browser-rev KERNEL_COMMIT --output mixed.html
+```
+
+`--user-src` 不负责内核源码或内核 URL；`--source-rev` 选择内嵌的内核内容，browser 参数选择
+网页链接。没有匹配镜像时可省略内核参数，混合调用关系仍可查看，但不解析内核源码。
 
 ### 快速上手：`fgreport`
 

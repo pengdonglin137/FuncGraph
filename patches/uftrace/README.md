@@ -18,10 +18,12 @@ The full base SHA is `842ed731248a9daded38774d8fb26c7b09474461`, locked in both
 the gitlink and `third_party/versions.json`. Build scripts reject mismatches;
 normal builds never track an upstream branch. See [dependency pins](../../third_party/README.md).
 
-The native executable is optional and is **not** linked into FuncGraph or
-included in Python distributions. uftrace is GPL-2.0; anyone distributing its
-binaries must also meet its corresponding-source/license obligations, including
-the applicable patches. This integration does not select a project-wide license.
+Linux platform wheels include the native executable and recording libraries as
+separate programs, together with GPL-2.0 `COPYING`, the fully patched corresponding
+source, base pin and patch hashes. Python-only wheels and sdists contain no native
+binary. `fguftrace` supplies the relocatable library path; report directory imports
+select this bundled executable automatically. This integration does not select
+a project-wide license.
 
 See [the integration guide](../../docs/uftrace.md),
 [中文说明](../../docs/uftrace.cn.md), and the

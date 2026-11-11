@@ -95,18 +95,66 @@ The mixed sample includes user source, kernel entry positions and 500 resolved k
 Download a wheel from GitHub Releases and install it with optional dependencies:
 
 ```bash
-python3 -m pip install './funcgraph-<version>-py3-none-any.whl[all]'
+python3 -m pip install './funcgraph-<version>-py3-none-linux_x86_64.whl[all]'
+fguftrace --version
 fgreport -P trace.txt
 ```
 
 Replace `<version>` with the version in the downloaded filename; a source version bump does not publish a GitHub Release.
 
-The package installs `funcgraph`, `fgreport`, `fastfaddr2line`, and `fgcapture.sh`;
+Linux wheels for x86_64 and aarch64 include the patched **uftrace executable and
+libmcount recording libraries**, not just a separate download. Choose
+`linux_aarch64` for ARM64. These are Linux platform wheels built on Ubuntu 22.04,
+not manylinux wheels; they require compatible glibc and system libraries
+(`libelf1`, `libdw1`, `libtraceevent1`, `liblzma5`, `libstdc++6` on Ubuntu).
+The `py3-none-any` wheel and source distribution remain Python-only fallbacks.
+
+The package installs `funcgraph`, `fgreport`, `fguftrace`, `fastfaddr2line`, and `fgcapture.sh`;
 the base install works without Python dependencies, while `[all]` adds pyelftools
 and Pygments. Pushing a matching `vX.Y.Z` tag automatically tests, builds, and
 publishes the wheel and source package as a GitHub Release (not PyPI).
 See [Building and releasing](docs/releasing.md) for the release checklist,
 verification commands, and troubleshooting.
+
+### User-only and mixed tracing
+
+`fguftrace` uses the bundled recorder and automatically selects its recording
+libraries after installation. `funcgraph --uftrace DIR` and `fgreport --uftrace DIR`
+also prefer the bundled executable, then patched `uftrace` on `PATH`.
+`--uftrace-bin PATH` is an optional explicit override, not a required argument.
+Saved JSONL needs no native recorder during report generation.
+
+```bash
+cc -pg -g -O0 -fno-omit-frame-pointer -o demo_mixed samples/demo_mixed.c
+printf 'FuncGraph demo\n' > demo-input.txt
+: > demo-output.txt
+fguftrace record --no-sched --srcline -d user.data ./demo_mixed demo-input.txt demo-output.txt
+funcgraph --no-config --uftrace user.data --timeline --enable-fold --filter \
+    --user-src samples --output user.html
+fgreport -P --uftrace user.data -- --user-src samples
+```
+
+For **mixed user/kernel recording**, use the guarded `fguftrace record -K 30
+--clock=mono --kernel-full-info ...` procedure in the [uftrace guide](docs/uftrace.md),
+or follow the [pigz + zlib case study](docs/pigz.md). Kernel capture requires a
+dedicated idle tracefs session with snapshot/restore; `fgcapture.sh` is still the
+kernel-only function_graph recorder, not a state-preserving uftrace wrapper.
+Kernel-only and user-only inputs need no special conversion; mixed reports show
+a boundary between the two spaces.
+
+To include **both source trees** in a mixed report, use the image and revision of
+the recorded kernel (replace these paths and revision):
+
+```bash
+funcgraph --no-config --uftrace mixed.data --timeline --enable-fold --filter \
+    --user-src /path/to/user/build --vmlinux /path/to/matching/vmlinux \
+    --kernel-src /path/to/linux --source-rev KERNEL_COMMIT --func-links --highlight-code \
+    --source-browser github --source-browser-rev KERNEL_COMMIT --output mixed.html
+```
+
+`--user-src` never sets kernel sources or kernel URLs. `--source-rev` chooses
+embedded kernel content; the browser options choose web links. Without a matching
+image, omit the kernel options: mixed stacks still work, but kernel source resolution does not.
 
 ### Quick start: `fgreport`
 

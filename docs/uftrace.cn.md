@@ -55,16 +55,39 @@ python3 funcgraph.py --no-config --timeline --enable-fold --filter \
     --output mixed-no-kernel-source.html samples/sample_mixed.jsonl
 ```
 
+## 安装和选择采集程序
+
+Release 的 Linux x86_64 / aarch64 wheel 包含带补丁的 uftrace 及五种 libmcount
+采集库。请选择匹配机器架构的包；`py3-none-any` wheel 和 Python 源码发布包不包含
+原生二进制。平台包以 Ubuntu 22.04 为构建基线，不标记为 manylinux。Ubuntu 上先安装
+采集程序需要的系统运行库，再安装 wheel：
+
+```bash
+sudo apt-get install libtraceevent1 libelf1 libdw1 liblzma5 libstdc++6
+python3 -m pip install './funcgraph-<version>-py3-none-linux_x86_64.whl[all]'
+fguftrace --version
+```
+
+ARM64 请替换为 `linux_aarch64`。`fguftrace record ...` 和 `fguftrace dump ...`
+自动运行内置程序，并使用安装后的 libmcount 路径。
+`funcgraph --uftrace DIR`、`fgreport --uftrace DIR` 的查找顺序为：显式指定的
+`--uftrace-bin PATH` → 内置 uftrace → `PATH` 中带补丁的 uftrace。覆盖参数不是必传项；
+无效覆盖路径或不完整的内置程序会直接报错，不会静默回退。未打补丁的上游 uftrace
+不支持 `--fgraph` 导出。读取已保存的 JSONL 不需要上述原生程序及系统运行库。
+`fgcapture.sh` 仍然是仅内核态的 tracefs 采集脚本，不支持 uftrace 用户态 / 混合采集选项。
+
 ## 生成报告
 
 ```bash
-funcgraph --uftrace CAPTURE --uftrace-bin build/uftrace-x86_64/bin/uftrace \
+funcgraph --uftrace CAPTURE \
     --timeline --enable-fold --filter --user-src samples --output mixed.html
+fgreport -P --uftrace CAPTURE -- --user-src samples
 # 或读取已经导出的文件，不需要 uftrace 可执行文件：
 funcgraph capture.jsonl --timeline --enable-fold --filter --output mixed.html
 ```
 
-目录输入调用带补丁的 uftrace（默认从 `PATH` 查找），执行 `dump --fgraph --srcline`。
+目录输入调用按上述顺序选出的 uftrace，执行 `dump --fgraph --srcline`。
+开发构建可按需增加 `--uftrace-bin build/uftrace-x86_64/bin/uftrace`。
 JSONL 按头部自动识别，也可用 `--input-format uftrace` 显式指定，支持 stdin 和压缩输入。
 一份报告读取一份记录目录或 JSONL。`--compare BASE` 支持 JSONL 或旧格式 trace；
 Compare 与 `--export` 分开统计用户态、内核态的同名函数。
@@ -113,7 +136,8 @@ raw 解码库当前使用的完整 commit SHA。构建前检查全部 gitlink �
 `git submodule update --remote`。有意升级时请按[依赖版本锁说明](../third_party/README.md)
 同时更新 gitlink、锁文件和补丁，并重新测试。
 
-从 Git checkout 构建，不是在已安装的 Python wheel / sdist 中构建。
+构建或更新原生程序需要 Git checkout，不是在已安装的 Python wheel / sdist 中构建；
+直接安装原生 Release wheel 不需要本机编译器。
 
 ```bash
 git submodule update --init third_party/uftrace
@@ -147,15 +171,21 @@ scripts/uftrace.sh check
 
 `refresh` 要求 worktree 干净、历史线性且基于固定的上游版本；替换旧序列前，
 会在另一份干净源码中验证新序列。补丁目的、上游提交状态及移除条件记录在
-`patches/uftrace/README.md`。uftrace 是 GPL-2.0；FuncGraph 不链接其代码，Python
-发行包也不带它的二进制。分发 uftrace 二进制时仍需履行相应源码和许可证义务，
-包括实际使用的补丁；本次集成不擅自给整个项目选择许可证。
+`patches/uftrace/README.md`。
+
+构建发布程序时，为构建脚本设置 `FG_UFTRACE_RELEASE=1`，禁用可选的 Python/Lua、
+curses、unwind 和 Capstone 功能。构建平台 wheel 时设置
+`FG_UFTRACE_PREFIX="$PWD/build/uftrace-x86_64"`（ARM64 使用 `aarch64`）。
+包内包括 uftrace、全部五种采集库、GPL-2.0 `COPYING`、固定的上游与补丁哈希，
+以及确定性生成、已应用全部补丁的完整对应源码 `source.tar.gz`；不打包操作系统共享库。
+同一对应源码还会单独作为 Release 附件。此集成不擅自给整个项目选择许可证。
+构建、搬迁安装验证命令见[发布清单](releasing.cn.md)。
 
 ## 原生导出格式
 
 ```bash
-build/uftrace-x86_64/bin/uftrace dump --fgraph --srcline -d CAPTURE > capture.jsonl
-# 等价写法：uftrace dump --format=fgraph --srcline -d CAPTURE
+fguftrace dump --fgraph --srcline -d CAPTURE > capture.jsonl
+# 开发版本等价命令：build/uftrace-x86_64/bin/uftrace dump --fgraph --srcline -d CAPTURE
 ```
 
 输出是 JSONL，**不是 ftrace 文本**。首条记录声明

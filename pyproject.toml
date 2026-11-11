@@ -26,6 +26,7 @@ all = ["pyelftools>=0.29", "Pygments>=2.14"]
 funcgraph = "fglib.cli:main"
 fastfaddr2line = "fastfaddr2line:main"
 fgview = "fglib.viewer:main"
+fguftrace = "fglib.uftrace_runtime:main"
 
 [project.urls]
 Homepage = "https://github.com/pengdonglin137/FuncGraph"

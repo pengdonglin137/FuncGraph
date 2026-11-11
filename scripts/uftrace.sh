@@ -86,6 +86,9 @@ case "$ACTION" in
         export GIT_CEILING_DIRECTORIES="$ROOT/build"
         CONFIGURE=(--prefix="$TARGET" --arch="$ARCH")
         [[ -z ${CROSS_COMPILE:-} ]] || CONFIGURE+=(--cross-compile="$CROSS_COMPILE")
+        if [[ ${FG_UFTRACE_RELEASE:-0} == 1 ]]; then
+            CONFIGURE+=(--without-libpython --without-libluajit --without-libncurses --without-libunwind --without-capstone)
+        fi
         ./configure "${CONFIGURE[@]}"
         make -j"${JOBS:-$(getconf _NPROCESSORS_ONLN)}"
         make install

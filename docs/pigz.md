@@ -3,14 +3,22 @@
 Compress a small CSV of synthetic orders with pigz v2.8 and its instrumented
 zlib v1.3.2 dependency. The first run needs no root, `vmlinux` or tracefs.
 Use x86-64 Linux with Git, GCC, Make, binutils, Python and the
-[patched uftrace build](uftrace.md#reproducible-native-build).
+[native FuncGraph wheel](uftrace.md#install-and-select-the-recorder), which
+provides `fguftrace`. A patched development build can be supplied explicitly.
 
 ## 1. Build and run
 
 From the FuncGraph checkout, choose a new work directory:
 
+Keep the executable's build path free of spaces. With the pinned uftrace v0.20,
+a path containing spaces is truncated in saved executable mappings; recording
+may complete but function names, typed arguments and source resolution are lost.
+Quoting the shell arguments does not repair those saved mappings.
+
 ```bash
-bash samples/pigz_case.sh /tmp/fg-pigz build/uftrace-x86_64/bin/uftrace
+bash samples/pigz_case.sh /tmp/fg-pigz
+# Optional development override, using another new work directory:
+bash samples/pigz_case.sh /tmp/fg-pigz-dev build/uftrace-x86_64/bin/uftrace
 ```
 
 The script pins both source commits. To instrument an existing build manually,
@@ -51,14 +59,17 @@ is the recorder command to run inside that guarded session (x86-64). Run the
 build above on the VM first and reuse its workspace and `orders.csv`.
 
 ```bash
-uftrace record -K 30 --clock=mono --kernel-full-info --no-sched --srcline \
+recorder=fguftrace
+"$recorder" record -K 30 --clock=mono --kernel-full-info --no-sched --srcline \
     -F '__x64_sys_read@kernel;__x64_sys_write@kernel' \
     -E 'sched:sched_process_exec@kernel;sched:sched_process_exit@kernel' \
     -A 'deflate@arg1/x64,arg2/i32' -R 'deflate@retval/i32' \
     -d capture-mixed ./pigz/pigz -p 1 -6 -c orders.csv > orders-mixed.csv.gz
 ./pigz/pigz -dc orders-mixed.csv.gz | cmp - orders.csv
-uftrace dump --fgraph --srcline -d capture-mixed > capture-mixed.jsonl
+"$recorder" dump --fgraph --srcline -d capture-mixed > capture-mixed.jsonl
 ```
+
+For a development build, set `recorder` to its absolute executable path instead.
 
 Configure **user and kernel sources separately** when generating the report.
 These values identify the QEMU Linux `7.4.0-rc2` build verified for this case.
@@ -96,6 +107,8 @@ on subsequent runs:
 fgreport init qemu-pigz --vmlinux "$VMLINUX" --kernel-src "$KERNEL_SRC" \
     --source-rev "$KERNEL_REV" --source-browser github --source-browser-rev "$KERNEL_REV"
 fgreport -p qemu-pigz capture-mixed.jsonl -- --user-src "$PWD"
+# Read the original directory directly with the installed recorder:
+fgreport -p qemu-pigz --uftrace capture-mixed -- --user-src "$PWD"
 ```
 
 Without a matching debug image, a call-flow-only report remains useful:

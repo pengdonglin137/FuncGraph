@@ -89,6 +89,7 @@ build_dir="$(mktemp -d)"
 python3 -m venv "$build_dir/venv"
 "$build_dir/venv/bin/python" -m pip install build twine pyelftools pygments
 PATH="$build_dir/venv/bin:$PATH" tests/run.sh
+unset FG_UFTRACE_PREFIX
 "$build_dir/venv/bin/python" -m build --outdir "$build_dir/dist"
 "$build_dir/venv/bin/python" -m twine check "$build_dir/dist/funcgraph-${next_version}-py3-none-any.whl" "$build_dir/dist/funcgraph-${next_version}.tar.gz"
 git diff --check
@@ -99,6 +100,36 @@ git diff --check
 wheel 和源码包均经过 Twine 检查，并在仓库外的独立虚拟环境中分别验证基础安装
 和 `[all]` 安装，覆盖命令入口、资源文件、报告/时间轴/对比、JSON 导出及 ELF 地址解析。
 Python 3.12 的包和校验文件保存为 Actions artifact：`python-dist`。
+
+共享工作流还在 Ubuntu 22.04 的 x86_64、aarch64 runner 上分别构建平台 wheel，
+验证带补丁的导出器，移走原始构建前缀后，在仓库外安装并实际采集一个新程序。
+产物分别保存为 `native-linux_ARCH-dist`。平台 wheel **内含 uftrace 和全部五种
+libmcount 库**，不是仅附一个下载链接。标签为 `py3-none-linux_ARCH`，不是 manylinux；
+glibc 和其他操作系统共享库仍由系统提供。依赖锁固定的是仓库提交，不是 apt 软件包版本。
+
+在支持的 Linux 主机上，完成上述 Python-only 验证后，可复现本机原生包构建。
+构建脚本不会覆盖已存在的原生输出目录：
+
+```bash
+sudo apt-get install build-essential pkg-config libtraceevent-dev libelf-dev libdw-dev
+git submodule update --init third_party/uftrace
+FG_UFTRACE_RELEASE=1 JOBS=2 scripts/uftrace.sh build
+native_prefix="$PWD/build/uftrace-$(uname -m)"
+FG_UFTRACE_PREFIX="$native_prefix" "$build_dir/venv/bin/python" -m build \
+    --wheel --outdir "$build_dir/native-dist"
+"$build_dir/venv/bin/python" -m twine check "$build_dir/native-dist/"*.whl
+mv "$native_prefix" "$build_dir/original-uftrace-prefix"
+python3 -m venv "$build_dir/native-venv"
+"$build_dir/native-venv/bin/python" -m pip install "$build_dir/native-dist/"*.whl
+workspace="$PWD"
+(cd "$build_dir" && ./native-venv/bin/python -I "$workspace/tests/smoke_installed.py" --with-uftrace)
+```
+
+每种架构都要在对应环境验证；x86_64 测试通过不能代替 ARM64 验证。
+`FG_UFTRACE_RELEASE=1` 禁用可选的 Python/Lua、curses、unwind 和 Capstone 功能。
+原生 wheel 同时包含 GPL-2.0 `COPYING`、程序与采集库哈希、固定上游和补丁哈希，以及
+`fglib/_native/uftrace/source.tar.gz`：已应用全部补丁、附构建说明的完整对应源码。
+CI 还将同一源码归档单独作为附件，不能用 GitHub 自动生成的 FuncGraph 源码快照代替。
 
 ## 4. 提交版本、创建标签并推送
 
@@ -123,7 +154,7 @@ git push origin "refs/tags/$release_tag"
 ```
 
 发布工作流先比较**标签指向的提交**中的版本，再运行共用测试/打包，最后下载
-`python-dist`、核对 `SHA256SUMS`，创建带自动生成说明的 Release。任何前置 job
+全部 `*-dist` artifacts、核对各自校验清单并合并 `SHA256SUMS`，创建带自动生成说明的 Release。任何前置 job
 失败都不会发布。`master` CI（含 Pages）和标签 Release 是两次独立运行，需分别检查。
 
 ## 5. 确认真正发布成功
@@ -141,11 +172,14 @@ gh run list --workflow release.yml --limit 5
 不要仅凭最近一次其他提交的成功记录判断本次发布。
 
 再检查 Releases 页面：标签正确、已发布而非 draft、正式版/预发布状态正确，
-并且有以下三个附件：
+并且有以下六个附件：
 
-- `funcgraph-<版本>-py3-none-any.whl`：Python wheel。
+- `funcgraph-<版本>-py3-none-linux_x86_64.whl`：内含采集程序的 Linux x86_64 包。
+- `funcgraph-<版本>-py3-none-linux_aarch64.whl`：内含采集程序的 Linux ARM64 包。
+- `funcgraph-<版本>-py3-none-any.whl`：不含原生程序的 Python wheel。
 - `funcgraph-<版本>.tar.gz`：源码发布包，不是 GitHub 自动附加的源码快照。
-- `SHA256SUMS`：上面两个包的 SHA-256 校验值。
+- `funcgraph-uftrace-<版本>-source.tar.gz`：已应用全部补丁的原生对应源码。
+- `SHA256SUMS`：上述五个包 / 源码归档的 SHA-256 校验值。
 
 下载真正的 Release 附件，再校验和试装，而不只是检查本地构建结果：
 
@@ -155,28 +189,33 @@ download_dir="$(mktemp -d)"
 gh release download "$release_tag" --dir "$download_dir"
 (cd "$download_dir" && sha256sum --check SHA256SUMS)
 python3 -m venv "$download_dir/venv"
-"$download_dir/venv/bin/python" -m pip install "$download_dir/funcgraph-${next_version}-py3-none-any.whl[all]"
+"$download_dir/venv/bin/python" -m pip install "$download_dir/funcgraph-${next_version}-py3-none-linux_$(uname -m).whl[all]"
 (cd "$download_dir" && ./venv/bin/python -I -c 'from importlib.metadata import version; print(version("funcgraph"))')
 "$download_dir/venv/bin/funcgraph" --help
 "$download_dir/venv/bin/fgreport" --help
+"$download_dir/venv/bin/fguftrace" --version
 ```
 
-应看到两个校验都通过，安装后显示的版本等于 `next_version`。
+应看到全部校验都通过，安装后显示的版本等于 `next_version`。
 完整复验下载包可运行仓库中的已安装包测试，`-I` 防止误导入源码目录：
 
 ```bash
-"$download_dir/venv/bin/python" -I "$PWD/tests/smoke_installed.py" --with-extras
+"$download_dir/venv/bin/python" -I "$PWD/tests/smoke_installed.py" --with-extras --with-uftrace
 ```
 
 这组测试还需要 C 编译器和 binutils。源码包可在另一个全新虚拟环境中，用下载的
-`.tar.gz` 替代 wheel 安装验证。最终记录版本、提交、Actions 运行 ID 和附件校验结果。
+`funcgraph-<版本>.tar.gz` 替代原生 wheel 安装验证；Python-only 包不传 `--with-uftrace`。
+通用 wheel 也要独立试装。最终记录版本、提交、Actions 运行 ID 和附件校验结果。
 
 ### 用户安装与使用
 
 安装方式是下载 Release 附件后通过本地路径执行 `pip install`，如上述命令；
 不是直接从 PyPI 执行 `pip install funcgraph`。
 基础包没有 Python 运行时依赖；`[fast]` 安装 pyelftools，`[highlight]` 安装 Pygments，
-`[all]` 安装两者。包提供 `funcgraph`、`fgreport`、`fastfaddr2line` 和 `fgcapture.sh`。
+`[all]` 安装两者。包提供 `funcgraph`、`fgreport`、`fguftrace`、`fastfaddr2line` 和 `fgcapture.sh`。
+平台 wheel 内含带补丁的 uftrace 和采集库，但仍需兼容的 glibc 和系统共享库；Ubuntu 上为
+`libtraceevent1`、`libelf1`、`libdw1`、`liblzma5`、`libstdc++6`。Python-only 包会查找
+`PATH` 中带补丁的 uftrace，也可通过 `--uftrace-bin PATH` 显式覆盖。读取 JSONL 不需要采集程序。
 快速地址解析仍需相应架构的系统 `addr2line`；抓取脚本需 Linux、Bash、root 和 tracefs。
 源码运行方式 `python3 funcgraph.py`、`./fgreport` 保持可用。
 两个发布包都包含解析器和 CSS/JavaScript；仓库资源在 `assets/`，wheel 内在 `fglib/_assets/`。
@@ -191,7 +230,8 @@ sample 更新走分支 CI，不依赖版本标签。只有共享检查**全部�
 | `master` CI 通过，但没有 Release | 普通分支 push 不发布；检查匹配标签是否已推送到 `origin`，以及标签的 `release` 运行状态。 |
 | `check-tag` 失败 | 检查标签提交里的 `APP_VERSION` 是否与标签严格一致，以及版本格式是否支持。 |
 | 测试、构建或资源检查失败 | 查看具体 job 日志；源码目录能运行不代表安装包包含了所有文件。 |
-| artifact、校验或发布权限出错 | 检查 `build`/`publish` 日志、`python-dist` 和仓库/组织 Actions 策略；发布 job 需要 `contents: write`。 |
+| artifact、校验或发布权限出错 | 检查 `build`/`publish` 日志、`python-dist` 和两份 `native-linux_ARCH-dist` artifact 及仓库/组织 Actions 策略；发布 job 需要 `contents: write`。 |
+| 原生程序缺少共享库，或 wheel 不受支持 | 安装文档列出的系统运行库，选择正确架构和兼容的 Linux/glibc 主机；不能将平台 wheel 改名为通用包或 manylinux。 |
 | runner、网络或服务临时失败 | 确认尚未创建 Release 后，在 Actions 选择 Re-run failed jobs 或 Re-run all jobs。 |
 | 必须修改源码或工作流才能修复 | 重跑仍使用原标签提交，不会使用后来修改的 `master`；提交修复、选择新版本和标签，重新发布。 |
 | 标签或 Release 已存在 | 不覆盖已发布附件，不移动已发布标签；先核实旧版本，修复以新版本发布。 |

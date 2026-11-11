@@ -2,14 +2,21 @@
 
 用 pigz v2.8 压缩一份合成的订单 CSV，同时跟踪它依赖的 zlib v1.3.2。第一部分不需要
 root、`vmlinux` 或 tracefs。环境为 x86-64 Linux，准备 Git、GCC、Make、binutils、
-Python 和[带补丁的 uftrace](uftrace.cn.md)。
+Python 和[内含采集程序的 FuncGraph 平台 wheel](uftrace.cn.md#安装和选择采集程序)，
+安装后提供 `fguftrace`。也可以显式选择带补丁的开发构建。
+
+可执行文件所在的构建路径请勿包含空格。固定的 uftrace v0.20 会在保存程序映射时截断
+含空格的路径：采集可能成功，但函数名、类型化参数和源码无法解析；给 shell 参数加引号
+不能修复已经截断的映射。
 
 ## 1. 修改编译选项并构建
 
 在 FuncGraph 仓库根目录运行，工作目录须不存在：
 
 ```bash
-bash samples/pigz_case.sh /tmp/fg-pigz build/uftrace-x86_64/bin/uftrace
+bash samples/pigz_case.sh /tmp/fg-pigz
+# 可选：换一个全新工作目录，显式使用开发版本：
+bash samples/pigz_case.sh /tmp/fg-pigz-dev build/uftrace-x86_64/bin/uftrace
 ```
 
 脚本固定两个项目的源码提交。如果在已有源码树中手工操作，从干净的构建目录重新编译**两者**：
@@ -42,14 +49,17 @@ Text 里也可以展开对应的入口行。用户态源码不链接到内核仓
 在 VM 内执行前述构建，进入包含 `orders.csv` 的同一工作目录，在已保护的 x86-64 采集会话中执行：
 
 ```bash
-uftrace record -K 30 --clock=mono --kernel-full-info --no-sched --srcline \
+recorder=fguftrace
+"$recorder" record -K 30 --clock=mono --kernel-full-info --no-sched --srcline \
     -F '__x64_sys_read@kernel;__x64_sys_write@kernel' \
     -E 'sched:sched_process_exec@kernel;sched:sched_process_exit@kernel' \
     -A 'deflate@arg1/x64,arg2/i32' -R 'deflate@retval/i32' \
     -d capture-mixed ./pigz/pigz -p 1 -6 -c orders.csv > orders-mixed.csv.gz
 ./pigz/pigz -dc orders-mixed.csv.gz | cmp - orders.csv
-uftrace dump --fgraph --srcline -d capture-mixed > capture-mixed.jsonl
+"$recorder" dump --fgraph --srcline -d capture-mixed > capture-mixed.jsonl
 ```
+
+开发构建请把 `recorder` 改成对应可执行文件的绝对路径。
 
 生成报告时，**用户态和内核态源码需要分别配置**。以下是本案例已验证的 QEMU
 Linux `7.4.0-rc2` 构建；如果换了内核，镜像、源码提交和网页版本必须一起替换为
@@ -82,6 +92,8 @@ funcgraph capture-mixed.jsonl --no-config --timeline --enable-fold --filter \
 fgreport init qemu-pigz --vmlinux "$VMLINUX" --kernel-src "$KERNEL_SRC" \
     --source-rev "$KERNEL_REV" --source-browser github --source-browser-rev "$KERNEL_REV"
 fgreport -p qemu-pigz capture-mixed.jsonl -- --user-src "$PWD"
+# 也可用安装包内的采集程序直接读取原始记录目录：
+fgreport -p qemu-pigz --uftrace capture-mixed -- --user-src "$PWD"
 ```
 
 如果只想查看调用关系，或手头没有匹配的内核调试镜像，可以省略内核相关参数：

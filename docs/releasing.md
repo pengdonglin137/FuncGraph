@@ -83,6 +83,7 @@ build_dir="$(mktemp -d)"
 python3 -m venv "$build_dir/venv"
 "$build_dir/venv/bin/python" -m pip install build twine pyelftools pygments
 PATH="$build_dir/venv/bin:$PATH" tests/run.sh
+unset FG_UFTRACE_PREFIX
 "$build_dir/venv/bin/python" -m build --outdir "$build_dir/dist"
 "$build_dir/venv/bin/python" -m twine check "$build_dir/dist/funcgraph-${next_version}-py3-none-any.whl" "$build_dir/dist/funcgraph-${next_version}.tar.gz"
 git diff --check
@@ -95,6 +96,42 @@ environments outside the checkout, without extras and then with `[all]`.
 Installed-package smoke tests cover command entry points, embedded resources,
 reports/timeline/comparison, JSON export, and a compiled ELF resolver fixture.
 The Python 3.12 packages and checksums become the `python-dist` Actions artifact.
+
+The shared workflow also builds native **Linux x86_64 and aarch64** wheels on
+Ubuntu 22.04 runners, tests the patched exporter, then moves the original build
+prefix away before installing the wheel outside the checkout and recording a
+fresh workload. Each platform produces `native-linux_ARCH-dist`. These wheels
+include uftrace and all five libmcount variants, not just a download link. They
+use `py3-none-linux_ARCH`, not manylinux tags; glibc and OS libraries remain
+system dependencies. The dependency lock freezes repository commits, not apt
+package versions.
+
+To reproduce the native build on a supported Linux host, after the Python-only
+checks above (the build script refuses existing native output directories):
+
+```bash
+sudo apt-get install build-essential pkg-config libtraceevent-dev libelf-dev libdw-dev
+git submodule update --init third_party/uftrace
+FG_UFTRACE_RELEASE=1 JOBS=2 scripts/uftrace.sh build
+native_prefix="$PWD/build/uftrace-$(uname -m)"
+FG_UFTRACE_PREFIX="$native_prefix" "$build_dir/venv/bin/python" -m build \
+    --wheel --outdir "$build_dir/native-dist"
+"$build_dir/venv/bin/python" -m twine check "$build_dir/native-dist/"*.whl
+mv "$native_prefix" "$build_dir/original-uftrace-prefix"
+python3 -m venv "$build_dir/native-venv"
+"$build_dir/native-venv/bin/python" -m pip install "$build_dir/native-dist/"*.whl
+workspace="$PWD"
+(cd "$build_dir" && ./native-venv/bin/python -I "$workspace/tests/smoke_installed.py" --with-uftrace)
+```
+
+Run the native verification on each actual target architecture; an x86_64 test
+does not establish ARM64 support. `FG_UFTRACE_RELEASE=1` disables optional
+Python/Lua, curses, unwind and Capstone features for the release build.
+The native wheel contains GPL-2.0 `COPYING`, executable/library hashes, the fixed
+uftrace base and patch hashes, and `fglib/_native/uftrace/source.tar.gz`: the full
+corresponding source with the maintained patches already applied, plus build
+instructions. CI attaches the same source archive separately. Do not substitute
+GitHub's automatic FuncGraph source snapshot for this native corresponding source.
 
 ### 3. Commit, tag, and push
 
@@ -138,7 +175,14 @@ gh run list --workflow release.yml --limit 5
 For each relevant run, use `gh run watch RUN_ID --exit-status` (replace `RUN_ID`
 with the actual ID). Inspect `gh run view RUN_ID --log-failed` on failure.
 Then confirm the Release is published, not a draft, has the intended stable or
-prerelease status, and attaches exactly the wheel, sdist, and checksum file:
+prerelease status, and contains all six intended attachments:
+
+- `funcgraph-VERSION-py3-none-linux_x86_64.whl`: bundled recorder for Linux x86_64.
+- `funcgraph-VERSION-py3-none-linux_aarch64.whl`: bundled recorder for Linux ARM64.
+- `funcgraph-VERSION-py3-none-any.whl`: Python-only wheel.
+- `funcgraph-VERSION.tar.gz`: Python source distribution.
+- `funcgraph-uftrace-VERSION-source.tar.gz`: fully patched native corresponding source.
+- `SHA256SUMS`: checksums for all five distributions/source archives.
 
 ```bash
 gh release view "$release_tag"
@@ -146,23 +190,25 @@ download_dir="$(mktemp -d)"
 gh release download "$release_tag" --dir "$download_dir"
 (cd "$download_dir" && sha256sum --check SHA256SUMS)
 python3 -m venv "$download_dir/venv"
-"$download_dir/venv/bin/python" -m pip install "$download_dir/funcgraph-${next_version}-py3-none-any.whl[all]"
+"$download_dir/venv/bin/python" -m pip install "$download_dir/funcgraph-${next_version}-py3-none-linux_$(uname -m).whl[all]"
 (cd "$download_dir" && ./venv/bin/python -I -c 'from importlib.metadata import version; print(version("funcgraph"))')
 "$download_dir/venv/bin/funcgraph" --help
 "$download_dir/venv/bin/fgreport" --help
+"$download_dir/venv/bin/fguftrace" --version
 ```
 
-The printed version must match `next_version`, and both checksums must pass.
+The printed version must match `next_version`, and all checksums must pass.
 For full installed-package validation of the downloaded wheel, without importing
 the source checkout:
 
 ```bash
-"$download_dir/venv/bin/python" -I "$PWD/tests/smoke_installed.py" --with-extras
+"$download_dir/venv/bin/python" -I "$PWD/tests/smoke_installed.py" --with-extras --with-uftrace
 ```
 
 This smoke test also needs a C compiler and binutils. Source installations can be
-checked in another fresh environment using the downloaded `.tar.gz` instead of
-the wheel. Record the tag, commit, run IDs, and verification outcome before
+checked in another fresh environment using `funcgraph-VERSION.tar.gz` instead of
+the native wheel; omit `--with-uftrace` for that Python-only package. Test the
+universal wheel separately too. Record the tag, commit, run IDs, and verification outcome before
 declaring the release complete.
 
 ## Install a release package
@@ -171,7 +217,12 @@ Download the wheel or source distribution and install it by local path, as in th
 verification commands above; `pip install funcgraph` is not part of this workflow.
 The base package has no Python runtime dependencies. Extras `fast`, `highlight`,
 and `all` install pyelftools, Pygments, or both. Installed commands are `funcgraph`,
-`fgreport`, `fastfaddr2line`, and `fgcapture.sh`. Fast resolution still requires
+`fgreport`, `fguftrace`, `fastfaddr2line`, and `fgcapture.sh`. Native wheels include
+the patched recorder and recording libraries; on Ubuntu, the recorder needs
+`libtraceevent1`, `libelf1`, `libdw1`, `liblzma5` and `libstdc++6` in addition to
+compatible glibc. Python-only packages fall back to patched uftrace on `PATH`,
+or `--uftrace-bin PATH`. Saved JSONL reports need no native recorder.
+Fast resolution still requires
 the appropriate system `addr2line`; capture requires Bash, root, and tracefs on
 Linux. Source-based commands (`python3 funcgraph.py`, `./fgreport`) remain supported.
 Both distributions include the resolver and CSS/JavaScript resources; source
@@ -187,7 +238,8 @@ Sample updates follow branch CI, not the release-tag workflow. Pages deploys onl
 | `master` CI passed, but no Release | Branch pushes do not release. Check that the matching tag exists on `origin` and inspect its `release` run. |
 | `check-tag` rejects a version | Compare the tag with `APP_VERSION` in the **tagged commit**, not the current branch. |
 | Test, packaging, or resource smoke test failed | Inspect the failed job; repository imports working locally do not prove installed resources are included. |
-| Artifact/checksum failure or publication permission denied | Inspect `build`/`publish` logs, the `python-dist` artifact, and repository/organization Actions policies; the publish job needs `contents: write`. |
+| Artifact/checksum failure or publication permission denied | Inspect `build`/`publish` logs, `python-dist` and both `native-linux_ARCH-dist` artifacts, and repository/organization Actions policies; the publish job needs `contents: write`. |
+| Recorder cannot load a shared library, or a wheel is not supported | Install the documented OS runtime libraries; choose the correct architecture and a compatible Linux/glibc host. Do not rename a platform wheel as universal or manylinux. |
 | Temporary runner, network, or service failure | After confirming that no Release was created, use Actions → Re-run failed jobs (or Re-run all jobs). |
 | A source/workflow fix is needed | A rerun still uses the original tagged commit. Commit the fix, choose a new version/tag, and repeat; a push to `master` alone does not fix the old tag. |
 | Tag or Release already exists | Do not overwrite published assets or move published tags. Check the existing result and use a new version for corrections. |

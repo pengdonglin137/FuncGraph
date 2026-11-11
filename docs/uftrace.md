@@ -65,17 +65,43 @@ python3 funcgraph.py --no-config --timeline --enable-fold --filter \
     --output mixed-no-kernel-source.html samples/sample_mixed.jsonl
 ```
 
+## Install and select the recorder
+
+The release's Linux x86_64 / aarch64 wheels include the patched recorder and
+its five libmcount recording libraries. Install the wheel matching your machine;
+`py3-none-any` and the Python source distribution do not contain native binaries.
+The platform wheels are built on Ubuntu 22.04, not tagged as manylinux. On Ubuntu,
+install the runtime prerequisites before using the recorder:
+
+```bash
+sudo apt-get install libtraceevent1 libelf1 libdw1 liblzma5 libstdc++6
+python3 -m pip install './funcgraph-<version>-py3-none-linux_x86_64.whl[all]'
+fguftrace --version
+```
+
+Use `linux_aarch64` on ARM64. `fguftrace record ...` and `fguftrace dump ...`
+run the installed recorder with a relocated libmcount path automatically.
+`funcgraph --uftrace DIR` and `fgreport --uftrace DIR` choose an explicit
+`--uftrace-bin PATH` first, then the bundled recorder, then patched `uftrace`
+on `PATH`. An invalid override or incomplete bundle is an error, not a silent
+fallback. Upstream uftrace without the maintained patches cannot export `--fgraph`.
+Reading saved JSONL needs none of these native runtime libraries or executables.
+`fgcapture.sh` remains the kernel-only tracefs recorder; it does not accept
+uftrace user/mixed recording options.
+
 ## Generate a report
 
 ```bash
-funcgraph --uftrace CAPTURE --uftrace-bin build/uftrace-x86_64/bin/uftrace \
+funcgraph --uftrace CAPTURE \
     --timeline --enable-fold --filter --user-src samples --output mixed.html
+fgreport -P --uftrace CAPTURE -- --user-src samples
 # Or import a saved export, with no uftrace executable needed:
 funcgraph capture.jsonl --timeline --enable-fold --filter --output mixed.html
 ```
 
-The directory reader runs the patched executable (`uftrace` on `PATH` by
-default) with `dump --fgraph --srcline`. JSONL is detected from the stream
+The directory reader runs the selected patched executable with
+`dump --fgraph --srcline`. For a development build, optionally add
+`--uftrace-bin build/uftrace-x86_64/bin/uftrace`. JSONL is detected from the stream
 header; `--input-format uftrace` selects it explicitly, including for stdin
 and compressed input. Use one recording or JSONL per report. `--compare BASE`
 accepts JSONL or a legacy trace file; Compare and `--export` group user and
@@ -145,7 +171,8 @@ checks every gitlink against this lock and requires a clean uftrace checkout at
 the selected commit before applying patches. Do not use `git submodule update --remote`.
 See [dependency pins](../third_party/README.md) before intentionally upgrading.
 
-Build from a Git checkout, not from an installed Python wheel/sdist.
+Building or updating the native payload requires a Git checkout, not an installed
+Python wheel/sdist. Installing a native release wheel does not require a compiler.
 
 ```bash
 git submodule update --init third_party/uftrace
@@ -183,11 +210,21 @@ scripts/uftrace.sh check
 the new series against an independent pristine archive before replacing the old
 series. Upstream submission/removal conditions are in `patches/uftrace/README.md`.
 
+To build a release payload, set `FG_UFTRACE_RELEASE=1` when running the build
+script; this disables optional Python/Lua, curses, unwind and Capstone features.
+Set `FG_UFTRACE_PREFIX="$PWD/build/uftrace-x86_64"` when building a platform wheel
+(use `aarch64` on ARM64). The wheel carries the executable, all five recording
+libraries, GPL-2.0 `COPYING`, the fixed base/patch hashes and a deterministic,
+fully patched `source.tar.gz`. It does not bundle the OS shared libraries.
+The release also attaches that corresponding source archive separately.
+This does not select a project-wide license. Full commands and relocation tests
+are in the [release checklist](releasing.md).
+
 ## Native export contract
 
 ```bash
-build/uftrace-x86_64/bin/uftrace dump --fgraph --srcline -d CAPTURE > capture.jsonl
-# Equivalent: uftrace dump --format=fgraph --srcline -d CAPTURE
+fguftrace dump --fgraph --srcline -d CAPTURE > capture.jsonl
+# Development equivalent: build/uftrace-x86_64/bin/uftrace dump --fgraph --srcline -d CAPTURE
 ```
 
 This exports JSONL, **not ftrace text**. The first record identifies

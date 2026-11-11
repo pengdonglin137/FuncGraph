@@ -8,5 +8,7 @@ include docs/uftrace.md docs/uftrace.cn.md
 include docs/pigz.md docs/pigz.cn.md
 include samples/pigz_case.sh samples/demo_mixed.c
 include scripts/uftrace.sh
+include scripts/uftrace_dist.py
 include third_party/versions.json third_party/check_pins.py third_party/README.md
+recursive-include patches/uftrace *.md *.patch series
 recursive-include tests *.py *.sh *.txt
