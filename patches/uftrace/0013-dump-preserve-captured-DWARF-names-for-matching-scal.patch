@@ -1,0 +1,589 @@
+From 031c96cd1f131151f5294c3ac51450d13cb1a285 Mon Sep 17 00:00:00 2001
+From: pengdonglin <pengdonglin@xiaomi.com>
+Date: Thu, 12 Nov 2026 06:59:34 +0800
+Subject: [PATCH] dump: preserve captured DWARF names for matching scalar
+ arguments
+
+Save user parameter names and ABI locations in backward-compatible .dbg
+comments while recording, including explicit -A specifications without
+automatic argument capture. Resolve the correct session, module and symbol
+once per exported call, then emit nullable names aligned with user_args.
+
+Require matching argument locations rather than assuming source parameter
+order, preserve captured widths and bytes, and decline conflicting names,
+malformed metadata, specialized compiler clones and broken type layouts.
+Offline export continues to work after the original ELF and source vanish.
+
+Add native tests for ABI matching, width changes, per-symbol isolation,
+conflicts, CRLF and rejected malformed or overflowing metadata. Verify
+115 native unit tests pass with one existing skip, plus 103 project
+argument-name, export, caller, import, detail and fullscreen regressions.
+---
+ cmds/dump.c     |  20 ++++
+ uftrace.h       |   2 +
+ utils/dwarf.c   | 259 +++++++++++++++++++++++++++++++++++++++++++++++-
+ utils/dwarf.h   |   3 +
+ utils/session.c |  15 +++
+ 5 files changed, 295 insertions(+), 4 deletions(-)
+
+diff --git a/cmds/dump.c b/cmds/dump.c
+index 1269231c743e..063fb068acdb 100644
+--- a/cmds/dump.c
++++ b/cmds/dump.c
+@@ -8,6 +8,7 @@
+ #include <time.h>
+ 
+ #include "uftrace.h"
++#include "utils/dwarf.h"
+ #include "utils/event.h"
+ #include "utils/filter.h"
+ #include "utils/fstack.h"
+@@ -1688,6 +1689,11 @@ static void fgraph_user_values(struct uftrace_task_reader *task, bool retval)
+ 	const int endian = task->h->hdr.endian;
+ 	struct uftrace_arg_spec *spec;
+ 	char values[32][32];
++	uint64_t symbol_address = 0;
++	struct uftrace_dbg_info *parameters = retval ? NULL :
++		task_find_parameter_info(&task->h->sessions, task, &symbol_address);
++	const char *names[32];
++	bool has_names = false;
+ 	size_t offset = 0;
+ 	unsigned count = 0, index;
+ 
+@@ -1735,6 +1741,8 @@ static void fgraph_user_values(struct uftrace_task_reader *task, bool retval)
+ 			return;
+ 		}
+ 		offset += padded;
++		names[count] = parameters ? get_dwarf_argname(parameters, symbol_address, spec) : NULL;
++		has_names |= names[count] != NULL;
+ 		count++;
+ 	}
+ 	if (!count || offset != args->len || (retval && count != 1))
+@@ -1751,6 +1759,18 @@ static void fgraph_user_values(struct uftrace_task_reader *task, bool retval)
+ 		fgraph_string(values[index]);
+ 	}
+ 	pr_out("]");
++	if (has_names) {
++		pr_out(",\"user_arg_names\":[");
++		for (index = 0; index < count; index++) {
++			if (index)
++				pr_out(",");
++			if (names[index])
++				fgraph_string(names[index]);
++			else
++				pr_out("null");
++		}
++		pr_out("]");
++	}
+ }
+ 
+ static void dump_fgraph_task(struct uftrace_dump_ops *ops, struct uftrace_task_reader *task,
+diff --git a/uftrace.h b/uftrace.h
+index 90da9dd357ed..9a1ccd63a426 100644
+--- a/uftrace.h
++++ b/uftrace.h
+@@ -520,6 +520,8 @@ struct uftrace_dbg_loc *task_find_loc_addr(struct uftrace_session_link *sess,
+ struct uftrace_symbol *task_find_sym_offset(struct uftrace_session_link *sess,
+ 					   struct uftrace_task_reader *task, uint64_t time,
+ 					   uint64_t addr, uint64_t *offset);
++struct uftrace_dbg_info *task_find_parameter_info(struct uftrace_session_link *sessions,
++						struct uftrace_task_reader *task, uint64_t *address);
+ bool task_find_exact_loc_addr(struct uftrace_session_link *sess, struct uftrace_task_reader *task,
+ 			      uint64_t time, uint64_t addr, struct uftrace_dbg_loc *out);
+ 
+diff --git a/utils/dwarf.c b/utils/dwarf.c
+index 45f9eadac8ee..5d211d562087 100644
+--- a/utils/dwarf.c
++++ b/utils/dwarf.c
+@@ -43,9 +43,16 @@ struct debug_entry {
+ 	uint64_t offset;
+ 	char *name;
+ 	char *spec;
++	struct list_head argnames;
+ };
+ 
+-static int add_debug_entry(struct rb_root *root, char *func, uint64_t offset, char *argspec)
++struct debug_argname {
++	struct list_head list;
++	struct uftrace_arg_spec spec;
++	char *name;
++};
++
++static int add_debug_entry(struct rb_root *root, const char *func, uint64_t offset, char *argspec)
+ {
+ 	struct debug_entry *entry, *iter;
+ 	struct rb_node *parent = NULL;
+@@ -77,6 +84,7 @@ static int add_debug_entry(struct rb_root *root, char *func, uint64_t offset, ch
+ 	entry->name = xstrdup(func);
+ 	entry->spec = xstrdup(argspec);
+ 	entry->offset = offset;
++	INIT_LIST_HEAD(&entry->argnames);
+ 
+ 	rb_link_node(&entry->node, parent, p);
+ 	rb_insert_color(&entry->node, root);
+@@ -119,6 +127,13 @@ static void free_debug_entry(struct rb_root *root)
+ 	while (!RB_EMPTY_ROOT(root)) {
+ 		node = rb_first(root);
+ 		entry = rb_entry(node, typeof(*entry), node);
++		while (!list_empty(&entry->argnames)) {
++			struct debug_argname *argument = list_first_entry(&entry->argnames,
++								   struct debug_argname, list);
++			list_del(&argument->list);
++			free(argument->name);
++			free(argument);
++		}
+ 
+ 		rb_erase(node, root);
+ 		free(entry->name);
+@@ -127,6 +142,106 @@ static void free_debug_entry(struct rb_root *root)
+ 	}
+ }
+ 
++static bool same_arg_location(const struct uftrace_arg_spec *left,
++			      const struct uftrace_arg_spec *right)
++{
++	if (left->type != right->type || left->idx != right->idx ||
++	    (left->fmt == ARG_FMT_FLOAT) != (right->fmt == ARG_FMT_FLOAT) ||
++	    left->struct_reg_cnt != right->struct_reg_cnt)
++		return false;
++	if ((left->type == ARG_TYPE_REG || left->type == ARG_TYPE_STACK) &&
++	    left->reg_idx != right->reg_idx)
++		return false;
++	return !memcmp(left->struct_regs, right->struct_regs,
++		       left->struct_reg_cnt * sizeof(left->struct_regs[0]));
++}
++
++static void add_debug_argname(struct uftrace_dbg_info *dinfo, const char *func, uint64_t offset,
++			      const struct uftrace_arg_spec *spec, const char *name)
++{
++	struct debug_entry *entry;
++	struct debug_argname *argument;
++	const unsigned char *character = (const unsigned char *)name;
++
++	if (!name || !*name || strlen(name) > 1024)
++		return;
++	for (; *character; character++) {
++		if (*character < 32 || *character == 127)
++			return;
++	}
++	entry = find_debug_entry(&dinfo->argnames, offset);
++	if (!entry) {
++		add_debug_entry(&dinfo->argnames, func, offset, "");
++		entry = find_debug_entry(&dinfo->argnames, offset);
++	}
++	list_for_each_entry(argument, &entry->argnames, list) {
++		if (same_arg_location(&argument->spec, spec)) {
++			if (argument->name && strcmp(argument->name, name)) {
++				free(argument->name);
++				argument->name = NULL;
++			}
++			return;
++		}
++	}
++	argument = xzalloc(sizeof(*argument));
++	argument->spec = *spec;
++	argument->name = xstrdup(name);
++	list_add_tail(&argument->list, &entry->argnames);
++}
++
++const char *get_dwarf_argname(struct uftrace_dbg_info *dinfo, uint64_t addr,
++			     const struct uftrace_arg_spec *spec)
++{
++	struct debug_entry *entry = find_debug_entry(&dinfo->argnames, addr);
++	struct debug_argname *argument;
++
++	if (!entry)
++		return NULL;
++	list_for_each_entry(argument, &entry->argnames, list) {
++		if (same_arg_location(&argument->spec, spec))
++			return argument->name;
++	}
++	return NULL;
++}
++
++static void load_debug_argname(struct uftrace_dbg_info *dinfo, const char *func, uint64_t offset,
++			       char *description)
++{
++	struct uftrace_arg_spec argument = {};
++	long fields[9];
++	char *end;
++	size_t length;
++	int position;
++
++	for (position = 0; position < 9; position++) {
++		errno = 0;
++		fields[position] = strtol(description, &end, 10);
++		if (errno || end == description || *end != ' ')
++			return;
++		description = end + 1;
++	}
++	if (fields[0] < ARG_TYPE_INDEX || fields[0] > ARG_TYPE_STACK ||
++	    fields[1] <= 0 || fields[1] > 4096 || fields[2] < 0 || fields[2] > SHRT_MAX ||
++	    (fields[3] != 0 && fields[3] != 1) || fields[4] < 0 || fields[4] > 4)
++		return;
++	for (position = 5; position < 9; position++) {
++		if (fields[position] < 0 || fields[position] > SHRT_MAX)
++			return;
++		argument.struct_regs[position - 5] = fields[position];
++	}
++	argument.type = fields[0];
++	argument.idx = fields[1];
++	argument.reg_idx = fields[2];
++	argument.fmt = fields[3] ? ARG_FMT_FLOAT : ARG_FMT_AUTO;
++	argument.struct_reg_cnt = fields[4];
++	length = strlen(description);
++	if (length && description[length - 1] == '\n')
++		description[--length] = '\0';
++	if (length && description[length - 1] == '\r')
++		description[--length] = '\0';
++	add_debug_argname(dinfo, func, offset, &argument, description);
++}
++
+ static struct uftrace_dbg_file *get_debug_file(struct uftrace_dbg_info *dinfo, const char *filename)
+ {
+ 	struct uftrace_dbg_file *df;
+@@ -353,6 +468,8 @@ static void release_dwarf_info(struct uftrace_dbg_info *dinfo)
+ struct arg_data {
+ 	/* name of the function (symbol name) */
+ 	const char *name;
++	uint64_t address;
++	bool names_broken;
+ 
+ 	/* (result) argspec, should be freed after used */
+ 	char *argspec;
+@@ -1341,11 +1458,30 @@ static int get_argspec(Dwarf_Die *die, void *data)
+ 
+ 		snprintf(buf, sizeof(buf), "arg%d", ++ad->idx);
+ 		if (!add_type_info(buf, sizeof(buf), &arg, ad)) {
++			ad->names_broken = true;
+ 			/* ignore this argument */
+ 			ad->idx--;
+ 			continue;
+ 		}
+ 		add_location(buf, sizeof(buf), &arg, ad);
++		{
++			struct uftrace_filter_setting setting = {
++				.arch = host_cpu_arch(),
++				.lp64 = sizeof(long) == 8,
++			};
++			char *description = xstrdup(buf);
++			struct uftrace_arg_spec *argument = parse_argspec(description, &setting);
++
++			if (argument) {
++				if (!ad->names_broken && !strstr(ad->name, ".isra.") &&
++				    !strstr(ad->name, ".constprop.") && !strstr(ad->name, ".part.") &&
++				    !strstr(ad->name, ".llvm."))
++					add_debug_argname(ad->dinfo, ad->name, ad->address, argument,
++							  str_attr(&arg, DW_AT_name, true));
++				free_arg_spec(argument);
++			}
++			free(description);
++		}
+ 
+ 		if (ad->argspec == NULL)
+ 			xasprintf(&ad->argspec, "@%s", buf);
+@@ -1365,6 +1501,8 @@ struct build_data {
+ 	int nr_rets;
+ 	struct uftrace_pattern *args;
+ 	struct uftrace_pattern *rets;
++	struct uftrace_pattern *names;
++	int nr_names;
+ 	struct cu_files files;
+ };
+ 
+@@ -1549,6 +1687,7 @@ static int get_dwarfspecs_cb(Dwarf_Die *die, void *data)
+ 	get_source_location(die, bd, sym);
+ 
+ 	setup_arg_data(&ad, sym->name, bd->dinfo);
++	ad.address = sym->addr;
+ 
+ 	for (i = 0; i < bd->nr_rets; i++) {
+ 		if (!match_filter_pattern(&bd->rets[i], sym->name))
+@@ -1575,6 +1714,15 @@ static int get_dwarfspecs_cb(Dwarf_Die *die, void *data)
+ 		ad.argspec = NULL;
+ 		break;
+ 	}
++	if (i == bd->nr_args) {
++		for (i = 0; i < bd->nr_names; i++) {
++			if (!match_filter_pattern(&bd->names[i], sym->name))
++				continue;
++			get_argspec(die, &ad);
++			free(ad.argspec);
++			break;
++		}
++	}
+ 
+ out:
+ 	return DWARF_CB_OK;
+@@ -1683,13 +1831,15 @@ static char *get_base_comp_dir(struct rb_root *dirs)
+ }
+ 
+ static void build_dwarf_info(struct uftrace_dbg_info *dinfo, struct uftrace_symtab *symtab,
+-			     enum uftrace_pattern_type ptype, struct strv *args, struct strv *rets)
++			     enum uftrace_pattern_type ptype, struct strv *args, struct strv *rets,
++			     struct strv *names)
+ {
+ 	Dwarf_Off curr = 0;
+ 	Dwarf_Off next = 0;
+ 	size_t header_sz = 0;
+ 	struct uftrace_pattern *arg_patt;
+ 	struct uftrace_pattern *ret_patt;
++	struct uftrace_pattern *name_patterns;
+ 	struct rb_root comp_dirs = RB_ROOT;
+ 	char *dir;
+ 	char *s;
+@@ -1705,6 +1855,9 @@ static void build_dwarf_info(struct uftrace_dbg_info *dinfo, struct uftrace_symt
+ 	ret_patt = xcalloc(rets->nr, sizeof(*ret_patt));
+ 	strv_for_each(rets, s, i)
+ 		init_filter_pattern(ptype, &ret_patt[i], s);
++	name_patterns = xcalloc(names->nr, sizeof(*name_patterns));
++	strv_for_each(names, s, i)
++		init_filter_pattern(ptype, &name_patterns[i], s);
+ 
+ 	dinfo->nr_locs = symtab->nr_sym;
+ 	dinfo->locs = xcalloc(dinfo->nr_locs, sizeof(*dinfo->locs));
+@@ -1719,6 +1872,8 @@ static void build_dwarf_info(struct uftrace_dbg_info *dinfo, struct uftrace_symt
+ 			.rets = ret_patt,
+ 			.nr_args = args->nr,
+ 			.nr_rets = rets->nr,
++			.names = name_patterns,
++			.nr_names = names->nr,
+ 		};
+ 
+ 		if (dwarf_offdie(dinfo->dw, curr + header_sz, &cudie) == NULL)
+@@ -1735,6 +1890,7 @@ static void build_dwarf_info(struct uftrace_dbg_info *dinfo, struct uftrace_symt
+ 		if (!dinfo->needs_args) {
+ 			bd.nr_args = 0;
+ 			bd.nr_rets = 0;
++			bd.nr_names = 0;
+ 		}
+ 
+ 		dwarf_getsrcfiles(&cudie, &bd.files.files, &bd.files.num);
+@@ -1766,6 +1922,9 @@ static void build_dwarf_info(struct uftrace_dbg_info *dinfo, struct uftrace_symt
+ 	for (i = 0; i < rets->nr; i++)
+ 		free_filter_pattern(&ret_patt[i]);
+ 	free(ret_patt);
++	for (i = 0; i < names->nr; i++)
++		free_filter_pattern(&name_patterns[i]);
++	free(name_patterns);
+ }
+ 
+ /*
+@@ -1853,7 +2012,8 @@ static int setup_dwarf_info(const char *filename, struct uftrace_dbg_info *dinfo
+ }
+ 
+ static void build_dwarf_info(struct uftrace_dbg_info *dinfo, struct uftrace_symtab *symtab,
+-			     enum uftrace_pattern_type ptype, struct strv *args, struct strv *rets)
++			     enum uftrace_pattern_type ptype, struct strv *args, struct strv *rets,
++			     struct strv *names)
+ {
+ }
+ 
+@@ -1873,6 +2033,7 @@ static void release_debug_info(struct uftrace_dbg_info *dinfo)
+ {
+ 	free_debug_entry(&dinfo->args);
+ 	free_debug_entry(&dinfo->rets);
++	free_debug_entry(&dinfo->argnames);
+ 	release_enum_def(&dinfo->enums);
+ 	release_debug_file(&dinfo->files);
+ 
+@@ -1925,6 +2086,7 @@ void prepare_debug_info(struct uftrace_sym_info *sinfo, enum uftrace_pattern_typ
+ 	struct uftrace_mmap *map;
+ 	struct strv dwarf_args = STRV_INIT;
+ 	struct strv dwarf_rets = STRV_INIT;
++	struct strv dwarf_names = STRV_INIT;
+ 
+ 	if (sinfo->flags & SYMTAB_FL_SYMS_DIR) {
+ 		load_debug_info(sinfo, true, false);
+@@ -1932,6 +2094,20 @@ void prepare_debug_info(struct uftrace_sym_info *sinfo, enum uftrace_pattern_typ
+ 	}
+ 
+ 	extract_dwarf_args(argspec, retspec, &dwarf_args, &dwarf_rets);
++	if (argspec) {
++		struct strv descriptions = STRV_INIT;
++		char *description;
++		int position;
++		strv_split(&descriptions, argspec, ";");
++		strv_for_each(&descriptions, description, position) {
++			char *separator = strchr(description, '@');
++			if (separator) {
++				*separator = '\0';
++				strv_append(&dwarf_names, description);
++			}
++		}
++		strv_free(&descriptions);
++	}
+ 
+ 	if (auto_args) {
+ 		if (ptype == PATT_REGEX) {
+@@ -1957,12 +2133,13 @@ void prepare_debug_info(struct uftrace_sym_info *sinfo, enum uftrace_pattern_typ
+ 		setup_debug_info(dinfo);
+ 
+ 		setup_dwarf_info(map->libname, dinfo, map->start, force);
+-		build_dwarf_info(dinfo, stab, ptype, &dwarf_args, &dwarf_rets);
++		build_dwarf_info(dinfo, stab, ptype, &dwarf_args, &dwarf_rets, &dwarf_names);
+ 		release_dwarf_info(dinfo);
+ 	}
+ 
+ 	strv_free(&dwarf_args);
+ 	strv_free(&dwarf_rets);
++	strv_free(&dwarf_names);
+ }
+ 
+ void finish_debug_info(struct uftrace_sym_info *sinfo)
+@@ -2149,6 +2326,20 @@ static void save_debug_entries(struct uftrace_dbg_info *dinfo, const char *dirna
+ 		if (entry && entry->spec)
+ 			save_debug_file(fp, 'A', entry->spec, 0);
+ 
++		entry = find_debug_entry(&dinfo->argnames, loc->sym->addr);
++		if (entry) {
++			struct debug_argname *argument;
++			list_for_each_entry(argument, &entry->argnames, list) {
++				const struct uftrace_arg_spec *spec = &argument->spec;
++				if (argument->name)
++					fprintf(fp, "# fgraph-param: %u %d %d %d %d %d %d %d %d %s\n",
++						spec->type, spec->idx, spec->reg_idx,
++						spec->fmt == ARG_FMT_FLOAT, spec->struct_reg_cnt,
++						spec->struct_regs[0], spec->struct_regs[1],
++						spec->struct_regs[2], spec->struct_regs[3], argument->name);
++			}
++		}
++
+ 		entry = find_debug_entry(&dinfo->rets, loc->sym->addr);
+ 		if (entry && entry->spec)
+ 			save_debug_file(fp, 'R', entry->spec, 0);
+@@ -2210,6 +2401,7 @@ static int load_debug_file(struct uftrace_dbg_info *dinfo, struct uftrace_symtab
+ 
+ 	dinfo->args = RB_ROOT;
+ 	dinfo->rets = RB_ROOT;
++	dinfo->argnames = RB_ROOT;
+ 	dinfo->enums = RB_ROOT;
+ 	dinfo->files = RB_ROOT;
+ 	dinfo->loaded = true;
+@@ -2226,6 +2418,10 @@ static int load_debug_file(struct uftrace_dbg_info *dinfo, struct uftrace_symtab
+ 		ptrdiff_t sym_idx;
+ 		unsigned long lineno;
+ 
++		if (!strncmp(line, "# fgraph-param: ", 16) && func) {
++			load_debug_argname(dinfo, func, offset, line + 16);
++			continue;
++		}
+ 		if (line[0] == '#')
+ 			continue;
+ 
+@@ -2288,6 +2484,7 @@ out:
+ 
+ 		free_debug_entry(&dinfo->args);
+ 		free_debug_entry(&dinfo->rets);
++		free_debug_entry(&dinfo->argnames);
+ 	}
+ 
+ 	free(line);
+@@ -2401,6 +2598,60 @@ struct comp_dir {
+ };
+ 
+ /* test: same number of compilation unit */
++TEST_CASE(dwarf_fgraph_parameter_locations)
++{
++	struct uftrace_dbg_info information = {};
++	struct uftrace_arg_spec argument = { .idx = 1, .fmt = ARG_FMT_AUTO, .size = 8 };
++	struct uftrace_arg_spec alternate = argument;
++
++	add_debug_argname(&information, "child", 0x100, &argument, "count");
++	add_debug_argname(&information, "child", 0x200, &argument, "other_count");
++	TEST_STREQ(get_dwarf_argname(&information, 0x100, &argument), "count");
++	TEST_STREQ(get_dwarf_argname(&information, 0x200, &argument), "other_count");
++	alternate.size = 1;
++	alternate.fmt = ARG_FMT_UINT;
++	TEST_STREQ(get_dwarf_argname(&information, 0x100, &alternate), "count");
++	alternate.type = ARG_TYPE_STACK;
++	alternate.stack_ofs = 1;
++	TEST_EQ(get_dwarf_argname(&information, 0x100, &alternate), NULL);
++	alternate = argument;
++	alternate.fmt = ARG_FMT_FLOAT;
++	TEST_EQ(get_dwarf_argname(&information, 0x100, &alternate), NULL);
++	add_debug_argname(&information, "child", 0x100, &argument, "conflicting");
++	TEST_EQ(get_dwarf_argname(&information, 0x100, &argument), NULL);
++	TEST_STREQ(get_dwarf_argname(&information, 0x200, &argument), "other_count");
++	free_debug_entry(&information.argnames);
++	return TEST_OK;
++}
++
++TEST_CASE(dwarf_fgraph_parameter_metadata)
++{
++	struct uftrace_dbg_info information = {};
++	struct uftrace_arg_spec argument = { .idx = 1, .fmt = ARG_FMT_AUTO };
++	const char *invalid[] = {
++		"-1 1 0 0 0 0 0 0 0 count", "4 1 0 0 0 0 0 0 0 count",
++		"0 0 0 0 0 0 0 0 0 count", "0 4097 0 0 0 0 0 0 0 count",
++		"0 1 32768 0 0 0 0 0 0 count", "0 1 0 2 0 0 0 0 0 count",
++		"0 1 0 0 5 0 0 0 0 count", "0 1 0 0 0 -1 0 0 0 count",
++		"0 1 0 0 0 0 0 0 32768 count", "0 1 0 0 0 0 0 0 0 count\rhidden",
++		"99999999999999999999999999999 1 0 0 0 0 0 0 0 count",
++		"0 1 0 0 0 0 0 0 0", "0 1 0 0 0 0 0 0 0 ",
++	};
++	char valid[] = "0 1 0 0 0 0 0 0 0 count\r\n";
++	unsigned position;
++
++	for (position = 0; position < ARRAY_SIZE(invalid); position++) {
++		char *description = xstrdup(invalid[position]);
++		load_debug_argname(&information, "child", 0x100, description);
++		free(description);
++		TEST_EQ(get_dwarf_argname(&information, 0x100, &argument), NULL);
++	}
++	load_debug_argname(&information, "child", 0x100, valid);
++	TEST_STREQ(get_dwarf_argname(&information, 0x100, &argument), "count");
++	free_debug_entry(&information.argnames);
++	return TEST_OK;
++}
++
+ TEST_CASE(dwarf_srcline_prefix1)
+ {
+ 	struct rb_root dirs = RB_ROOT;
+diff --git a/utils/dwarf.h b/utils/dwarf.h
+index 756574ef74cb..989f1fc8d62d 100644
+--- a/utils/dwarf.h
++++ b/utils/dwarf.h
+@@ -44,6 +44,7 @@ struct uftrace_dbg_info {
+ 	struct rb_root args;
+ 	/* rb tree of return values */
+ 	struct rb_root rets;
++	struct rb_root argnames;
+ 	/* rb tree of enum tags/values */
+ 	struct rb_root enums;
+ 	/* rb tree of file info */
+@@ -73,6 +74,8 @@ extern bool find_dbg_line_at(struct uftrace_dbg_info *dinfo, uint64_t addr,
+ 			     struct uftrace_dbg_file **out_file, int *out_line);
+ extern char *get_dwarf_argspec(struct uftrace_dbg_info *dinfo, char *name, unsigned long addr);
+ extern char *get_dwarf_retspec(struct uftrace_dbg_info *dinfo, char *name, unsigned long addr);
++extern const char *get_dwarf_argname(struct uftrace_dbg_info *dinfo, uint64_t addr,
++				     const struct uftrace_arg_spec *spec);
+ struct uftrace_dbg_loc *find_file_line(struct uftrace_sym_info *sinfo, uint64_t addr);
+ extern void save_debug_info(struct uftrace_sym_info *sinfo, const char *dirname);
+ extern void load_debug_info(struct uftrace_sym_info *sinfo, bool needs_srcline,
+diff --git a/utils/session.c b/utils/session.c
+index 9cc1d16f18e1..431b911dc555 100644
+--- a/utils/session.c
++++ b/utils/session.c
+@@ -850,6 +850,21 @@ struct uftrace_symbol *task_find_sym_offset(struct uftrace_session_link *session
+ 	return sym;
+ }
+ 
++struct uftrace_dbg_info *task_find_parameter_info(struct uftrace_session_link *sessions,
++						struct uftrace_task_reader *task, uint64_t *address)
++{
++	struct uftrace_module *module;
++	struct uftrace_symbol *symbol;
++	uint64_t offset;
++
++	if (task_find_addr_module(sessions, task, task->rstack->time, task->rstack->addr,
++				  &module, &symbol, &offset) < 0 || !module ||
++	    offset < symbol->addr || offset - symbol->addr >= symbol->size)
++		return NULL;
++	*address = symbol->addr;
++	return &module->dinfo;
++}
++
+ struct uftrace_dbg_loc *task_find_loc_addr(struct uftrace_session_link *sessions,
+ 					   struct uftrace_task_reader *task, uint64_t time,
+ 					   uint64_t addr)

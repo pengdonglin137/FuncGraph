@@ -1,6 +1,6 @@
 # User / kernel tracing with uftrace
 
-## Implementation status (2026-11-11)
+## Implementation status (2026-11-12)
 
 The optional native capture/export foundation is implemented and validated on
 x86_64 QEMU Linux **7.4.0-rc2** and Raspberry Pi 4 Linux
@@ -396,6 +396,25 @@ frames as roots. There is no implicit clock adjustment or synthetic completion.
   or 64 bits) add optional `user_args` (entry list of strings) or `user_retval`
   (exit string). Strings avoid losing 64-bit precision in browsers. An unsupported
   or incomplete specification leaves the whole payload raw; older exports still work.
+- New captures made with the patched recording libraries also save available user
+  DWARF parameter names in the capture's `.dbg` files. Build the application and
+  relevant libraries with `-g`; `--auto-args` or explicit `-A` specifications can
+  retain names. Export adds an optional `user_arg_names` list aligned with
+  `user_args`, using `null` for an unmatched location. Lookup uses the recorded
+  session, mapped module, function address and integer/floating/register/stack
+  binding, not a global function-name match or kernel BTF. Explicit capture
+  specifications still determine which values and widths are recorded; names
+  never add, remove or reinterpret their values.
+  Text and Timeline show `count=3` when a name is known and `slotN=value` for
+  unmatched entries in a partly named list. Timeline keeps the original payload
+  under **Original argument bytes**. Old recordings without the saved names keep
+  their value-only display; updating only the exporter cannot recover missing
+  capture metadata, so record again with the updated executable **and** recording
+  libraries. Stripped DWARF, conflicting metadata, signature-specialized compiler
+  clones, or unmatched custom locations
+  remain unnamed. Complex/unsupported formats still retain raw bytes rather than
+  inventing values or parameter names. The checked-in mixed sample predates this
+  metadata and is not rewritten with guessed names.
 - Perf `event` records have `origin=perf`, `space=null`, unknown `cpu=null`, an
   opaque stream index and the available scheduling/task/comm fields. Do not count
   perf scheduling and equivalent kernel tracepoints twice in an importer.

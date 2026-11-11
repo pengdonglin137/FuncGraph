@@ -373,7 +373,9 @@ function showDetail(i) {
             '<span class="tl-cs-at">' + (userSite ? '<br><span data-callsite-position>' + esc(userSite[0] + ':' + userSite[1]) + '</span>' : '') + '</span>' +
             (!userSite ? '<div class="tl-context-note">Call-site source unavailable; function entry is a fallback.</div>' : ''));
         else h += kv('caller site', '<span class="tl-muted">Not recorded · capture with -T &apos;.@callsite&apos;</span>');
-        if (userDetail.args !== undefined) h += kv('user args', esc(userDetail.args));
+        if (userDetail.args !== undefined) h += kv('user args', esc(userDetail.args) +
+            (userDetail.arg_names ? '<div class="tl-context-note">Names from recorded user DWARF; values follow the saved capture specification.</div>' : '') +
+            (a ? '<details class="tl-context-note"><summary>Original argument bytes</summary>' + esc(a) + '</details>' : ''));
         else if (a) h += kv('raw argument bytes', esc(a));
         if (userDetail.retval !== undefined) h += kv('user return', esc(userDetail.retval));
         else if (userDetail.return_payload) h += kv('raw return bytes', esc(userDetail.return_payload));

@@ -93,6 +93,14 @@ def _check_record(record):
                                   not isinstance(record['user_args'], list) or not record['user_args'] or
                                   not all(isinstance(value, str) and SCALAR.fullmatch(value) for value in record['user_args'])):
         raise UftraceInputError('invalid user argument values')
+    if 'user_arg_names' in record:
+        names = record['user_arg_names']
+        if ('user_args' not in record or not isinstance(names, list) or
+                len(names) != len(record['user_args']) or not any(name is not None for name in names) or
+                not all(name is None or isinstance(name, str) and 0 < len(name) <= 1024 and
+                        all(ord(character) >= 32 and ord(character) != 127 for character in name)
+                        for name in names)):
+            raise UftraceInputError('invalid user argument names')
     if 'user_retval' in record and ((space, kind) != ('user', 'exit') or
                                     not isinstance(record['user_retval'], str) or not SCALAR.fullmatch(record['user_retval'])):
         raise UftraceInputError('invalid user return value')
@@ -292,7 +300,13 @@ class UftraceTimeline(TimelineBuilder):
         if user:
             detail = self.user_details[lineno] = {'address': record['address']}
             if 'user_args' in record:
-                detail['args'] = ', '.join(_display(value) for value in record['user_args'])
+                names = record.get('user_arg_names')
+                detail['args'] = ', '.join(
+                    ((_display(names[position]) if names[position] is not None else 'slot' + str(position + 1)) + '='
+                     if names else '') + _display(value)
+                    for position, value in enumerate(record['user_args']))
+                if names:
+                    detail['arg_names'] = tuple(names)
             if user_site:
                 detail['callsite'] = {'retaddr': user_site['retaddr']}
                 if 'name' in user_site:

@@ -18,6 +18,7 @@ are generated from committed changes in `build/uftrace-dev`, never hand-edited.
 | 0010 | Export native user CALLSITE events with original bytes/return PCs, saved-session caller symbols and exact `PC - 1` source positions; keep callee entries separate. | Not submitted. Remove when upstream's structured export preserves the same evidence and the call-site regressions pass. |
 | 0011 | Decode saved automatic scalar argument/return specifications using native replay's integer/hexadecimal formatting, while retaining original bytes and unsupported-format fallbacks. | Not submitted. Remove when upstream's structured export supports automatic scalar values and the native regressions pass. |
 | 0012 | Export bounded user caller-site symbol offsets at return PC minus one with capture-session PIE/library/dlopen relocation, retaining original return PCs. | Not submitted. Remove when upstream exports equivalent call-site symbol bounds and relocation tests pass. |
+| 0013 | Save user DWARF parameter names with ABI-location metadata in backward-compatible debug comments; export names only for matching recorded scalar argument locations, including offline and dlopen captures. | Not submitted. Remove when upstream preserves equivalent captured parameter-name provenance and the native/import/browser regressions pass. |
 
 The full base SHA is `842ed731248a9daded38774d8fb26c7b09474461`, locked in both
 the gitlink and `third_party/versions.json`. Build scripts reject mismatches;
