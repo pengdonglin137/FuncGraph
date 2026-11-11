@@ -25,6 +25,15 @@ funcgraph trace.dat.gz --timeline --output trace.html
 cat trace.dat | funcgraph - --timeline --output trace.html
 ```
 
+raw 输入也支持目录报告：
+
+```bash
+funcgraph trace.dat --timeline --report-mode sidecar --output trace-report
+fgview trace-report
+```
+
+目录报告请通过 `fgview` 提供的地址访问，不要用 `file://` 直接打开 `index.html`。若要按大小选择，使用 `--report-mode auto --sidecar-threshold BYTES`；阈值比较完整生成的 HTML 大小，不是 raw 文件大小或二进制中的换行数量。sidecar 延后浏览器端的 Text 和源码正文加载，但不把 raw 解码变成流式或有界内存处理。详见[查看器指南](viewer.cn.md)。
+
 默认 `--input-format auto` 自动识别；`raw` 强制要求 trace-cmd 容器，`text` 遇到二进制容器则明确报错。`--compare` 的文件独立自动识别，可以混合对比 raw 和文本。
 
 默认读取顶层 buffer。`--raw-instance NAME` 选择一个命名 buffer，也用于 raw 格式的比较基线，不会静默合并多个 instance。当前 buffer 没有调用或调度事件时，错误会列出可选实例。
@@ -81,7 +90,7 @@ export LD_LIBRARY_PATH="$HOME/.local/funcgraph-raw/lib${LD_LIBRARY_PATH:+:$LD_LI
 - `retaddr` 是记录的**返回 PC**，caller offset 使用该 PC；符号长度来自下一条 kallsyms 地址边界，不是重新测量的代码长度。不臆造架构相关的调用指令偏移修正。
 - 调度切换/唤醒保留任务、CPU、状态及时间戳。额外的 switch-in 上下文行使恢复边界等于真实切换时间，而不是下一条函数事件。丢事件保留计数，未知数量仍为 `?`/JSON null；graph overrun 以明确注释显示。
 - 当前支持 local/global/mono/mono_raw/boot/tai/uptime/perf 纳秒时钟；没有保存时钟的旧容器按 reader 的 local 约定处理。counter/cycle 时钟（含 x86-tsc）暂不支持，建议采集时用 `-C mono`。local 时钟原有的跨 CPU 同步限制仍存在。
-- 其它事件保留为可读注释，不代表都有专门分析能力。这是**完整文件解码/归一化**，不是实时读取 trace_pipe_raw、常量内存处理、Text 虚拟化或 sidecar。Text 行号指生成的事件行，不是二进制文件偏移。
+- 其它事件保留为可读注释，不代表都有专门分析能力。这是**完整文件解码/归一化**，不是实时读取 trace_pipe_raw、常量内存处理或 Text 虚拟化；单文件和 sidecar 输出使用同一份解码模型。Text 行号指生成的事件行，不是二进制文件偏移。
 
 CLI 使用的 `inputs.read_lines()` 直接保留原生解码器生成的归一化行列表，压缩输入、stdin 以及混合多输入中的每个 raw 文件均走此路径，不再把整份列表拼成完整 trace 字符串再重新拆行。公开的 `inputs.read_text()` API 在调用者明确需要字符串时，仍为 raw 输入返回以换行符结尾的文本。这只消除加载时的冗余复制；完整归一化 trace 和分析模型仍保存在内存中。
 

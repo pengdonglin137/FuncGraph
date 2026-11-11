@@ -25,6 +25,15 @@ funcgraph trace.dat.gz --timeline --output trace.html
 cat trace.dat | funcgraph - --timeline --output trace.html
 ```
 
+Raw inputs also support directory reports:
+
+```bash
+funcgraph trace.dat --timeline --report-mode sidecar --output trace-report
+fgview trace-report
+```
+
+Serve the directory with `fgview` instead of opening its `index.html` through `file://`. For explicit size-based selection, use `--report-mode auto --sidecar-threshold BYTES`; the threshold is the complete generated HTML size, not the raw file size or a count of binary newline bytes. Sidecar defers browser delivery of Text and source bodies, but does not make raw decoding streaming or bounded-memory. See the [viewer guide](viewer.md).
+
 `--input-format auto` is the default; `raw` requires a valid trace-cmd container, and `text` rejects one rather than decoding binary bytes as replacement characters. The comparison file is auto-detected independently, so raw and text can be compared. `--raw-instance NAME` selects one named buffer instead of the default top-level buffer; it also applies to raw comparison inputs. Buffers are never silently combined. If the selected buffer has no graph/scheduling events, the error lists available named instances.
 
 Normal compressed inputs (`.gz`, `.xz`, `.lzma`, `.bz2`) and binary stdin work. Compressed containers/stdin are spooled into a private temporary file because libtracecmd needs seekable input. Multiple inputs use the existing chronological merge with nanosecond timestamp keys. `fgreport trace.dat -- --raw-instance NAME` passes decoder options through; its line-count shortcut deliberately does not count binary newline bytes. For large raw reports use pre-filtering or `--no-text-view` explicitly.
@@ -81,7 +90,7 @@ The bridge reads event fields through libtraceevent, not guessed ctypes layouts.
 - `retaddr` is the recorded **return PC**. The caller offset uses that PC; symbol sizes come from the next kallsyms boundary, not a new measurement of code length. No architecture-specific call-instruction adjustment is invented.
 - Scheduling switch/wakeup events retain task/CPU identity, state and timestamps. Switch-in context rows place resume boundaries at the actual switch timestamp, rather than at the next function event. Lost-event counts are retained; unknown counts stay unknown (`?`/JSON null). Graph overruns are shown as explicit comments.
 - Supported clocks are nanosecond clocks: local, global, mono, mono_raw, boot, tai, uptime and perf; legacy files without a saved clock use the reader's local-clock convention. Counter/cycle clocks (including x86-tsc) are rejected for now; capture with `-C mono`. Local clocks still have their original cross-CPU synchronization limitations.
-- Other events remain readable comments, not promises of specialized analysis. This is a complete-file decoding/normalization path, **not** live `trace_pipe_raw` reading, constant-memory processing, Text virtualization or sidecar output. Normalized Text line numbers refer to generated event rows, not binary file offsets.
+- Other events remain readable comments, not promises of specialized analysis. This is a complete-file decoding/normalization path, **not** live `trace_pipe_raw` reading, constant-memory processing or Text virtualization. Single-file and sidecar output use the same decoded model. Normalized Text line numbers refer to generated event rows, not binary file offsets.
 
 The CLI's `inputs.read_lines()` path keeps the native decoder's normalized line list directly, including compressed inputs, stdin and each raw member of a mixed-input merge. It does not join that list into a full trace string and split it again. The public `inputs.read_text()` API still returns a newline-terminated string for raw inputs when explicitly requested. This removes redundant loading copies; the complete normalized trace and analysis models still reside in memory.
 
