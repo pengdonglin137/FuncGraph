@@ -484,14 +484,45 @@ function nameOf(i) { return S[sName[i]]; }
 function spaceOf(index) { return sFlags[index] & FL.USER ? 'user' : 'kernel'; }
 function userPosition(index) { return D.sources?.user_positions?.[D.sources?.user_lines?.[sLine[index]]]; }
 function userCallSite(index) { return D.sources?.user_positions?.[D.sources?.user_callsites?.[sLine[index]]]; }
-function retOf(i) { return sRet && sRet[i] >= 0 ? S[sRet[i]] : null; }
+function kernelTypesOf(index) { return sFlags[index] & FL.USER ? null : D.uftrace?.kernel_types?.[sName[index]]; }
+function scalarValue(value, format, returning = false) {
+    if (!Array.isArray(format)) return value;
+    const [kind, bits] = format;
+    if (kind === 'void') return null;
+    if (!Number.isInteger(bits) || bits < 1 || bits > 64) return value;
+    try {
+        let number = BigInt(value) & ((1n << BigInt(bits)) - 1n);
+        if (kind === 'sint') {
+            if (number & (1n << BigInt(bits - 1))) number -= 1n << BigInt(bits);
+            return String(number);
+        }
+        if (kind === 'enum') return String(number);
+        if (kind === 'bool' && returning) return number ? 'true' : 'false';
+        return '0x' + number.toString(16);
+    } catch (_) { return value; }
+}
+function rawRetOf(index) { return sRet && sRet[index] >= 0 ? S[sRet[index]] : null; }
+function retOf(index) {
+    const raw = rawRetOf(index), format = kernelTypesOf(index)?.ret;
+    return raw === null || !format ? raw : scalarValue(raw, format, true);
+}
+function userCallAddress(index) {
+    const address = D.uftrace?.user_details?.[sLine[index]]?.callsite?.retaddr;
+    try { return address ? '0x' + (BigInt(address) - 1n).toString(16) : null; } catch (_) { return null; }
+}
 function callerOf(i) { return sCaller && sCaller[i] >= 0 ? S[sCaller[i]] : null; }
 function argsOf(i) { return sArgs && sArgs[i] >= 0 ? S[sArgs[i]] : null; }
 function namedArgsOf(index) {
     const raw = argsOf(index), names = D.uftrace?.kernel_arg_names?.[sName[index]];
-    if (!raw || raw === '[]' || sFlags[index] & FL.USER || !Array.isArray(names) || !names.some(Boolean)) return null;
-    return raw.split(', ').map((value, position) =>
-        (names[position] || 'slot' + (position + 1)) + '=' + value).join(', ');
+    const signature = kernelTypesOf(index), formats = signature?.args || [];
+    if (!raw || raw === '[]' || sFlags[index] & FL.USER ||
+        (!names?.some(Boolean) && !formats.length && signature?.argc === undefined)) return null;
+    const values = raw.split(', '), count = signature?.argc ?? values.length;
+    if (!count) return 'no parameters';
+    const result = values.slice(0, count).map((value, position) =>
+        (names?.[position] || 'slot' + (position + 1)) + '=' + scalarValue(value, formats[position]));
+    if (count > values.length) result.push('…');
+    return result.join(', ');
 }
 function modOf(i) { return sMod && sMod[i] >= 0 ? S[sMod[i]] : null; }
 function cpuOf(i) { return sCpu ? sCpu[i] : -1; }

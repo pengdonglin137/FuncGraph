@@ -165,7 +165,7 @@ function tipSlice(i) {
     if (!D.uftrace || f & FL.LAT) h += row('context', CTX_NAMES[f & FL.CTX] + (f & FL.CTXINF ? ' (inferred)' : '') + ctxFlagText(f));
     const r = retOf(i);
     if (r !== null) {
-        const field = D.uftrace ? 'raw return' : 'return';
+        const field = kernelTypesOf(i)?.ret ? 'return (BTF)' : D.uftrace ? 'raw return' : 'return';
         if (eRole[i] >= 0) h += row(field, esc(r) + ' ' + (errName(eErr[i]) || '') + ' — ' + errRoleText(i), 't-err');
         else h += row(field, esc(r) + (f & FL.NULLRET ? ' (NULL)' : ''));
     }

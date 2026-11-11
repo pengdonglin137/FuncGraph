@@ -201,6 +201,10 @@ kernel names separately, even when their symbols have identical spelling.
 
   The updated patched exporter preserves the event bytes and return PC, resolving
   `PC - 1` with the recorded session's module maps and matching debug images.
+  Details show this exact value as **call site address**, keeping the original
+  PC as **caller return address** and the callee entry as **recorded address**.
+  These distinct addresses are never substituted for one another; `PC - 1`
+  identifies a position inside the call, not necessarily its instruction start.
   An event is paired only with the next user record of the same thread when that
   record is an entry exactly one ns later. Loss or mismatches never invent a site.
   Text and details prefer **User call site source**. A stack's parent row uses
@@ -208,15 +212,30 @@ kernel names separately, even when their symbols have identical spelling.
   Otherwise the explicitly labeled function-entry fallback and original addresses
   remain. Re-record old captures without call-site events: regenerating HTML cannot
   recover a caller PC that was never recorded.
-- **Kernel argument names:** matching `--vmlinux` or `--btf` supplies names for
-  **args (BTF)** and Text as `name=raw_value`, retaining the original values in
-  expandable **Raw argument slots**. This reuses BTF without another DWARF lookup
-  or pointer dereference. Only an ABI-safe integer/pointer parameter prefix is
-  named. Aggregates, floating-point arguments, variadic tails, conflicting
-  prototypes, argument-rewriting compiler clones and wide integers of unknown
-  word size are not guessed; remaining slots use `slotN`, not invented argument
-  names. Without BTF the existing **raw args** remains. User scalar values still
-  follow their captured specifications and never borrow kernel parameter names.
+- **Kernel argument counts and widths:** matching `--vmlinux` or `--btf` trims
+  **args (BTF)** and Text to a trusted prototype, displaying `name=typed_value`.
+  Integers are masked to their declared BTF bit width, then interpreted with the
+  correct signedness: an `int` slot of `0xdeadbeefffffffea` becomes `-22`, while
+  an `unsigned char` becomes `0xea`. Pointers retain exact hexadecimal values
+  at the known target word size, without dereferencing or JavaScript floating-point
+  conversion. Zero-parameter functions hide spare slots; missing captured slots
+  use `…`, never invented values. **return (BTF)** applies the same width/sign
+  correction, boolean returns use bit 0 as `true/false`, and `void` has no value.
+  Expand **Raw argument slots** or **Original return bits** for unmodified
+  register values; the JSONL and model retain their original data.
+  Only an ABI-safe integer/pointer prefix is interpreted. Aggregates, floats,
+  variadic tails, conflicting prototypes, compiler clones and unknown pointer
+  word sizes never force a count/slot mapping. Remaining slots use `slotN`.
+  No additional DWARF lookup is needed. Without matching BTF, **raw args** and
+  **raw return** remain; byte-for-byte equivalence with every kernel version's
+  `cat trace` formatter is not claimed.
+- **User arguments:** compile with debug information and record with `--auto-args`,
+  or specify `-A` / `-R` explicitly. For example,
+  `fguftrace record --auto-args --srcline -T '.@callsite' -d capture.data ./app`.
+  Automatic scalar values follow uftrace replay's number formatting. Unsupported
+  strings, floats, enums and aggregates retain their bytes; absent specifications
+  are not guessed. Kernel BTF never trims or names user parameters. Old captures
+  without argument payloads must be recorded again.
 - **Filtering:** with `--filter`, use `space:user` or `space:kernel` in Text
   or Timeline's shared Filter. Sidecar reports can apply this filter before
   Text loads. CLI tree pre-filters are not supported on uftrace streams yet.
@@ -224,7 +243,8 @@ kernel names separately, even when their symbols have identical spelling.
   as measured calls. CPU for user calls remains unknown. User values appear
   when uftrace recorded supported scalar argument/return specifications;
   otherwise recorded bytes are labeled as raw bytes, not guessed. The
-  recorded address is not a resolved source address. Kernel returns are shown as raw bits, with errno analysis
+  recorded address is not a resolved source address. Kernel returns use matching
+  BTF types when available while retaining raw bits, with errno analysis
   only for known BTF types. Kernel scheduler tracepoints drive scheduling
   analysis; perf events do not produce duplicate intervals. The JSONL retains
   native fields not projected into the report.
@@ -361,7 +381,7 @@ idle tracefs validation environment, pass separate exact syscall roots and
 explicit `-A`/`-R` specifications, for example:
 
 ```bash
-uftrace record -K 30 --clock=mono --kernel-full-info --no-sched --srcline -T '.@callsite' -d CAPTURE \
+uftrace record -K 30 --clock=mono --kernel-full-info --no-sched --auto-args --srcline -T '.@callsite' -d CAPTURE \
     -F '__x64_sys_read@kernel;__x64_sys_write@kernel;__x64_sys_sendto@kernel;__x64_sys_recvfrom@kernel' \
     -A 'dispatch_datagram@arg1/i32,arg2/x64,arg3/u64,arg4/x64,arg5/u32' \
     -A 'receive_frame@arg1/i32,arg2/x64,arg3/u64,arg4/i32' \

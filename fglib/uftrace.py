@@ -7,10 +7,11 @@ import re
 import time
 
 from .model import FtraceLine
+from .btf import format_scalar
 from .parser import _base36
 from .timeline import (TimelineBuilder, _Frame, F_USER, F_BOUNDARY, F_ORPHAN, F_TRUNCATED,
                        F_HAS_LAT, F_IRQOFF, F_BHOFF, F_PREEMPT_SHIFT, RE_MAY_SLEEP,
-                       RE_SCHED_SWITCH, CTX_TASK)
+                       RE_SCHED_SWITCH, RE_COMPARATOR, _strip_suffix, CTX_TASK)
 
 
 SCHEMA = 'funcgraph.uftrace.v1'
@@ -216,6 +217,7 @@ class UftraceTimeline(TimelineBuilder):
         self.user_details = {}
         self.kernel_details = {}
         self.argument_names = {}
+        self.kernel_types = {}
         self.caller_symbols = {}
         self.lifecycle = []
         self.native_depths = []
@@ -389,17 +391,40 @@ class UftraceTimeline(TimelineBuilder):
             return
         counts = {}
         for index, flags in enumerate(self.s_flags):
-            if flags & (F_USER | F_ORPHAN) or self.s_args[index] < 0:
+            if flags & (F_USER | F_ORPHAN):
                 continue
             values = self.records[self.s_line[index] - 3].get('args')
-            if not values:
-                continue
             name = self.s_name[index]
-            counts[name] = max(counts.get(name, 0), len(values))
+            counts[name] = max(counts.get(name, 0), len(values or ()))
         for name, count in counts.items():
             names = self.rettypes.argument_names(self.strings[name], count)
             if any(names):
                 self.argument_names[name] = names
+            if hasattr(self.rettypes, 'function_types'):
+                types = self.rettypes.function_types(self.strings[name])
+                if types:
+                    self.kernel_types[name] = types
+
+    def _formatted_arguments(self, index, values):
+        name = self.s_name[index]
+        names = self.argument_names.get(name, ())
+        signature = self.kernel_types.get(name, {})
+        formats = signature.get('args', ())
+        count = signature.get('argc', len(values))
+        result = []
+        for position, value in enumerate(values[:count]):
+            if position < len(formats):
+                value = format_scalar(value, *formats[position])
+            label = names[position] if position < len(names) and names[position] else f'slot{position + 1}'
+            result.append(label + '=' + value)
+        if count > len(values):
+            result.append('…')
+        return ', '.join(result)
+
+    def _formatted_return(self, index):
+        value = self.s_ret[index]
+        signature = self.kernel_types.get(self.s_name[index], {})
+        return format_scalar(value, *signature['ret'], returning=True) if value is not None and 'ret' in signature else value
 
     def _event(self, record, task, timestamp, cpu, context):
         name, payload = record.get('name', ''), record.get('text', '')
@@ -470,6 +495,21 @@ class UftraceTimeline(TimelineBuilder):
         name = self.strings[self.s_name[index]]
         if self.rettypes.lookup(name)[0] is None:
             return None, False, False
+        signature = self.rettypes.function_types(name) if hasattr(self.rettypes, 'function_types') else None
+        returned = signature.get('ret') if signature else None
+        if returned and self.s_ret[index] is not None:
+            kind, bits = returned
+            if kind not in ('sint', 'ptr') or kind == 'sint' and RE_COMPARATOR.search(_strip_suffix(name)):
+                return None, True, False
+            try:
+                value = int(self.s_ret[index], 0) & ((1 << bits) - 1)
+            except ValueError:
+                return None, False, False
+            if kind == 'ptr' and value == 0:
+                return None, True, True
+            if value & (1 << (bits - 1)):
+                value -= 1 << bits
+            return (value, True, False) if -4095 <= value <= -1 else (None, True, False)
         return super()._err_value(index)
 
     def _text_lines(self, enable_fold, include_text):
@@ -506,9 +546,8 @@ class UftraceTimeline(TimelineBuilder):
                         args = self.user_details[lineno].get('args') or ('raw bytes: ' + args if args else None)
                     else:
                         names = self.argument_names.get(self.s_name[index], ())
-                        if names and record.get('args'):
-                            args = ', '.join(f'{names[position]}={value}' if position < len(names) and names[position]
-                                             else f'slot{position + 1}={value}' for position, value in enumerate(record['args']))
+                        if (names or self.s_name[index] in self.kernel_types) and record.get('args'):
+                            args = self._formatted_arguments(index, record['args'])
                     detail = ' (' + args + ')' if args else '()'
                     body = name + detail + ' {'
                     if space == 'user':
@@ -527,10 +566,11 @@ class UftraceTimeline(TimelineBuilder):
                             source = positions[position_id][:2]
                             source_kind = 'user call site (recorded return address - 1)'
                 else:
-                    retval = self.s_ret[index]
+                    retval = self._formatted_return(index)
                     duration = (self.s_end[index] - self.s_start[index]) / 1000 if not flags & F_ORPHAN else None
                     elapsed = f' · {duration:.3f} µs' if duration is not None else ' · entry not recorded'
-                    returned = ' · raw return ' + retval if retval is not None else ''
+                    typed = 'ret' in self.kernel_types.get(self.s_name[index], {})
+                    returned = (' · return ' if typed else ' · raw return ') + retval if retval is not None else ''
                     if space == 'user':
                         detail = self.user_details[self.s_line[index]]
                         if 'retval' in detail:
@@ -575,6 +615,8 @@ class UftraceTimeline(TimelineBuilder):
             data['uftrace']['kernel_details'] = self.kernel_details
         if self.argument_names:
             data['uftrace']['kernel_arg_names'] = self.argument_names
+        if self.kernel_types:
+            data['uftrace']['kernel_types'] = self.kernel_types
         if self.caller_symbols:
             data['uftrace']['caller_symbols'] = self.caller_symbols
         if self.lifecycle:

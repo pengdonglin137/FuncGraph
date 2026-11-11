@@ -292,13 +292,16 @@ function showDetail(i) {
     h += kv('depth', String(sDepth[i]));
     if (f & FL.LAT) h += kv('flags', esc(ctxFlagText(f).replace(/^ · /, '').replace(' (preempt off)', '') || 'none') +
         ((f >> FL.PR_SHIFT) & 15 ? ' <span class="d">(baseline ' + PBASE + ': ' + (pd > 0 ? 'preemption disabled ' + pd + ' level' + (pd > 1 ? 's' : '') : 'preemptible') + ')</span>' : ''));
-    const r = retOf(i);
+    const r = retOf(i), rawReturn = rawRetOf(i), typedReturn = kernelTypesOf(i)?.ret;
     if (r !== null) {
         let rv = esc(r);
         if (eRole[i] >= 0) rv += ' ' + esc(errName(eErr[i])) + ' · ' + esc(errRoleText(i));
         else if (f & FL.NULLRET) rv += ' (NULL)';
-        h += kv(D.uftrace ? 'raw return' : 'return', rv, eRole[i] >= 0 ? 'err' : '');
+        h += kv(typedReturn ? 'return (BTF)' : D.uftrace ? 'raw return' : 'return', rv, eRole[i] >= 0 ? 'err' : '');
     }
+    if (typedReturn && rawReturn !== null) h += kv('raw return',
+        '<details class="tl-context-note"><summary>' + (typedReturn[0] === 'void' ? 'void (BTF) · original bits' : 'Original return bits') +
+        '</summary>' + esc(rawReturn) + '</details>');
     const c = callerOf(i);
     const capturedCaller = D.uftrace?.caller_symbols?.[sCaller?.[i]];
     if (c) h += kv(D.uftrace && !capturedCaller ? 'caller address' : 'call site', esc(c) + '<span class="tl-cs-at"></span>' + (f & FL.MISMATCH ? '<div class="tl-context-note tl-tail-note">' + esc(callerRelationText(i)) + '</div>' : ''));
@@ -315,7 +318,9 @@ function showDetail(i) {
     const a = argsOf(i);
     const userDetail = f & FL.USER ? D.uftrace?.user_details?.[sLine[i]] : null;
     if (userDetail) {
-        h += kv('recorded address', esc(userDetail.address));
+        h += kv('recorded address', esc(userDetail.address) + '<div class="tl-context-note">Function entry address, not the call site.</div>');
+        const callAddress = userCallAddress(i);
+        if (callAddress) h += kv('call site address', esc(callAddress) + '<div class="tl-context-note">Recorded caller return address − 1.</div>');
         const userSite = userCallSite(i);
         if (userDetail.callsite) h += kv('caller return address', esc(userDetail.callsite.retaddr) +
             '<span class="tl-cs-at">' + (userSite ? '<br><span data-callsite-position>' + esc(userSite[0] + ':' + userSite[1]) + '</span>' : '') + '</span>' +

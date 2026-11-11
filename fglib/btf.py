@@ -232,12 +232,32 @@ class BtfInfo:
             if pk != KIND_FUNC_PROTO:
                 continue
             self.func_ret[name] = self.classify(ret_tid)
-            parameters = (tuple((self.string(offset), *self.classify(tid)) for offset, tid in params),
-                          self.classify(ret_tid), self.word_size)
+            parameters = (tuple((self.string(offset), *self.classify(tid), self.scalar_bits(tid))
+                                for offset, tid in params),
+                          (*self.classify(ret_tid), self.scalar_bits(ret_tid, returning=True)), self.word_size)
             if name in self.func_params and self.func_params[name] != parameters:
                 self.func_params[name] = None
             else:
                 self.func_params[name] = parameters
+
+    def scalar_bits(self, tid, returning=False, _depth=0):
+        if tid == 0:
+            return 0
+        if _depth > 32:
+            return None
+        kind, size, extra = self._get(tid)
+        if kind in _MODIFIERS:
+            return self.scalar_bits(size, returning, _depth + 1)
+        if kind == KIND_PTR:
+            return self.word_size * 8 if self.word_size else None
+        if kind == KIND_INT:
+            bits, offset = extra & 0xff, (extra >> 16) & 0xff
+            if offset or not 0 < bits <= min(size * 8, 64):
+                return None
+            return 1 if returning and (extra >> 24) & 4 else bits
+        if kind in (KIND_ENUM, KIND_ENUM64) and 0 < size <= 8:
+            return size * 8
+        return None
 
     def lookup(self, func_name):
         """Return (cls, size) for a function, trying compiler-suffix stripping."""
@@ -259,6 +279,26 @@ def load_btf(path, base=None):
         blob = data
     return BtfInfo(blob, base=base, source=path,
                    word_size=(8 if data[4] == 2 else 4) if data[:4] == b'\x7fELF' else None)
+
+
+def format_scalar(value, kind, bits, returning=False):
+    if kind == 'void':
+        return None
+    if not isinstance(bits, int) or not 0 < bits <= 64:
+        return value
+    try:
+        number = int(value, 16 if value.lower().startswith('0x') else 10) & ((1 << bits) - 1)
+    except (ValueError, AttributeError):
+        return value
+    if kind == 'sint':
+        if number & (1 << (bits - 1)):
+            number -= 1 << bits
+        return str(number)
+    if kind == 'enum':
+        return str(number)
+    if kind == 'bool' and returning:
+        return 'true' if number else 'false'
+    return hex(number)
 
 
 class ReturnTypeDB:
@@ -295,12 +335,32 @@ class ReturnTypeDB:
         if returned[0] == 'other':
             return ()
         names = []
-        for name, kind, size in fields[:count]:
+        for name, kind, size, bits in fields[:count]:
             if kind != 'ptr' and (kind not in ('sint', 'uint', 'bool', 'enum') or
                                   not 0 < size <= (word_size or 4)):
                 break
             names.append(name)
         return tuple(names)
+
+    def function_types(self, func_name):
+        params = self.params.get(func_name)
+        if params is None or any(suffix in func_name for suffix in ('.isra.', '.constprop.', '.part.', '.llvm.')):
+            return None
+        fields, returned, word_size = params
+        result = {}
+        if returned[0] != 'other':
+            arguments = []
+            for name, kind, size, bits in fields:
+                if bits is None or not bits or size > (word_size or 4) and kind != 'ptr':
+                    break
+                arguments.append((kind, bits))
+            result['args'] = arguments
+            if len(arguments) == len(fields):
+                result['argc'] = len(fields)
+        kind, size, bits = returned
+        if bits is not None and (kind == 'void' or kind == 'ptr' or size <= (word_size or 4)):
+            result['ret'] = (kind, bits)
+        return result or None
 
     def lookup(self, func_name):
         """Look up a function, stripping GCC/LLVM clone suffixes (.isra.0, .constprop.0, .llvm.123)."""

@@ -163,18 +163,29 @@ Compare 与 `--export` 分开统计用户态、内核态的同名函数。
 
   更新后的补丁版导出保留事件原始字节和返回 PC，使用采集会话的模块映射、匹配的带调试信息镜像
   解析 `PC - 1`。只把事件与同线程恰好晚 1 ns 的下一条用户态入口配对；缺失、丢失或不匹配时不补猜。
+  详情的 **call site address** 明确显示这个 `PC - 1`，**caller return address** 保留原始 PC，
+  **recorded address** 仍是被调函数入口地址；三者不相互替代，也不把返回地址伪称为调用指令起始地址。
   Text 和详情源码优先展示 **User call site source**；调用栈只在保存的调用者符号与父帧匹配时，
   将该位置放到父帧右侧。没采集调用点或缺少匹配的 DWARF 时，明确标注函数入口回退，仍保留原始地址。
   旧采集若没有调用点事件，需要重新采集；仅重新生成 HTML 无法找回从未记录的调用地址。
-- **内核参数名**：提供匹配的 `--vmlinux` 或 `--btf` 后，详情的 **args (BTF)** 和 Text 显示
-  `参数名=原始值`，原始槽位仍在可展开的 **Raw argument slots** 中。不额外做 DWARF 查询，也不解引用指针。
-  只命名可以确认 ABI 对应关系的整数/指针参数前缀；聚合参数、浮点、可变参数、原型冲突、
-  可能改写参数的编译器克隆以及未知字长的宽整数不强配参数名。其余槽位保持 `slotN`，不冒充函数参数。
-  无 BTF 时仍显示 **raw args**；用户态的标量参数和值仍按采集规格解码，不借用内核的参数名。
+- **内核参数和位宽**：提供匹配的 `--vmlinux` 或 `--btf` 后，详情的 **args (BTF)** 和 Text
+  按可信原型裁剪参数数量，显示 `参数名=类型修正值`；每个整数只取 BTF 声明的低位，再按有符号性解释。
+  例如 `int` 槽位为 `0xdeadbeefffffffea` 时显示 `-22`，`unsigned char` 显示 `0xea`，不会把高位残值当作参数。
+  指针按已知目标字长保留精确十六进制，不解引用；64 位数据不经过 JavaScript 浮点数转换。
+  完整原型为零参时不展示残余槽；声明参数多于实采槽时以 `…` 标出缺失，不补值。
+  **return (BTF)** 同样修正返回值的位宽和符号；布尔返回值取 bit 0，显示 `true/false`，`void` 不伪造返回值。
+  参数和返回寄存器的原始位模式仍分别保存在 **Raw argument slots** 和 **Original return bits**，JSONL 和模型原值不变。
+  只解释 ABI 对应关系已确认的整数/指针前缀；聚合参数、浮点、可变参数、原型冲突、编译器克隆、
+  未知指针字长等不能确认的布局不强行裁剪，其余槽位保持 `slotN`。不额外做 DWARF 查询。
+  无匹配 BTF 时仍显示 **raw args** / **raw return**，不承诺与所有内核版本的 `cat trace` 逐字一致。
+- **用户态参数**：应用应带调试信息编译，采集时使用 `--auto-args`，或以 `-A` / `-R` 明确规格。
+  例如 `fguftrace record --auto-args --srcline -T '.@callsite' -d capture.data ./app`。
+  自动标量按 uftrace replay 的数值规则导出；不支持的字符串、浮点、枚举和聚合规格保留原始字节，缺失规格不猜测。
+  内核 BTF 仅解释内核调用，不能给用户态函数裁参数或命名；已有采集若没有参数 payload，需要重新采集。
 - **过滤**：启用 `--filter` 后，Text 与 Timeline 共用的 Filter 支持 `space:user` 和
   `space:kernel`；sidecar 报告不必先加载 Text。命令行的调用树预过滤暂不适用于 uftrace。
 - **数据缺口**：缺失进出记录或丢失事件会标记，不补造实测帧。用户态 CPU 未知，
-  用户态仅在存在支持的标量参数规格时解码，否则保留原始字节；内核返回值展示原始比特，只在 BTF 类型已知时做 errno
+  用户态仅在存在支持的标量参数规格时解码，否则保留原始字节；内核返回值在匹配 BTF 可用时展示类型修正值，并保留原始比特，只在 BTF 类型已知时做 errno
   分析。调度分析使用内核 tracepoint，不与 perf 事件重复计入。未投影到报告中的原生
   字段仍保留在 JSONL 中。
 
@@ -262,7 +273,7 @@ fguftrace dump --fgraph --srcline -d CAPTURE > capture.jsonl
   不伪造 BTF 类型或返回值来源。
 - 内核 tracepoint 的 `event` 保存原始 **common PID**、事件名、格式化 payload
   和 flags，包括在其它任务上下文发生的调度事件。存在用户事件 / 参数 payload
-  时，以 `payload_hex` 保存原始字节。支持的 8/16/32/64 位有符号、无符号、十六进制和指针
+  时，以 `payload_hex` 保存原始字节。支持的 8/16/32/64 位自动、有符号、无符号、十六进制和指针
   规格会附加 `user_args`（入口字符串列表）或 `user_retval`（出口字符串）。使用字符串保留
   64 位精度；规格不受支持或不完整时保留原始 payload，不猜测。
 - perf `event` 标记 `origin=perf`、`space=null`、未知 `cpu=null`，并带不透明的

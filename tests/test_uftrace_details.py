@@ -9,7 +9,7 @@ import unittest
 import struct
 
 import helpers
-from fglib import btf, inputs, uftrace
+from fglib import btf, inputs, timeline, uftrace
 from fglib.viewer import create_server
 from test_btf import BtfBuilder, make_elf
 from test_timeline import invariant_errors
@@ -20,7 +20,12 @@ def arguments(database, name, fields, returned=None):
     scalar = database.int_('int', 4, signed=True)
     types = {'int': scalar, 'ptr': database.add(None, btf.KIND_PTR, 0, scalar),
              'wide': database.int_('wide', 8), 'float': database.add('float', btf.KIND_FLOAT, 0, 4),
-             'struct': database.add('aggregate', btf.KIND_STRUCT, 0, 16), 'varargs': 0}
+             'struct': database.add('aggregate', btf.KIND_STRUCT, 0, 16), 'varargs': 0, 'void': 0}
+    for size in (1, 2, 4, 8):
+        types['s' + str(size * 8)] = database.int_('s' + str(size * 8), size, signed=True)
+        types['u' + str(size * 8)] = database.int_('u' + str(size * 8), size)
+    types['bool'] = database.int_('bool', 1, boolean=True)
+    types['enum'] = database.add('unsigned_enum', btf.KIND_ENUM, 0, 4)
     payload = b''.join(struct.pack('<II', database.s(field) if field else 0, types[kind])
                        for field, kind in fields)
     proto = database.add(None, btf.KIND_FUNC_PROTO, len(fields), types[returned] if returned else scalar, payload)
@@ -60,13 +65,124 @@ class KernelArgumentNamesTest(unittest.TestCase):
         data = builder.to_data()
         index = next(index for index, name in enumerate(data['cols']['name']) if data['strings'][name] == 'inner')
         line = data['cols']['line'][index]
-        named = 'fd=0x3, buffer=0xffff1234, length=0x200, slot4=0x55'
+        named = 'fd=3, buffer=0xffff1234, length=0x200'
         self.assertEqual(data['uftrace']['kernel_arg_names'][data['cols']['name'][index]], ('fd', 'buffer', 'length'))
         self.assertNotIn(line, data['uftrace']['kernel_details'])
         self.assertEqual(data['strings'][data['cols']['args'][index]], '0x3, 0xffff1234, 0x200, 0x55')
         self.assertEqual(builder.parsed[line - 1].params, named)
         self.assertIn(named, builder.parsed[line - 1].raw_line)
         self.assertEqual(invariant_errors(data), [])
+
+    def test_scalar_widths_signedness_and_original_slots_are_independent(self):
+        cases = [('s8', '0xdeadbeefffffffff', '-1'), ('u8', '0xdeadbeefffffffff', '0xff'),
+                 ('s16', '0xdeadbeefffff8001', '-32767'), ('u16', '0xdeadbeefffff8001', '0x8001'),
+                 ('s32', '0xdeadbeefffffffea', '-22'), ('u32', '0xdeadbeefffffffea', '0xffffffea'),
+                 ('s64', '0xffffffffffffffea', '-22'), ('u64', '0xffffffffffffffea', '0xffffffffffffffea'),
+                 ('enum', '0xdeadbeefffffffff', '4294967295')]
+        for kind, raw, expected in cases:
+            with self.subTest(kind=kind):
+                records = capture()
+                records[5]['args'] = [raw, '0x9999', '0x8888', '0x7777', '0x6666', '0x5555']
+                database = named_database((('value', kind),))
+                builder = inputs.UftraceInput(io.StringIO(stream(records))).build(enable_fold=True, rettypes=database)
+                data = builder.to_data()
+                index = next(index for index, name in enumerate(data['cols']['name']) if data['strings'][name] == 'inner')
+                line = data['cols']['line'][index]
+                self.assertEqual(builder.parsed[line - 1].params, 'value=' + expected)
+                self.assertEqual(data['strings'][data['cols']['args'][index]], ', '.join(records[5]['args']))
+                self.assertEqual(data['uftrace']['kernel_types'][data['cols']['name'][index]]['argc'], 1)
+
+    def test_zero_arguments_missing_slots_and_unsafe_layouts_do_not_invent_values(self):
+        for fields, expected in [((), ''),
+                                 ((('fd', 'int'), ('value', 'struct'), ('flags', 'int')),
+                                  'fd=3, slot2=0x99, slot3=0x88'),
+                                 (tuple(('value' + str(index), 'int') for index in range(5)),
+                                  'value0=3, value1=153, value2=136, …')]:
+            with self.subTest(fields=fields):
+                records = capture()
+                records[5]['args'] = ['0x3', '0x99', '0x88']
+                builder = inputs.UftraceInput(io.StringIO(stream(records))).build(
+                    enable_fold=True, rettypes=named_database(fields))
+                data = builder.to_data()
+                index = next(index for index, name in enumerate(data['cols']['name']) if data['strings'][name] == 'inner')
+                self.assertEqual(builder.parsed[data['cols']['line'][index] - 1].params, expected)
+
+    def test_return_width_void_bool_enum_and_pointer_keep_raw_bits(self):
+        for kind, raw, expected, word_size in [('s32', '0xdeadbeefffffffea', '-22', 8),
+                                              ('u16', '0xdeadbeefffff1234', '0x1234', 8),
+                                              ('bool', '0xfffffffffffffffe', 'false', 8),
+                                              ('bool', '0xffffffffffffffff', 'true', 8),
+                                              ('enum', '0xdeadbeefffffffff', '4294967295', 8),
+                                              ('void', '0xdeadbeefffffffff', None, 8),
+                                              ('ptr', '0xdeadbeefffffffff', '0xffffffff', 4)]:
+            with self.subTest(kind=kind, word_size=word_size):
+                source = BtfBuilder()
+                arguments(source, 'inner', [('value', 'int')], kind)
+                database = btf.ReturnTypeDB()
+                database.add(btf.BtfInfo(source.blob(), word_size=word_size))
+                records = capture()
+                records[6]['retval'] = raw
+                builder = inputs.UftraceInput(io.StringIO(stream(records))).build(enable_fold=True, rettypes=database)
+                data = builder.to_data()
+                index = next(index for index, name in enumerate(data['cols']['name']) if data['strings'][name] == 'inner')
+                self.assertEqual(builder._formatted_return(index), expected)
+                self.assertEqual(data['strings'][data['cols']['ret'][index]], raw)
+                rendered = builder.parsed[data['cols']['eline'][index] - 1].raw_line
+                if expected is None:
+                    self.assertNotIn('return ', rendered)
+                else:
+                    self.assertIn('return ' + expected, rendered)
+
+    def test_encoded_integer_width_modifiers_and_unknown_layouts(self):
+        source = BtfBuilder()
+        narrow = source.add('signed24', btf.KIND_INT, 0, 4, struct.pack('<I', (1 << 24) | 24))
+        qualified = source.add('const_signed24', btf.KIND_CONST, 0, narrow)
+        proto = source.add(None, btf.KIND_FUNC_PROTO, 1, qualified,
+                           struct.pack('<II', source.s('value'), qualified))
+        source.add('inner', btf.KIND_FUNC, 0, proto)
+        database = btf.ReturnTypeDB()
+        database.add(btf.BtfInfo(source.blob(), word_size=8))
+        self.assertEqual(database.function_types('inner'),
+                         {'args': [('sint', 24)], 'argc': 1, 'ret': ('sint', 24)})
+        self.assertEqual(btf.format_scalar('0xdeadbeefffffffea', 'sint', 24), '-22')
+        for encoded in (0, 65, (1 << 16) | 24):
+            with self.subTest(encoded=encoded):
+                unsafe = BtfBuilder()
+                scalar = unsafe.add('unsafe', btf.KIND_INT, 0, 4, struct.pack('<I', encoded))
+                unsafe.func('inner', scalar)
+                database = btf.ReturnTypeDB()
+                database.add(btf.BtfInfo(unsafe.blob(), word_size=8))
+                self.assertNotIn('ret', database.function_types('inner'))
+
+    def test_unconfirmed_signatures_do_not_trim_original_slots(self):
+        for fields, word_size in [((('value', 'ptr'),), None),
+                                 ((('value', 'wide'),), 4),
+                                 ((('value', 'float'),), 8),
+                                 ((('value', 'struct'),), 8),
+                                 ((('', 'varargs'),), 8)]:
+            with self.subTest(fields=fields, word_size=word_size):
+                signature = named_database(fields, word_size).function_types('inner')
+                self.assertNotIn('argc', signature)
+                self.assertEqual(signature['args'], [])
+
+    def test_pointer_diagnostics_use_target_width_without_mutating_raw_bits(self):
+        for raw, expected, null in [('0xdeadbeeffffffffb', -5, False),
+                                    ('0xdeadbeef00000000', None, True),
+                                    ('0xdeadbeef00000123', None, False)]:
+            with self.subTest(raw=raw):
+                source = BtfBuilder()
+                arguments(source, 'inner', [], 'ptr')
+                database = btf.ReturnTypeDB()
+                database.add(btf.BtfInfo(source.blob(), word_size=4))
+                records = capture()
+                records[6]['retval'] = raw
+                builder = inputs.UftraceInput(io.StringIO(stream(records))).build(rettypes=database)
+                data = builder.to_data()
+                index = next(index for index, name in enumerate(data['cols']['name'])
+                             if data['strings'][name] == 'inner')
+                self.assertEqual(builder._err_value(index), (expected, True, null))
+                self.assertEqual(bool(data['cols']['flags'][index] & timeline.F_NULL_RET), null)
+                self.assertEqual(data['strings'][data['cols']['ret'][index]], raw)
 
     def test_unknown_abi_aggregate_float_varargs_and_clone_do_not_shift_names(self):
         for fields, word_size, expected in [
@@ -272,6 +388,7 @@ class UftraceDetailBrowserTest(unittest.TestCase):
                                 self.assertIn('demo.c:5', panel.locator('.tl-cs-src').inner_text())
                                 self.assertIn('user call site', panel.locator('.tl-cs-src').inner_text())
                                 self.assertIn('0x1234', panel.locator('.k:has-text("caller return address") + .v').inner_text())
+                                self.assertIn('0x1233', panel.locator('.k:text-is("call site address") + .v').inner_text())
                                 self.assertEqual(panel.locator('[data-callsite-position]').count(), 1)
                                 stack = panel.locator('[data-context-list=stack]')
                                 main_source = stack.locator('.tl-context-source', has_text='demo.c:5')
@@ -286,7 +403,7 @@ class UftraceDetailBrowserTest(unittest.TestCase):
                                         .find(index => model.nameOf(index) === 'inner'));
                                 }''')
                                 panel.get_by_text('args (BTF)', exact=True).wait_for()
-                                self.assertIn('fd=0x3, buffer=0xffff1234, length=0x200', panel.inner_text())
+                                self.assertIn('fd=3, buffer=0xffff1234, length=0x200', panel.inner_text())
                                 self.assertEqual(panel.locator('details:has(summary:text-is("Raw argument slots"))').get_attribute('open'), None)
                                 page.set_viewport_size({'width': 390, 'height': 844})
                                 self.assertEqual(page.get_by_text('args (BTF)', exact=True).count(), 1)
@@ -300,11 +417,72 @@ class UftraceDetailBrowserTest(unittest.TestCase):
                                 server.shutdown()
                                 thread.join(timeout=5)
 
+    def test_btf_widths_match_text_preserve_raw_and_never_round_64bit_addresses(self):
+        cases = [('s8', '0xdeadbeefffffffff', '-1', '-1'),
+                 ('u16', '0xdeadbeefffff1234', '0x1234', '0x1234'),
+                 ('s64', '0xffffffffffffffea', '-22', '-22'),
+                 ('u64', '0xfedcba9876543210', '0xfedcba9876543210', '0xfedcba9876543210'),
+                 ('ptr', '0xdeadbeefffffffff', '0xffffffff', '0xffffffff'),
+                 ('bool', '0xfffffffffffffffe', '0xfe', 'false'),
+                 ('enum', '0xdeadbeefffffffff', '4294967295', '4294967295'),
+                 ('void', '0xdeadbeefffffffff', None, None)]
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for kind, raw, argument, returned in cases:
+                with self.subTest(kind=kind):
+                    records = capture()
+                    records[5]['args'] = [raw, '0x1234', '0x5678', '0x9999', '0x8888', '0x7777']
+                    records[6]['retval'] = raw
+                    source = BtfBuilder()
+                    arguments(source, 'inner', [] if kind == 'void' else [('value', kind)], kind)
+                    database = btf.ReturnTypeDB()
+                    word_size = 4 if kind == 'ptr' else 8
+                    database.add(btf.BtfInfo(source.blob(), word_size=word_size))
+                    builder = inputs.UftraceInput(io.StringIO(stream(records))).build(
+                        enable_fold=True, rettypes=database)
+                    data = builder.to_data()
+                    index = next(index for index, name in enumerate(data['cols']['name'])
+                                 if data['strings'][name] == 'inner')
+                    self.assertEqual(builder._formatted_return(index), returned)
+                    image = root / 'debug.elf'
+                    image.write_bytes(make_elf({'.BTF': source.blob()}))
+                    report = root / 'report.html'
+                    trace = root / 'trace.jsonl'
+                    trace.write_text(stream(records))
+                    result = invoke(trace, '--timeline', '--enable-fold', '--btf', image, '--output', report)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    if word_size == 4:
+                        html = report.read_text()
+                        model = helpers.json_script(html, 'tlData')
+                        model['uftrace']['kernel_types'] = data['uftrace']['kernel_types']
+                        start = html.index('>', html.index('id="tlData"')) + 1
+                        end = html.index('</script>', start)
+                        report.write_text(html[:start] + json.dumps(model) + html[end:])
+                    page = self.browser.new_page()
+                    page.set_default_timeout(5000)
+                    try:
+                        page.goto(report.as_uri())
+                        page.evaluate('() => fgSwitchView("timeline")')
+                        page.evaluate('(index) => fgView("timeline").probe().select(index)', index)
+                        panel = page.locator('.tl-detail')
+                        self.assertEqual(panel.locator('.k:text-is("args (BTF)") + .v').inner_text().splitlines()[0],
+                                         'no parameters' if argument is None else 'value=' + argument)
+                        self.assertIn(raw, panel.locator('details:has(summary:text-is("Raw argument slots"))').text_content())
+                        self.assertIn(raw, panel.locator('.k:text-is("raw return") + .v').text_content())
+                        if returned is None:
+                            self.assertEqual(panel.locator('.k:text-is("return (BTF)")').count(), 0)
+                        else:
+                            self.assertIn(returned, panel.locator('.k:text-is("return (BTF)") + .v').inner_text())
+                    finally:
+                        page.close()
+
     def test_caller_position_survives_missing_source_files_and_untraced_wrappers(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             records = recorded_calls()
             records[1]['user_callsite']['name'] = 'untraced_wrapper'
+            records[1]['user_callsite']['retaddr'] = '0xfedcba9876543210'
+            records[1]['payload_hex'] = bytes.fromhex('fedcba9876543210')[::-1].hex()
             trace = root / 'trace.jsonl'
             trace.write_text(stream(records))
             report = root / 'report.html'
@@ -318,6 +496,7 @@ class UftraceDetailBrowserTest(unittest.TestCase):
                 page.evaluate('() => fgView("timeline").probe().select(1)')
                 panel = page.locator('.tl-detail')
                 self.assertIn('demo.c:5', panel.locator('.k:has-text("caller return address") + .v').text_content())
+                self.assertIn('0xfedcba987654320f', panel.locator('.k:text-is("call site address") + .v').text_content())
                 self.assertEqual(panel.locator('.tl-cs').count(), 0)
                 stack = panel.locator('[data-context-list=stack]')
                 self.assertIn('demo.c:2', stack.text_content())
