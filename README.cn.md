@@ -125,8 +125,10 @@ Linux x86_64 / aarch64 的 wheel **内含带补丁的 uftrace 可执行程序和
 `PATH` 上带补丁的 uftrace；`--uftrace-bin PATH` 仅用于手动覆盖，**不必每次传路径**。
 导入已保存的 JSONL 不需要 uftrace 可执行程序。
 
-下面包含参数的 `-pg` 示例已在 x86_64 验证。ARM64/GCC 的首参采集仍有
-[待解决的正确性限制](docs/uftrace.cn.md#安装和选择采集程序)，修复前不能将其 `arg1` 当作可信参数。
+下面的 `-pg` 示例适用于 x86_64。ARM64 请改用 `-fpatchable-function-entry=2`
+编译，并在 `fguftrace record` 中增加 `-P .`；内置程序无需 Capstone 即可跟踪这两个
+入口 NOP，已在树莓派验证参数和返回值。ARM64/GCC 的 `-pg` 仍会破坏首参，旧记录需要
+重新采集；共享库也必须正确插桩并显式选择，见[架构说明](docs/uftrace.cn.md#安装和选择采集程序)。
 
 ```bash
 cc -pg -g -O0 -fno-omit-frame-pointer -o demo_mixed samples/demo_mixed.c

@@ -2,6 +2,7 @@
 import json
 import os
 from pathlib import Path
+import platform
 import shutil
 import subprocess
 import struct
@@ -16,6 +17,9 @@ from verify_uftrace_records import verify
 EXECUTABLE = Path(os.environ.get('FG_UFTRACE', str(Path(helpers.ROOT) /
                                                 'build/uftrace-x86_64/bin/uftrace')))
 AVAILABLE = EXECUTABLE.is_file() and shutil.which('gcc')
+PATCHABLE = platform.machine() in ('aarch64', 'arm64')
+COMPILE_FLAGS = ['-fpatchable-function-entry=2'] if PATCHABLE else ['-pg']
+RECORD_FLAGS = ['-P', '.'] if PATCHABLE else []
 
 
 class UftraceExportTest(unittest.TestCase):
@@ -32,16 +36,17 @@ class UftraceExportTest(unittest.TestCase):
         source.write_text('int child(int);\nint main(void) { return child(1) != 2; }\n')
         library = cls.root / 'workload_lib.c'
         library.write_text('int child(int value) { return value + 1; }\n')
-        subprocess.run(['gcc', '-pg', '-g', '-O0', '-c', 'workload_lib.c'], cwd=cls.root,
+        subprocess.run(['gcc', *COMPILE_FLAGS, '-g', '-O0', '-c', 'workload_lib.c'], cwd=cls.root,
                        check=True, capture_output=True)
         subprocess.run(['ar', 'rcs', 'libworkload.a', 'workload_lib.o'], cwd=cls.root,
                        check=True, capture_output=True)
         cls.binary = cls.root / 'workload'
-        subprocess.run(['gcc', '-pg', '-g', '-O0', '-o', 'workload', 'workload.c', 'libworkload.a'],
+        subprocess.run(['gcc', *COMPILE_FLAGS, '-g', '-O0', '-o', 'workload', 'workload.c', 'libworkload.a'],
                        cwd=cls.root, check=True, capture_output=True)
         cls.base = cls.root / 'base'
         result = subprocess.run([str(EXECUTABLE), 'record', '--no-sched', '--no-libcall', '--srcline',
-                                 '-d', str(cls.base), str(cls.binary)], capture_output=True, text=True)
+                                 *RECORD_FLAGS, '-d', str(cls.base), str(cls.binary)],
+                                capture_output=True, text=True)
         if result.returncode:
             raise AssertionError(result.stderr)
 
@@ -79,6 +84,7 @@ class UftraceExportTest(unittest.TestCase):
     def record_user_with_spec(self, arg_spec):
         directory = Path(self.workspace.name) / 'typed'
         subprocess.run([str(EXECUTABLE), 'record', '--no-sched', '--no-libcall',
+                        *RECORD_FLAGS,
                         '-A', arg_spec, '-R', 'child@retval/i32',
                         '-d', str(directory), str(self.binary)], check=True, capture_output=True)
         self.capture = directory
@@ -99,6 +105,56 @@ class UftraceExportTest(unittest.TestCase):
         self.assertNotIn('user_args', entry)
         self.assertEqual(exit_record['user_retval'], '2')
 
+    def test_integer_arguments_survive_pie_non_pie_and_optimization(self):
+        values = [-11, 22, -33, 44, 55, -66, 77, 88]
+        directory = Path(self.workspace.name)
+        source = directory / 'register arguments.c'
+        source.write_text(
+            '__attribute__((noinline, noclone)) '
+            'long aggregate(long first, long second, long third, long fourth, '
+            'long fifth, long sixth, long seventh, long eighth) {\n'
+            '    return first + second + third + fourth + fifth + sixth + seventh + eighth;\n'
+            '}\nint main(void) { return aggregate(-11, 22, -33, 44, 55, -66, 77, 88) != 176; }\n')
+        specification = 'aggregate@' + ','.join('arg' + str(index) + '/i64' for index in range(1, 9))
+        for optimization in ['-O0', '-O2']:
+            for kind, options in [('pie', ['-fPIE', '-pie']), ('exec', ['-fno-pie', '-no-pie'])]:
+                with self.subTest(optimization=optimization, kind=kind):
+                    binary = directory / (kind + optimization)
+                    subprocess.run(['gcc', *COMPILE_FLAGS, '-g', optimization, *options,
+                                    '-o', str(binary), str(source)], check=True, capture_output=True)
+                    self.capture = directory / (binary.name + '.data')
+                    subprocess.run([str(EXECUTABLE), 'record', '--no-sched', '--no-libcall',
+                                    *RECORD_FLAGS, '-A', specification, '-R', 'aggregate@retval/i64',
+                                    '-d', str(self.capture), str(binary)], check=True, capture_output=True)
+                    calls = [record for record in self.records() if record.get('name') == 'aggregate']
+                    self.assertEqual([record['type'] for record in calls], ['entry', 'exit'])
+                    self.assertEqual(calls[0]['user_args'], [str(value) for value in values])
+                    self.assertEqual(calls[1]['user_retval'], '176')
+
+    def test_recursive_arguments_returns_and_depth_remain_paired(self):
+        directory = Path(self.workspace.name)
+        source = directory / 'recursive.c'
+        source.write_text('__attribute__((noinline, noclone)) int descend(int level, int seed) {\n'
+                          '    return level ? descend(level - 1, seed + 3) + 1 : seed;\n'
+                          '}\nint main(void) { return descend(3, 5) != 17; }\n')
+        for optimization in ['-O0', '-O2']:
+            with self.subTest(optimization=optimization):
+                binary = directory / ('recursive' + optimization)
+                subprocess.run(['gcc', *COMPILE_FLAGS, '-g', optimization, '-fno-optimize-sibling-calls',
+                                '-o', str(binary), str(source)], check=True, capture_output=True)
+                self.capture = directory / (binary.name + '.data')
+                subprocess.run([str(EXECUTABLE), 'record', '--no-sched', '--no-libcall', *RECORD_FLAGS,
+                                '-A', 'descend@arg1/i32,arg2/i32', '-R', 'descend@retval/i32',
+                                '-d', str(self.capture), str(binary)], check=True, capture_output=True)
+                calls = [record for record in self.records() if record.get('name') == 'descend']
+                entries = [record for record in calls if record['type'] == 'entry']
+                exits = [record for record in calls if record['type'] == 'exit']
+                self.assertEqual([record['user_args'] for record in entries],
+                                 [['3', '5'], ['2', '8'], ['1', '11'], ['0', '14']])
+                self.assertEqual([record['user_retval'] for record in exits], ['14', '15', '16', '17'])
+                self.assertEqual([record['depth'] for record in entries], [1, 2, 3, 4])
+                self.assertEqual([record['depth'] for record in exits], [4, 3, 2, 1])
+
     def test_executable_and_source_paths_with_spaces_survive_offline_export(self):
         cases = [('build with spaces', 'application with spaces', []),
                  ('构建 \t tabs', '应用程序 \t name  ', []),
@@ -111,10 +167,11 @@ class UftraceExportTest(unittest.TestCase):
                 source.write_text('int child(int value) { return value + 1; }\n'
                                   'int main(void) { return child(1) != 2; }\n')
                 binary = directory / filename
-                subprocess.run(['gcc', '-pg', '-g', '-O0', *options, '-o', str(binary), str(source)],
+                subprocess.run(['gcc', *COMPILE_FLAGS, '-g', '-O0', *options, '-o', str(binary), str(source)],
                                check=True, capture_output=True)
                 self.capture = directory / 'recording with spaces'
                 subprocess.run([str(EXECUTABLE), 'record', '--no-sched', '--no-libcall', '--srcline',
+                                *RECORD_FLAGS,
                                 '-A', 'child@arg1/i32', '-R', 'child@retval/i32',
                                 '-d', str(self.capture), str(binary)], check=True, capture_output=True)
                 self.assertTrue(any(str(binary) in path.read_text() for path in self.capture.glob('*.map')))
@@ -132,15 +189,16 @@ class UftraceExportTest(unittest.TestCase):
         source = directory / 'library source.c'
         source.write_text('int shared_child(int value) { return value + 1; }\n')
         library = directory / 'libwith spaces.so'
-        subprocess.run(['gcc', '-pg', '-g', '-O0', '-fPIC', '-shared', '-o', str(library), str(source)],
+        subprocess.run(['gcc', *COMPILE_FLAGS, '-g', '-O0', '-fPIC', '-shared', '-o', str(library), str(source)],
                        check=True, capture_output=True)
         main = directory / 'main.c'
         main.write_text('int shared_child(int);\nint main(void) { return shared_child(1) != 2; }\n')
         binary = directory / 'workload'
-        subprocess.run(['gcc', '-pg', '-g', '-O0', '-o', str(binary), str(main), str(library),
+        subprocess.run(['gcc', *COMPILE_FLAGS, '-g', '-O0', '-o', str(binary), str(main), str(library),
                         '-Wl,-rpath,' + str(directory)], check=True, capture_output=True)
         self.capture = directory / 'capture'
         subprocess.run([str(EXECUTABLE), 'record', '--no-sched', '--no-libcall', '--srcline',
+                        *RECORD_FLAGS, *(['-P', '.@' + library.name] if PATCHABLE else []),
                         '-A', 'shared_child@arg1/i32', '-R', 'shared_child@retval/i32',
                         '-d', str(self.capture), str(binary)], check=True, capture_output=True)
         self.assertTrue(any(str(library) in path.read_text() for path in self.capture.glob('*.map')))

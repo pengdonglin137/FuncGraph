@@ -81,12 +81,25 @@ ARM64 请替换为 `linux_aarch64`。`fguftrace record ...` 和 `fguftrace dump 
 符号和源码元数据离线导出。旧记录如果已经截断映射路径，需要重新采集；重新导出或
 生成 HTML 不能恢复采集时已经丢失的数据。
 
-**ARM64 参数的待解决限制：**树莓派 GCC 14.2.0 使用 `-pg` 时，在 `_mcount` 之前
-会覆盖 `x0`，记录的 `arg1` 并非原始首参。原生程序可以构建，但 ARM64 导出回归中
-有三个测试涉及的五个断言 / 子场景因该问题失败，不能将这些值当作可信参数，也不能
-跳过失败检查。Patchable function entry 还需要单独验证动态跟踪构建；当前发布构建
-禁用了 Capstone，实测未记录到该方式的调用。本指南的参数示例仍以 x86_64 验证为准，
-不代表已经证明 ARM64 参数正确。
+**ARM64 参数采集：**树莓派 GCC 14.2.0 使用 `-pg` 时，在 `_mcount` 之前
+会覆盖 `x0`，该方式记录的 `arg1` 并非原始首参。不要尝试从旧记录中猜测恢复；
+请将所有需要跟踪的对象和库改用 `-fpatchable-function-entry=2` 编译，不再使用 `-pg`，
+并在采集时增加 `-P .`。两个 NOP 必须位于函数入口，不要使用带非零第二参数的变体。
+维护的补丁允许发布程序在没有 Capstone 时跟踪这种入口，并拒绝改写普通指令，
+不代表支持任意未插桩函数的动态跟踪。树莓派原生导出 24 项回归全部通过，包括
+首参、8 个整数参数、PIE / 非 PIE、`-O0` / `-O2`、递归及共享库路径场景。
+
+```bash
+cc -fpatchable-function-entry=2 -g -O0 -fno-omit-frame-pointer \
+    -o demo_mixed samples/demo_mixed.c
+fguftrace record -P . --no-sched --srcline -d user.data \
+    ./demo_mixed demo-input.txt demo-output.txt
+```
+
+输入 / 输出文件按 README 示例准备。动态共享库也要用上述编译选项重新构建，
+并额外指定 `-P '.@libexample.so'`；仅 `-P .` 不会自动选择所有库。
+混合采集同样保留 `-P .`，并选择本机架构的内核函数。后文的 QEMU 采集命令是
+x86_64 示例，不应把 `__x64_sys_*` 原样用于 ARM64。
 
 ## 生成报告
 
@@ -186,7 +199,8 @@ scripts/uftrace.sh check
 `patches/uftrace/README.md`。
 
 构建发布程序时，为构建脚本设置 `FG_UFTRACE_RELEASE=1`，禁用可选的 Python/Lua、
-curses、unwind 和 Capstone 功能。构建平台 wheel 时设置
+curses、unwind 和 Capstone 功能，但保留 ARM64 的双 NOP 入口采集，版本信息中标记为
+`patchable`（不是任意指令的 `dynamic`）。构建平台 wheel 时设置
 `FG_UFTRACE_PREFIX="$PWD/build/uftrace-x86_64"`（ARM64 使用 `aarch64`）。
 包内包括 uftrace、全部五种采集库、GPL-2.0 `COPYING`、固定的上游与补丁哈希，
 以及确定性生成、已应用全部补丁的完整对应源码 `source.tar.gz`；不打包操作系统共享库。

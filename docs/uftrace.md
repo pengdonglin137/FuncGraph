@@ -96,14 +96,29 @@ and source metadata even after the original executable/library is moved away.
 Older recordings whose mapping paths were already truncated must be recorded
 again; neither re-export nor HTML generation can recover missing capture data.
 
-**Open ARM64 argument limitation:** on the Raspberry Pi with GCC 14.2.0,
-`-pg` overwrites `x0` before `_mcount`; the captured `arg1` is not the original
-first argument. The native recorder builds, but its ARM64 export regression run
-has five failing assertions/subcases in three tests for this issue. Do not treat
-those values as trustworthy or skip the failing checks. Patchable function entry
-needs a separately validated dynamic-tracing build; the current release build
-disables Capstone and did not record the probed patchable workload. The argument
-examples remain verified on x86_64, not a claim of ARM64 argument correctness.
+**ARM64 argument recording:** Raspberry Pi GCC 14.2.0 with `-pg` overwrites `x0`
+before `_mcount`; that mode's `arg1` is not the original first argument. Do not
+guess missing values from old recordings. Rebuild every traced object and library
+with `-fpatchable-function-entry=2` instead of `-pg`, and record with `-P .`.
+Both NOPs must be at the function entry; do not use a nonzero second compiler
+argument. The maintained patch enables these entries without Capstone and refuses
+to rewrite ordinary instructions: it does not enable arbitrary uninstrumented
+dynamic tracing. All 24 native export regressions pass on the Pi, including the
+first argument, eight integer arguments, PIE/non-PIE, `-O0`/`-O2`, recursion and
+shared-library paths.
+
+```bash
+cc -fpatchable-function-entry=2 -g -O0 -fno-omit-frame-pointer \
+    -o demo_mixed samples/demo_mixed.c
+fguftrace record -P . --no-sched --srcline -d user.data \
+    ./demo_mixed demo-input.txt demo-output.txt
+```
+
+Prepare the input/output files as in the README. Rebuild shared libraries with
+the same instrumentation and add `-P '.@libexample.so'` for each selected library;
+`-P .` alone does not select every library. Retain `-P .` for mixed recording and
+select kernel functions for the actual architecture. The QEMU examples below
+target x86_64: do not copy their `__x64_sys_*` filters to ARM64.
 
 ## Generate a report
 
@@ -227,7 +242,9 @@ the new series against an independent pristine archive before replacing the old
 series. Upstream submission/removal conditions are in `patches/uftrace/README.md`.
 
 To build a release payload, set `FG_UFTRACE_RELEASE=1` when running the build
-script; this disables optional Python/Lua, curses, unwind and Capstone features.
+script; this disables optional Python/Lua, curses, unwind and Capstone features,
+but retains ARM64 two-NOP entry recording, reported as `patchable` rather than
+general `dynamic` support in the version string.
 Set `FG_UFTRACE_PREFIX="$PWD/build/uftrace-x86_64"` when building a platform wheel
 (use `aarch64` on ARM64). The wheel carries the executable, all five recording
 libraries, GPL-2.0 `COPYING`, the fixed base/patch hashes and a deterministic,

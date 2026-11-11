@@ -1,7 +1,7 @@
 From 2e6a42260d5fd616e814e2176a29a82458a163e3 Mon Sep 17 00:00:00 2001
 From: pengdonglin <pengdonglin@xiaomi.com>
 Date: Wed, 11 Nov 2026 12:41:33 +0800
-Subject: [PATCH 8/8] fix(session): preserve whitespace in captured executable
+Subject: [PATCH 8/9] fix(session): preserve whitespace in captured executable
  and library paths
 
 Parse only the fixed /proc/maps header with scanf and keep its complete

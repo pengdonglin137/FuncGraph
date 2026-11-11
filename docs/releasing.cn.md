@@ -127,6 +127,9 @@ workspace="$PWD"
 
 每种架构都要在对应环境验证；x86_64 测试通过不能代替 ARM64 验证。
 `FG_UFTRACE_RELEASE=1` 禁用可选的 Python/Lua、curses、unwind 和 Capstone 功能。
+ARM64 发布构建必须在版本信息中包含 `patchable`，且通过 `aarch64_patchable`
+原生单测；导出及安装测试用 `-fpatchable-function-entry=2` 配合 `record -P .`，
+不得使用会破坏首参的 `-pg`，也不能通过跳过 ARM64 参数断言来放行发布。
 原生 wheel 同时包含 GPL-2.0 `COPYING`、程序与采集库哈希、固定上游和补丁哈希，以及
 `fglib/_native/uftrace/source.tar.gz`：已应用全部补丁、附构建说明的完整对应源码。
 CI 还将同一源码归档单独作为附件，不能用 GitHub 自动生成的 FuncGraph 源码快照代替。

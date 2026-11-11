@@ -1,7 +1,7 @@
 From dbb2f69206c37c24361a09ce2ff31b51314e0826 Mon Sep 17 00:00:00 2001
 From: pengdonglin <pengdonglin@xiaomi.com>
 Date: Wed, 11 Nov 2026 05:23:35 +0800
-Subject: [PATCH 2/8] kernel: decode return-address entries and retain raw
+Subject: [PATCH 2/9] kernel: decode return-address entries and retain raw
  record context
 
 Register fgraph_retaddr_entry as a function entry and save its event format. Retain full-width function addresses, native depth, common PID/flags/preempt count and optional retval, return address, call/return timestamps and arguments for immediate raw export. Decode fixed, flexible, data_loc and relative argument arrays through recorded field definitions with length/alignment bounds and endian-aware reads. Reset every record before dispatch so unsupported events cannot duplicate the previous function. Preserve common_pid separately from replay task reassignment for scheduler events. Context is immediate-parser evidence only; buffered replay does not claim to retain it.

@@ -1,7 +1,7 @@
 From f745683300fe3247a339f443114dab64fd3c32eb Mon Sep 17 00:00:00 2001
 From: pengdonglin <pengdonglin@xiaomi.com>
 Date: Wed, 11 Nov 2026 11:44:09 +0800
-Subject: [PATCH 7/8] dump: symbolize original kernel return PCs using captured
+Subject: [PATCH 7/9] dump: symbolize original kernel return PCs using captured
  kallsyms
 
 Add optional retaddr_symbol metadata to FuncGraph kernel entry records without

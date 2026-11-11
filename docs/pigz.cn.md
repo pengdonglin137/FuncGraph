@@ -1,7 +1,7 @@
 # 实战：追踪 pigz 和 zlib 压缩订单 CSV
 
 用 pigz v2.8 压缩一份合成的订单 CSV，同时跟踪它依赖的 zlib v1.3.2。第一部分不需要
-root、`vmlinux` 或 tracefs。环境为 x86-64 Linux，准备 Git、GCC、Make、binutils、
+root、`vmlinux` 或 tracefs，支持 x86-64 / ARM64 Linux。准备 Git、GCC、Make、binutils、
 Python 和[内含采集程序的 FuncGraph 平台 wheel](uftrace.cn.md#安装和选择采集程序)，
 安装后提供 `fguftrace`。也可以显式选择带补丁的开发构建。
 
@@ -19,7 +19,8 @@ bash samples/pigz_case.sh /tmp/fg-pigz
 bash samples/pigz_case.sh /tmp/fg-pigz-dev build/uftrace-x86_64/bin/uftrace
 ```
 
-脚本固定两个项目的源码提交。如果在已有源码树中手工操作，从干净的构建目录重新编译**两者**：
+脚本固定两个项目的源码提交，并自动选择架构的插桩方式。如果在已有源码树中手工操作，
+从干净的构建目录重新编译**两者**；下面是 x86-64 的选项：
 
 ```bash
 flags='-pg -g -O0 -fno-omit-frame-pointer'
@@ -31,6 +32,11 @@ make -C pigz CFLAGS="$flags -I../zlib" LDFLAGS=-pg LIBS='../zlib/libz.a -lm -pth
 `-fno-omit-frame-pointer` 让调用链更容易跟踪。这是诊断构建，不用于评估压缩吞吐。
 显式链接新编译的 `libz.a`，不要只写 `-lz`。脚本会确认 `deflate` 定义在可执行文件内，
 且没有动态依赖 `libz.so`。
+
+ARM64 把上述 `flags` 中的 `-pg` 和 `LDFLAGS` 改成 `-fpatchable-function-entry=2`，
+采集命令增加 `-P .`；脚本会自动完成这两项。ARM64/GCC `-pg` 会在钩子之前破坏首参，
+不能把其记录的 `z_stream` 指针当作可信数据。维护的双 NOP 入口补丁不依赖 Capstone，
+但不支持任意未插桩函数的动态跟踪，详见[架构说明](uftrace.cn.md#安装和选择采集程序)。
 
 ## 2. 操作并查看报告
 

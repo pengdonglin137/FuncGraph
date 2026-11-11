@@ -14,6 +14,7 @@ are generated from committed changes in `build/uftrace-dev`, never hand-edited.
 | 0006 | Decode relative argument locations with older libtraceevent headers without requiring its newer flag enum. | Not submitted. Remove when upstream handles both supported metadata forms. |
 | 0007 | Export bounded code-symbol/module metadata for original return PCs using only saved kallsyms; preserve raw addresses. | Not submitted. Remove when upstream offers the same captured-symbol provenance and boundary semantics. |
 | 0008 | Preserve complete executable/library paths through recording, build-ID annotation and replay, including whitespace, long paths and explicit empty build IDs. | Not submitted. Remove when upstream preserves the same map-path and build-ID boundaries and the recording/offline-export regressions pass. |
+| 0009 | Enable ARM64 two-NOP patchable entries without Capstone, reject ordinary-instruction relocation without a disassembler, and report the limited capability as `patchable`. | Not submitted. Remove when upstream offers the same bounded support and the native entry/argument regressions pass. |
 
 The full base SHA is `842ed731248a9daded38774d8fb26c7b09474461`, locked in both
 the gitlink and `third_party/versions.json`. Build scripts reject mismatches;

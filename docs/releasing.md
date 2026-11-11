@@ -127,6 +127,10 @@ workspace="$PWD"
 Run the native verification on each actual target architecture; an x86_64 test
 does not establish ARM64 support. `FG_UFTRACE_RELEASE=1` disables optional
 Python/Lua, curses, unwind and Capstone features for the release build.
+ARM64 release builds must report `patchable` in their version and pass the
+`aarch64_patchable` native unit tests. Export/installation tests use
+`-fpatchable-function-entry=2` with `record -P .`, not ARM64 `-pg` with its
+clobbered first argument; never bypass the argument assertions to release.
 The native wheel contains GPL-2.0 `COPYING`, executable/library hashes, the fixed
 uftrace base and patch hashes, and `fglib/_native/uftrace/source.tar.gz`: the full
 corresponding source with the maintained patches already applied, plus build

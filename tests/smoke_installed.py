@@ -87,8 +87,13 @@ class InstalledPackageTest(unittest.TestCase):
         capture = directory / 'recording with spaces.data'
         source.write_text('int work(int value) { return value + 1; }\n'
                           'int main(void) { return work(41) != 42; }\n')
-        self.run_command('cc', '-pg', '-g', '-O0', '-fno-omit-frame-pointer', '-o', str(binary), str(source))
+        patchable = platform.machine() in ('aarch64', 'arm64')
+        compile_flags = ['-fpatchable-function-entry=2'] if patchable else ['-pg']
+        record_flags = ['-P', '.'] if patchable else []
+        self.run_command('cc', *compile_flags, '-g', '-O0', '-fno-omit-frame-pointer',
+                         '-o', str(binary), str(source))
         self.run_command(self.executable('fguftrace'), 'record', '--no-sched', '--no-libcall', '--srcline',
+                         *record_flags,
                          '-A', 'work@arg1/i32', '-R', 'work@retval/i32', '-d', str(capture), str(binary))
         binary.rename(binary.with_name('moved program'))
         records = [json.loads(line) for line in self.run_command(

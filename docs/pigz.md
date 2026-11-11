@@ -2,9 +2,17 @@
 
 Compress a small CSV of synthetic orders with pigz v2.8 and its instrumented
 zlib v1.3.2 dependency. The first run needs no root, `vmlinux` or tracefs.
-Use x86-64 Linux with Git, GCC, Make, binutils, Python and the
+Use x86-64 or ARM64 Linux with Git, GCC, Make, binutils, Python and the
 [native FuncGraph wheel](uftrace.md#install-and-select-the-recorder), which
 provides `fguftrace`. A patched development build can be supplied explicitly.
+
+The script selects instrumentation for the host architecture. The manual `-pg`
+build commands below target x86-64. On ARM64 replace `-pg` in both `flags` and
+`LDFLAGS` with `-fpatchable-function-entry=2`, and add `-P .` when recording;
+the script does both automatically. ARM64/GCC `-pg` clobbers the first argument,
+so its saved `z_stream` pointer is not trustworthy. The maintained two-NOP entry
+support needs no Capstone, but does not provide arbitrary uninstrumented dynamic
+tracing; see the [architecture notes](uftrace.md#install-and-select-the-recorder).
 
 ## 1. Build and run
 

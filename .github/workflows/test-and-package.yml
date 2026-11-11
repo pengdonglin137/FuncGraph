@@ -107,6 +107,10 @@ jobs:
           FG_UFTRACE_RELEASE=1 JOBS=2 scripts/uftrace.sh build
           build/uftrace-${{ matrix.arch }}/bin/uftrace --version | grep 'uftrace v0.20 '
           GIT_CEILING_DIRECTORIES="$PWD/build" make -C build/uftrace-src-${{ matrix.arch }} -j2 unittest UNITTESTARG=session_map
+          if [ '${{ matrix.arch }}' = aarch64 ]; then
+            build/uftrace-aarch64/bin/uftrace --version | grep ' patchable '
+            GIT_CEILING_DIRECTORIES="$PWD/build" make -C build/uftrace-src-aarch64 -j2 unittest UNITTESTARG=aarch64_patchable
+          fi
           test -z "$(git -C third_party/uftrace status --porcelain)"
       - name: Verify export fields without root or tracefs
         env:

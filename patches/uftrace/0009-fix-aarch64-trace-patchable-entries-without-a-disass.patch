@@ -1,0 +1,159 @@
+From 0a63282c4e094553eda011012618e0475e23610e Mon Sep 17 00:00:00 2001
+From: pengdonglin <pengdonglin@xiaomi.com>
+Date: Wed, 11 Nov 2026 13:22:36 +0800
+Subject: [PATCH 9/9] fix(aarch64): trace patchable entries without a
+ disassembler
+
+GCC -pg overwrites x0 before calling _mcount on AArch64, so that hook cannot reliably capture the original first argument. Use the existing two-NOP patchable entry path to observe registers before the prologue instead.
+
+Wire AArch64 dynamic lifecycle hooks even when Capstone is disabled. Only the validated two-NOP patch path remains available in that configuration: ordinary instruction relocation fails closed without dereferencing the instruction buffer. Capstone-enabled instruction decoding is unchanged. Report the limited capability as patchable, not general dynamic support.
+
+Add native regressions for missing disassembler support and exact two-NOP entry validation, including single/shifted NOP rejection, trampoline encoding and preserving the following instruction. On a Raspberry Pi with GCC 14.2.0 and no Capstone, both native cases and all 24 FuncGraph export tests pass, including eight integer arguments, recursion, PIE/non-PIE and O0/O2 workloads.
+---
+ arch/aarch64/mcount-dynamic.c | 38 +++++++++++++++++++++++++++
+ arch/aarch64/mcount-insn.c    | 48 +++++++++++++++++++----------------
+ arch/aarch64/mcount-support.c |  2 --
+ misc/version.sh               |  2 ++
+ 4 files changed, 66 insertions(+), 24 deletions(-)
+
+diff --git a/arch/aarch64/mcount-dynamic.c b/arch/aarch64/mcount-dynamic.c
+index 206295a0a7f3..4176c9cdc3a9 100644
+--- a/arch/aarch64/mcount-dynamic.c
++++ b/arch/aarch64/mcount-dynamic.c
+@@ -314,3 +314,41 @@ void mcount_arch_dynamic_recover(struct mcount_dynamic_info *mdi,
+ 		free(badsym);
+ 	}
+ }
++
++#ifdef UNIT_TEST
++TEST_CASE(aarch64_patchable_requires_two_entry_nops)
++{
++	uint32_t code[4];
++	uint32_t patterns[][4] = {
++		{ 0xa9bf7bfd, 0x910003fd, 0xd65f03c0, 0 },
++		{ 0xd503201f, 0xd65f03c0, 0xd65f03c0, 0 },
++		{ 0xa9bf7bfd, 0xd503201f, 0xd503201f, 0 },
++	};
++	enum mcount_dynamic_type types[] = { DYNAMIC_FENTRY_NOP, DYNAMIC_PATCHABLE };
++	struct uftrace_mmap map = { .start = (unsigned long)code };
++	struct mcount_dynamic_info mdi = {
++		.map = &map,
++		.trampoline = (unsigned long)code + 64,
++		.type = DYNAMIC_PATCHABLE,
++	};
++	struct uftrace_symbol sym = { .size = sizeof(code), .name = "entry" };
++	unsigned index;
++
++	for (index = 0; index < ARRAY_SIZE(patterns); index++) {
++		memcpy(code, patterns[index], sizeof(code));
++		TEST_EQ(mcount_patch_func(&mdi, &sym, NULL, 0), INSTRUMENT_SKIPPED);
++		TEST_MEMEQ(code, patterns[index], sizeof(code));
++	}
++
++	for (index = 0; index < ARRAY_SIZE(types); index++) {
++		mdi.type = types[index];
++		memcpy(code, patchable_nop_patt, CODE_SIZE);
++		code[2] = 0xd65f03c0;
++		TEST_EQ(mcount_patch_func(&mdi, &sym, NULL, 0), INSTRUMENT_SUCCESS);
++		TEST_EQ(code[0], 0xa9bf7bfd);
++		TEST_EQ(code[1], 0x9400000f);
++		TEST_EQ(code[2], 0xd65f03c0);
++	}
++	return TEST_OK;
++}
++#endif
+diff --git a/arch/aarch64/mcount-insn.c b/arch/aarch64/mcount-insn.c
+index 13488487b5ac..366706ad8086 100644
+--- a/arch/aarch64/mcount-insn.c
++++ b/arch/aarch64/mcount-insn.c
+@@ -271,36 +271,40 @@ out:
+ 
+ #else /* HAVE_LIBCAPSTONE */
+ 
+-static bool disasm_check_insn(uint8_t *insn)
++void mcount_disasm_init(struct mcount_disasm_engine *disasm)
+ {
+-	// LDR (literal)
+-	if ((*insn & 0x3b) == 0x18)
+-		return false;
+-
+-	// ADR or ADRP
+-	if ((*insn & 0x1f) == 0x10)
+-		return false;
+-
+-	// Branch & system instructions
+-	if ((*insn & 0x1c) == 0x14)
+-		return false;
++	(void)disasm;
++}
+ 
+-	return true;
++void mcount_disasm_finish(struct mcount_disasm_engine *disasm)
++{
++	(void)disasm;
+ }
+ 
+ int disasm_check_insns(struct mcount_disasm_engine *disasm, struct mcount_dynamic_info *mdi,
+ 		       struct mcount_disasm_info *info)
+ {
+-	uint8_t *insn = (void *)info->addr;
+-
+-	if (!disasm_check_insn(&insn[3]) || !disasm_check_insn(&insn[7]))
+-		return INSTRUMENT_FAILED;
+-
+-	memcpy(info->insns, insn, INSN_SIZE);
+-	info->orig_size = INSN_SIZE;
+-	info->copy_size = INSN_SIZE;
++	(void)disasm;
++	(void)mdi;
++	(void)info;
++	return INSTRUMENT_FAILED;
++}
+ 
+-	return INSTRUMENT_SUCCESS;
++#ifdef UNIT_TEST
++TEST_CASE(aarch64_patchable_without_disassembler)
++{
++	struct mcount_disasm_engine disasm;
++	struct mcount_disasm_info info = { .addr = 1 };
++	struct mcount_disasm_info original = info;
++
++	TEST_NE(mcount_arch_ops.disasm_init, NULL);
++	TEST_NE(mcount_arch_ops.disasm_finish, NULL);
++	mcount_arch_ops.disasm_init(&disasm);
++	TEST_EQ(disasm_check_insns(&disasm, NULL, &info), INSTRUMENT_FAILED);
++	TEST_MEMEQ(&info, &original, sizeof(info));
++	mcount_arch_ops.disasm_finish(&disasm);
++	return TEST_OK;
+ }
++#endif
+ 
+ #endif /* HAVE_LIBCAPSTONE */
+diff --git a/arch/aarch64/mcount-support.c b/arch/aarch64/mcount-support.c
+index b5995d74ff5d..cd36b71eaf1f 100644
+--- a/arch/aarch64/mcount-support.c
++++ b/arch/aarch64/mcount-support.c
+@@ -45,10 +45,8 @@ const struct mcount_arch_ops mcount_arch_ops = {
+ 		[UFT_ARCH_OPS_DYNAMIC] = (unsigned long)dynamic_return,
+ 	},
+ 	.plthook_addr = mcount_arch_plthook_addr,
+-#ifdef HAVE_LIBCAPSTONE
+ 	.disasm_init = mcount_disasm_init,
+ 	.disasm_finish = mcount_disasm_finish,
+-#endif
+ 	.setup_trampoline = mcount_setup_trampoline,
+ 	.cleanup_trampoline = mcount_cleanup_trampoline,
+ 	.patch_func = mcount_patch_func,
+diff --git a/misc/version.sh b/misc/version.sh
+index 592e2fb6b9aa..f3924c9a0484 100755
+--- a/misc/version.sh
++++ b/misc/version.sh
+@@ -53,6 +53,8 @@ if test -f ${SRCDIR}/check-deps/perf_context_switch; then
+ fi
+ if test -f ${SRCDIR}/check-deps/have_libcapstone; then
+     DEPS="${DEPS} dynamic"
++elif test "${ARCH}" = aarch64; then
++    DEPS="${DEPS} patchable"
+ fi
+ if test -f ${SRCDIR}/check-deps/have_libtraceevent; then
+     DEPS="${DEPS} kernel"

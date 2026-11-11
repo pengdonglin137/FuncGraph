@@ -12,6 +12,16 @@ tracer=$(command -v -- "${2:-fguftrace}") || {
 }
 tracer=$(realpath -- "$tracer")
 test -x "$tracer"
+instrumentation=-pg
+record_flags=()
+case $(uname -m) in
+    x86_64) ;;
+    aarch64|arm64)
+        instrumentation=-fpatchable-function-entry=2
+        record_flags=(-P .)
+        ;;
+    *) echo 'This example requires x86_64 or ARM64 Linux.' >&2; exit 1 ;;
+esac
 mkdir -- "$1"
 cd -- "$1"
 work=$PWD
@@ -21,9 +31,9 @@ git -c advice.detachedHead=false clone --depth 1 --branch v1.3.2 https://github.
 test "$(git -C pigz rev-parse HEAD)" = fe4894f57739e3039a2ffc2a2a360d35e19bacbe
 test "$(git -C zlib rev-parse HEAD)" = da607da739fa6047df13e66a2af6b8bec7c2a498
 
-flags='-pg -g -O0 -fno-omit-frame-pointer'
+flags="$instrumentation -g -O0 -fno-omit-frame-pointer"
 (cd zlib && CFLAGS="$flags" ./configure --static && make -j2 libz.a)
-make -C pigz -j2 CFLAGS="$flags -I../zlib" LDFLAGS=-pg LIBS='../zlib/libz.a -lm -pthread'
+make -C pigz -j2 CFLAGS="$flags -I../zlib" LDFLAGS="$instrumentation" LIBS='../zlib/libz.a -lm -pthread'
 readelf -d pigz/pigz > dynamic.txt
 if grep -q 'NEEDED.*libz\.so' dynamic.txt; then
     echo 'Unexpected dependency on system libz.so' >&2
@@ -36,7 +46,7 @@ printf 'order_id,customer_id,total\n' > orders.csv
 for ((order=1; order<=128; order++)); do
     printf '%04d,C%02d,%d\n' "$order" "$((order % 12))" "$((order * 7))"
 done >> orders.csv
-"$tracer" record --no-sched --srcline -A 'deflate@arg1/x64,arg2/i32' -R 'deflate@retval/i32' \
+"$tracer" record "${record_flags[@]}" --no-sched --srcline -A 'deflate@arg1/x64,arg2/i32' -R 'deflate@retval/i32' \
     -d capture ./pigz/pigz -p 1 -6 -c orders.csv > orders.csv.gz
 ./pigz/pigz -dc orders.csv.gz | cmp - orders.csv
 "$tracer" dump --fgraph --srcline -d capture > capture.jsonl
