@@ -6,7 +6,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from fglib import inputs, uftrace_runtime
+from fglib import inputs, uftrace, uftrace_runtime
 
 
 class UftraceRuntimeTest(unittest.TestCase):
@@ -81,7 +81,9 @@ class UftraceRuntimeTest(unittest.TestCase):
         fixture = Path(__file__).parent.parent / 'samples/sample_mixed.jsonl'
         executable.write_text('#!/bin/sh\nexec cat "' + str(fixture) + '"\n')
         imported = inputs.read_uftrace_directory(str(self.root))
-        self.assertEqual(len(imported.records), 1648)
+        with fixture.open(encoding='utf-8') as source:
+            _, expected = uftrace.read_export(source)
+        self.assertEqual(imported.records, expected)
 
 
 if __name__ == '__main__':

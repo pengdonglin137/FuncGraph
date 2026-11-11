@@ -32,25 +32,30 @@ returns on user exit rows. Use `space:user` or `space:kernel` to inspect one spa
 
 The [checked-in JSONL](../samples/sample_mixed.jsonl) is a scoped extract from
 the x86_64 QEMU Linux `7.4.0-rc2` capture of [`demo_mixed.c`](../samples/demo_mixed.c)
-on November 11, 2026, with `--srcline -T '.@callsite'`. It contains 25 user calls,
-788 kernel calls, 22 recorded user call-site events and five linked transitions.
+on November 11, 2026, with `--auto-args --srcline -T '.@callsite'`. It contains 25 user calls,
+689 kernel calls, 25 recorded user call-site events and five linked transitions.
 The extract keeps the original call records and call-site events (including
 addresses, parameters and raw return values), but not scheduler/perf events.
-The published report uses the matching kernel debug image: 314 unique kernel
-functions retain entry locations in the call stack, and 485 unique captured
-kernel call sites resolve to source, including 298 inline chains. Links are pinned
+Sixteen user calls have decoded arguments and nineteen have decoded returns,
+covering `main`, `run_round`, file transfer and the multi-layer UDP path.
+The published report uses the matching kernel debug image: 306 unique kernel
+functions retain entry locations in the call stack, and 465 unique captured
+kernel call sites resolve to source, including 282 inline chains. Links are pinned
 to Linux `v7.4-rc2`. Select `__x64_sys_sendto` for its `net/socket.c:2286` stack
 entry and **Call site source** in `do_syscall_x64`, `arch/x86/entry/syscall_64.c:61`.
 The recorded PC `0xffffffff82129117` is retained separately from
 `do_syscall_64+0xb7/0x580`. Expanding its Text row shows the same call-site chain.
 The matching BTF also verifies the nonblocking receive error path and supplies
-safe argument-name prefixes for 288 kernel functions. Select `__sys_sendto` for
+safe argument-name prefixes for 280 kernel functions and typed values for 292 functions. Select `__sys_sendto` for
 `fd`, `buff`, `len`, `flags`, `addr` and `addr_len`; expand **Raw argument slots**
 to inspect the unchanged recorded values. Select each `receive_frame` call to see
 its distinct caller line, `demo_mixed.c:47` or `demo_mixed.c:49`, rather than its
 shared entry at line 36. The caller return PC is retained separately from the
-recorded callee address. Missing libc source stays unavailable, not kernel-linked.
-The complete native export was independently checked against 82,615 saved kernel
+recorded callee address, alongside the explicit **call site address** (`PC - 1`).
+For `__x64_sys_sendto`, **args (BTF)** shows its single `pt_regs` pointer, not six
+invented arguments; the unchanged register slots remain expandable.
+Missing libc source stays unavailable, not kernel-linked.
+The complete native export was independently checked against 112,287 saved kernel
 records, and all 75 snapshotted tracefs settings were restored exactly. Viewing the
 HTML needs neither the kernel tree nor uftrace. To rebuild it from the repository
 root, provide the matching debug-enabled image and source repository:
@@ -341,7 +346,7 @@ frames as roots. There is no implicit clock adjustment or synthetic completion.
 - Kernel tracepoint `event` records retain the original **common PID**, name,
   formatted payload and flags, including scheduling events from other tasks.
   User event/argument payloads, when present, retain their `payload_hex` bytes.
-  Supported signed/unsigned integer and hex/pointer specifications (8, 16, 32,
+  Supported automatic, signed/unsigned integer and hex/pointer specifications (8, 16, 32,
   or 64 bits) add optional `user_args` (entry list of strings) or `user_retval`
   (exit string). Strings avoid losing 64-bit precision in browsers. An unsupported
   or incomplete specification leaves the whole payload raw; older exports still work.

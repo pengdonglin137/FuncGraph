@@ -79,7 +79,7 @@ FG_CONFIG=/dev/null python3 docs/img/make_shots.py
 
 本地打开 [sample_mixed.html](sample_mixed.html)，也可以点截图在线查看。在 **Timeline** 选中 `dispatch_datagram` 可看用户态参数、返回值和记录的函数地址；选中 `__x64_sys_sendto` 可看调用顶边细线和调用栈分界。Text 同一入口旁的 `K` 带下划线。这份 QEMU 上对 [`demo_mixed.c`](samples/demo_mixed.c) 的实际采集有 5 处匹配的跨态边界，采集和重建步骤见 [uftrace 指南](docs/uftrace.cn.md)。
 
-更新后的混合样例包含 22 个真实用户态调用点、内核入口位置及 485 个已解析的内核调用点（其中 298 个含内联链），内核链接固定到 Linux `v7.4-rc2`。分别选中两次 `receive_frame`，源码落在不同的调用行 `demo_mixed.c:47` 和 `demo_mixed.c:49`，不再都定位到函数入口。选中 `__sys_sendto` 可看 BTF 参数名，并展开原始参数槽。对于 `__x64_sys_sendto`，调用栈入口仍是 `net/socket.c:2286`，**Call site source** 展示 `do_syscall_x64` 中的 `arch/x86/entry/syscall_64.c:61`。原始返回 PC 与被调函数地址分开保留，用户态源码不会套用内核链接。
+更新后的混合样例使用 `--auto-args`，25 次用户调用中有 16 次带可读参数、19 次带可读返回值，同时保留 25 个真实用户态调用点、内核入口位置及 465 个已解析的内核调用点（其中 282 个含内联链），内核链接固定到 Linux `v7.4-rc2`。分别选中两次 `receive_frame`，源码落在不同的调用行 `demo_mixed.c:47` 和 `demo_mixed.c:49`，不再都定位到函数入口。匹配的 BTF 不仅提供参数名，还裁剪参数个数、参数和返回值位宽及符号；例如 `__x64_sys_sendto` 只显示真实的一个 `pt_regs` 指针，原始寄存器槽和返回位模式仍可展开核对。该函数的调用栈入口仍是 `net/socket.c:2286`，**Call site source** 展示 `do_syscall_x64` 中的 `arch/x86/entry/syscall_64.c:61`。调用点地址（return PC − 1）、原始返回 PC 与被调函数入口地址分开保留，用户态源码和参数不会误用内核的链接或 BTF。
 
 ---
 

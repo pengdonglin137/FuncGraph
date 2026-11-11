@@ -20,7 +20,7 @@ from test_uftrace_import import invoke
 ROOT = Path(helpers.ROOT)
 TRACE = ROOT / 'samples/sample_mixed.jsonl'
 REPORT = ROOT / 'sample_mixed.html'
-COUNTS = {'user': 25, 'kernel': 788}
+COUNTS = {'user': 25, 'kernel': 689}
 PAGE_FILES = {'index.html', 'sample.html', 'sample.png', 'sample_text.png',
               'sample_mixed.html', 'sample_mixed.png', '.nojekyll'}
 
@@ -54,7 +54,7 @@ class MixedSampleTest(unittest.TestCase):
                 self.assertEqual(sum(record['space'] == space and record['type'] == kind for record in records), count)
         self.assertEqual({record['type'] for record in records}, {'entry', 'exit', 'event'})
         events = [record for record in records if record['type'] == 'event']
-        self.assertEqual(len(events), 22)
+        self.assertEqual(len(events), 25)
         self.assertTrue(all(record['space'] == 'user' and record['name'] == 'callsite' for record in events))
         sendto = next(record for record in records if record['name'] == '__x64_sys_sendto' and record['type'] == 'entry')
         self.assertTrue(sendto['args'])
@@ -78,10 +78,10 @@ class MixedSampleTest(unittest.TestCase):
         cols = data['cols']
         names = [data['strings'][index] for index in cols['name']]
         kernel_flags = [flags for flags in cols['flags'] if not flags & timeline.F_USER]
-        self.assertEqual(sum(bool(flags & timeline.F_IRQOFF) for flags in kernel_flags), 61)
+        self.assertEqual(sum(bool(flags & timeline.F_IRQOFF) for flags in kernel_flags), 51)
         self.assertEqual(sum(bool(flags & timeline.F_BHOFF) for flags in kernel_flags), 51)
         self.assertEqual(sum(flags & timeline.F_CTX_MASK == timeline.CTX_HARDIRQ for flags in kernel_flags), 0)
-        self.assertEqual(sum(flags & timeline.F_CTX_MASK == timeline.CTX_SOFTIRQ for flags in kernel_flags), 131)
+        self.assertEqual(sum(flags & timeline.F_CTX_MASK == timeline.CTX_SOFTIRQ for flags in kernel_flags), 45)
         self.assertTrue(all(flags & timeline.F_HAS_LAT for flags in kernel_flags))
         self.assertFalse(any(flags & timeline.F_HAS_LAT for flags in cols['flags'] if flags & timeline.F_USER))
         boundaries = [index for index, flags in enumerate(cols['flags']) if flags & timeline.F_BOUNDARY]
@@ -112,8 +112,11 @@ class MixedSampleTest(unittest.TestCase):
             for key in data.keys() - {'btf', 'cols', 'errs', 'chains', 'errnames', 'sources', 'stats', 'inline', 'uftrace'}:
                 self.assertEqual(data[key], rebuilt_data[key], key)
             self.assertTrue(data['uftrace']['kernel_arg_names'])
+            self.assertTrue(data['uftrace']['kernel_types'])
             self.assertNotIn('kernel_arg_names', rebuilt_data['uftrace'])
-            self.assertEqual({key: value for key, value in data['uftrace'].items() if key != 'kernel_arg_names'},
+            self.assertNotIn('kernel_types', rebuilt_data['uftrace'])
+            self.assertEqual({key: value for key, value in data['uftrace'].items()
+                              if key not in ('kernel_arg_names', 'kernel_types')},
                              rebuilt_data['uftrace'])
             for key in cols:
                 if key == 'flags':
@@ -141,10 +144,10 @@ class MixedSampleTest(unittest.TestCase):
         html = REPORT.read_text(encoding='utf-8')
         data, pool, source_lines = (helpers.json_script(html, key) for key in ('tlData', 'fgSrc', 'fgSrcLines'))
         functions, cols = data['sources']['functions'], data['cols']
-        self.assertEqual(len(functions), 314)
-        self.assertEqual(len(data['sources']['callers']), 485)
+        self.assertEqual(len(functions), 306)
+        self.assertEqual(len(data['sources']['callers']), 465)
         self.assertTrue(all(data['sources']['callers'].values()))
-        self.assertEqual(len(data['inline']), 298)
+        self.assertEqual(len(data['inline']), 282)
         self.assertEqual(len(data['uftrace']['kernel_details']), COUNTS['kernel'])
         for index, flags in enumerate(cols['flags']):
             if flags & timeline.F_USER:
@@ -173,11 +176,24 @@ class MixedSampleTest(unittest.TestCase):
         index = names.index('__sys_sendto')
         self.assertEqual(data['uftrace']['kernel_arg_names'][str(cols['name'][index])],
                          ['fd', 'buff', 'len', 'flags', 'addr', 'addr_len'])
-        self.assertEqual(len(data['uftrace']['kernel_arg_names']), 288)
+        self.assertEqual(len(data['uftrace']['kernel_arg_names']), 280)
+        signature = data['uftrace']['kernel_types'][str(cols['name'][index])]
+        self.assertEqual(signature['argc'], 6)
+        self.assertEqual(signature['args'], [['sint', 32], ['ptr', 64], ['uint', 64],
+                                            ['uint', 32], ['ptr', 64], ['sint', 32]])
         entries = {line: record for line, record in enumerate(records, 3) if record['type'] == 'entry'}
         raw = entries[cols['line'][index]]['args']
         self.assertEqual(data['strings'][cols['args'][index]], ', '.join(raw))
         self.assertEqual(raw[2], '0x200')
+        expected_counts = {'main': 2, 'run_round': 4, 'transfer_file': 4, 'read_block': 3,
+                           'write_block': 3, 'exchange_loopback': 4, 'send_frame': 4,
+                           'dispatch_datagram': 5, 'receive_frame': 4}
+        for record in entries.values():
+            if record['space'] == 'user' and record['name'] in expected_counts:
+                self.assertEqual(len(record['user_args']), expected_counts[record['name']], record['name'])
+                self.assertIn('payload_hex', record)
+        self.assertEqual(sum('args' in detail for detail in data['uftrace']['user_details'].values()), 16)
+        self.assertEqual(sum('retval' in detail for detail in data['uftrace']['user_details'].values()), 19)
         sites = {(record['tid'], record['time_ns'] + 1): record for record in records
                  if record['type'] == 'event'}
         self.assertEqual(len(sources['user_callsites']), len(sites))
@@ -280,6 +296,14 @@ class MixedSampleBrowserTest(unittest.TestCase):
         self.assertEqual(divider.locator('.tl-stack-space').inner_text(), 'K')
         self.assertEqual(divider.get_attribute('data-context-kind'), 'inline')
         self.assertEqual(divider.evaluate('row => row.previousElementSibling.querySelector(".tl-stack-space").textContent'), 'U')
+        arguments = page.locator('.k:text-is("args (BTF)") + .v')
+        self.assertEqual(arguments.inner_text().splitlines()[0].count('='), 1)
+        self.assertTrue(arguments.inner_text().startswith('__unused=0x'))
+        raw_slots = arguments.locator('details:has(summary:text-is("Raw argument slots"))')
+        self.assertEqual(raw_slots.get_attribute('open'), None)
+        self.assertEqual(raw_slots.text_content().count(', '), 5)
+        self.assertEqual(page.locator('.k:text-is("return (BTF)") + .v').inner_text(), '512')
+        self.assertIn('0x200', page.locator('.k:text-is("raw return") + .v').text_content())
         stack.locator('.tl-source-open', has_text='demo_mixed.c:33').click()
         page.locator('.tl-cs-src .current-line', has_text='return dispatch_datagram').wait_for(state='visible')
         page.evaluate('''() => {

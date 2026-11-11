@@ -27,20 +27,22 @@ Text 在对应入口旁显示带下划线的 `K`，用户态入口行显示参�
 
 [仓库内的 JSONL](../samples/sample_mixed.jsonl) 取自 2026 年 11 月 11 日在 x86_64 QEMU
 Linux `7.4.0-rc2` 上对 [`demo_mixed.c`](../samples/demo_mixed.c) 的实际采集，使用
-`--srcline -T '.@callsite'`，包含 25 次用户态调用、788 次内核态调用、22 个用户态调用点事件
+`--auto-args --srcline -T '.@callsite'`，包含 25 次用户态调用、689 次内核态调用、25 个用户态调用点事件
 和 5 处匹配的跨态边界。截取时保留了原始调用记录和调用点事件，包括地址、参数和原始
-返回值；没有纳入调度 / perf 事件。发布的报告使用了匹配的内核调试镜像：314 个不同的内核
-函数均保留调用栈入口位置，另外恢复了 485 个不同内核调用点的源码位置，其中 298 个含内联链，
+返回值；没有纳入调度 / perf 事件。16 次用户调用带可读参数、19 次带可读返回值，覆盖
+`main`、`run_round`、文件传输和 UDP 路径的多层函数。发布的报告使用了匹配的内核调试镜像：306 个不同的内核
+函数均保留调用栈入口位置，另外恢复了 465 个不同内核调用点的源码位置，其中 282 个含内联链，
 链接固定到 Linux `v7.4-rc2`。选中 `__x64_sys_sendto`，调用栈中的函数入口仍是
 `net/socket.c:2286`；**Call site source** 展示 `do_syscall_x64` 中的
 `arch/x86/entry/syscall_64.c:61`。原始 PC `0xffffffff82129117` 与
 `do_syscall_64+0xb7/0x580` 分开展示；展开 Text 行可看同一调用点的内联源码链。匹配的 BTF 还可
-校验非阻塞接收的错误路径，并为 288 个内核函数提供 ABI 安全的参数名前缀。
+校验非阻塞接收的错误路径，为 280 个内核函数提供 ABI 安全的参数名前缀，并为 292 个函数提供类型修正信息。
 选中 `__sys_sendto` 可看 `fd`、`buff`、`len`、`flags`、`addr`、`addr_len`；展开
 **Raw argument slots** 可核对未经改写的原始参数槽。分别选中两次 `receive_frame`，
 源码应落在 `demo_mixed.c:47` 和 `demo_mixed.c:49`，而非共同的第 36 行函数入口；
-caller return PC 与被调函数的 recorded address 分开保留。缺失的 libc 源码如实显示不可用，
-不会套用内核链接。完整导出已与保存的 82,615 条内核记录独立逐条核对，75 项 tracefs
+call site address（return PC − 1）、caller return PC 与被调函数的 recorded address 分开保留。
+选中 `__x64_sys_sendto`，**args (BTF)** 只显示实际的一个 `pt_regs` 指针，不再冒充六个参数；其余原始槽位仍可展开。
+缺失的 libc 源码如实显示不可用，不会套用内核链接。完整导出已与保存的 112,287 条内核记录独立逐条核对，75 项 tracefs
 设置均精确恢复。打开 HTML 无需内核源码树或 uftrace。在仓库根目录重建它时，
 需要匹配且含调试信息的镜像及源码仓库：
 
