@@ -1980,6 +1980,83 @@ class BrowserSmokeTest(unittest.TestCase):
         box = self.page.locator('.tl-canvas').bounding_box()
         self.page.mouse.click(box['x'] + box['width'] * (timestamp - start) / (end - start), box['y'] + 28)
 
+    def test_many_task_tracks_only_visit_the_viewport_and_relayout_after_filtering(self):
+        count, target = 512, 490
+        self.open_range_data([f'worker_{index}' for index in range(count)], starts=[0] * count,
+                             durations=[10000] * count, columns={'task': list(range(count))},
+                             extra={'tasks': [dict(pid=index + 1, comm=f'task_{index}', kind=0, cpu=0)
+                                              for index in range(count)]})
+        self.ev('''async target => {
+            const probe = fgView('timeline').probe(), scroll = document.querySelector('.tl-scroll');
+            scroll.scrollTop = probe.TRACKS[target].y - 5;
+            await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+            window.trackReads = {positions: 0, hidden: 0};
+            for (const track of probe.TRACKS) for (const [key, counter] of [['y', 'positions'], ['hidden', 'hidden']]) {
+                let value = track[key];
+                Object.defineProperty(track, key, {configurable: true,
+                    get() { trackReads[counter]++; return value; }, set(next) { value = next; }});
+            }
+        }''', target)
+        point = self.ev('target => fgView("timeline").probe().xyOf(target)', target)
+        self.ev('trackReads.positions = trackReads.hidden = 0')
+        self.page.mouse.move(*point)
+        self.ev('async () => { await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))); }')
+        self.assertIn(f'worker_{target}', self.page.locator('.tl-tip').inner_text())
+        counts = self.ev('trackReads')
+        self.assertLess(counts['positions'], 150, 'hover/redraw scanned offscreen task positions')
+        self.assertLess(counts['hidden'], 50, 'hover/redraw scanned offscreen task visibility')
+        self.page.mouse.click(*point)
+        self.assertEqual(self.ev("fgView('timeline').probe().sel()"), target)
+        self.page.click('.tl-detail .tl-close')
+        self.page.click('[data-act=expand]')
+        self.assertTrue(self.ev("fgView('timeline').probe().TRACKS.every(track => track.collapsed)"))
+        self.page.click('[data-act=expand]')
+        self.assertFalse(self.ev("fgView('timeline').probe().TRACKS.some(track => track.collapsed)"))
+        self.ev('target => fgNotifyFilter("chosen task", new Set([target + 1]))', target)
+        self.page.click('[data-act=fhide]')
+        self.assertEqual(self.ev("fgView('timeline').probe().TRACKS.filter(track => track.h > 0).map(track => track.id)"), [target])
+        self.ev("document.querySelector('.tl-scroll').scrollTop = 0")
+        point = self.ev('target => fgView("timeline").probe().xyOf(target)', target)
+        self.page.mouse.click(*point)
+        self.assertEqual(self.ev("fgView('timeline').probe().sel()"), target)
+        self.page.click('.tl-detail .tl-close')
+        self.ev('fgNotifyFilter("", null)')
+        self.assertEqual(self.ev("fgView('timeline').probe().TRACKS.filter(track => track.h > 0).length"), count)
+        gap = self.ev('''target => {
+            const probe = fgView('timeline').probe(), track = probe.TRACKS[target];
+            const scroll = document.querySelector('.tl-scroll'), canvas = document.querySelector('.tl-canvas');
+            scroll.scrollTop = track.y;
+            const box = canvas.getBoundingClientRect();
+            return [box.left + box.width / 2, box.top + track.h - 3];
+        }''', target)
+        self.page.mouse.click(*gap)
+        self.assertEqual(self.ev("fgView('timeline').probe().sel()"), -1)
+        self.assertFalse(self.ev("fgView('timeline').probe().TRACKS.some(track => track.collapsed)"))
+        self.page.mouse.click(gap[0], gap[1] + 3)
+        self.assertTrue(self.ev('target => fgView("timeline").probe().TRACKS[target + 1].collapsed', target))
+        self.assertFalse(self.ev('target => fgView("timeline").probe().TRACKS[target].collapsed', target))
+
+    def test_cpu_only_overview_classifies_track_kinds_once_per_rebuild(self):
+        count = 512
+        self.open_range_data(['worker'] * count, starts=[0] * count, durations=[10000] * count,
+                             columns={'task': list(range(count))},
+                             extra={'tasks': [dict(pid=-1, comm=f'CPU {index}', kind=2, cpu=index)
+                                              for index in range(count)]})
+        result = self.ev('''async () => {
+            const api = fgView('timeline'), canvas = document.querySelector('.tl-head-canvas');
+            const before = canvas.toDataURL();
+            window.kindReads = 0;
+            for (const track of api.probe().TRACKS) {
+                const value = track.kind;
+                Object.defineProperty(track, 'kind', {configurable: true, get() { kindReads++; return value; }});
+            }
+            api.resize();
+            await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+            return {reads: kindReads, same: canvas.toDataURL() === before};
+        }''')
+        self.assertTrue(result['same'])
+        self.assertLess(result['reads'], count * 5, 'overview repeatedly searched all track kinds')
+
     def test_cpu_navigation_reveals_scheduler_only_task_and_clears_stale_selection(self):
         tasks = [dict(pid=1, comm='calls', kind=0, cpu=0, runs=[[0, 3000, 0]]),
                  dict(pid=2, comm='scheduler-only', kind=0, cpu=0, runs=[[3000, 9000, 0]])]

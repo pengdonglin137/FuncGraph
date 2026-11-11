@@ -281,6 +281,8 @@ On a phone, search, zoom, **Notes** and the mixed-trace legend stay in the toolb
 
 On long scheduling traces, zoom into the interval you are investigating. The off-CPU, resched and IRQ-off track overlays skip intervals outside the visible time window, but keep intervals that cross its edges. If the full view is too dense, turn off overlays you do not need; this does not change analysis or exports.
 
+For traces with many tasks, scrolling draws only the tracks intersecting the vertical viewport. Hidden or offscreen tracks remain available in **Tasks**, analysis and exports; collapsing or hiding a track does not discard its calls.
+
 The tool adapts to the options the trace was captured with and tells you what is missing:
 
 | Missing option | Effect in the timeline |

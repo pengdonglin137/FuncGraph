@@ -197,16 +197,28 @@ function resize() {
     draw();
     scheduleDistHistogram();
 }
+const visibleTracks = [];
 function layout() {
+    visibleTracks.length = 0;
     let y = 0;
     for (const t of ORDER) {
         t.y = y;
         if (t.hidden) { t.h = 0; continue; }
         t.h = HDR + (t.collapsed ? MINI : (t.maxD + 1) * ROW) + GAP;
+        visibleTracks.push(t);
         y += t.h;
     }
     totalH = y;
     elSpacer.style.height = Math.max(0, totalH - H) + 'px';
+}
+function firstTrackEndingAfter(position) {
+    let low = 0, high = visibleTracks.length;
+    while (low < high) {
+        const middle = (low + high) >>> 1, track = visibleTracks[middle];
+        if (track.y + track.h <= position) low = middle + 1;
+        else high = middle;
+    }
+    return low;
 }
 
 let rafPending = false;
@@ -232,10 +244,10 @@ function render() {
     const step = niceStep((ve - vs) / Math.max(1, W / 110));
     ctx.fillStyle = P.grid;
     for (let t = Math.ceil(vs / step) * step; t < ve; t += step) ctx.fillRect(Math.round((t - vs) * k), 0, 1, H);
-    for (const t of ORDER) {
-        if (t.hidden) continue;
+    for (let index = firstTrackEndingAfter(sy); index < visibleTracks.length; index++) {
+        const t = visibleTracks[index];
         const y = t.y - sy;
-        if (y + t.h < 0 || y > H) continue;
+        if (y > H) break;
         drawTrack(t, y, vs, ve, k);
     }
     if (ov.wk && WAKES.length) drawWakeups(vs, ve, k, sy);
@@ -689,8 +701,9 @@ function drawOff(r, y, vs, k) {
 let ovDirty = true, ovDens = null, ovMax = 1;
 function buildOverview() {
     ovDens = new Float32Array(Math.max(1, Math.ceil(W)));
+    const hasTasks = ORDER.some(track => track.kind === 0);
     for (const t of ORDER) {
-        if (t.kind !== 0 && ORDER.some(x => x.kind === 0)) continue;
+        if (t.kind !== 0 && hasTasks) continue;
         if (!t.rowsT.length) continue;
         for (const i of t.rowsT[0]) {
             const a = Math.max(0, ovX(sStart[i])), b = ovX(sEnd[i]);

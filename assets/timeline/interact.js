@@ -2,9 +2,8 @@
 function hitTest(mx, my) {
     // returns {track, slice, off, header}
     const yy = my + elScroll.scrollTop;
-    let t = null;
-    for (const tr of ORDER) if (!tr.hidden && yy >= tr.y && yy < tr.y + tr.h - GAP) { t = tr; break; }
-    if (!t) return { track: null, slice: -1, off: null, header: false };
+    const t = visibleTracks[firstTrackEndingAfter(yy)];
+    if (!t || yy < t.y || yy >= t.y + t.h - GAP) return { track: null, slice: -1, off: null, header: false };
     if (yy < t.y + HDR) return { track: t, slice: -1, off: null, header: true };
     const k = W / (view.e - view.s), tm = view.s + mx / k;
     const d = t.collapsed ? 0 : Math.floor((yy - t.y - HDR) / ROW);
