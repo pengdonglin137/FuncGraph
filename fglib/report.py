@@ -1397,11 +1397,9 @@ class HtmlGenerator:
 
             content_parts.append(f'<div class="{line_container_class}" id="{line_anchor_id}" data-line-number="{line_number}" data-line-id="{line_id}"{data_attrs}{title_attr}')
             if is_expandable:
-                content_parts.append(f' onclick="handleLineClick(event, \'{line_id}\')" ondblclick="handleDoubleClick(event, \'{line_id}\')" tabindex="0"')
-                content_parts.append('>')
-            else:
-                content_parts.append('>')
-            content_parts.append(f'<span class="line-number" onclick="updateAnchor(\'{line_anchor_id}\', event)" title="Click to copy anchor link">{line_number}</span>')
+                content_parts.append(' tabindex="0"')
+            content_parts.append('>')
+            content_parts.append(f'<span class="line-number" title="Click to copy anchor link">{line_number}</span>')
 
             content_parts.append(f'<span class="line-content">{escaped_line}</span>')
 

@@ -145,6 +145,7 @@ def measure(browser, report, timeout, mount_text, filter_query=None, text_querie
                 }''')
                 after = {metric['name']: metric['value']
                          for metric in session.send('Performance.getMetrics')['metrics']}
+                mounted['dom_counters'] = session.send('Memory.getDOMCounters')
                 session.detach()
                 mounted['browser_work'] = {
                     name: (after[metric] - before[metric]) * scale

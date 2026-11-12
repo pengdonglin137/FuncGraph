@@ -1,4 +1,4 @@
-"""Horizontal Text scrolling stays separate from report navigation and layout."""
+"""Text scrolling and delegated interactions preserve report navigation and layout."""
 from pathlib import Path
 import threading
 import unittest
@@ -87,6 +87,163 @@ class TextViewportTest(unittest.TestCase):
                     return [bounds.left,bounds.right];
                 })};
         }''')
+
+    def test_text_interactions_use_two_delegates_instead_of_per_row_handlers(self):
+        for mode in ['single', 'sidecar']:
+            with self.subTest(mode=mode):
+                page = self.open_report(mode, width=1500)
+                self.assertEqual(page.locator('#content .line-container').count(), 4204)
+                self.assertEqual(page.locator('#content .line-container[onclick], #content .line-container[ondblclick], '
+                                              '#content .line-container > .line-number[onclick]').count(), 0)
+                self.assertTrue(page.evaluate('''() => Array.from(document.querySelectorAll(
+                    '#content .line-container, #content .line-container > .line-number')).every(
+                    node => node.onclick === null && node.ondblclick === null)'''))
+                session = page.context.new_cdp_session(page)
+                target = session.send('Runtime.evaluate', {'expression': 'document.getElementById("content")',
+                                                           'objectGroup': 'text-interactions'})['result']['objectId']
+                for iteration in range(2):
+                    listeners = session.send('DOMDebugger.getEventListeners', {'objectId': target})['listeners']
+                    self.assertEqual(sorted(listener['type'] for listener in listeners if
+                                            'function fgHandleTextInteraction(' in listener.get('handler', {}).get('description', '')),
+                                     ['click', 'dblclick'])
+                    page.evaluate('async () => { await fgSwitchView("timeline"); await fgSwitchView("text"); fgToggleTextOrder(); }')
+                session.detach()
+
+    def test_delegated_line_number_copies_one_anchor_without_expanding_source(self):
+        for mode in ['single', 'sidecar']:
+            with self.subTest(mode=mode):
+                page = self.open_report(mode, width=1500)
+                page.evaluate('''() => {
+                    window.copiedAnchors = [];
+                    Object.defineProperty(navigator.clipboard, 'writeText', {value: text => {
+                        copiedAnchors.push(text); return Promise.resolve();
+                    }});
+                    const number = document.querySelector('#L3 > .line-number');
+                    const label = document.createElement('b'); label.textContent = number.textContent;
+                    number.replaceChildren(label);
+                }''')
+                page.locator('#L3 > .line-number b').click()
+                page.wait_for_function('() => location.hash === "#L3" && copiedAnchors.length === 1')
+                page.wait_for_timeout(250)
+                self.assertEqual(page.evaluate('copiedAnchors.length'), 1)
+                self.assertTrue(page.evaluate('copiedAnchors[0].endsWith("#L3")'))
+                self.assertEqual(page.locator('#line_2_content').evaluate('node => node.style.display'), 'none')
+
+    def test_delegated_source_button_opens_and_closes_exactly_once(self):
+        for mode in ['single', 'sidecar']:
+            with self.subTest(mode=mode):
+                page = self.open_report(mode, width=1500)
+                button = page.locator('#L3 .expand-btn')
+                button.click()
+                page.wait_for_function('() => document.getElementById("line_2_content").style.display === "block"')
+                self.assertEqual(button.text_content(), '-')
+                self.assertTrue(page.locator('#L3').evaluate('node => node.classList.contains("selected")'))
+                button.click()
+                page.wait_for_function('() => document.getElementById("line_2_content").style.display === "none"')
+                self.assertEqual(button.text_content(), '+')
+
+    def test_delegated_double_click_keeps_native_selection_and_cancels_source_toggle(self):
+        for mode in ['single', 'sidecar']:
+            with self.subTest(mode=mode):
+                page = self.open_report(mode, width=1500)
+                page.evaluate('''() => {
+                    window.doubleCalls = 0; const original = handleDoubleClick;
+                    handleDoubleClick = (...args) => { doubleCalls++; return original(...args); };
+                }''')
+                page.locator('#L3 .hl-time').first.dblclick()
+                page.wait_for_timeout(250)
+                self.assertEqual(page.evaluate('doubleCalls'), 1)
+                self.assertTrue(page.evaluate('getSelection().toString().trim().length > 0'))
+                self.assertEqual(page.locator('#line_2_content').evaluate('node => node.style.display'), 'none')
+
+    def test_delegated_row_events_do_not_toggle_source_when_folding(self):
+        for mode in ['single', 'sidecar']:
+            with self.subTest(mode=mode):
+                page = self.open_report(mode, width=1500)
+                control = page.locator('#L2 .fold-icon')
+                control.click()
+                self.assertEqual(page.locator('#L3').evaluate('node => node.style.display'), 'none')
+                self.assertTrue(page.locator('#L2').evaluate('node => node.classList.contains("folded")'))
+                control.click()
+                page.wait_for_timeout(250)
+                self.assertNotEqual(page.locator('#L3').evaluate('node => node.style.display'), 'none')
+                self.assertFalse(page.locator('#L2').evaluate('node => node.classList.contains("folded")'))
+                self.assertEqual(page.locator('#line_1_content').evaluate('node => node.style.display'), 'none')
+
+    def test_source_descendants_are_not_mistaken_for_trace_rows_after_reordering(self):
+        for mode in ['single', 'sidecar']:
+            with self.subTest(mode=mode):
+                page = self.open_report(mode, width=1500)
+                page.evaluate('''() => {
+                    fgToggleTextOrder(); window.rowCalls = 0; const original = handleLineClick;
+                    handleLineClick = (...args) => { rowCalls++; return original(...args); };
+                }''')
+                page.locator('#L3 .expand-btn').click()
+                page.wait_for_function('() => document.getElementById("line_2_content").style.display === "block"')
+                page.locator('#line_2_content .src-frame[open] .source-line').first.click()
+                page.wait_for_timeout(250)
+                self.assertEqual(page.evaluate('rowCalls'), 1)
+                self.assertEqual(page.locator('#line_2_content').evaluate('node => node.style.display'), 'block')
+
+    def test_legacy_inline_handlers_are_not_called_again_by_delegates(self):
+        for mode in ['single', 'sidecar']:
+            with self.subTest(mode=mode):
+                page = self.open_report(mode, width=1500)
+                page.evaluate('''() => {
+                    const row = document.getElementById('L3');
+                    row.setAttribute('onclick', "handleLineClick(event, 'line_2')");
+                    row.setAttribute('ondblclick', "handleDoubleClick(event, 'line_2')");
+                    row.querySelector('.line-number').setAttribute('onclick', "updateAnchor('L3', event)");
+                    window.clickCalls = 0; window.doubleCalls = 0; window.anchorCalls = 0;
+                    const click = handleLineClick, double = handleDoubleClick, anchor = updateAnchor;
+                    handleLineClick = (...args) => { clickCalls++; return click(...args); };
+                    handleDoubleClick = (...args) => { doubleCalls++; return double(...args); };
+                    updateAnchor = (...args) => { anchorCalls++; return anchor(...args); };
+                }''')
+                page.locator('#L3 .expand-btn').click()
+                page.wait_for_function('() => document.getElementById("line_2_content").style.display === "block"')
+                self.assertEqual(page.evaluate('clickCalls'), 1)
+                page.locator('#L3 > .line-number').click()
+                self.assertEqual(page.evaluate('anchorCalls'), 1)
+                page.locator('#L3 .hl-time').first.dblclick()
+                self.assertEqual(page.evaluate('doubleCalls'), 1)
+
+    def test_keyboard_source_toggle_remains_available_without_inline_handlers(self):
+        for mode in ['single', 'sidecar']:
+            with self.subTest(mode=mode):
+                page = self.open_report(mode, width=1500)
+                page.locator('#L3').focus()
+                page.keyboard.press('Enter')
+                page.wait_for_function('() => document.getElementById("line_2_content").style.display === "block"')
+                page.keyboard.press('Enter')
+                page.wait_for_function('() => document.getElementById("line_2_content").style.display === "none"')
+
+    def test_separate_touch_source_taps_use_the_same_delegated_route_in_both_themes(self):
+        for mode in ['single', 'sidecar']:
+            for theme in ['light', 'dark']:
+                with self.subTest(mode=mode, theme=theme):
+                    page = self.open_report(mode, theme=theme)
+                    target = page.locator('#L3 .hl-time').first
+                    target.tap()
+                    page.wait_for_function('() => document.getElementById("line_2_content").style.display === "block"')
+                    page.wait_for_timeout(400)
+                    target.tap()
+                    page.wait_for_function('() => document.getElementById("line_2_content").style.display === "none"')
+
+    def test_native_source_links_keep_their_target_without_toggling_rows(self):
+        for mode in ['single', 'sidecar']:
+            with self.subTest(mode=mode):
+                page = self.open_report(mode, width=1500)
+                page.context.route('https://**/*', lambda route: route.fulfill(status=200, body='source fixture'))
+                link = page.locator('#L3 .func-name-link').first
+                expected = link.get_attribute('href')
+                with page.expect_popup() as popup:
+                    link.click()
+                popup.value.wait_for_load_state()
+                self.assertEqual(popup.value.url, expected)
+                popup.value.close()
+                page.wait_for_timeout(250)
+                self.assertEqual(page.locator('#line_2_content').evaluate('node => node.style.display'), 'none')
 
     def test_long_rows_pan_without_expanding_or_displacing_page_chrome(self):
         for mode in ['single', 'sidecar']:

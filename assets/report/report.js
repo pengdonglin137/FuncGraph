@@ -3112,6 +3112,20 @@
             if (summary) summary.remove();
         }
 
+        function fgHandleTextInteraction(event) {
+            const row = event.target.closest('.line-container');
+            if (!row || !event.currentTarget.contains(row)) return;
+            const number = event.target.closest('.line-number');
+            if (event.type === 'click' && number?.parentElement === row) {
+                if (!number.hasAttribute('onclick')) updateAnchor(row.id, event);
+                return;
+            }
+            const attribute = event.type === 'dblclick' ? 'ondblclick' : 'onclick';
+            if (!row.classList.contains('expandable') || row.hasAttribute(attribute)) return;
+            if (event.type === 'dblclick') handleDoubleClick(event, row.dataset.lineId);
+            else handleLineClick(event, row.dataset.lineId);
+        }
+
         function fgInitText(mounted = false, model = null, navigation = null) {
             if (fgTextInitialized || fgTextDeferred()) return;
             const root = document.getElementById('content');
@@ -3128,6 +3142,8 @@
             if (root.classList.contains('text-layout-auto'))
                 matchMedia('(max-width: 768px)').addEventListener('change', () => fgResetTextLayout(root.children));
             fgTextInitialized = true;
+            root.addEventListener('click', fgHandleTextInteraction);
+            root.addEventListener('dblclick', fgHandleTextInteraction);
             if (mounted) {
                 fgRestoreTextOrder();
                 initTextFolds();

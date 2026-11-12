@@ -8,6 +8,9 @@
 Text 正文横向阅读已与页头/标签/工具栏隔离，保留完整长行、参数与源码；触屏、
 横向滚动和 h/l 均只移动正文，纵向导航及视图往返保留横向位置。大 trace 实测与
 未完成的窗口化边界见 [performance-text-viewport.md](../performance-text-viewport.md)。
+Text 行号复制、源码单击/双击已共享正文级事件委托，避免每行绑定；保持原有选择、
+链接、折叠、键盘和触屏行为。完整 DOM/模型仍保留，测量与限制见
+[performance-text-interactions.md](../performance-text-interactions.md)。
 阅读方式见 [detail-layout.md](../detail-layout.md)
 和 [filtering.md](../filtering.md)。其余 P1 仍为待实施的设计建议。
 

@@ -81,6 +81,8 @@ New reports isolate horizontal Text scrolling from the header, tabs and toolbar.
 
 Chunked sidecar reports continue skipping offscreen layout and remember laid-out blocks' inline sizes, so jumping away from an unusually wide row does not reset horizontal reading merely because that row is skipped. Longer unvisited rows may still extend the horizontal range. Existing content/responsive-size invalidation remains in place. This does not reduce DOM, model or loaded-record counts and is not bounded memory or windowing. Both single-file and sidecar reports use this layout; regenerate older reports. Implementation, measurements and limits: [horizontal Text reading](performance-text-viewport.md).
 
+New reports share root-level delegates for line-number copying and source-row clicks/double-clicks instead of binding these handlers to every trace row. Keyboard, touch, native source links, folding and text selection keep their existing behavior; reordering and view switches do not rebind rows. Regenerate older reports to benefit. This reduces interaction overhead but retains the complete DOM/model; [measurements and limits](performance-text-interactions.md) do not claim completed windowing.
+
 ## Security And Loading
 
 Only GET and HEAD are supported. Requests require a valid loopback Host and the random path; explicit cross-origin requests are rejected. The viewer does not enable CORS or offer upload, editing, deletion or shell endpoints. Responses disable caching and MIME sniffing, restrict cross-origin use and apply a Content Security Policy compatible with the generated report's inline scripts/styles and same-origin fetches.
