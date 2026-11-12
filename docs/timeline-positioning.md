@@ -5,6 +5,19 @@ coordinate navigation. It changes the viewport, not the recorded model,
 selection, shared filter, track visibility or analysis scope. Compact layouts
 keep the entry in More rather than adding a permanent narrow-screen toolbar.
 
+## Calls and full context
+
+The initial view fits all recorded calls plus any exec / exit milestones; reports
+without either use their complete recorded extent. The overview always includes
+all recorded evidence, even scheduler events before the first or after the last
+call. **Fit trace** / `0` / `Home` shows that full extent. **Tools → Navigate →
+Fit calls** returns to all recorded calls, independently of the shared filter,
+and is disabled when no calls were recorded. Both actions preserve selection,
+range analysis, filters, track visibility and the original model. They use bounds
+computed during Timeline preparation, with no new trace scan or Text load on
+click. Point-only evidence receives one drawing unit of width, not an invented
+function duration; packed / call-order views retain their own coordinate units.
+
 ## Coordinate contract
 
 - Offset input defaults to nanoseconds; timestamps default to seconds. Decimal

@@ -9,6 +9,7 @@ import unittest
 import helpers
 from benchmark_range import fixture
 from fglib.viewer import create_server
+from test_cpu_coverage import scheduling_capture
 from test_uftrace_import import HEADER, ORIGIN, capture, lifecycle_event, stream
 
 
@@ -130,6 +131,110 @@ class PositionBrowserTest(unittest.TestCase):
         self.assertAlmostEqual(end - start, extent)
         self.assertAlmostEqual(start, -extent * 0.02)
         self.assertEqual(self.page.locator('.tl-detail').inner_text(), summary)
+
+    def test_initial_call_focus_and_fit_trace_keep_all_scheduling_context(self):
+        for sidecar in (False, True):
+            with self.subTest(sidecar=sidecar):
+                self.open_capture(scheduling_capture(), sidecar=sidecar, no_text=True)
+                original = self.page.evaluate("JSON.stringify(fgData.read('tlData'))")
+                self.assertEqual(self.view(), [20, 870])
+                self.page.evaluate("fgView('timeline').probe().select(0)")
+                detail = self.page.locator('.tl-detail').inner_text()
+                self.page.locator('[data-act=fit]').click()
+                self.assertEqual(self.view(), [0, 900])
+                helpers.click_timeline_tool(self.page, '[data-act=fitcalls]')
+                self.assertEqual(self.view(), [20, 870])
+                self.assertEqual(self.page.evaluate("fgView('timeline').probe().sel()"), 0)
+                self.assertEqual(self.page.locator('.tl-detail').inner_text(), detail)
+                self.assertEqual(self.page.evaluate("JSON.stringify(fgData.read('tlData'))"), original)
+                self.assertTrue(self.page.locator('[data-act=options]').evaluate('button => button === document.activeElement'))
+                for key in ('0', 'Home'):
+                    self.page.locator('.tl-canvas').focus()
+                    self.page.keyboard.press(key)
+                    self.assertEqual(self.view(), [0, 900])
+                    helpers.click_timeline_tool(self.page, '[data-act=fitcalls]')
+
+    def test_overview_positioning_includes_pre_call_scheduling(self):
+        self.open_capture(scheduling_capture())
+        self.page.evaluate("fgView('timeline').probe().zoomTo(400, 500)")
+        overview = self.page.locator('.tl-head-canvas').bounding_box()
+        self.page.mouse.click(overview['x'] + overview['width'] * 0.1, overview['y'] + 5)
+        start, end = self.view()
+        self.assertAlmostEqual((start + end) / 2, 90, delta=1)
+
+    def test_call_fit_ignores_filter_scope_and_preserves_analysis(self):
+        self.open_capture(scheduling_capture())
+        helpers.open_timeline_tools(self.page)
+        self.page.locator('#tlFilterInput').fill('func:^inner$')
+        self.page.locator('[data-act=fapply]').click()
+        self.page.wait_for_function("() => fgFilterState.text === 'func:^inner$'")
+        self.page.evaluate("fgView('timeline').probe().range(100, 200)")
+        detail = self.page.locator('.tl-detail').inner_text()
+        original = self.page.evaluate("JSON.stringify(fgData.read('tlData'))")
+        helpers.click_timeline_tool(self.page, '[data-act=fitcalls]')
+        self.assertEqual(self.view(), [20, 870])
+        self.assertEqual(self.page.locator('.tl-detail').inner_text(), detail)
+        self.assertEqual(self.page.evaluate('fgFilterState.text'), 'func:^inner$')
+        self.assertEqual(self.page.evaluate("JSON.stringify(fgData.read('tlData'))"), original)
+
+    def test_event_only_fit_disables_call_action_without_loading_text(self):
+        for sidecar in (False, True):
+            with self.subTest(sidecar=sidecar):
+                self.open_capture([lifecycle_event('exec', 1000), lifecycle_event('exit', 1000000)],
+                                  sidecar=sidecar, no_text=True)
+                requests = []
+                self.page.on('request', lambda request: requests.append(request.url))
+                self.assertTrue(self.page.locator('[data-act=fitcalls]').is_disabled())
+                self.assertIn('No recorded calls', self.page.locator('[data-act=fitcalls]').get_attribute('title'))
+                self.page.evaluate("fgView('timeline').probe().zoomTo(1000, 2000)")
+                self.page.locator('[data-act=fit]').click()
+                self.assertEqual(self.view(), [0, 999000])
+                self.assertEqual(self.page.evaluate("fgView('timeline').probe().sel()"), -1)
+                self.assertEqual(requests, [])
+
+    def test_call_fit_touch_target_and_keyboard_focus_in_both_themes(self):
+        for theme in ('light', 'dark'):
+            for width, height in ((390, 844), (844, 390)):
+                with self.subTest(theme=theme, width=width):
+                    self.context = self.browser.new_context(viewport={'width': width, 'height': height},
+                                                            is_mobile=True, has_touch=True)
+                    self.addCleanup(self.context.close)
+                    self.open_capture(scheduling_capture(), sidecar=True)
+                    self.page.evaluate('theme => document.documentElement.dataset.theme = theme', theme)
+                    helpers.open_timeline_tools(self.page)
+                    button = self.page.locator('[data-act=fitcalls]')
+                    button.scroll_into_view_if_needed()
+                    self.assertGreaterEqual(button.bounding_box()['height'], 44)
+                    button.tap()
+                    self.assertEqual(self.view(), [20, 870])
+                    self.assertFalse(self.page.locator('.tl-options').is_visible())
+                    self.assertTrue(self.page.locator('[data-act=options]').evaluate('button => button === document.activeElement'))
+
+    def test_initial_focus_keeps_recorded_exec_and_exit_milestones(self):
+        records = sorted(scheduling_capture() + [lifecycle_event('exec', 20), lifecycle_event('exit', 1100)],
+                         key=lambda record: record['time_ns'])
+        self.open_capture(records)
+        self.assertEqual(self.view(), [0, 1080])
+        helpers.click_timeline_tool(self.page, '[data-act=fitcalls]')
+        self.assertEqual(self.view(), [80, 930])
+        self.page.locator('[data-act=fit]').click()
+        self.assertEqual(self.view(), [0, 1080])
+
+    def test_call_fit_uses_recorded_coordinates_in_all_modes(self):
+        for mode in ('abs', 'rel', 'compressed', 'count'):
+            with self.subTest(mode=mode):
+                self.open_report(mode)
+                expected = self.page.evaluate("() => { const probe = fgView('timeline').probe(); return [Math.min(...probe.sStart), Math.max(...probe.sEnd)]; }")
+                self.page.evaluate("fgView('timeline').probe().zoomTo(10000, 20000)")
+                helpers.click_timeline_tool(self.page, '[data-act=fitcalls]')
+                self.assertEqual(self.view(), expected)
+
+    def test_point_only_fit_has_a_finite_nonzero_view(self):
+        self.open_capture([lifecycle_event('exec', 1000)])
+        self.assertEqual(self.view(), [0, 1])
+        self.page.locator('[data-act=fit]').click()
+        self.assertEqual(self.view(), [0, 1])
+        self.assertTrue(self.page.locator('[data-act=fitcalls]').is_disabled())
 
     def test_decimal_units_are_exact_and_never_use_exponential_or_hex_parsing(self):
         self.open_report()

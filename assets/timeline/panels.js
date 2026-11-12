@@ -1284,7 +1284,7 @@ tlRoot.querySelectorAll('[data-ov]').forEach(b => {
 elToolbar.addEventListener('click', ev => {
     const b = ev.target.closest('[data-act]');
     if (!b) return;
-    if (elOptions.classList.contains('open') && b.matches('[data-act^=an-], [data-act=position], [data-act=process-events], [data-act=max], [data-act=help]')) {
+    if (elOptions.classList.contains('open') && b.matches('[data-act^=an-], [data-act=position], [data-act=fitcalls], [data-act=process-events], [data-act=max], [data-act=help]')) {
         setToolbarOptions(false, true);
     }
     switch (b.dataset.act) {
@@ -1297,6 +1297,7 @@ elToolbar.addEventListener('click', ev => {
         case 'zoomout': zoomAt(1.5, W / 2); break;
         case 'zoomin': zoomAt(1 / 1.5, W / 2); break;
         case 'fit': fitAll(); break;
+        case 'fitcalls': fitCalls(); break;
         case 'help': elHelp.classList.toggle('show'); break;
         case 'notes': setNotes(elNotes.classList.contains('hide')); break;
         case 'max': toggleFullscreen(); break;
@@ -1402,6 +1403,7 @@ elHelp.innerHTML = `
 <h4>Touch</h4><ul>
 <li>Tap a call or track header. Swipe horizontally on the tracks to pan; swipe vertically to scroll.</li>
 <li>Pinch the tracks to zoom around your fingers, or use <b>−</b>, <b>+</b> and <b>Fit trace</b> on touch devices.</li>
+<li><b>Fit trace</b> (<kbd>0</kbd> / <kbd>Home</kbd>) and the overview include all recorded scheduling context. The initial view focuses on calls and recorded exec / exit milestones. <b>Tools → Navigate → Fit calls</b> shows all recorded calls without changing selection, filters or analysis.</li>
 <li><b>Tools</b> opens grouped navigation, display, analysis and filter controls without resizing the tracks. Click outside or press <kbd>Escape</kbd> to close it. <b>Notes</b> shows capture limitations. On phones, <b>Full screen</b> stays visible beside Search.</li></ul>
 <h4>Search and filter</h4><ul>
 <li><b>Search</b>: function-name regex; highlights matches and navigates between calls with Enter / Shift+Enter.</li>

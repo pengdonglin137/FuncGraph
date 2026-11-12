@@ -35,7 +35,7 @@ class MixedTreeModelTest(unittest.TestCase):
             metadata, records = uftrace.read_export(stream)
         builder = uftrace.UftraceTimeline(metadata, records).build(enable_fold=True)
         main = next(line for line in builder.parsed if line.raw_func_name == 'main')
-        events = [line for line in builder.parsed if line.get('record_type') == 'event']
+        events = [line for line in builder.parsed if line.get('record_type') == 'event' and line.space == 'user']
         self.assertEqual(len(events), 25)
         self.assertIsNone(events[0].fold_id)
         for line in events[1:]:
@@ -43,6 +43,12 @@ class MixedTreeModelTest(unittest.TestCase):
             self.assertEqual(line.fold_type, 'inner')
             self.assertEqual(line.fold_id, line.fold_ancestors.split()[-1])
             self.assertTrue(line.raw_line.endswith(' ' * (2 + 2 * line.call_depth) + '/* callsite:  */'))
+        kernel_events = [line for line in builder.parsed if line.get('record_type') == 'event' and line.space == 'kernel']
+        self.assertEqual(len(kernel_events), 49)
+        for line in kernel_events:
+            if line.fold_id is None:
+                self.assertEqual(line.fold_ancestors, '')
+                self.assertIsNone(line.call_depth)
         for line in builder.parsed:
             if line.fold_type == 'entry':
                 column = line.raw_line.split(' | ', 4)[-1]
@@ -109,6 +115,19 @@ class MixedTreeBrowserTest(unittest.TestCase):
     def setUpClass(cls):
         cls.directory = tempfile.TemporaryDirectory(prefix='fg-mixed-tree-')
         cls.root = Path(cls.directory.name)
+        with TRACE.open(encoding='utf-8') as source:
+            _, records = uftrace.read_export(source)
+        main = next(line for line, record in enumerate(records, 3)
+                    if record['type'] == 'entry' and record['space'] == 'user' and record['name'] == 'main')
+        opens = [line for line, record in enumerate(records, 3)
+                 if record['type'] == 'entry' and record['space'] == 'user' and record['name'] == 'open']
+        exits = [line for line, record in enumerate(records, 3)
+                 if record['type'] == 'exit' and record['space'] == 'user' and record['name'] == 'open']
+        unrelated = next(line for line, record in enumerate(records, 3)
+                         if opens[0] < line < exits[0] and record['type'] == 'event' and record['space'] == 'kernel')
+        cls.rows = {name: f'#L{line}' for name, line in {
+            'entry': main, 'first': exits[0], 'last': exits[1], 'unrelated': unrelated,
+            'open': opens[0], 'hover': opens[1] - 1, 'before': main - 1}.items()}
         for mode, filename in [('single', 'mixed.html'), ('sidecar', 'sidecar')]:
             result = invoke(TRACE, '--timeline', '--enable-fold', '--filter', '--report-mode', mode,
                             '--user-src', Path(helpers.ROOT) / 'samples', '--output', cls.root / filename)
@@ -138,10 +157,13 @@ class MixedTreeBrowserTest(unittest.TestCase):
     def open_text(self, page, filename='mixed.html'):
         page.goto(self.url + filename)
         page.evaluate("fgSwitchView('text')")
-        page.wait_for_selector('#L6 .call-indent')
+        page.wait_for_selector(self.rows['open'] + ' .call-indent')
+        page.evaluate('selector => window.scrollTo(0, document.querySelector(selector).getBoundingClientRect().top + scrollY - 160)',
+                      self.rows['entry'])
         page.mouse.move(0, 0)
 
-    def assert_continuous_rail(self, page, first='#L5', last='#L10', entry='#L4'):
+    def assert_continuous_rail(self, page, first=None, last=None, entry=None):
+        first, last, entry = first or self.rows['first'], last or self.rows['last'], entry or self.rows['entry']
         clip = page.evaluate('''({first, last, entry}) => {
             const icon = document.querySelector(entry + ' .fold-icon').getBoundingClientRect();
             const top = document.querySelector(first).getBoundingClientRect().top;
@@ -188,8 +210,8 @@ class MixedTreeBrowserTest(unittest.TestCase):
                 try:
                     self.open_text(page)
                     page.evaluate('theme => document.documentElement.dataset.theme = theme', theme)
-                    icon = page.locator('#L4 .fold-icon').bounding_box()
-                    indent = page.locator('#L4 .call-indent').bounding_box()
+                    icon = page.locator(self.rows['entry'] + ' .fold-icon').bounding_box()
+                    indent = page.locator(self.rows['entry'] + ' .call-indent').bounding_box()
                     self.assertGreaterEqual(icon['x'], indent['x'] - 0.1)
                     self.assert_continuous_rail(page)
                 finally:
@@ -200,12 +222,14 @@ class MixedTreeBrowserTest(unittest.TestCase):
         try:
             self.open_text(page, 'sidecar/index.html')
             self.assert_continuous_rail(page)
-            page.locator('#L4 .fold-icon').click()
-            self.assertFalse(page.locator('#L5').is_visible())
-            self.assertFalse(page.locator('#L6').is_visible())
-            self.assertTrue(page.locator('#L3').is_visible())
-            page.locator('#L4 .fold-icon').click()
-            self.assertTrue(page.locator('#L5').is_visible())
+            page.locator(self.rows['entry'] + ' .fold-icon').click()
+            self.assertFalse(page.locator(self.rows['first']).is_visible())
+            self.assertFalse(page.locator(self.rows['open']).is_visible())
+            self.assertTrue(page.locator(self.rows['before']).is_visible())
+            self.assertTrue(page.locator(self.rows['unrelated']).is_visible())
+            self.assertEqual(page.locator(self.rows['unrelated'] + ' .call-indent').count(), 0)
+            page.locator(self.rows['entry'] + ' .fold-icon').click()
+            self.assertTrue(page.locator(self.rows['first']).is_visible())
             page.mouse.move(0, 0)
             self.assert_continuous_rail(page)
         finally:
@@ -215,9 +239,9 @@ class MixedTreeBrowserTest(unittest.TestCase):
         page = self.browser.new_page(viewport=dict(width=1500, height=900))
         try:
             self.open_text(page)
-            indent = page.locator('#L8 .call-indent')
+            indent = page.locator(self.rows['hover'] + ' .call-indent')
             normal = indent.screenshot()
-            page.locator('#L4 .fold-icon').hover()
+            page.locator(self.rows['entry'] + ' .fold-icon').hover()
             emphasized = indent.screenshot()
             self.assertNotEqual(normal, emphasized)
             page.mouse.move(0, 0)

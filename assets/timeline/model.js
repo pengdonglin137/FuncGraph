@@ -383,16 +383,33 @@ for (const r of D.resched) TRACKS[r[0]].rs.push(r);   // [task, start, end, maxP
 for (const r of D.irqoff) TRACKS[r[0]].io.push(r);    // [task, start, end]
 for (let c = 0; c < CHAINS.length; c++) if (!CHAINS[c][6]) TRACKS[sTask[CHAINS[c][0]]].errs.push(c);
 
-let tMax = 1;
-function observeEnd(value) { if (Number.isFinite(value) && value > tMax) tMax = value; }
-for (let index = 0; index < N; index++) { observeEnd(sStart[index]); observeEnd(sEnd[index]); }
-for (const task of TRACKS) for (const run of task.runs) { observeEnd(run[0]); observeEnd(run[1]); }
-for (const records of [D.offcpu, D.resched, D.irqoff]) for (const record of records) {
-    observeEnd(record[1]); observeEnd(record[2]);
+let tMin = Infinity, tMax = -Infinity, callStart = Infinity, callEnd = -Infinity;
+function observeTime(value) {
+    if (!Number.isFinite(value)) return;
+    tMin = Math.min(tMin, value);
+    tMax = Math.max(tMax, value);
 }
-for (const section of D.sections || []) { observeEnd(section[2]); observeEnd(section[3]); }
-for (const wake of D.wakeups || []) observeEnd(wake[1]);
-for (const event of PROCESS_EVENTS) observeEnd(event[1]);
+for (let index = 0; index < N; index++) {
+    observeTime(sStart[index]); observeTime(sEnd[index]);
+    callStart = Math.min(callStart, sStart[index]);
+    callEnd = Math.max(callEnd, sEnd[index]);
+}
+for (const task of TRACKS) for (const run of task.runs) { observeTime(run[0]); observeTime(run[1]); }
+for (const records of [D.offcpu, D.resched, D.irqoff]) for (const record of records) {
+    observeTime(record[1]); observeTime(record[2]);
+}
+for (const section of D.sections || []) { observeTime(section[2]); observeTime(section[3]); }
+for (const wake of D.wakeups || []) observeTime(wake[1]);
+let initialStart = callStart, initialEnd = callEnd;
+for (const event of PROCESS_EVENTS) {
+    observeTime(event[1]);
+    initialStart = Math.min(initialStart, event[1]);
+    initialEnd = Math.max(initialEnd, event[1]);
+}
+if (!Number.isFinite(tMin)) tMin = 0;
+if (!Number.isFinite(tMax) || tMax <= tMin) tMax = tMin + 1;
+if (!Number.isFinite(initialStart)) { initialStart = tMin; initialEnd = tMax; }
+initialEnd = Math.max(initialStart + 1, initialEnd);
 const OPEN_OFF = new Set(D.offcpu.filter(record => record[2] === null));
 for (const r of D.offcpu) if (r[2] === null) r[2] = tMax;
 const SCHED_BLOCK_SIZE = 128;
@@ -649,19 +666,11 @@ function lbStart(row, t, lo) {  // first j >= lo with start >= t
     return lo;
 }
 
-// The time origin is the earliest event (sched events may precede the first traced call);
-// Fit and the initial view start at the first call so leading idle time does not shrink the calls.
-let tCall = tMax;
-for (let i = 0; i < N; i++) if (sStart[i] < tCall) tCall = sStart[i];
-for (const event of PROCESS_EVENTS) if (event[1] < tCall) tCall = event[1];
-if (tCall >= tMax) tCall = 0;
-
 // ---- view state ----
-const view = { s: tCall, e: tMax };
-// overview strip: covers the calls ([tCall, tMax]); ovX(t) / ovT(x) convert time <-> strip x
-function ovK() { return W / Math.max(1, tMax - tCall); }
-function ovX(t) { return (t - tCall) * ovK(); }
-function ovT(x) { return tCall + x / ovK(); }
+const view = { s: initialStart, e: initialEnd };
+function ovK() { return W / Math.max(1, tMax - tMin); }
+function ovX(t) { return (t - tMin) * ovK(); }
+function ovT(x) { return tMin + x / ovK(); }
 const ov = { err: true, irq: true, rs: true, off: true, wk: true, preempt: false, mk: true };
 let colorMode = 'ctx';
 let sel = -1, hov = -1, hovOff = null, hovCpu = null;
@@ -757,6 +766,7 @@ tlRoot.innerHTML = `
     <button class="tl-btn" data-act="expand" title="Expand / collapse all tracks">Tracks</button>
     <button class="tl-btn" data-act="an-tasks" title="Find and navigate all recorded tasks, including scheduling-only tasks">Tasks</button>
     <button class="tl-btn" data-act="position" title="Go to a coordinate or interval without changing selection (G)">Go to…</button>
+    <button class="tl-btn" data-act="fitcalls" aria-label="Fit recorded calls" title="${N ? 'Show all recorded calls, independent of filters' : 'No recorded calls in this report'}"${N ? '' : ' disabled'}>Fit calls</button>
   </span>
   <span class="tl-group" role="group" aria-label="Timeline display">
     <span class="tl-label tl-menu-heading">Display</span>

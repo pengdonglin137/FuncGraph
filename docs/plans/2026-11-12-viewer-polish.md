@@ -3,6 +3,8 @@
 状态（2026-11-12）：已落地详情语义配色、参数整项换行，以及主信息优先 / Trace metadata
 按需展开、筛选草稿 / 应用反馈，以及大 trace 函数查找的懒加载索引和分批准备。
 详情标题的次要操作已归入 Actions 菜单，支持键盘、触屏和按需加载 Text。
+调用聚焦与完整 trace 范围已分离：初始保留调用及 exec / exit，概览与 Fit trace
+覆盖真实调度上下文，次要的 Fit calls 收入 Tools，不改变过滤、选择或分析。
 阅读方式见 [detail-layout.md](../detail-layout.md)
 和 [filtering.md](../filtering.md)。其余 P1 仍为待实施的设计建议。
 

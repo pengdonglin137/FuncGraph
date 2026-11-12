@@ -9,6 +9,7 @@ import unittest
 import helpers
 from fglib.viewer import create_server
 from test_uftrace_import import HEADER, ORIGIN, build, call, capture, stream
+from test_timeline import decode, invariant_errors
 
 try:
     from playwright.sync_api import sync_playwright
@@ -29,7 +30,9 @@ def scheduling_capture():
 class CpuCoverageDataTest(unittest.TestCase):
     def test_real_mixed_sample_retains_the_gap_without_inventing_cpu_placement(self):
         records = [json.loads(line) for line in (Path(helpers.ROOT) / 'samples/sample_mixed.jsonl').read_text().splitlines()]
-        metadata, calls = records[0], records[1:-1]
+        metadata = records[0]
+        calls = [record for record in records[1:-1]
+                 if not (record['type'] == 'event' and record['space'] == 'kernel')]
         data = build(calls, metadata).to_data()
         index = next(index for index, name in enumerate(data['cols']['name']) if data['strings'][name] == 'main')
         self.assertEqual(data['cols']['start'][index], 0)
@@ -39,6 +42,34 @@ class CpuCoverageDataTest(unittest.TestCase):
         self.assertFalse(data['caps']['sched_events'])
         self.assertEqual(metadata['kernel_settings']['events/sched/sched_switch/enable'], '1')
         self.assertFalse(any('sched_switch' in record.get('name', '') for record in calls))
+
+    def test_real_sample_switches_preserve_absolute_calls_and_pre_main_cpu_placement(self):
+        records = [json.loads(line) for line in (Path(helpers.ROOT) / 'samples/sample_mixed.jsonl').read_text().splitlines()]
+        metadata, records = records[0], records[1:-1]
+        data = build(records, metadata).to_data()
+        without_scheduling = build([record for record in records
+                                   if not (record['type'] == 'event' and record['space'] == 'kernel')], metadata).to_data()
+        self.assertEqual(invariant_errors(data), [])
+        self.assertTrue(data['caps']['sched_events'])
+        self.assertEqual(data['n'], 714)
+        self.assertEqual(data['stats']['lost'], 0)
+        self.assertEqual(data['stats']['truncated'], 0)
+
+        def calls(model):
+            starts, ends = decode(model)
+            cols, origin = model['cols'], int(model['uftrace']['origin_ns'])
+            return [(model['strings'][cols['name'][index]], model['tasks'][cols['task'][index]]['pid'],
+                     origin + starts[index], origin + ends[index], cols['flags'][index],
+                     None if cols['parent'][index] < 0 else
+                     (model['strings'][cols['name'][cols['parent'][index]]], origin + starts[cols['parent'][index]]))
+                    for index in range(model['n'])]
+
+        self.assertEqual(calls(data), calls(without_scheduling))
+        task = next(task for task in data['tasks'] if task['pid'] == 9416)
+        self.assertEqual(task['runs'][-1], [430595341, 704840737, 4])
+        main = next(record for record in calls(data) if record[0] == 'main')
+        self.assertEqual(main[2:4], (88351483766336, 88351489955656))
+        self.assertEqual(main[2] - (int(data['uftrace']['origin_ns']) + task['runs'][-1][0]), 240612849)
 
     def test_actual_switches_can_precede_main_and_do_not_change_function_timestamps(self):
         data = build(scheduling_capture()).to_data()

@@ -2064,7 +2064,7 @@ class BrowserSmokeTest(unittest.TestCase):
                 self.open_range_data(['early'], starts=[1000], durations=[1000], extra=extra)
                 self.page.click('[data-act=fit]')
                 expected = 8000 if label == 'wait' else 9000
-                self.assertEqual(self.ev("fgView('timeline').probe().view()"), [1000, expected])
+                self.assertEqual(self.ev("fgView('timeline').probe().view()"), [0 if label == 'runs' else 1000, expected])
 
     def click_cpu_at(self, timestamp):
         self.page.click('[data-act=fit]')

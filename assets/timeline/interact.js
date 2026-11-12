@@ -59,7 +59,11 @@ function clampView() {
     if (view.s < -pad) { view.s = -pad; view.e = view.s + span; }
     if (view.e > tMax + pad) { view.e = tMax + pad; view.s = view.e - span; }
 }
-function fitAll() { view.s = tCall; view.e = tMax; draw(); }
+function fitAll() { view.s = tMin; view.e = tMax; draw(); }
+function fitCalls() {
+    if (!N) return;
+    view.s = callStart; view.e = Math.max(callStart + 1, callEnd); draw();
+}
 function zoomTo(s, e, revealSlice) {
     const span = Math.max(e - s, MODE === 'count' ? 2000 : 50);
     const pad = span * 0.08;

@@ -177,12 +177,15 @@ rg -c '"name"\s*:\s*"sched:sched_(switch|waking|wakeup)"' capture.jsonl
 
 No match means the export contains none of these records; it does not prove
 that the task never switched. Retain the scheduling records when extracting
-or filtering a capture. The published mixed sample deliberately excludes them:
-re-exporting its original saved capture confirms 14 switches, 28 waking events
-and seven wakeups, but these are absent from `samples/sample_mixed.jsonl`.
-See [CPU coverage](cpu-coverage.md) for why its CPU observation span must not be
-extended to `main` without the missing events. A recorded switch-in can precede
-`main`; its timestamp is not a replacement for the function's entry timestamp.
+or filtering a capture. `samples/sample_mixed.jsonl` and its HTML retain all
+14 switches, 28 waking events and seven wakeups from the original capture, plus
+25 user call-site events. All original timestamps, addresses, arguments and
+714 calls are preserved. Scheduling extends the report to about 705 ms around
+6.19 ms of calls, so the initial view focuses on calls while the overview always
+covers all recorded context. Use **Fit trace** / `0` / `Home` for the full extent
+and **Tools → Navigate → Fit calls** to return to the calls, without changing
+filters or analysis. A recorded switch-in can precede `main`; it is not a
+replacement for the function's entry timestamp. See [CPU coverage](cpu-coverage.md).
 
 ## Generate a report
 

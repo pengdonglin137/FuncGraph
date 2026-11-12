@@ -1,5 +1,6 @@
 """Validate the published mixed sample and its no-debug-image fallback."""
 
+from collections import Counter
 from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 import json
@@ -54,8 +55,10 @@ class MixedSampleTest(unittest.TestCase):
                 self.assertEqual(sum(record['space'] == space and record['type'] == kind for record in records), count)
         self.assertEqual({record['type'] for record in records}, {'entry', 'exit', 'event'})
         events = [record for record in records if record['type'] == 'event']
-        self.assertEqual(len(events), 25)
-        self.assertTrue(all(record['space'] == 'user' and record['name'] == 'callsite' for record in events))
+        self.assertEqual(len(events), 74)
+        self.assertEqual(Counter((record['space'], record['name']) for record in events), {
+            ('user', 'callsite'): 25, ('kernel', 'sched:sched_switch'): 14,
+            ('kernel', 'sched:sched_waking'): 28, ('kernel', 'sched:sched_wakeup'): 7})
         sendto = next(record for record in records if record['name'] == '__x64_sys_sendto' and record['type'] == 'entry')
         self.assertTrue(sendto['args'])
         self.assertIn('retaddr', sendto)
@@ -206,7 +209,7 @@ class MixedSampleTest(unittest.TestCase):
         self.assertEqual(sum(bool(detail.get('arg_names')) for detail in data['uftrace']['user_details'].values()), 19)
         self.assertEqual(sum('retval' in detail for detail in data['uftrace']['user_details'].values()), 19)
         sites = {(record['tid'], record['time_ns'] + 1): record for record in records
-                 if record['type'] == 'event'}
+                 if record['type'] == 'event' and record['space'] == 'user' and record['name'] == 'callsite'}
         self.assertEqual(len(sources['user_callsites']), len(sites))
         for line, record in entries.items():
             if record['space'] != 'user':

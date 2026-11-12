@@ -587,6 +587,7 @@ table.tl-sum td.err { color: #c62828; }
 
 @media (any-pointer: coarse) {
     .tl-zoom-group .tl-btn { min-width: 44px; min-height: 44px; }
+    .tl-options [data-act=fitcalls] { min-height: 44px; }
     .tl-touch-zoom { display: inline-block; font-size: 16px; }
 }
 
@@ -636,6 +637,7 @@ table.tl-sum td.err { color: #c62828; }
 .tl-compact .tl-options.open { display: flex; inset: 100% 0 auto; }
 .tl-compact .tl-notes:not(.hide) { inset: var(--tl-toolbar-height, 100px) 0 auto; }
 .tl-compact .tl-options :is(button, input) { min-height: 36px; }
+.tl-compact .tl-options [data-act=fitcalls] { min-height: 44px; }
 .tl-compact .tl-options input { font-size: 16px; }
 .tl-compact .tl-process-head .tl-btn, .tl-compact .tl-process-tools .tl-btn, .tl-compact .tl-process-link { min-height: 44px; }
 .tl-compact .an-task-head .tl-btn, .tl-compact .an-task-footer .tl-btn, .tl-compact [data-task-show],

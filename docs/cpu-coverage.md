@@ -15,36 +15,40 @@ In `samples/sample_mixed.jsonl` / `sample_mixed.html`:
 
 | Observation | Relative time | Absolute monotonic time (ns) |
 | --- | --- | --- |
-| `main` entry | 0 ns | 88351483766336 |
-| First kernel record on CPU4 | 5,775,459 ns | 88351489541795 |
-| Last kernel record on CPU4 | 6,142,775 ns | 88351489909111 |
-| `main` return | 6,189,320 ns | 88351489955656 |
+| First retained event / report origin | 0 ns | 88350812558146 |
+| Recorded switch-in of demo_mixed on CPU4 | 430,595,341 ns | 88351243153487 |
+| `main` entry | 671,208,190 ns | 88351483766336 |
+| First kernel function record on CPU4 | 676,983,649 ns | 88351489541795 |
+| Last kernel function record on CPU4 | 677,350,965 ns | 88351489909111 |
+| `main` return | 677,397,510 ns | 88351489955656 |
 
-This scoped sample has 25 user call-site events but **no `sched_switch` records**.
-The saved configuration says scheduler events were enabled; configuration is
-not evidence that corresponding events reached the saved export. User function
-records have `cpu=null`. These timestamps share the saved monotonic clock; the
-5.775459 ms difference is not an offset to correct or a delayed `main` entry.
+The sample now retains all 14 switches, 28 waking events and seven wakeups from
+its original saved capture, alongside 25 user call-site events. Its 714 calls,
+absolute function timestamps, arguments, addresses and cross-space ancestry are
+unchanged. Added scheduling records move the report origin earlier; this is not
+a clock correction. The recorded CPU4 switch-in precedes `main` by 240.612849 ms:
+the task can execute before `main`. User records still have `cpu=null`; do not
+fill their CPU field or extend functions using scheduling boundaries.
 
-该样例保存了 25 条用户态调用点事件，但没有实际的 `sched_switch` 事件。采集配置中的
-enable=1 不等于导出文件中存在对应事件。用户态函数的 `cpu=null`，时间统一使用保存的
-monotonic 时钟。因此相差的 5.775459 ms 不是应当平移修正的时钟偏移，也不是 `main`
-实际从 CPU 行左边界才开始执行。
+样例现在保留原始采集中的全部 14 条切换、28 条 waking、7 条 wakeup，另有 25 条
+用户调用点事件。714 个调用、绝对时间、参数、地址和跨态父子关系不变；报告原点因
+保留更早调度记录而前移，不是校正时钟。CPU4 上的真实 switch-in 比 `main` 早
+240.612849 ms，任务可在 `main` 之前执行。用户态记录仍保持 `cpu=null`，不能填入
+推断的 CPU，也不能把函数入口移到调度边界。
 
-The original saved capture does contain scheduling events: a fresh native
-re-export confirms 14 switches, 28 waking events and seven wakeups. They were
-excluded from the published extract, not disabled by its `--no-sched` option:
-that option controls perf scheduling, while the patched `--kernel-full-info`
-enables the available kernel scheduler tracepoints independently. See
-[record task switches](uftrace.md#record-task-switches) for capture and export
-verification. Do not transplant CPU intervals into the sample without retaining
-their actual event evidence and timestamps.
+The full scheduling context spans about 705 ms, compared with 6.189320 ms for
+`main`. The initial view focuses on calls; the overview and **Fit trace** / `0` /
+`Home` retain the full context. **Tools → Navigate → Fit calls** returns to the
+calls without filtering the underlying evidence. Readback `enable=1` alone is
+still not proof of retained events. `--no-sched` controls perf scheduling;
+patched `--kernel-full-info` enables kernel scheduler tracepoints independently.
+See [record task switches](uftrace.md#record-task-switches) for verification.
 
-原始采集目录重新导出后，确有 14 条切换、28 条 waking 和 7 条 wakeup；它们是在
-公开样例提取时被排除，并非被 `--no-sched` 关闭。该参数控制 perf 来源，补丁版
-`--kernel-full-info` 会独立启用可用的内核调度 tracepoint。采集和导出检查方法见
-[记录任务切换](uftrace.cn.md#记录任务切换)。不能在缺少原始事件及其时间戳的情况下，
-直接将另一个导出的 CPU 运行区间移植到样例。
+完整调度上下文约 705 ms，而 `main` 只有 6.189320 ms。初始视野聚焦调用，概览与
+**Fit trace** / `0` / `Home` 仍覆盖完整记录，**Tools → Navigate → Fit calls**
+返回调用范围，不过滤底层证据。enable=1 仍不能单独证明事件被保留。`--no-sched`
+只控制 perf 来源，补丁版 `--kernel-full-info` 独立开启内核调度 tracepoint，详见
+[记录任务切换](uftrace.cn.md#记录任务切换)。
 
 ## Reading the overview
 

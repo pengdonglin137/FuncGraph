@@ -145,11 +145,13 @@ rg -c '"name"\s*:\s*"sched:sched_(switch|waking|wakeup)"' capture.jsonl
 ```
 
 没有匹配表示导出中不存在这些记录，不能据此证明任务从未切换。提取或过滤记录时，也应
-保留所需的调度事件。当前公开混合样例特意未纳入它们：重新导出原始采集目录，已核实
-有 14 条 switch、28 条 waking 和 7 条 wakeup，但 `samples/sample_mixed.jsonl`
-不含这些事件。因此不能把该样例的 CPU 观测区间直接向前补到 `main`，详见
-[CPU 覆盖说明](cpu-coverage.md)。真实 switch-in 可能早于 `main`，它也不能替代
-函数本身的入口时间。
+保留所需的调度事件。`samples/sample_mixed.jsonl` 及对应 HTML 现在保留原始采集中的
+14 条 switch、28 条 waking 和 7 条 wakeup，另有 25 条用户态调用点事件；所有原始
+时间戳、地址、参数和 714 个调用不变。调度事件使整份报告跨度约为 705 ms，而调用
+只有约 6.19 ms，所以默认聚焦调用，概览条始终覆盖完整记录。**Fit trace** / `0` /
+`Home` 查看全部上下文；**Tools → Navigate → Fit calls** 返回调用范围，不修改过滤
+或分析。真实 switch-in 早于 `main` 并不表示函数入口有误，也不能用 switch-in 替换
+函数时间，详见 [CPU 覆盖说明](cpu-coverage.md)。
 
 ## 生成报告
 
