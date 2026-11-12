@@ -59,6 +59,12 @@ The experimental renderer does not claim native selection or find across unmount
 
 ## 数据与边界
 
+- 导航可见性按完整显示排列一次提交二进制掩码，先验证再更新，仅应用实际变化项。
+  私有缓存和每次临时输入各为 `N` 字节，和下述折叠掩码、ordinal 数组分别计费；
+  普通逐行更新同步缓存，实际重排清除缓存并重新对齐。新建的默认完整 renderer
+  不主动分配该缓存，但 Full Text 回退可能复用既有导航，不能保证立即释放。
+  不改变完整重排校验或最多 160 个挂载单元的投影；[测量和限制](performance-text-navigation-visibility.md)。
+
 - 窗口重建复用原始记录 ordinal；无筛选时折叠状态使用现有范围生成按次字节掩码，
   有筛选时保留逐匹配记录的 predicate。掩码每行 1 字节，无匹配范围不分配；
   实现、实测及剩余阻塞见[折叠范围优化](performance-text-fold-visibility.md)。任务 plan 和当前

@@ -337,6 +337,7 @@ function fgCreateTextWindow(model, navigation, root) {
             ordinals = rankedOrder.ordinals;
         } else rankedOrder = null;
         navigation.reorder(order);
+        const visibility = new Uint8Array(order.length);
         const style = getComputedStyle(root);
         const estimate = Math.max(21, parseFloat(style.getPropertyValue('--fg-text-font-size')) * 1.5 +
             2 * parseFloat(style.getPropertyValue('--fg-text-pad-y')));
@@ -357,7 +358,7 @@ function fgCreateTextWindow(model, navigation, root) {
             const record = model.records[ordinal];
             const visible = (visibleRecord ? visibleRecord(record) : hidden === null || !hidden[ordinal]) &&
                 (fgTextSort || fgTextOrder !== 'task' || !plan.hidden.has(number));
-            navigation.setVisible(number, !!visible);
+            visibility[index] = visible ? 1 : 0;
             if (!visible) continue;
             for (const boundary of pendingBoundaries) {
                 if (boundary.kind === 'task-group-head') taskGroups.push({ index: sequence.length, text: boundary.text });
@@ -368,6 +369,7 @@ function fgCreateTextWindow(model, navigation, root) {
             positions.set(number, sequence.length); sequence.push(number);
             sizes.push(heights[ordinal] || estimate);
         }
+        navigation.setVisibility(visibility);
         tree = new Float64Array(sequence.length + 1);
         for (let index = 1; index < tree.length; index++) {
             tree[index] += sizes[index - 1];

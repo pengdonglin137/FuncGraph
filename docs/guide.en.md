@@ -29,6 +29,13 @@ allocated without a matching enabled scope; full-model work can still block.
 See [fold-range measurements](performance-text-fold-visibility.md) and the
 [earlier ordinal comparison](performance-text-geometry.md).
 
+Navigation visibility is now updated once per windowed rebuild, with complete
+binary-mask validation before any change. Unchanged entries skip Set/Map work;
+local mounted-row updates and complete order checks remain. The private cache
+and temporary input each add one byte per record, separately from fold masks
+and ordinal arrays. See [navigation measurements and limits](performance-text-navigation-visibility.md).
+This does not eliminate cold reads or synchronous full-model work.
+
 Scattered window rows now share one verified read per HTML network resource,
 avoiding repeated download, checksum and decoding after small-cache eviction.
 Display order and full paint-block validation are unchanged; no new option is

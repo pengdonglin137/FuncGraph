@@ -7,6 +7,10 @@ renderer、自动分流阈值、版本、Timeline 外观或记录内容。报告
 
 ## 问题与实现
 
+本文保留折叠范围阶段的基线和数字。后续重建改用完整二进制掩码批量更新导航，
+缓存和临时输入各增加每行 1 字节，见[导航优化](performance-text-navigation-visibility.md)。
+导航掩码按显示位置对齐，不能与本文按原始 ordinal 对齐的折叠掩码混用。
+
 前一阶段已经[复用原始记录 ordinal](performance-text-geometry.md)，但 37 万行
 稀疏折叠仍约有 400ms 同步阻塞。当前版本 CPU profile 显示，重复祖先字符串虽已
 按次缓存，众多不同祖先链仍重复遍历相同前缀；完全未隐藏的记录也读取折叠字段。

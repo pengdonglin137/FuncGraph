@@ -641,6 +641,32 @@ class TextWindowTest(unittest.TestCase):
                 self.assertLess(result['reads'], 1024)
                 self.assertLessEqual(result['mounted'], 160)
 
+    def test_rebuild_updates_complete_navigation_visibility_once_without_full_model_per_line_calls(self):
+        self.open_report()
+        facts = self.page.evaluate('''async () => {
+            const navigation=fgTextNavigation,original=navigation.setVisibility,perLine=navigation.setVisible;
+            const root=[...fgTextModel.folding(fgTextWindow.model).blocks.values()].find(block=>block.entry?.getAttribute('data-func')==='root').id;
+            const captures=[],syncCalls=[];
+            let counting=false,calls=0;
+            navigation.setVisibility=function(values) {captures.push(values.slice());return original.call(this,values)};
+            navigation.setVisible=function(...arguments) {if(counting) calls++;return perLine.apply(this,arguments)};
+            try {
+                for(const order of ['time','task']) for(const direction of ['','desc','asc']) {
+                    fgTextOrder=order;fgTextSort=direction;foldedBlocks={[root]:true};
+                    fgNotifyFilter('',null);calls=0;counting=true;
+                    const pending=fgTextWindow.rebuild();counting=false;syncCalls.push(calls);await pending;
+                    const mask=captures.at(-1),expected=navigation.order.filter((_,index)=>mask[index]===1);
+                    if(mask.length!==fgTextWindow.model.records.length) throw new Error('Incomplete navigation mask');
+                    if(JSON.stringify(expected)!==JSON.stringify(fgTextWindow.visibleNumbers)) throw new Error('Display/ordinal masks confused');
+                    if(navigation.visibleCount!==expected.length) throw new Error('Wrong navigation count');
+                }
+                return {calls:captures.length,syncCalls,mounted:document.querySelectorAll('#content .line-container').length};
+            } finally {navigation.setVisibility=original;navigation.setVisible=perLine}
+        }''')
+        self.assertEqual(facts['calls'],6)
+        self.assertTrue(all(calls<=160 for calls in facts['syncCalls']),facts['syncCalls'])
+        self.assertLessEqual(facts['mounted'],160)
+
     def test_unfiltered_rebuild_uses_range_masks_and_filtered_rebuild_keeps_selective_predicate(self):
         self.open_report()
         facts = self.page.evaluate('''async () => {

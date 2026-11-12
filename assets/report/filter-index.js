@@ -333,6 +333,7 @@
         let visibleTree = new Uint32Array(1), expandableTree = new Uint32Array(1);
         let visibleCount = 0, expandableCount = 0;
         let visibleSnapshot = null, expandableSnapshot = null;
+        let visibilityState = null;
         let updates = 0, rebuildPending = false;
         const rebuildThreshold = Math.max(1, Math.floor(order.length / Math.max(1, Math.ceil(Math.log2(order.length + 1)))));
         function rebuildTrees() {
@@ -381,6 +382,27 @@
             });
             return indices;
         }
+        function changeVisibility(line, visible, position) {
+            if (visible) concealed.delete(line);
+            else concealed.add(line);
+            const change = visible ? 1 : -1, expandable = sources.has(line);
+            visibleCount += change;
+            visibleSnapshot = null;
+            if (expandable) { expandableCount += change; expandableSnapshot = null; }
+            if (visibilityState !== null) {
+                position ??= positions.get(line);
+                visibilityState[position] = visible ? 1 : 0;
+            }
+            if (rebuildPending || ++updates >= rebuildThreshold) {
+                rebuildPending = true;
+                return;
+            }
+            position ??= positions.get(line);
+            for (let index = position + 1; index < visibleTree.length; index += index & -index) {
+                visibleTree[index] += change;
+                if (expandable) expandableTree[index] += change;
+            }
+        }
         const result = {
             order: [],
             get visibleCount() { return visibleCount; },
@@ -391,20 +413,22 @@
             setVisible(line, visible) {
                 if (!original.has(line)) throw new Error('Invalid Text navigation line');
                 if (concealed.has(line) === !visible) return;
-                if (visible) concealed.delete(line);
-                else concealed.add(line);
-                const change = visible ? 1 : -1, expandable = sources.has(line);
-                visibleCount += change;
-                visibleSnapshot = null;
-                if (expandable) { expandableCount += change; expandableSnapshot = null; }
-                if (rebuildPending || ++updates >= rebuildThreshold) {
-                    rebuildPending = true;
-                    return;
+                changeVisibility(line, visible);
+            },
+            setVisibility(values) {
+                if (!(values instanceof Uint8Array) || values.length !== result.order.length) {
+                    throw new Error('Invalid Text navigation visibility');
                 }
-                for (let index = positions.get(line) + 1; index < visibleTree.length; index += index & -index) {
-                    visibleTree[index] += change;
-                    if (expandable) expandableTree[index] += change;
+                for (let index = 0; index < values.length; index++) {
+                    if (values[index] > 1) throw new Error('Invalid Text navigation visibility');
                 }
+                for (let index = 0; index < values.length; index++) {
+                    const line = result.order[index], visible = values[index] === 1;
+                    if (visibilityState === null ? concealed.has(line) === !visible : visibilityState[index] === values[index]) continue;
+                    changeVisibility(line, visible, index);
+                }
+                if (visibilityState === null) visibilityState = values.slice();
+                return result;
             },
             reorder(next) {
                 if (Array.isArray(next) && next.length === original.size && result.order.length === original.size) {
@@ -419,6 +443,7 @@
                     next.some(line => !original.has(line))) throw new Error('Invalid Text navigation order');
                 result.order = next.slice();
                 positions = updated;
+                visibilityState = null;
                 rebuildTrees();
                 visibleSnapshot = expandableSnapshot = null;
             },

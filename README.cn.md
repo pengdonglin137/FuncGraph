@@ -14,6 +14,8 @@ FuncGraph 支持可视化仅用户态、仅内核态和混合 uftrace 记录。�
 
 窗口重建复用预备的原始记录索引；无筛选时，折叠状态复用现有范围索引，使用临时的每行 1 字节掩码，避免逐行重查祖先链；有筛选时保留逐匹配记录的判断。任务/耗时 ordinal 数组仍最多另增每行 8 字节；全量处理仍可能阻塞，不改变默认开启策略。稀疏/密集折叠实测、内存成本和限制见[折叠范围优化](docs/performance-text-fold-visibility.md)及[前一阶段](docs/performance-text-geometry.md)。
 
+窗口重建改为一次提交完整导航可见性，避免逐行重复查 Set/Map；私有状态缓存与每次临时输入各增加每行 1 字节。完整重排校验和已挂载行的折叠投影不变。热操作改善及冷读取等剩余阻塞见[导航批量更新实测](docs/performance-text-navigation-visibility.md)，不代表页面已无卡顿。
+
 [![ci](https://github.com/pengdonglin137/FuncGraph/actions/workflows/ci.yml/badge.svg)](https://github.com/pengdonglin137/FuncGraph/actions/workflows/ci.yml)
 
 [![FuncGraph 可视化示例（点击打开示例报告）](sample.png)](https://pengdonglin137.github.io/FuncGraph/sample.html)

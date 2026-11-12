@@ -785,6 +785,115 @@ class TextModelTest(unittest.TestCase):
             assert.deepEqual(order, original);
         ''')
 
+    def test_navigation_bulk_visibility_validates_atomically_and_copies_the_initial_state(self):
+        self.run_model('''
+            const order=[2**40+2,2**40+9,2**40+23], navigation=fgTextModel.navigation(order,[order[1]]);
+            const storage=new Uint8Array([9,1,0,1,9]),values=storage.subarray(1,4);
+            assert.equal(navigation.setVisibility(values),navigation);
+            assert.deepEqual(navigation.visible,[0,2]);assert.equal(navigation.expandableCount,0);
+            const visible=navigation.visible,expandable=navigation.expandable;
+            for(const invalid of [null,undefined,[],[1,0,1],new Uint8Array(2),new Uint8Array(4),
+                new Uint8Array([0,0,2]),new Uint8Array([255,0,0]),new Uint16Array([1,0,1])]) {
+                assert.throws(()=>navigation.setVisibility(invalid),/Invalid Text navigation visibility/);
+                assert.equal(navigation.visible,visible);assert.equal(navigation.expandable,expandable);
+                assert.equal(navigation.visibleCount,2);assert.equal(navigation.expandableCount,0);
+                assert.deepEqual(navigation.order,order);
+            }
+            storage.fill(0);
+            assert.deepEqual(navigation.visible,[0,2]);
+            navigation.setVisibility(new Uint8Array([1,0,1]));
+            assert.equal(navigation.visible,visible);
+            navigation.setVisible(order[0],false);
+            assert.equal(navigation.visibleCount,1);
+            navigation.setVisibility(new Uint8Array([1,0,1]));
+            assert.deepEqual(navigation.visible,[0,2]);
+            const empty=fgTextModel.navigation([],[]);
+            assert.equal(empty.setVisibility(new Uint8Array()),empty);
+            assert.equal(empty.visibleCount,0);assert.equal(empty.boundary(false),-1);
+        ''')
+
+    def test_navigation_warm_bulk_visibility_avoids_full_map_and_set_checks(self):
+        self.run_model('''
+            const order=Array.from({length:32768},(_,index)=>index*7+2);
+            const navigation=fgTextModel.navigation(order,order.filter((_,index)=>index%3===0));
+            const values=Uint8Array.from(order,(_,index)=>index%5===0?0:1);
+            navigation.setVisibility(values);navigation.refresh();
+            const visible=navigation.visible,expandable=navigation.expandable;
+            const originalMap=Map.prototype.get,originalSet=Set.prototype.has;
+            let maps=0,sets=0;
+            Map.prototype.get=function(...arguments) {maps++;return originalMap.apply(this,arguments)};
+            Set.prototype.has=function(...arguments) {sets++;return originalSet.apply(this,arguments)};
+            try {navigation.setVisibility(values);navigation.refresh()}
+            finally {Map.prototype.get=originalMap;Set.prototype.has=originalSet}
+            assert.equal(maps,0);assert.equal(sets,0);
+            assert.equal(navigation.visible,visible);assert.equal(navigation.expandable,expandable);
+            values[1]=0;
+            navigation.setVisibility(values);
+            assert.notEqual(navigation.visible,visible);assert.equal(navigation.expandable,expandable);
+            navigation.reorder(order.slice().reverse());
+            navigation.setVisibility(new Uint8Array(order.length).fill(1));
+            assert.equal(navigation.visibleCount,order.length);
+            assert.equal(navigation.indexOf(order[0]),order.length-1);
+            assert.equal(navigation.boundary(false),1);
+        ''')
+
+    def test_navigation_bulk_updates_mix_with_local_visibility_and_reorders_against_reference(self):
+        self.run_model('''
+            let seed=1729;
+            const random=limit=>{seed=(Math.imul(seed,1664525)+1013904223)>>>0;return Math.floor(seed/2**32*limit)};
+            for(const length of [0,1,37,200]) for(const sourceMode of ['none','some','all']) {
+                let order=Array.from({length},(_,index)=>2**40+index*13+2);
+                const sources=new Set(order.filter((_,index)=>sourceMode==='all'||sourceMode==='some'&&index%3===0));
+                const hidden=new Set(order.filter((_,index)=>index%7===0));
+                const navigation=fgTextModel.navigation(order,[...sources],[...hidden]);
+                for(let round=0;round<80;round++) {
+                    if(round%4===0) {order=order.slice().reverse();navigation.reorder(order)}
+                    else if(round%4===1&&length) {
+                        const line=order[random(length)],show=random(2)===1;
+                        navigation.setVisible(line,show);if(show) hidden.delete(line);else hidden.add(line);
+                    } else {
+                        const values=Uint8Array.from(order,()=>random(5)>0?1:0);
+                        navigation.setVisibility(values);
+                        order.forEach((line,index)=>{if(values[index]) hidden.delete(line);else hidden.add(line)});
+                        values.fill(0);
+                    }
+                    if(round%3===0) navigation.refresh();
+                    const visible=[],expandable=[];
+                    order.forEach((line,index)=>{if(!hidden.has(line)) {visible.push(index);if(sources.has(line)) expandable.push(index)}});
+                    assert.deepEqual(navigation.visible,visible);assert.deepEqual(navigation.expandable,expandable);
+                    assert.equal(navigation.visibleCount,visible.length);assert.equal(navigation.expandableCount,expandable.length);
+                    const boundaries=expandable.length?expandable:visible;
+                    assert.equal(navigation.boundary(false),boundaries[0]??-1);
+                    assert.equal(navigation.boundary(true),boundaries.at(-1)??-1);
+                    for(const current of [-1,0,length-1]) {
+                        const after=current<0?expandable[0]:expandable.find(index=>index>current)??expandable[0];
+                        const before=current<0?expandable.at(-1):expandable.slice().reverse().find(index=>index<current)??expandable.at(-1);
+                        assert.equal(navigation.next(current,1),after??-1);
+                        assert.equal(navigation.next(current,-1),before??-1);
+                    }
+                }
+            }
+        ''')
+
+    def test_navigation_bulk_visibility_observes_pending_local_changes_before_reordered_retry(self):
+        self.run_model('''
+            const order=Array.from({length:4096},(_,index)=>index*11+2),navigation=fgTextModel.navigation(order,order);
+            const all=new Uint8Array(order.length).fill(1);
+            navigation.setVisibility(all);
+            for(const line of order) navigation.setVisible(line,false);
+            assert.equal(navigation.visibleCount,0);
+            const snapshot=navigation.visible;
+            assert.throws(()=>navigation.setVisibility(new Uint8Array(order.length).fill(2)),/Invalid Text navigation visibility/);
+            assert.equal(navigation.visible,snapshot);assert.equal(navigation.visibleCount,0);
+            navigation.setVisibility(all);assert.equal(navigation.visibleCount,order.length);
+            assert.equal(navigation.boundary(false),0);assert.equal(navigation.boundary(true),order.length-1);
+            assert.throws(()=>navigation.reorder(order.slice(1).concat(order[1])),/Invalid Text navigation order/);
+            navigation.setVisibility(new Uint8Array(order.length));
+            assert.equal(navigation.visibleCount,0);assert.equal(navigation.next(-1,1),-1);
+            navigation.reorder(order.slice().reverse());navigation.setVisibility(all);
+            assert.equal(navigation.indexOf(order[0]),order.length-1);assert.equal(navigation.next(-1,1),0);
+        ''')
+
     def test_navigation_validates_complete_orders_and_supports_empty_visible_sets(self):
         self.run_model('''
             const navigation = fgTextModel.navigation([2,4,7], [4]);

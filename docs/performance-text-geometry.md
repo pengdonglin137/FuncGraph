@@ -10,6 +10,8 @@ Timeline 数据和外观均不改变。入口及限制见[窗口化说明](perfo
 这是 ordinal 阶段的实现与测量记录。后续无筛选路径改为复用现有范围生成按次
 字节掩码；有筛选路径保留下文 predicate，见[折叠范围优化](performance-text-fold-visibility.md)。
 这里保留原阶段的基线和数字，不跨阶段混比。
+后续导航用完整二进制掩码批量提交可见性，减少重复 Set/Map 查询；独立的缓存、
+临时输入及两种规模的测量见[导航优化](performance-text-navigation-visibility.md)。
 
 此前排序、可见序列与高度阶段反复按真实行号查找记录；已经缓存的完整排列仍未
 携带对应原始 ordinal。每行还重新判断同一条祖先链是否被折叠，即使完全展开也

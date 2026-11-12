@@ -22,6 +22,11 @@ ordinal 读取临时掩码；有筛选时保留逐匹配记录的祖先判断。
 无匹配折叠范围时不分配。完整模型处理仍可能阻塞，见[折叠范围实测](performance-text-fold-visibility.md)
 及[前一阶段的热点对照](performance-text-geometry.md)。
 
+窗口重建一次提交完整二进制导航掩码，全部验证后才发布状态；未改变的项不再逐行
+查 Set/Map。已挂载行的本地投影和完整重排校验保留。私有导航缓存与每次临时输入
+各增加每行 1 字节，和折叠掩码、ordinal 数组另计。见[导航实测与限制](performance-text-navigation-visibility.md)，
+冷读取和同步全量处理仍可能阻塞。
+
 窗口排序后需要的多行若属于同一个 HTML 网络资源，会合并读取，避免小缓存反复淘汰
 同一资源而重复下载、校验和解码；显示顺序不变，所需绘制块仍逐行完整校验。
 无需新增参数；用法、实测和仍有的解析开销见[分散窗口读取](performance-text-block-locality.md)。

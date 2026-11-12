@@ -24,6 +24,13 @@ Task/duration ordinal arrays still add up to eight bytes per record, and
 full-model work can still block. See [fold-range measurements and limits](docs/performance-text-fold-visibility.md)
 and the [earlier ordinal comparison](docs/performance-text-geometry.md).
 
+Windowed rebuilds now submit one complete visibility mask to navigation instead
+of repeating per-line Set/Map lookups. A private one-byte-per-record cache avoids
+reapplying unchanged visibility; each rebuild also uses a temporary mask of that
+size. Full order validation and mounted-row projection remain intact. See
+[navigation measurements and memory limits](docs/performance-text-navigation-visibility.md);
+cold reads and full-model work can still pause the page.
+
 ## What is FuncGraph?
 
 FuncGraph converts kernel `function_graph` text, trace-cmd raw containers and uftrace user/mixed recordings into interactive, filterable HTML reports for kernel development and application-to-kernel call analysis. It supports source linking, high-speed address resolution, parameter and duration filtering, and keyboard-friendly call folding. Call structure can be viewed without a matching debug image; source and type enrichment need the corresponding debug information.
