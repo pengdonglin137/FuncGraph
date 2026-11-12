@@ -72,6 +72,7 @@
                 const rows = fragment.querySelectorAll('.line-container');
                 const model = yield* fgPrepareTextModel(rows);
                 const navigation = yield* fgPrepareTextNavigation(rows, model);
+                if (fgTextOrder === 'task') yield* fgTextModel.prepareOrder(model, 'task');
                 yield { label: 'Finishing Text layout…', paint: true };
                 content.classList.toggle('text-layout-auto', chunked && window.CSS?.supports('content-visibility: auto') &&
                     CSS.supports('contain-intrinsic-block-size: calc(2 * (max(13px * 1.5 + 4px, 21px) + 2px))') &&

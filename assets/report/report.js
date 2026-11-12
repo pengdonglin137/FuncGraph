@@ -155,13 +155,6 @@
         // context switches by a summary line. Folding/filters work on attributes, not on order.
         let fgTextOrder = lsGet('textOrder') || 'time';
         let fgTextSort = '';
-        const RE_SWITCH_LINE = /^\s*(\d+)\)\s+(.+?)-(\d+)\s+=>\s+(.+?)-(\d+)\s*$/;
-        const RE_TS_LINE = /^\s*(\d+\.\d+)\s*\|/;
-        function fgTaskKey(line) {
-            const pid = line.getAttribute('data-pid'), cpu = line.getAttribute('data-cpu');
-            if (pid === '' || pid === null) return cpu ? 'cpu' + cpu : '';
-            return pid === '0' ? 'idle' + cpu : 'p' + pid;
-        }
         function fgBlocks(container) {
             // [line, expandedContentOrNull] in DOM order
             const out = [];
@@ -187,14 +180,20 @@
             updateExpandableLines();
         }
         function fgReorder(container, mode, orderedBlocks) {
-            container.querySelectorAll('.task-group-head, .task-gap').forEach(e => e.remove());
-            const blocks = orderedBlocks || fgBlocks(container).sort((a, b) => +a[0].dataset.lineNumber - +b[0].dataset.lineNumber);
+            const blocks = orderedBlocks || fgBlocks(container);
+            const byLine = new Map(blocks.map(block => [+block[0].getAttribute('data-line-number'), block]));
+            const model = orderedBlocks ? null : fgDomTextModels.get(container) || fgGetTextModel(blocks.map(block => block[0]), container);
+            const plan = orderedBlocks ? { order: Array.from(byLine.keys()), boundaries: [] } :
+                fgTextModel.order(model, mode === 'task' ? 'task' : 'time');
+            if (byLine.size !== blocks.length || byLine.size !== plan.order.length || plan.order.some(number => !byLine.has(number))) {
+                throw new Error('Text order does not cover mounted rows');
+            }
+            container.querySelectorAll('.task-group-head, .task-gap').forEach(element => element.remove());
             const frag = document.createDocumentFragment();
             const navigation = fgTextNavigation;
-            const lineOrder = [];
             const commit = () => {
                 container.replaceChildren(frag);
-                if (navigation) navigation.reorder(lineOrder);
+                if (navigation) navigation.reorder(plan.order);
             };
             const chunkSize = Number(container.querySelector('.text-chunk')?.dataset.chunkSize) || 512;
             let chunk = null, chunkRows = 0;
@@ -205,75 +204,28 @@
                     chunk.dataset.chunkSize = chunkSize; frag.appendChild(chunk); chunkRows = 0;
                 }
                 chunk.appendChild(block[0]); if (block[1]) chunk.appendChild(block[1]); chunkRows++;
-                if (navigation) lineOrder.push(+block[0].getAttribute('data-line-number'));
             };
             fgTextOrder = mode;
             lsSet('textOrder', mode);
             const btn = document.getElementById('textOrderBtn');
             if (btn) btn.textContent = 'Order: ' + (mode === 'task' ? 'by task' : 'time');
-            if (mode !== 'task') {
-                blocks.forEach(put);
-                commit();
-                container.classList.remove('grouped');
-                return;
-            }
-            // header comments stay first; untasked lines (separators) follow the previous line's task
-            const groups = new Map(), head = [];
-            const realBefore = new Map();         // line number -> number of real lines before it
-            let nReal = 0;
-            let cur = '';
-            const txt = b => (b[0].querySelector('.line-content') || b[0]).textContent;
-            for (const b of blocks) {
-                realBefore.set(+b[0].dataset.lineNumber, nReal);
-                if (!/^\s*(-{5,})?\s*$/.test(txt(b))) nReal++;
-                let k = fgTaskKey(b[0]);
-                if (!k) {
-                    if (!cur) { head.push(b); continue; }
-                    if (/^\s*(-{5,})?\s*$/.test(txt(b))) { b[0].classList.add('grp-hidden'); }   // separators, blank lines
-                    k = cur;
+            let nextBoundary = 0;
+            for (let index = 0; index < plan.order.length; index++) {
+                while (nextBoundary < plan.boundaries.length && plan.boundaries[nextBoundary].at === index) {
+                    const item = plan.boundaries[nextBoundary++];
+                    const element = document.createElement('div');
+                    element.className = item.kind; element.textContent = item.text;
+                    boundary(element);
                 }
-                cur = k;
-                if (!groups.has(k)) groups.set(k, []);
-                groups.get(k).push(b);
-            }
-            head.forEach(put);
-            // busiest tasks first; idle and per-CPU (no funcgraph-proc) groups after them
-            const order = Array.from(groups.entries()).sort((a, b) => {
-                const ia = a[0].startsWith('idle'), ib = b[0].startsWith('idle');
-                if (ia !== ib) return ia ? 1 : -1;
-                return b[1].length - a[1].length;
-            });
-            for (const [k, list] of order) {
-                const real = list.filter(b => !b[0].classList.contains('grp-hidden'));
-                const first = real[0] ? real[0][0] : list[0][0];
-                const cpus = new Set(real.map(b => b[0].getAttribute('data-cpu')).filter(Boolean));
-                const h = document.createElement('div');
-                h.className = 'task-group-head';
-                h.textContent = (first.getAttribute('data-comm') || k) + '  ' + (first.getAttribute('data-pid') || '') +
-                    '   ·  ' + real.length + ' lines  ·  CPU ' + Array.from(cpus).sort((a, b) => a - b).join(',');
-                boundary(h);
-                let pendingSwitch = null, prevLn = -1, prevTs = null;
-                for (const b of list) {
-                    const t = txt(b), ln = +b[0].dataset.lineNumber;
-                    const sw = t.match(RE_SWITCH_LINE);
-                    const tm = t.match(RE_TS_LINE);
-                    if (pendingSwitch && !sw && !b[0].classList.contains('grp-hidden')) {
-                        const gap = document.createElement('div');
-                        gap.className = 'task-gap';
-                        const dt = (tm && prevTs !== null) ? ' after ' + ((parseFloat(tm[1]) - prevTs) * 1e3).toFixed(3) + ' ms' : '';
-                        gap.textContent = '⇣ switched out on CPU ' + pendingSwitch[1] + ' → ' + pendingSwitch[4].trim() + '-' + pendingSwitch[5] +
-                            '; resumes at line ' + ln + dt + ' (' + (realBefore.get(ln) - realBefore.get(prevLn) - 1) + ' lines of other tasks in between)';
-                        boundary(gap);
-                        pendingSwitch = null;
-                    }
-                    if (sw) { pendingSwitch = sw; b[0].classList.add('task-switch'); }
-                    if (tm) prevTs = parseFloat(tm[1]);
-                    if (!b[0].classList.contains('grp-hidden')) prevLn = ln;
-                    put(b);
+                const number = plan.order[index], block = byLine.get(number);
+                if (mode === 'task') {
+                    if (plan.hidden.has(number)) block[0].classList.add('grp-hidden');
+                    if (plan.switches.has(number)) block[0].classList.add('task-switch');
                 }
+                put(block);
             }
             commit();
-            container.classList.add('grouped');
+            container.classList.toggle('grouped', mode === 'task');
         }
         function fgToggleTextOrder() { fgSetTextOrder(fgTextOrder === 'task' ? 'time' : 'task'); }
         function fgRestoreTextOrder() {
@@ -1333,8 +1285,7 @@
         }
 
         const fgDomTextModels = new WeakMap();
-        function* fgPrepareTextModel(lines) {
-            const root = document.getElementById('content');
+        function* fgPrepareTextModel(lines, root = document.getElementById('content')) {
             if (fgDomTextModels.has(root)) return fgDomTextModels.get(root);
             let data;
             if (fgData.ready('fgTextIndex')) data = fgData.read('fgTextIndex');
@@ -1374,10 +1325,9 @@
             return model;
         }
 
-        function fgGetTextModel(lines) {
-            const root = document.getElementById('content');
+        function fgGetTextModel(lines, root = document.getElementById('content')) {
             if (fgDomTextModels.has(root)) return fgDomTextModels.get(root);
-            const iterator = fgPrepareTextModel(lines);
+            const iterator = fgPrepareTextModel(lines, root);
             let result;
             do { result = iterator.next(); } while (!result.done);
             fgDomTextModels.set(root, result.value);

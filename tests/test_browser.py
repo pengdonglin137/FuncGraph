@@ -5460,6 +5460,52 @@ class BrowserSmokeTest(unittest.TestCase):
         self.assertTrue(self.ev("""(() => { const n = Array.from(document.querySelectorAll('#content .line-container')).map(l => +l.dataset.lineNumber);
             return n.every((x, i) => i === 0 || x > n[i - 1]) && !document.querySelector('.task-gap, .task-group-head'); })()"""))
 
+    def test_task_order_projects_cached_records_without_reading_live_trace_text(self):
+        facts = self.ev('''() => {
+            const root = document.getElementById('content');
+            const model = fgGetTextModel(root.querySelectorAll('.line-container'));
+            const plan = fgTextModel.order(model, 'task');
+            const attribute = Element.prototype.getAttribute;
+            const text = Object.getOwnPropertyDescriptor(Node.prototype, 'textContent');
+            Element.prototype.getAttribute = function(name) {
+                if (this.classList.contains('line-container') && ['data-cpu','data-pid','data-comm'].includes(name))
+                    throw new Error('Live task metadata read: ' + name);
+                return attribute.call(this, name);
+            };
+            Object.defineProperty(Node.prototype, 'textContent', {...text, get() {
+                if (this.nodeType === 1 && this.classList.contains('line-content')) throw new Error('Live trace text read');
+                return text.get.call(this);
+            }});
+            try { fgSetTextOrder('task'); fgSetTextOrder('time'); fgSetTextOrder('task'); }
+            finally {
+                Element.prototype.getAttribute = attribute;
+                Object.defineProperty(Node.prototype, 'textContent', text);
+            }
+            return {rows:Array.from(root.querySelectorAll('.line-container'), row => +row.dataset.lineNumber),
+                expected:plan.order, groups:Array.from(root.querySelectorAll('.task-group-head, .task-gap'), node => node.textContent),
+                expectedGroups:plan.boundaries.map(boundary => boundary.text),
+                navigation:fgTextNavigation.order, same:fgTextModel.order(model, 'task') === plan};
+        }''')
+        self.assertEqual(facts['rows'], facts['expected'])
+        self.assertEqual(facts['navigation'], facts['expected'])
+        self.assertEqual(facts['groups'], facts['expectedGroups'])
+        self.assertTrue(facts['same'])
+
+    def test_incomplete_order_projection_fails_without_discarding_other_rows(self):
+        result = self.ev('''() => {
+            const root = document.getElementById('content');
+            fgGetTextModel(root.querySelectorAll('.line-container'));
+            root.lastElementChild.remove();
+            const before = root.innerHTML, order = fgTextOrder;
+            let message = '';
+            try { fgSetTextOrder('task'); } catch (error) { message = error.message; }
+            return {message, same:root.innerHTML === before, connected:root.isConnected, order:fgTextOrder === order};
+        }''')
+        self.assertEqual(result['message'], 'Text order does not cover mounted rows')
+        self.assertTrue(result['same'])
+        self.assertTrue(result['connected'])
+        self.assertTrue(result['order'])
+
     def test_text_order_keeps_chunks_bounded_and_source_pairs_intact(self):
         snapshot = """() => {
             const content = document.getElementById('content');

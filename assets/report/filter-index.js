@@ -4,6 +4,7 @@
     const columns = new Map(fields.map((field, index) => ['data-' + field, index + 2]));
     const models = new WeakMap();
     const foldModels = new WeakMap();
+    const orderModels = new WeakMap();
     class TextRecord {
         constructor(row, version) { this.row = row; this.version = version; }
         get textContent() { return this.row[1]; }
@@ -165,6 +166,96 @@
         do { result = steps.next(); } while (!result.done);
         return result.value;
     }
+    function* prepareOrder(model, mode) {
+        if (mode !== 'time' && mode !== 'task') throw new Error('Invalid Text order');
+        const cached = orderModels.get(model)?.get(mode);
+        if (cached) return cached;
+        const order = [], boundaries = [], hidden = new Set(), switches = new Set();
+        if (mode === 'time') {
+            for (const record of model.records) {
+                order.push(record.row[0]);
+                if (order.length % 512 === 0) yield 'Preparing Text order: ' + order.length + ' / ' + model.records.length + '…';
+            }
+        } else {
+            const groups = new Map(), head = [];
+            const realBefore = new Uint32Array(model.records.length);
+            let realCount = 0, current = '';
+            for (let index = 0; index < model.records.length; index++) {
+                const record = model.records[index];
+                const separator = /^\s*(-{5,})?\s*$/.test(record.textContent);
+                realBefore[index] = realCount;
+                if (!separator) realCount++;
+                const pid = record.getAttribute('data-pid'), cpu = record.getAttribute('data-cpu');
+                let key = pid === '' || pid === null ? cpu ? 'cpu' + cpu : '' : pid === '0' ? 'idle' + cpu : 'p' + pid;
+                if (!key) {
+                    if (!current) head.push(index);
+                    else {
+                        if (separator) hidden.add(record.row[0]);
+                        key = current;
+                    }
+                }
+                if (key) {
+                    current = key;
+                    if (!groups.has(key)) groups.set(key, []);
+                    groups.get(key).push(index);
+                }
+                if ((index + 1) % 512 === 0) yield 'Grouping complete Text rows: ' + (index + 1) + ' / ' + model.records.length + '…';
+            }
+            for (const index of head) order.push(model.records[index].row[0]);
+            const tasks = Array.from(groups).sort((left, right) => {
+                const leftIdle = left[0].startsWith('idle'), rightIdle = right[0].startsWith('idle');
+                return leftIdle !== rightIdle ? leftIdle ? 1 : -1 : right[1].length - left[1].length;
+            });
+            let summarized = 0;
+            for (const [key, members] of tasks) {
+                let first = null, count = 0;
+                const cpus = new Set();
+                for (const index of members) {
+                    const record = model.records[index];
+                    if (++summarized % 512 === 0) yield 'Summarizing task rows: ' + summarized + ' / ' + model.records.length + '…';
+                    if (hidden.has(record.row[0])) continue;
+                    first ||= record;
+                    count++;
+                    const cpu = record.getAttribute('data-cpu');
+                    if (cpu) cpus.add(cpu);
+                }
+                first ||= model.records[members[0]];
+                boundaries.push({ at: order.length, kind: 'task-group-head',
+                    text: (first.getAttribute('data-comm') || key) + '  ' + (first.getAttribute('data-pid') || '') +
+                        '   ·  ' + count + ' lines  ·  CPU ' + Array.from(cpus).sort((left, right) => left - right).join(',') });
+                let pendingSwitch = null, previous = -1, previousTime = null;
+                for (const index of members) {
+                    const record = model.records[index], number = record.row[0];
+                    const switched = /^\s*(\d+)\)\s+(.+?)-(\d+)\s+=>\s+(.+?)-(\d+)\s*$/.exec(record.textContent);
+                    const timestamp = /^\s*(\d+\.\d+)\s*\|/.exec(record.textContent);
+                    if (pendingSwitch && !switched && !hidden.has(number)) {
+                        const elapsed = timestamp && previousTime !== null ?
+                            ' after ' + ((parseFloat(timestamp[1]) - previousTime) * 1e3).toFixed(3) + ' ms' : '';
+                        boundaries.push({ at: order.length, kind: 'task-gap',
+                            text: '⇣ switched out on CPU ' + pendingSwitch[1] + ' → ' + pendingSwitch[4].trim() + '-' + pendingSwitch[5] +
+                                '; resumes at line ' + number + elapsed + ' (' + (realBefore[index] - realBefore[previous] - 1) +
+                                ' lines of other tasks in between)' });
+                        pendingSwitch = null;
+                    }
+                    if (switched) { pendingSwitch = switched; switches.add(number); }
+                    if (timestamp) previousTime = parseFloat(timestamp[1]);
+                    if (!hidden.has(number)) previous = index;
+                    order.push(number);
+                    if (order.length % 512 === 0) yield 'Ordering task rows: ' + order.length + ' / ' + model.records.length + '…';
+                }
+            }
+        }
+        if (!orderModels.has(model)) orderModels.set(model, new Map());
+        const plans = orderModels.get(model);
+        if (!plans.has(mode)) plans.set(mode, { order, boundaries, hidden, switches });
+        return plans.get(mode);
+    }
+    function order(model, mode) {
+        const steps = prepareOrder(model, mode);
+        let result;
+        do { result = steps.next(); } while (!result.done);
+        return result.value;
+    }
     function navigation(order, expandable, hidden = []) {
         const original = new Set(order);
         const sources = new Set(expandable);
@@ -291,7 +382,7 @@
         }
         return navigation(order, expandable);
     }
-    window.fgTextModel = { fields, prepare, filter, folding, prepareFolding, navigation, prepareNavigation };
+    window.fgTextModel = { fields, prepare, filter, folding, prepareFolding, order, prepareOrder, navigation, prepareNavigation };
     window.fgIndexedFilter = async function (data, text, signal, progress) {
         const iterator = steps(data, text);
         try {

@@ -485,6 +485,38 @@ class SidecarBrowserTest(unittest.TestCase):
         finally:
             self.page.close()
 
+    def test_saved_task_order_is_prepared_before_any_text_rows_are_mounted(self):
+        facts = self.page.evaluate('''async () => {
+            fgTextOrder = 'task'; lsSet('textOrder', 'task');
+            const prepare = fgTextModel.prepareOrder;
+            const observations = [];
+            let preparedModel = null, preparedPlan = null;
+            fgTextModel.prepareOrder = function* (model, mode) {
+                const steps = prepare(model, mode);
+                try {
+                    while (true) {
+                        const result = steps.next();
+                        if (result.done) { preparedModel = model; preparedPlan = result.value; return result.value; }
+                        observations.push({label:result.value, rows:document.querySelectorAll('#content .line-container').length});
+                        yield result.value;
+                    }
+                } finally { steps.return(); }
+            };
+            try { await fgSwitchView('text'); } finally { fgTextModel.prepareOrder = prepare; }
+            return {observations, rows:document.querySelectorAll('#content .line-container').length,
+                order:fgTextNavigation.order, expected:preparedPlan.order,
+                same:fgDomTextModels.get(document.getElementById('content')) === preparedModel &&
+                    fgTextModel.order(preparedModel, 'task') === preparedPlan,
+                label:document.getElementById('textOrderBtn').textContent};
+        }''')
+        self.assertGreater(len(facts['observations']), 0)
+        self.assertTrue(all(observation['rows'] == 0 for observation in facts['observations']))
+        self.assertTrue(any(observation['label'].startswith('Grouping') for observation in facts['observations']))
+        self.assertEqual(facts['rows'], len(facts['expected']))
+        self.assertEqual(facts['order'], facts['expected'])
+        self.assertTrue(facts['same'])
+        self.assertEqual(facts['label'], 'Order: by task')
+
     def test_initial_timeline_does_not_fetch_text_or_compare_or_create_text_rows(self):
         self.assertEqual(self.page.locator('#content .line-container').count(), 0)
         self.assertFalse(any(url.endswith(('text.html', 'compare.json', 'text-index.json')) for url in self.requests))

@@ -522,6 +522,13 @@ With **Order: by task**:
 - After each context switch a grey italic summary line is inserted, e.g. `⇣ switched out on CPU 0 → idle-0; resumes at line 19703 after 7.640 ms (1 lines of other tasks in between)`: where it was switched out, who came next, when and at which line it resumes, and how many lines of other tasks lie in between. Separator and blank lines of the switch markers are hidden.
 - Folding, filters, heatmap and source blocks keep working. **Order: time** restores the original order by line number.
 
+New reports prepare and reuse time/task permutations, headers and switch-gap
+descriptions from complete records instead of repeatedly reading live row DOM.
+Header counts still describe full records, not current filter hits; filtering
+and folding do not rewrite that permutation. Sidecar prepares a saved task
+order in stages before mounting. This is not DOM windowing: reparenting and
+layout can still block. See [measurements and limits](performance-text-order.md).
+
 ### 5.7 Unified filter
 
 Type `field:value` in the filter box, combine with `AND`, `OR`, `NOT` and parentheses, and press Enter or Apply. The field buttons below open drop-down lists of values.

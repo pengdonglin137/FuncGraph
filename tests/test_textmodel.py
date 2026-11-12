@@ -1,5 +1,7 @@
 import json
 from pathlib import Path
+import random
+import re
 import shutil
 import subprocess
 import unittest
@@ -49,6 +51,178 @@ class TextModelTest(unittest.TestCase):
             assert.equal(retained[1].getAttribute('data-cpu'), '1');
             assert.equal(first.getAttribute('data-cpu'), '0');
         ''')
+
+    def test_order_plan_preserves_sparse_rows_task_headers_switches_and_exact_gaps(self):
+        self.run_model('''
+            const input = data([
+                [2, '# header', {}], [4, '', {}],
+                [10, '1.000000 | A()', {cpu:'0', pid:'7', comm:'工人'}],
+                [12, ' 0) worker-7 => other-9', {cpu:'0', pid:'7', comm:'工人'}],
+                [17, '-----', {}],
+                [25, '1.001000 | B()', {cpu:'1', pid:'9', comm:'other'}], [28, '', {}],
+                [40, '1.002000 | A()', {cpu:'1', pid:'7', comm:'工人'}],
+                [45, '1.003000 | C()', {cpu:'10', pid:'9', comm:'other'}]]);
+            const original = JSON.stringify(input), model = drain(fgTextModel.prepare(input));
+            const task = drain(fgTextModel.prepareOrder(model, 'task'));
+            assert.deepEqual(task.order, [2,4,10,12,17,40,25,28,45]);
+            assert.deepEqual([...task.hidden], [17,28]);
+            assert.deepEqual([...task.switches], [12]);
+            assert.deepEqual(task.boundaries, [
+                {at:2, kind:'task-group-head', text:'工人  7   ·  3 lines  ·  CPU 0,1'},
+                {at:5, kind:'task-gap', text:'⇣ switched out on CPU 0 → other-9; resumes at line 40 after 2.000 ms (1 lines of other tasks in between)'},
+                {at:6, kind:'task-group-head', text:'other  9   ·  2 lines  ·  CPU 1,10'}]);
+            const time = fgTextModel.order(model, 'time');
+            assert.deepEqual(time.order, [2,4,10,12,17,25,28,40,45]);
+            assert.deepEqual(time.boundaries, []);
+            assert.equal(time.hidden.size, 0); assert.equal(time.switches.size, 0);
+            assert.equal(JSON.stringify(input), original);
+        ''')
+
+    def test_task_order_keeps_idle_cpus_separate_and_stable_ties_with_untasked_rows(self):
+        self.run_model('''
+            const model = drain(fgTextModel.prepare(data([
+                [1, '# header', {}], [3, 'idle-a', {cpu:'0', pid:'0'}],
+                [5, 'perCPU', {cpu:'0'}], [7, '', {cpu:'0', pid:''}],
+                [9, 'worker', {cpu:'3', pid:'57', comm:'<&任务>'}],
+                [11, 'worker2', {cpu:'1', pid:'57', comm:'<&任务>'}],
+                [13, 'idle-b', {cpu:'1', pid:'0'}],
+                [15, 'untasked text', {}]])));
+            const plan = fgTextModel.order(model, 'task');
+            assert.deepEqual(plan.order, [1,5,7,9,11,13,15,3]);
+            assert.equal(plan.hidden.size, 0);
+            assert.deepEqual(plan.boundaries.map(boundary => [boundary.at, boundary.text]), [
+                [1, 'cpu0     ·  2 lines  ·  CPU 0'],
+                [3, '<&任务>  57   ·  2 lines  ·  CPU 1,3'],
+                [5, 'idle1  0   ·  2 lines  ·  CPU 1'],
+                [7, 'idle0  0   ·  1 lines  ·  CPU 0']]);
+        ''')
+
+    def test_order_plans_handle_empty_header_only_and_invalid_modes(self):
+        self.run_model('''
+            for (const rows of [[], [[2, '', {}]], [[1, '# header', {}], [3, '---', {}], [11, '任务', {}]]]) {
+                const model = drain(fgTextModel.prepare(data(rows)));
+                for (const mode of ['time', 'task']) {
+                    const plan = fgTextModel.order(model, mode);
+                    assert.deepEqual(plan.order, rows.map(row => row[0]));
+                    assert.deepEqual(plan.boundaries, []);
+                    assert.equal(plan.hidden.size, 0); assert.equal(plan.switches.size, 0);
+                }
+                assert.throws(() => fgTextModel.order(model, 'duration'), /Invalid Text order/);
+                assert.throws(() => fgTextModel.order(model, null), /Invalid Text order/);
+            }
+        ''')
+
+    def test_order_cache_uses_complete_record_identity_and_never_retains_dom(self):
+        self.run_model('''
+            for (const version of [1,2,3]) {
+                const input = data([[3, 'first', {cpu:'0', pid:'2', comm:'first'}],
+                    [9, 'second', {cpu:'1', pid:'3', comm:'second'}]]);
+                if (version >= 2) input.rows.forEach(row => row.push(null));
+                if (version === 3) {
+                    input.fields.push('space');
+                    input.rows.forEach(row => row.splice(row.length - 1, 0, 'user'));
+                }
+                input.version = version;
+                const before = JSON.stringify(input), model = drain(fgTextModel.prepare(input));
+                const task = fgTextModel.order(model, 'task'), time = fgTextModel.order(model, 'time');
+                for (const record of model.records) {
+                    record.getAttribute = () => { throw new Error('Repeated metadata read'); };
+                    Object.defineProperty(record, 'textContent', {get() { throw new Error('Repeated raw text read'); }});
+                }
+                model.records[Symbol.iterator] = () => { throw new Error('Repeated record enumeration'); };
+                assert.equal(fgTextModel.order(model, 'task'), task);
+                assert.equal(drain(fgTextModel.prepareOrder(model, 'time')), time);
+                assert.equal(JSON.stringify(input), before);
+                const other = drain(fgTextModel.prepare(data([[3, 'other', {pid:'8', comm:'other'}]])));
+                assert.notEqual(fgTextModel.order(other, 'task'), task);
+                assert.equal(fgTextModel.order(other, 'task').boundaries[0].text.startsWith('other '), true);
+            }
+        ''')
+
+    def test_cancelled_order_preparation_publishes_no_partial_plan_and_can_restart(self):
+        self.run_model('''
+            for (const mode of ['time', 'task']) for (const stage of mode === 'task' ? ['Grouping', 'Summarizing', 'Ordering'] : ['Preparing']) {
+                const rows = Array.from({length:4097}, (unused, index) => [index * 3 + 1, 'call()', {cpu:'0', pid:'3'}]);
+                const model = drain(fgTextModel.prepare(data(rows)));
+                const cancelled = fgTextModel.prepareOrder(model, mode);
+                let progress;
+                do { progress = cancelled.next(); assert.equal(progress.done, false); } while (!progress.value.startsWith(stage));
+                assert.equal(cancelled.return().done, true);
+                const resumed = fgTextModel.prepareOrder(model, mode);
+                assert.equal(resumed.next().value.startsWith(mode === 'task' ? 'Grouping' : 'Preparing'), true);
+                const plan = drain(resumed);
+                assert.equal(plan.order.length, rows.length);
+                assert.equal(new Set(plan.order).size, rows.length);
+                assert.equal(fgTextModel.order(model, mode), plan);
+            }
+        ''')
+
+    def test_random_task_plans_match_an_independent_full_record_reference(self):
+        generator = random.Random(19760311)
+        for scenario in range(30):
+            rows = []
+            number = 0
+            for unused in range(generator.randrange(250)):
+                number += generator.randrange(1, 11)
+                cpu = generator.choice([None, '', '0', '1', '10'])
+                pid = generator.choice([None, '', '0', '7', '9', '11'])
+                text = generator.choice(['', '  ', '-----', '----', '任务 <&> call()',
+                                         f'{generator.randrange(100) / 10:.6f} | call()',
+                                         f' {cpu or "0"}) old-task-7 => new-task-9'])
+                rows.append([number, text, dict(cpu=cpu, pid=pid, comm=generator.choice([None, '', 'worker', '任务<&>']))])
+            head, groups, hidden, switches, prefixes = [], {}, set(), set(), {}
+            real_count = 0
+            current = ''
+            for row in rows:
+                number, text, attributes = row
+                separator = re.fullmatch(r'\s*(-{5,})?\s*', text) is not None
+                prefixes[number] = real_count
+                real_count += not separator
+                pid, cpu = attributes['pid'], attributes['cpu']
+                key = ('cpu' + cpu if cpu else '') if pid in (None, '') else ('idle' + ('null' if cpu is None else cpu) if pid == '0' else 'p' + pid)
+                if not key:
+                    if not current:
+                        head.append(row)
+                        continue
+                    if separator:
+                        hidden.add(number)
+                    key = current
+                current = key
+                groups.setdefault(key, []).append(row)
+            expected_order = [row[0] for row in head]
+            boundaries = []
+            for key, members in sorted(groups.items(), key=lambda group: (group[0].startswith('idle'), -len(group[1]))):
+                real = [row for row in members if row[0] not in hidden]
+                first = (real or members)[0][2]
+                cpus = list(dict.fromkeys(row[2]['cpu'] for row in real if row[2]['cpu']))
+                boundaries.append(dict(at=len(expected_order), kind='task-group-head',
+                                       text=f'{first["comm"] or key}  {first["pid"] or ""}   ·  {len(real)} lines  ·  CPU ' + ','.join(sorted(cpus, key=int))))
+                pending, previous, previous_time = None, None, None
+                for number, text, attributes in members:
+                    switched = re.fullmatch(r'\s*(\d+)\)\s+(.+?)-(\d+)\s+=>\s+(.+?)-(\d+)\s*', text)
+                    timestamp = re.match(r'\s*(\d+\.\d+)\s*\|', text)
+                    if pending and not switched and number not in hidden:
+                        elapsed = f' after {(float(timestamp[1]) - previous_time) * 1000:.3f} ms' if timestamp and previous_time is not None else ''
+                        boundaries.append(dict(at=len(expected_order), kind='task-gap',
+                                               text=f'⇣ switched out on CPU {pending[1]} → {pending[4].strip()}-{pending[5]}; resumes at line {number}{elapsed} ({prefixes[number] - prefixes[previous] - 1} lines of other tasks in between)'))
+                        pending = None
+                    if switched:
+                        pending = switched
+                        switches.add(number)
+                    if timestamp:
+                        previous_time = float(timestamp[1])
+                    if number not in hidden:
+                        previous = number
+                    expected_order.append(number)
+            expected = dict(order=expected_order, boundaries=boundaries, hidden=sorted(hidden), switches=sorted(switches))
+            with self.subTest(scenario=scenario):
+                self.run_model('''
+                    const model = drain(fgTextModel.prepare(data(ROWS)));
+                    const plan = fgTextModel.order(model, 'task');
+                    assert.deepEqual({order:plan.order, boundaries:plan.boundaries,
+                        hidden:[...plan.hidden].sort((left,right) => left-right),
+                        switches:[...plan.switches].sort((left,right) => left-right)}, EXPECTED);
+                '''.replace('ROWS', json.dumps(rows)).replace('EXPECTED', json.dumps(expected)))
 
     def test_complete_preparation_is_cached_without_mutating_input(self):
         self.run_model('''
