@@ -302,8 +302,8 @@ class UftraceTimeline(TimelineBuilder):
             if 'user_args' in record:
                 names = record.get('user_arg_names')
                 detail['args'] = ', '.join(
-                    ((_display(names[position]) if names[position] is not None else 'slot' + str(position + 1)) + '='
-                     if names else '') + _display(value)
+                    (_display(names[position]) if names and names[position] is not None else 'slot' + str(position + 1)) +
+                    '=' + _display(value)
                     for position, value in enumerate(record['user_args']))
                 if names:
                     detail['arg_names'] = tuple(names)

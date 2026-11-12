@@ -1,5 +1,6 @@
 """Recorded user DWARF parameter names, ABI matching and report presentation."""
 import io
+from itertools import product
 import json
 from pathlib import Path
 import re
@@ -13,6 +14,7 @@ from fglib import inputs, uftrace
 from fglib.viewer import create_server
 from test_uftrace_export import AVAILABLE, COMPILE_FLAGS, EXECUTABLE, RECORD_FLAGS
 from test_uftrace_import import capture, stream
+from test_uftrace_details import callsite
 
 
 @unittest.skipUnless(AVAILABLE, 'patched uftrace and gcc are required')
@@ -186,12 +188,31 @@ class ArgumentNamesImportTest(unittest.TestCase):
 
     def test_partial_and_legacy_names_are_explicit(self):
         for names, expected in (((None, 'flags'), 'slot1=3, flags=0xffffffffffffffff'),
-                                (None, '3, 0xffffffffffffffff')):
+                                (None, 'slot1=3, slot2=0xffffffffffffffff')):
             with self.subTest(names=names):
                 builder = inputs.UftraceInput(io.StringIO(stream(self.records(names)))).build()
                 detail = next(value for value in builder.to_data()['uftrace']['user_details'].values()
                               if 'args' in value)
                 self.assertEqual(detail['args'], expected)
+
+    def test_unnamed_slots_follow_recorded_value_count_without_guessing_signature(self):
+        for count in (1, 2, 7):
+            with self.subTest(count=count):
+                records = self.records(None)
+                records[1]['user_args'] = [str(index + 1) for index in range(count)]
+                builder = inputs.UftraceInput(io.StringIO(stream(records))).build()
+                detail = next(value for value in builder.to_data()['uftrace']['user_details'].values() if 'args' in value)
+                self.assertEqual(detail['args'], ', '.join(f'slot{index + 1}={index + 1}' for index in range(count)))
+                self.assertNotIn('arg_names', detail)
+
+    def test_raw_only_capture_does_not_invent_decoded_arguments(self):
+        records = self.records(None)
+        del records[1]['user_args']
+        data = inputs.UftraceInput(io.StringIO(stream(records))).build().to_data()
+        detail = data['uftrace']['user_details'][data['cols']['line'][1]]
+        self.assertNotIn('args', detail)
+        self.assertNotIn('arg_names', detail)
+        self.assertEqual(data['strings'][data['cols']['args'][1]], '03000000ffffffffffffffff')
 
     def test_invalid_names_fail_at_the_jsonl_boundary(self):
         for names in ([], ['count'], ['count', 'flags', 'extra'], [None, None], ['', 'flags'],
@@ -229,11 +250,16 @@ class ArgumentNamesBrowserTest(unittest.TestCase):
             kernel = helpers.FakeKernel()
             self.addCleanup(kernel.close)
             name = 'count<script>window.argNameExecuted=1</script>'
-            records = ArgumentNamesImportTest().records((name, None))
             trace = Path(directory) / 'capture.jsonl'
-            trace.write_text(stream(records))
-            for mode in ('single', 'sidecar'):
-                with self.subTest(mode=mode):
+            for names, mode in product(((name, None), None), ('single', 'sidecar')):
+                with self.subTest(mode=mode, names=names):
+                    records = ArgumentNamesImportTest().records(names)
+                    records[2]['user_retval'] = '7'
+                    site = callsite()
+                    site['user_callsite']['symbol'] = {'address': '0x1200', 'offset': 0x33, 'size': 0x80}
+                    records.insert(1, site)
+                    trace.write_text(stream(records))
+                    expected = (name if names else 'slot1') + '=3, slot2=0xffffffffffffffff'
                     output = 'report.html' if mode == 'single' else 'sidecar'
                     kernel.run(str(trace), '--timeline', '--enable-fold', '--report-mode', mode, out=output)
                     with create_server(Path(kernel.dir) / output) as server:
@@ -247,16 +273,19 @@ class ArgumentNamesBrowserTest(unittest.TestCase):
                             page.evaluate('async () => { await fgSwitchView("timeline"); }')
                             page.evaluate('() => fgView("timeline").probe().select(1)')
                             detail = page.locator('.tl-detail')
-                            self.assertIn(name + '=3, slot2=0xffffffffffffffff', detail.inner_text())
+                            self.assertIn(expected, detail.inner_text())
+                            self.assertIn('main+0x33/0x80', detail.inner_text())
+                            self.assertEqual(detail.locator('.k', has_text='caller return').count(), 0)
+                            self.assertEqual(detail.locator('.k', has_text='user return').locator('xpath=following-sibling::span[1]').inner_text(), '7')
                             self.assertNotIn('Names from recorded user DWARF', detail.inner_text())
                             raw = detail.get_by_text('Original argument bytes', exact=True)
                             self.assertFalse(raw.locator('..').evaluate('element => element.open'))
                             raw.click()
-                            self.assertIn('Names from recorded user DWARF', detail.inner_text())
+                            self.assertIn('Names from recorded user DWARF' if names else 'Parameter names were not recorded', detail.inner_text())
                             self.assertIn('03000000ffffffffffffffff', detail.inner_text())
                             self.assertIsNone(page.evaluate('window.argNameExecuted'))
                             page.evaluate('async () => { await fgSwitchView("text"); }')
-                            self.assertIn(name + '=3, slot2=0xffffffffffffffff', page.locator('#content').inner_text())
+                            self.assertIn(expected, page.locator('#content').inner_text())
                             self.assertIsNone(page.evaluate('window.argNameExecuted'))
                             self.assertEqual(errors, [])
                             page.close()

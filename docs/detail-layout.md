@@ -38,6 +38,16 @@ are unchanged. This is a presentation change, not a new decoding mode.
 
 ## Arguments and evidence / 参数与证据
 
+- Decoded user arguments use `name=value` with recorded DWARF names. Missing
+  names use explicit `slot1=value`, `slot2=value` placeholders in both Text and
+  Timeline; these are captured values, not guessed source parameter names or a
+  claim that every signature parameter was captured. Raw-only payloads remain
+  raw bytes and are not decoded by the viewer.
+- User **caller site** uses the saved caller symbol plus offset/size when
+  available, based on the return PC minus one. It is not a caller-return field.
+  The function's own **user return** remains available. Missing recorded symbol
+  information is explicitly unavailable, not reconstructed from a same-named
+  function or a nearby entry address.
 - Parameters prefer wrapping between complete `name=value` items. Quoted strings
   and nested `()`, `[]` or `{}` values are not split at their internal commas.
   Recorded scalar parameter names are handled as literal names, not parsed as
@@ -56,6 +66,14 @@ are unchanged. This is a presentation change, not a new decoding mode.
 参数优先按完整 `name=value` 项换行，不拆引号、括号内部的逗号。单项过长仍可内部换行，
 不会截断、舍入或省略真实值，复制保留原有参数和分隔符。已有参数名按字面值转义，
 不当成 HTML；破损输入整体保留，不猜测参数边界。
+
+已解码用户态参数优先使用录制的 DWARF 参数名；缺名时在 Text 和 Timeline 中明确写为
+`slot1=值`、`slot2=值`。这些是采集槽位，不是真实参数名，也不代表完整函数签名；不会固定
+补成六个参数。仅有原始字节时继续显示 raw，不由页面猜测解码。
+
+用户态保留 **caller site**，已记录符号时按返回 PC 减一显示为 `函数+偏移/长度`，不另列
+caller return；函数本身的 **user return** 仍保留。旧记录缺少调用方符号信息时明确标为
+不可用，不从同名函数或入口地址猜偏移。
 
 **Original argument bytes / Raw argument slots** 仍紧邻参数。用户态 DWARF 参数名的来源说明
 收进原始字节展开区；没有原始字节时仅提供 **Argument provenance**，不会虚构字节数据。

@@ -436,7 +436,9 @@ function showDetail(i) {
             (!userSite ? '<div class="tl-context-note">Call-site source unavailable; function entry is a fallback.</div>' : ''));
         else h += kv('caller site', '<span class="tl-muted">Not recorded · capture with -T &apos;.@callsite&apos;</span>');
         if (userDetail.args !== undefined) {
-            const provenance = userDetail.arg_names ? '<div class="tl-context-note">Names from recorded user DWARF; values follow the saved capture specification.</div>' : '';
+            const provenance = '<div class="tl-context-note">' + (userDetail.arg_names ?
+                'Names from recorded user DWARF; values follow the saved capture specification. Unnamed values use slotN placeholders.' :
+                'Parameter names were not recorded; slotN identifies a captured value, not a source parameter name.') + '</div>';
             h += kv('user args', detailArgumentsHtml(userDetail.args, userDetail.arg_names) +
                 (a || provenance ? '<details class="tl-context-note"><summary>' + (a ? 'Original argument bytes' : 'Argument provenance') +
                     '</summary>' + provenance + (a ? detailToken('raw', a) : '') + '</details>' : ''), 'tl-arguments');
