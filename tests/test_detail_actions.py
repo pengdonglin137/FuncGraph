@@ -105,6 +105,46 @@ class DetailActionsBrowserTest(unittest.TestCase):
     def focused_action(self):
         return self.page.evaluate('document.activeElement.dataset.callAction')
 
+    def gate_fullscreen(self):
+        self.page.evaluate('''() => {
+            const state=window.fullscreenTest={root:null};
+            Object.defineProperty(document,'fullscreenElement',{configurable:true,get:()=>state.root});
+            Element.prototype.requestFullscreen=function() {
+                return new Promise((resolve,reject)=>{
+                    state.reject=reject;
+                    state.enter=()=>{
+                        state.root=this;
+                        document.activeElement.blur();
+                        document.dispatchEvent(new Event('fullscreenchange'));
+                        resolve();
+                    };
+                });
+            };
+            document.exitFullscreen=()=>state.exiting ||= new Promise(resolve=>{
+                state.exit=(blur=true)=>{
+                    state.root=null;
+                    if (blur) document.activeElement.blur();
+                    document.dispatchEvent(new Event('fullscreenchange'));
+                    resolve();
+                };
+            });
+        }''')
+
+    def open_pending_text_action(self, mode, route='menu'):
+        self.open(mode=mode)
+        self.gate_fullscreen()
+        self.page.locator('[data-act=max]').click()
+        if route == 'menu':
+            self.open_menu()
+            self.menu.locator('[data-call-action=text]').press('Enter')
+        elif route == 'key':
+            self.page.locator('.tl-canvas').focus()
+            self.page.keyboard.press('Enter')
+        else:
+            self.page.locator('[data-trace-metadata] > summary').click()
+            self.page.locator('.tl-detail a[data-line]').first.click()
+        self.page.wait_for_function("() => fgCurrentView()==='text' && !fgTextDeferred()")
+
     def test_only_one_secondary_entry_in_every_space_theme_width_and_delivery_mode(self):
         for kind, mode, theme, width in product(('kernel', 'user', 'mixed'), ('single', 'sidecar'),
                                                ('light', 'dark'), (320, 390, 1440)):
@@ -274,6 +314,8 @@ class DetailActionsBrowserTest(unittest.TestCase):
                 self.menu.locator(f'[data-call-action={action}]').press('Enter')
                 if action == 'text':
                     self.page.wait_for_function("() => fgCurrentView() === 'text' && !fgTextDeferred() && !document.fullscreenElement")
+                    self.page.wait_for_function('''() => document.activeElement ===
+                        document.querySelector('.view-tab[data-view=text]')''')
                     self.assertTrue(self.page.locator('.view-tab[data-view=text]').evaluate(
                         'element => element === document.activeElement'))
                 else:
@@ -282,6 +324,76 @@ class DetailActionsBrowserTest(unittest.TestCase):
                         '.tl-canvas, [data-detail-expand]')'''))
                 self.assertFalse(self.menu.is_visible())
                 self.assertTrue(self.page.evaluate('!!document.activeElement.getClientRects().length'))
+                self.assertEqual(self.page.evaluate("fgView('timeline').probe().sel()"), 1)
+
+    def test_late_native_entry_and_exit_restore_the_original_text_action_focus(self):
+        for mode, route in product(('single', 'sidecar'), ('menu', 'key', 'link')):
+            with self.subTest(mode=mode, route=route):
+                self.open_pending_text_action(mode, route)
+                self.page.evaluate('() => fullscreenTest.enter()')
+                self.page.wait_for_function('() => !!fullscreenTest.exit')
+                self.page.evaluate('() => fullscreenTest.exit()')
+                self.assertTrue(self.page.locator('.view-tab[data-view=text]').evaluate(
+                    'element => element===document.activeElement'))
+                self.assertFalse(self.page.evaluate('!!document.fullscreenElement'))
+                self.assertFalse(self.page.evaluate('document.body.classList.contains("tl-max")'))
+                self.assertEqual(self.page.evaluate("fgView('timeline').probe().sel()"), 1)
+
+    def test_late_fullscreen_exit_cannot_override_new_input_or_navigation(self):
+        for mode, change in product(('single', 'sidecar'),
+                ('focus', 'pointer', 'key', 'line', 'view', 'cancel')):
+            with self.subTest(mode=mode, change=change):
+                self.open_pending_text_action(mode)
+                self.page.evaluate('() => fullscreenTest.enter()')
+                self.page.wait_for_function('() => !!fullscreenTest.exit')
+                target = self.page.evaluate('''async change => {
+                    if (change==='focus') document.getElementById('filterInput').focus();
+                    if (change==='pointer') document.body.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true}));
+                    if (change==='key') document.body.dispatchEvent(new KeyboardEvent('keydown',{key:'Shift',bubbles:true}));
+                    if (change==='line') {
+                        const number=fgTextNavigation.order.at(-1);
+                        await fgRequestTextLine(number,element=>fgSelectMountedTextLine(element,false));
+                        return 'L'+number;
+                    }
+                    if (change==='view') {await fgSwitchView('timeline'); await fgSwitchView('text')}
+                    if (change==='cancel') fgCancelTextNavigation();
+                    return null;
+                }''', change)
+                self.page.evaluate('() => fullscreenTest.exit(false)')
+                expected = '#filterInput' if change == 'focus' else 'body'
+                self.assertTrue(self.page.locator(expected).evaluate('element=>element===document.activeElement'))
+                if target:
+                    self.assertEqual(self.page.evaluate('keyboardSelectedLine.id'), target)
+                self.assertEqual(self.page.evaluate('fgCurrentView()'), 'text')
+                self.assertEqual(self.page.evaluate("fgView('timeline').probe().sel()"), 1)
+
+    def test_rejected_native_entry_releases_pending_text_focus(self):
+        for mode in ('single', 'sidecar'):
+            with self.subTest(mode=mode):
+                self.open_pending_text_action(mode)
+                self.page.evaluate('() => fullscreenTest.reject(new Error("denied"))')
+                self.page.wait_for_function('() => !document.querySelector("[data-act=max]").disabled')
+                self.assertTrue(self.page.locator('.view-tab[data-view=text]').evaluate(
+                    'element=>element===document.activeElement'))
+                self.page.evaluate('''() => {
+                    document.activeElement.blur();
+                    document.dispatchEvent(new Event('fullscreenchange'));
+                }''')
+                self.assertTrue(self.page.locator('body').evaluate('element=>element===document.activeElement'))
+
+    def test_enter_shortcut_and_recorded_line_links_focus_the_visible_text_tab(self):
+        for mode, route in product(('single', 'sidecar'), ('key', 'link')):
+            with self.subTest(mode=mode, route=route):
+                self.open(mode=mode)
+                if route == 'key':
+                    self.page.locator('.tl-canvas').focus()
+                    self.page.keyboard.press('Enter')
+                else:
+                    self.page.locator('[data-trace-metadata] > summary').click()
+                    self.page.locator('.tl-detail a[data-line]').first.click()
+                self.page.wait_for_function("() => fgCurrentView()==='text' && !fgTextDeferred()")
+                self.assertTrue(self.page.locator('.view-tab[data-view=text]').evaluate(
+                    'element=>element===document.activeElement'))
                 self.assertEqual(self.page.evaluate("fgView('timeline').probe().sel()"), 1)
 
     def test_timeline_only_disables_text_with_an_accessible_reason_and_skips_it(self):

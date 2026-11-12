@@ -50,6 +50,31 @@ Home / End 切换可用项，Enter / 空格执行。Escape 仅关闭菜单并恢
 打开菜单不遍历调用、不改变选择/视野/过滤，也不预加载 Text；sidecar 仅执行跳转时加载。
 切换调用、页面或分析会关闭旧菜单，防止误操作另一个调用。
 
+## Text handoff and full-screen focus / 文本跳转与全屏焦点
+
+**Open in Text**, the Timeline **Enter** shortcut, and recorded trace-line links
+share the same focus handoff to the visible **Text** tab. Native full screen
+enters and exits asynchronously: a request that finishes after navigation must
+exit again and restore focus, rather than leave it on the document body or a
+hidden Timeline control. Page-only full screen uses the same destination.
+
+The handoff belongs to that exact line-navigation request. A new line request,
+leaving Text, Escape/cancellation, pointer or keyboard input, or moving focus to
+another control prevents the late completion from reclaiming focus. A rejected
+native request releases the pending handoff. No arbitrary delay or repeated
+focus timer is used; browser tests wait for the actual focus destination, not
+only for `fullscreenElement` to become null.
+
+**Open in Text**、Timeline 的 **Enter** 快捷键和真实 trace 行号链接统一把焦点交给
+可见的 **Text** 标签。浏览器全屏进入/退出都是异步的：如果进入请求在跳转后才完成，
+仍会退出并恢复焦点，不把键盘操作留给 body 或隐藏的 Timeline 控件。页面级全屏
+使用相同目标，不改变调用选择、筛选和原始记录。
+
+焦点恢复只属于本次跳行；切换页面、换一个目标、Escape/取消、新的鼠标或键盘输入，
+以及主动聚焦其他控件都会阻止旧完成事件抢回焦点。全屏请求被拒绝后清理待恢复状态。
+不靠固定延时反复强制聚焦；测试等待真实焦点目标，不能仅凭 `fullscreenElement`
+已清空就认定焦点也同步恢复。旧报告需重新生成。
+
 ## Trace metadata
 
 - Open **Trace metadata** below the primary facts to inspect the task/CPU,

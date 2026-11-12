@@ -583,6 +583,24 @@ function focusTimelineControl() {
     const target = detailExpanded ? elDetail.querySelector('[data-detail-expand]') : elCv;
     if (target) target.focus({ preventScroll: true });
 }
+let pendingTextFocus = null;
+function restoreTextFocus() {
+    const request = pendingTextFocus;
+    if (!request) return;
+    const tab = document.querySelector('.view-tab[data-view="text"]'), active = document.activeElement;
+    if (!request.current() || active !== document.body && active !== tab && !tlRoot.contains(active)) {
+        pendingTextFocus = null;
+        return;
+    }
+    if (!document.fullscreenElement) tab?.focus({ preventScroll: true });
+    if (!fullscreenPending && !nativeFullscreen && document.fullscreenElement !== tlRoot) pendingTextFocus = null;
+}
+for (const kind of ['pointerdown', 'keydown', 'focusin']) document.addEventListener(kind, event => {
+    if (!pendingTextFocus) return;
+    if (kind === 'focusin' && (event.target === document.body || tlRoot.contains(event.target) ||
+        event.target?.matches?.('.view-tab[data-view="text"]'))) return;
+    pendingTextFocus = null;
+}, true);
 function setDetailExpanded(on) {
     detailExpanded = on && elDetail.classList.contains('show');
     tlRoot.classList.toggle('tl-detail-expanded', detailExpanded);
@@ -698,16 +716,7 @@ elCallActions.addEventListener('click', event => {
         focusTimelineControl();
     } else if (action.dataset.callAction === 'text') {
         gotoText(sLine[index]);
-        if (window.fgCurrentView() === 'text') {
-            const focusTextTab = () => {
-                const active = document.activeElement;
-                if (window.fgCurrentView() === 'text' && (active === document.body || tlRoot.contains(active)))
-                    document.querySelector('.view-tab[data-view="text"]')?.focus({ preventScroll: true });
-            };
-            if (document.fullscreenElement === tlRoot)
-                document.addEventListener('fullscreenchange', focusTextTab, { once: true });
-            focusTextTab();
-        } else focusTimelineControl();
+        if (window.fgCurrentView() !== 'text') focusTimelineControl();
     }
 });
 function openDetail(html) {
@@ -871,6 +880,7 @@ async function toggleFullscreen() {
         if (!tlRoot.classList.contains('tl-fullscreen') || window.fgCurrentView() !== 'timeline') {
             leaveFullscreen(false);
         }
+        restoreTextFocus();
     }
 }
 document.addEventListener('fullscreenchange', () => {
@@ -882,6 +892,7 @@ document.addEventListener('fullscreenchange', () => {
         nativeFullscreen = false;
         setMax(false, true);
     }
+    restoreTextFocus();
 });
 elDetail.addEventListener('click', ev => {
     const actions = ev.target.closest('[data-call-actions]');
@@ -1087,7 +1098,7 @@ function showRangeSummary() {
 function gotoText(n) {
     if (D.no_text) { toast('Report generated with --no-text-view: no text view (trace line ' + n + ')'); return; }
     window.fgSwitchView('text');
-    return fgRequestTextLine(n, (el, request) => {
+    const result = fgRequestTextLine(n, (el, request) => {
         if (typeof _setFolded === 'function' && typeof foldedBlocks === 'object') {
             const model = fgDomTextModels.get(document.getElementById('content'));
             const record = model ? fgTextModel.locate(model, n)?.record : el;
@@ -1105,6 +1116,9 @@ function gotoText(n) {
         }, 30);
     }, { missing: () => toast('Line ' + n + ' not found'),
         error: error => toast('Unable to open trace line ' + n + ': ' + error.message) });
+    pendingTextFocus = fgTextLineRequest;
+    restoreTextFocus();
+    return result;
 }
 function revealLine(n) {
     let i = sliceForLine(n);

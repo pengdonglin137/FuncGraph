@@ -838,6 +838,13 @@ When the panel is shorter than 140px, such as phone landscape or a manually redu
 
 For a larger canvas, select **Full screen** (`M`). It hides page chrome and requests browser full screen; **Exit full screen**, `M`, or `Escape` restores the page. Unsupported or denied native full screen falls back to filling the page viewport, with a brief status message. Browser-initiated exits update the button as well. Switching to Text exits full screen; reopening Timeline does not enter it automatically. Zoom, call selection, filters, model identity and the saved detail split do not change. The detail-expansion control is independent: it borrows the chart area rather than entering full screen. **Notes N** toggles capture notes and remembers that preference. Regenerate existing reports to get these controls.
 
+Timeline **Open in Text**, **Enter**, and recorded trace-line links move focus
+to the visible **Text** tab. This also handles a native full-screen request
+finishing after the jump; later completion does not override a newer navigation
+or input/focus choice. Native focus restoration may follow the full-screen exit
+event rather than the first frame where `fullscreenElement` is null. See
+[Text handoff details](detail-layout.md#text-handoff-and-full-screen-focus--文本跳转与全屏焦点).
+
 ### 6.6 Search and filter
 
 - **Search box** (`/`): a case-insensitive function-name regex over real traced calls, not arguments, call sites or synthetic inline frames. Non-matching slices are dimmed.
