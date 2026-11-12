@@ -680,7 +680,8 @@ function setToolbarOptions(on, restoreFocus = false) {
     if (open && compactToolbar.matches && !elNotes.classList.contains('hide')) setNotes(false);
     elOptions.classList.toggle('open', open);
     elMore.setAttribute('aria-expanded', String(open));
-    if (open) elOptions.querySelector('button:not([disabled]), input:not([disabled])')?.focus({ preventScroll: true });
+    if (open) Array.from(elOptions.querySelectorAll('button:not([disabled]), input:not([disabled])'))
+        .find(control => control.getClientRects().length)?.focus({ preventScroll: true });
     if (restoreFocus) elMore.focus({ preventScroll: true });
 }
 function syncToolbar() {

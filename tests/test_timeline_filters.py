@@ -239,3 +239,7 @@ class TimelineFilterTest(unittest.TestCase):
         self.assertFalse(self.page.locator('.tl-filterbar').is_visible())
         self.assertTrue(self.page.locator('.tl-search').is_visible())
         self.assertFalse(self.page.locator('.tl-more-filter').is_visible())
+        self.assertTrue(self.page.evaluate('''() => {
+            const active = document.activeElement;
+            return document.querySelector('.tl-options').contains(active) && active.getClientRects().length > 0;
+        }'''))

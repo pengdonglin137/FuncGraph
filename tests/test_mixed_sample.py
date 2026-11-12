@@ -115,9 +115,17 @@ class MixedSampleTest(unittest.TestCase):
             self.assertTrue(data['uftrace']['kernel_types'])
             self.assertNotIn('kernel_arg_names', rebuilt_data['uftrace'])
             self.assertNotIn('kernel_types', rebuilt_data['uftrace'])
-            self.assertEqual({key: value for key, value in data['uftrace'].items()
-                              if key not in ('kernel_arg_names', 'kernel_types')},
-                             rebuilt_data['uftrace'])
+            expected_uftrace = {key: value for key, value in data['uftrace'].items()
+                               if key not in ('kernel_arg_names', 'kernel_types')}
+            expected_details = {}
+            for line, detail in data['uftrace']['user_details'].items():
+                expected_detail = dict(detail)
+                values = detail.get('args', '').split(', ')
+                if 'args' in detail and not detail.get('arg_names') and all(uftrace.SCALAR.fullmatch(value) for value in values):
+                    expected_detail['args'] = ', '.join(f'slot{position + 1}={value}' for position, value in enumerate(values))
+                expected_details[line] = expected_detail
+            expected_uftrace['user_details'] = expected_details
+            self.assertEqual(expected_uftrace, rebuilt_data['uftrace'])
             for key in cols:
                 if key == 'flags':
                     self.assertEqual([flags & ~timeline.F_NULL_RET for flags in cols[key]], rebuilt_data['cols'][key])
