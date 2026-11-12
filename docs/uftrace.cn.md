@@ -111,7 +111,7 @@ ARM64 请替换为 `linux_aarch64`。`fguftrace record ...` 和 `fguftrace dump 
 ```bash
 cc -fpatchable-function-entry=2 -g -O0 -fno-omit-frame-pointer \
     -o demo_mixed samples/demo_mixed.c
-fguftrace record -P . --no-sched --srcline -T '.@callsite' -d user.data \
+fguftrace record -P . --auto-args --no-sched --srcline -T '.@callsite' -d user.data \
     ./demo_mixed demo-input.txt demo-output.txt
 ```
 
@@ -160,11 +160,15 @@ rg -c '"name"\s*:\s*"sched:sched_(switch|waking|wakeup)"' capture.jsonl
 
 ```bash
 funcgraph --uftrace CAPTURE \
-    --timeline --enable-fold --filter --user-src samples --output mixed.html
-fgreport -P --uftrace CAPTURE -- --user-src samples
+    --timeline --enable-fold --filter --user-src "$PWD" --output mixed.html
+fgreport -P --uftrace CAPTURE -- --user-src "$PWD"
 # 或读取已经导出的文件，不需要 uftrace 可执行文件：
 funcgraph capture.jsonl --timeline --enable-fold --filter --output mixed.html
 ```
+
+这里的用户源码根适用于从仓库根目录编译、导出路径为 `samples/demo_mixed.c` 的新记录。
+已有公开样例的路径是 `demo_mixed.c`，仍使用 `--user-src samples`；不要混用两者。
+先核对 JSONL 中的源码路径，再选根目录，详见[完整采集案例](capture.cn.md)。
 
 目录输入调用按上述顺序选出的 uftrace，执行 `dump --fgraph --srcline`。
 开发构建可按需增加 `--uftrace-bin build/uftrace-x86_64/bin/uftrace`。

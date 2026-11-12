@@ -97,3 +97,49 @@ tests each: the native package passes all 14, while Python-only wheel/sdist
 each skip only the native-wheel-specific case. The native installed smoke
 records through both `fguftrace` and the simplified `fgcapture --user` without
 a recorder-path override and verifies captured names, values and call sites.
+
+## Documented demo and pigz cases (November 12, 2026)
+
+The follow-up documentation/example acceptance is separate from the full-suite
+run above. The updated pigz script routes recording through the unified user
+wrapper, preserving its explicit two-argument / return specification for
+`deflate` while enabling automatic names and caller sites for other functions.
+It builds pinned pigz and zlib in a path containing spaces, verifies static zlib
+linkage, round-trips the CSV and generates offline HTML.
+
+| Case | Observed calls | Evidence |
+| --- | ---: | --- |
+| Documented file / UDP user demo | 27 user | Exact documented compiler command, five named dispatch arguments, two distinct receive caller lines and byte-identical copied input |
+| Updated pigz user script | 1,108 user | Two named deflate values, return 1, bounded single_compress caller and embedded user source |
+| QEMU depth-4 mixed pigz | 1,108 user + 2,693 kernel | Shared mono clock, actual exec/exit, 36 matched boundaries and restored tracefs |
+
+The independently decoded mixed kernel stream contains 5,409 records: 2,693
+entries, 2,691 exits and 25 events (8 switch, 11 waking, 4 wakeup, 1 exec, 1 exit).
+There are no explicit losses or nonzero overruns, but the two unmatched kernel
+entries remain incomplete. All 81 tracefs settings read back unchanged. The
+diagnostic executable was built on the x86_64 host and copied to the compatible
+QEMU guest; kernel source/image identity is the same verified revision above.
+No addresses, arguments, source positions or timestamps are replaced for display.
+
+An actual recipe failure exposed a documentation pitfall: uftrace saved
+`samples/demo_mixed.c`, even with an absolute compiler input. `--user-src samples`
+then looked under `samples/samples/` and produced no excerpt. Fresh capture
+examples now use the repository root, `--user-src "$PWD"`; rebuilding the older
+published sample, which stores `demo_mixed.c`, still uses `--user-src samples`.
+The new native regression executes the documented compiler command inside a
+path containing spaces, checks real source bodies, and compares complete call
+columns, strings, uftrace details and source positions for directory vs JSONL
+imports. Syntax and wrapper-option checks do not execute privileged examples.
+
+The focused capture/native/sample regression run passes **116 tests**. Chromium
+checks all three offline reports for names, values, returns, symbol offsets and
+embedded source without network requests or JavaScript errors. The mixed report
+also exposes matching kernel BTF and commit-pinned source links. Both 390px touch
+themes are checked for document overflow. The source distribution contains the
+updated guides, case script, root capture launcher and this validation record.
+
+Retained local artifacts: `build/captures/20261112-pigz/`; the original build
+path `/tmp/fg-doc-examples.K8tIUg5U/pigz case/` is kept because recorded absolute
+paths are not automatically relocated. HTML embeds the inspected snippets and
+can be opened independently. Large binaries are Git-ignored; this is not a new
+Release or an update to the public Pages samples.

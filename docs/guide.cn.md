@@ -27,7 +27,9 @@
 
 ## 1. 概述
 
-FuncGraph 读取内核 `function_graph` tracer 的文本输出，生成一个可以离线打开的 HTML 报告。报告包含以下标签页：
+FuncGraph 读取内核 `function_graph` 文本、trace-cmd 容器和带补丁 uftrace 的记录目录 / JSONL，
+支持仅用户态、仅内核态及混合调用。默认生成可离线打开的单文件 HTML；大报告可选择
+sidecar 目录并通过 `fgview` 打开。报告包含以下标签页：
 
 | 标签页 | 内容 | 需要 |
 |---|---|---|
@@ -50,7 +52,12 @@ python3 funcgraph.py --timeline --enable-fold --filter --fast \
 
 ## 2. 安装
 
-FuncGraph 不需要安装，直接运行仓库里的 `funcgraph.py` 即可。
+只解析已有记录时可以直接运行仓库里的 `funcgraph.py`。需要采集用户态 / 混合记录时，
+推荐安装 Release 中匹配采集机架构的原生 wheel：`linux_x86_64` 或 `linux_aarch64`。
+它包含带补丁的 uftrace 和五种 libmcount，`fgcapture --user/--mixed` 自动使用，
+不必反复传路径；通用 `py3-none-any` wheel / 源码包不含这些原生程序。
+平台包仍有 glibc 和系统共享库要求，安装命令与选择表见[统一采集指南](capture.cn.md)。
+已导出的 JSONL 不依赖 uftrace；以下表格主要说明报告生成的依赖。
 
 | 依赖 | 用途 | 是否必需 |
 |---|---|---|
@@ -73,9 +80,24 @@ export LLVM=1                               # 或使用 llvm-addr2line
 
 ## 3. 采集 trace
 
-### 3.1 用 fgcapture.sh 采集（推荐）
+### 3.1 用 fgcapture 采集（推荐）
+
+先按观察目标选择模式；`--user` / `--mixed` 的目标程序需要插桩及调试信息：
+
+| 模式 | 入口 | 输出 / 权限 |
+| --- | --- | --- |
+| 内核态（默认） | `fgcapture --kernel -o kernel.txt -- CMD` | 文本文件；root、tracefs |
+| 用户态 | `fgcapture --user -o user.data -- ./app` | uftrace 目录；无需 root / tracefs |
+| 同次运行的用户态 + 内核态 | `fgcapture --mixed -o mixed.data -- ./app` | uftrace 目录及恢复证据；root、空闲专用 tracefs |
+
+用户 / 混合模式默认自动记录参数、返回值、调用点和源码元数据；混合模式还记录
+可用的调度及 exec / exit 事件。默认范围为架构 syscall 根、8 层内核深度，不是全内核。
+从编译、采集到生成 HTML 的可复现命令见[三种模式完整案例](capture.cn.md)，业务依赖库
+的编译与跟踪见 [pigz + zlib](pigz.cn.md)。原始 `fguftrace record` 保留为专家接口。
 
 `fgcapture.sh` 在目标机上以 root 运行。它会按场景设置 tracefs、采集、检查是否丢事件，最后恢复所有被它改过的设置。
+下列旧入口及选项表用于**纯内核模式**，仍可原样使用；不要把 `-d/-p/--keep` 等
+纯内核选项套用到简化的用户 / 混合封装。
 
 ```bash
 fgcapture.sh -d 0.5 -o /tmp/all.txt                  # 全系统采集 0.5 秒
@@ -93,7 +115,7 @@ fgcapture.sh -n __schedule -d 1                      # 不跟踪调度器内部�
 | `-g FUNC[,..]` | 只跟踪这些函数的调用树（`set_graph_function`） |
 | `-n FUNC[,..]` | 不跟踪这些函数的调用树（`set_graph_notrace`） |
 | `-b KB` | 每个 CPU 的环形缓冲区大小，默认 16384 KB |
-| `--sched` | 同时记录 `sched_switch`、`sched_waking`、`sched_wakeup` 事件，用于唤醒箭头和等待链 |
+| `--sched` | 同时记录可用的 switch / waking / wakeup 及 exec / exit 事件，用于等待链和生命周期 |
 | `--calibrate` | 先用相同的选项测量跟踪开销，结果写进输出文件的第一行 |
 | `--args` | 记录函数参数（见 3.3 节） |
 | `--no-args` | 禁用参数并跳过自动能力探测 |
@@ -104,7 +126,9 @@ fgcapture.sh -n __schedule -d 1                      # 不跟踪调度器内部�
 
 采集结束后脚本会检查有没有丢事件。如果出现 `WARNING: events were lost`，说明环形缓冲区写满被覆盖了，可以加大 `-b`、缩短 `-d`，或者用 `-p`/`-g` 缩小跟踪范围。
 
-> 脚本通过 `trap` 在退出时恢复设置，进程被 `kill -9` 杀掉时来不及恢复。这时可以手动执行：`echo nop > /sys/kernel/tracing/current_tracer`。
+> 脚本通过 `trap` 在退出时恢复设置；`kill -9`、断电或内核崩溃可能来不及恢复。
+> 不要把 `echo nop` 当作完整恢复：时钟、过滤、事件、CPU mask 和 buffer 等也可能改变。
+> 先确认会话归属，再按保存的设置人工核对；混合封装另有 `.fgcapture/` 读回证据。
 
 ### 3.2 手动采集
 

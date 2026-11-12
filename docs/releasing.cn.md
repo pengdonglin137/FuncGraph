@@ -225,13 +225,25 @@ python3 -m venv "$download_dir/venv"
 安装方式是下载 Release 附件后通过本地路径执行 `pip install`，如上述命令；
 不是直接从 PyPI 执行 `pip install funcgraph`。
 基础包没有 Python 运行时依赖；`[fast]` 安装 pyelftools，`[highlight]` 安装 Pygments，
-`[all]` 安装两者。包提供 `funcgraph`、`fgreport`、`fguftrace`、`fastfaddr2line` 和 `fgcapture.sh`。
+`[all]` 安装两者。包提供 `funcgraph`、`fgreport`、`fgview`、`fgcapture`、`fguftrace`、
+`fastfaddr2line` 和 `fgcapture.sh`。
 平台 wheel 内含带补丁的 uftrace 和采集库，但仍需兼容的 glibc 和系统共享库；Ubuntu 上为
 `libtraceevent1`、`libelf1`、`libdw1`、`liblzma5`、`libstdc++6`。Python-only 包会查找
 `PATH` 中带补丁的 uftrace，也可通过 `--uftrace-bin PATH` 显式覆盖。读取 JSONL 不需要采集程序。
-快速地址解析仍需相应架构的系统 `addr2line`；抓取脚本需 Linux、Bash、root 和 tracefs。
+快速地址解析仍需相应架构的系统 `addr2line`；纯内核脚本需 Linux、Bash、root 和 tracefs。
+`fgcapture --user` 不需要 root / tracefs，混合模式需要 root 和空闲的专用 tracefs。
 源码运行方式 `python3 funcgraph.py`、`./fgreport` 保持可用。
 两个发布包都包含解析器和 CSS/JavaScript；仓库资源在 `assets/`，wheel 内在 `fglib/_assets/`。
+
+| Release 附件 | 内置 uftrace | 推荐用途 |
+| --- | --- | --- |
+| `*-linux_x86_64.whl` | 有，可执行文件及五种 libmcount | x86_64 Linux 用户态 / 混合采集 |
+| `*-linux_aarch64.whl` | 有，可执行文件及五种 libmcount | ARM64 Linux 用户态 / 混合采集 |
+| `*-py3-none-any.whl`、Python 源码包 | 无 | 已导出记录的离线报告，或另行提供带补丁 uftrace |
+| `funcgraph-uftrace-*-source.tar.gz` | 对应源码，不是可执行安装包 | 审计 / 重建原生组件 |
+
+安装后执行 `fguftrace --version` 核对内置程序；三种模式的编译、采集、生成报告及
+产物保留方式见[统一采集案例](capture.cn.md)，实际应用和依赖库见 [pigz + zlib](pigz.cn.md)。
 
 ## 6. 常见问题与处理
 

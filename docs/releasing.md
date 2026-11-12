@@ -234,16 +234,28 @@ Download the wheel or source distribution and install it by local path, as in th
 verification commands above; `pip install funcgraph` is not part of this workflow.
 The base package has no Python runtime dependencies. Extras `fast`, `highlight`,
 and `all` install pyelftools, Pygments, or both. Installed commands are `funcgraph`,
-`fgreport`, `fguftrace`, `fastfaddr2line`, and `fgcapture.sh`. Native wheels include
+`fgreport`, `fgview`, `fgcapture`, `fguftrace`, `fastfaddr2line`, and `fgcapture.sh`. Native wheels include
 the patched recorder and recording libraries; on Ubuntu, the recorder needs
 `libtraceevent1`, `libelf1`, `libdw1`, `liblzma5` and `libstdc++6` in addition to
 compatible glibc. Python-only packages fall back to patched uftrace on `PATH`,
 or `--uftrace-bin PATH`. Saved JSONL reports need no native recorder.
 Fast resolution still requires
-the appropriate system `addr2line`; capture requires Bash, root, and tracefs on
-Linux. Source-based commands (`python3 funcgraph.py`, `./fgreport`) remain supported.
+the appropriate system `addr2line`. Kernel-only capture needs Linux, Bash, root
+and tracefs; `fgcapture --user` needs no root / tracefs, while mixed mode requires
+root and idle dedicated tracefs. Source-based commands (`python3 funcgraph.py`, `./fgreport`) remain supported.
 Both distributions include the resolver and CSS/JavaScript resources; source
 assets live in `assets/`, while wheels install them under `fglib/_assets/`.
+
+| Release attachment | Bundled uftrace | Intended use |
+| --- | --- | --- |
+| `*-linux_x86_64.whl` | Executable and five libmcount libraries | x86_64 Linux user/mixed recording |
+| `*-linux_aarch64.whl` | Executable and five libmcount libraries | ARM64 Linux user/mixed recording |
+| `*-py3-none-any.whl`, Python sdist | None | Offline exported-record reports, or separately supplied patched uftrace |
+| `funcgraph-uftrace-*-source.tar.gz` | Corresponding source, not an executable installation | Audit / rebuild native components |
+
+Check `fguftrace --version` after installation. See the [unified capture cases](capture.md)
+for building, recording, reporting and preserving artifacts, or [pigz + zlib](pigz.md)
+for an application and instrumented dependency.
 
 ## Troubleshooting
 

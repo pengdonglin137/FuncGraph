@@ -17,6 +17,8 @@ FuncGraph converts `function_graph` ftrace output into an interactive, filterabl
 > **Try it online**: [home page](https://pengdonglin137.github.io/FuncGraph/) · [mixed user + kernel](https://pengdonglin137.github.io/FuncGraph/sample_mixed.html) · [kernel-only](https://pengdonglin137.github.io/FuncGraph/sample.html) (opens in the browser, no install).
 >
 > **User guide** (detailed: capture options, every field and color in the views, panels, compare, export, FAQ): [English](docs/guide.en.md) · [中文](docs/guide.cn.md). Design: [docs/design.md](docs/design.md).
+>
+> **Capture to report**: [complete cases for all three modes](docs/capture.md) · [pigz + zlib business case](docs/pigz.md), with build flags, original recordings, separate source configuration, result checks and artifact inventories.
 
 ## Cheat Sheet
 
@@ -141,8 +143,8 @@ printf 'FuncGraph demo\n' > demo-input.txt
 : > demo-output.txt
 fgcapture --user -o user.data -- ./demo_mixed demo-input.txt demo-output.txt
 funcgraph --no-config --uftrace user.data --timeline --enable-fold --filter \
-    --user-src samples --output user.html
-fgreport -P --uftrace user.data -- --user-src samples
+    --user-src "$PWD" --output user.html
+fgreport -P --uftrace user.data -- --user-src "$PWD"
 ```
 
 For **mixed user/kernel recording**, the unified wrapper configures arguments,

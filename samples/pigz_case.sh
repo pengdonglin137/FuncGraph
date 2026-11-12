@@ -13,12 +13,10 @@ tracer=$(command -v -- "${2:-fguftrace}") || {
 tracer=$(realpath -- "$tracer")
 test -x "$tracer"
 instrumentation=-pg
-record_flags=()
 case $(uname -m) in
     x86_64) ;;
     aarch64|arm64)
         instrumentation=-fpatchable-function-entry=2
-        record_flags=(-P .)
         ;;
     *) echo 'This example requires x86_64 or ARM64 Linux.' >&2; exit 1 ;;
 esac
@@ -46,8 +44,9 @@ printf 'order_id,customer_id,total\n' > orders.csv
 for ((order=1; order<=128; order++)); do
     printf '%04d,C%02d,%d\n' "$order" "$((order % 12))" "$((order * 7))"
 done >> orders.csv
-"$tracer" record "${record_flags[@]}" --no-sched --srcline -A 'deflate@arg1/x64,arg2/i32' -R 'deflate@retval/i32' \
-    -d capture ./pigz/pigz -p 1 -6 -c orders.csv > orders.csv.gz
+python3 "$root/fgcapture" --user --uftrace-bin "$tracer" \
+    -A 'deflate@arg1/x64,arg2/i32' -R 'deflate@retval/i32' \
+    -o capture -- ./pigz/pigz -p 1 -6 -c orders.csv > orders.csv.gz
 ./pigz/pigz -dc orders.csv.gz | cmp - orders.csv
 "$tracer" dump --fgraph --srcline -d capture > capture.jsonl
 

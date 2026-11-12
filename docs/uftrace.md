@@ -136,7 +136,7 @@ shared-library paths.
 ```bash
 cc -fpatchable-function-entry=2 -g -O0 -fno-omit-frame-pointer \
     -o demo_mixed samples/demo_mixed.c
-fguftrace record -P . --no-sched --srcline -T '.@callsite' -d user.data \
+fguftrace record -P . --auto-args --no-sched --srcline -T '.@callsite' -d user.data \
     ./demo_mixed demo-input.txt demo-output.txt
 ```
 
@@ -194,11 +194,16 @@ replacement for the function's entry timestamp. See [CPU coverage](cpu-coverage.
 
 ```bash
 funcgraph --uftrace CAPTURE \
-    --timeline --enable-fold --filter --user-src samples --output mixed.html
-fgreport -P --uftrace CAPTURE -- --user-src samples
+    --timeline --enable-fold --filter --user-src "$PWD" --output mixed.html
+fgreport -P --uftrace CAPTURE -- --user-src "$PWD"
 # Or import a saved export, with no uftrace executable needed:
 funcgraph capture.jsonl --timeline --enable-fold --filter --output mixed.html
 ```
+
+The user root above matches fresh checkout-built recordings whose exported path
+is `samples/demo_mixed.c`. The published sample instead stores `demo_mixed.c`
+and still needs `--user-src samples`. Check exported paths before choosing the
+root; see the [complete capture cases](capture.md).
 
 The directory reader runs the selected patched executable with
 `dump --fgraph --srcline`. For a development build, optionally add

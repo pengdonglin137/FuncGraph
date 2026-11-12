@@ -16,6 +16,8 @@ FuncGraph 支持可视化仅用户态、仅内核态和混合 uftrace 记录。�
 > **在线试用**：[首页](https://pengdonglin137.github.io/FuncGraph/) · [用户态 + 内核态](https://pengdonglin137.github.io/FuncGraph/sample_mixed.html) · [纯内核态](https://pengdonglin137.github.io/FuncGraph/sample.html)（在浏览器中直接打开，无需安装）。
 >
 > **详细使用指南**：[中文](docs/guide.cn.md) · [English](docs/guide.en.md)（采集选项、各视图字段与配色的含义、分析面板、对比、导出、常见问题）。设计文档：[docs/design.md](docs/design.md)。
+>
+> **从采集到报告**：[三种模式的完整案例](docs/capture.cn.md) · [pigz + zlib 业务案例](docs/pigz.cn.md)（含编译选项、原始记录、源码配置、结果核对和产物说明）。
 
 ## FuncGraph 是什么？
 
@@ -140,8 +142,8 @@ printf 'FuncGraph demo\n' > demo-input.txt
 : > demo-output.txt
 fgcapture --user -o user.data -- ./demo_mixed demo-input.txt demo-output.txt
 funcgraph --no-config --uftrace user.data --timeline --enable-fold --filter \
-    --user-src samples --output user.html
-fgreport -P --uftrace user.data -- --user-src samples
+    --user-src "$PWD" --output user.html
+fgreport -P --uftrace user.data -- --user-src "$PWD"
 ```
 
 **混合采集**现在只需一条命令，自动配置参数、调用点、统一时钟、调度和 exec/exit：
