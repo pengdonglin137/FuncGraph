@@ -97,7 +97,9 @@ class MixedSampleTest(unittest.TestCase):
                                          'exchange_loopback', 'run_round', 'main'])
         detail = data['uftrace']['user_details'][str(cols['line'][names.index('dispatch_datagram')])]
         self.assertEqual(detail['address'], dispatch['address'])
-        self.assertEqual(detail['args'], ', '.join(dispatch['user_args']))
+        self.assertEqual(detail['arg_names'], ['fd', 'buffer', 'length', 'peer', 'peer_size'])
+        self.assertEqual(detail['args'], ', '.join(f'{name}={value}'
+                                                 for name, value in zip(dispatch['user_arg_names'], dispatch['user_args'])))
         self.assertEqual(detail['retval'], '512')
         self.assertGreater(data['btf'], 0)
         self.assertEqual(len(data['chains']), 1)
@@ -200,7 +202,8 @@ class MixedSampleTest(unittest.TestCase):
             if record['space'] == 'user' and record['name'] in expected_counts:
                 self.assertEqual(len(record['user_args']), expected_counts[record['name']], record['name'])
                 self.assertIn('payload_hex', record)
-        self.assertEqual(sum('args' in detail for detail in data['uftrace']['user_details'].values()), 16)
+        self.assertEqual(sum('args' in detail for detail in data['uftrace']['user_details'].values()), 19)
+        self.assertEqual(sum(bool(detail.get('arg_names')) for detail in data['uftrace']['user_details'].values()), 19)
         self.assertEqual(sum('retval' in detail for detail in data['uftrace']['user_details'].values()), 19)
         sites = {(record['tid'], record['time_ns'] + 1): record for record in records
                  if record['type'] == 'event'}
@@ -214,6 +217,9 @@ class MixedSampleTest(unittest.TestCase):
                 self.assertNotIn('callsite', detail)
                 continue
             site = event['user_callsite']
+            self.assertIn('symbol', site)
+            self.assertEqual(int(site['symbol']['address'], 16) + site['symbol']['offset'], int(site['retaddr'], 16) - 1)
+            self.assertLess(site['symbol']['offset'], site['symbol']['size'])
             self.assertEqual(detail['callsite'], {key: value for key, value in site.items() if key != 'source'})
             self.assertEqual(int.from_bytes(bytes.fromhex(event['payload_hex']), 'little'), int(site['retaddr'], 16))
             position = sources['user_positions'][sources['user_callsites'][str(line)]]
@@ -228,6 +234,26 @@ class MixedSampleTest(unittest.TestCase):
             excerpt = pool[source_lines[line]]
             self.assertIn(f'demo_mixed.c:{number} · user call site (recorded return address - 1)', excerpt)
             self.assertNotIn('function entry (not call site)', excerpt)
+
+    def test_open_has_named_string_arguments_and_real_bounded_call_sites(self):
+        with TRACE.open(encoding='utf-8') as source:
+            _, records = uftrace.read_export(source)
+        data = helpers.json_script(REPORT.read_text(encoding='utf-8'), 'tlData')
+        opens = [(line, record) for line, record in enumerate(records, 3)
+                 if record['type'] == 'entry' and record['space'] == 'user' and record['name'] == 'open']
+        self.assertEqual(len(opens), 2)
+        for (line, record), filename, flags, offset in zip(opens, ('input.bin', 'output.bin'), ('0', '1'), (0x73, 0x8c)):
+            detail = data['uftrace']['user_details'][str(line)]
+            self.assertEqual(record['user_arg_names'], ['pathname', 'flags'])
+            self.assertEqual(record['user_arg_name_sources'], ['prototype', 'prototype'])
+            self.assertEqual(record['user_args'], [f'"/tmp/funcgraph-btf-values.OBCDn1/{filename}"', flags])
+            self.assertEqual(detail['args'], f'pathname={record["user_args"][0]}, flags={flags}')
+            self.assertEqual(detail['arg_names'], record['user_arg_names'])
+            self.assertEqual(detail['arg_name_sources'], record['user_arg_name_sources'])
+            self.assertEqual(detail['callsite']['name'], 'main')
+            self.assertEqual(detail['callsite']['symbol'], {'address': '0x55d10752f616', 'offset': offset, 'size': 0x196})
+            index = data['cols']['line'].index(line)
+            self.assertEqual(data['strings'][data['cols']['args'][index]], record['payload_hex'])
 
     def test_pages_stage_preserves_both_examples(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -378,8 +404,10 @@ class MixedSampleBrowserTest(unittest.TestCase):
         self.assertEqual(excerpt_link.get_attribute('href'), callsite_url)
         callsite_link = page.locator('.tl-cs-at [data-callsite-position]')
         self.assertEqual(callsite_link.get_attribute('href'), callsite_url)
-        self.assertIn('do_syscall_64+0xb7/0x580', page.locator('.k:has-text("call site") + .v').inner_text())
-        self.assertIn('0xffffffff82129117', page.locator('.k:has-text("return address") + .v').inner_text())
+        self.assertIn('do_syscall_64+0xb7/0x580', page.locator('.k:text-is("caller site") + .v').inner_text())
+        self.assertEqual(page.locator('.k:has-text("return address")').count(), 0)
+        self.assertEqual(page.evaluate('line => fgData.read("tlData").uftrace.kernel_details[String(line)].retaddr', line),
+                         '0xffffffff82129117')
         page.context.route('https://github.com/torvalds/linux/**', lambda route: route.fulfill(
             status=200, content_type='text/html', body='<title>Kernel source</title>'))
         for link in (source, excerpt_link, callsite_link):
@@ -397,6 +425,30 @@ class MixedSampleBrowserTest(unittest.TestCase):
         entry.click()
         self.assertIn('do_syscall_64+0xb7/0x580', entry.inner_text())
         page.locator('.expanded-content:visible .current-line', has_text='regs->ax = x64_sys_call').wait_for(state='visible')
+        self.assertEqual(errors, [])
+        self.assertEqual(requests, [REPORT.as_uri()])
+
+    def test_offline_open_arguments_and_caller_offsets_are_readable(self):
+        page, errors, requests = self.open_page(REPORT.as_uri())
+        page.get_by_role('button', name='Timeline', exact=True).click()
+        for occurrence, filename, flags, offset in ((0, 'input.bin', '0', '73'), (1, 'output.bin', '1', '8c')):
+            page.evaluate('''occurrence => {
+                const model = fgView('timeline').probe();
+                const indices = Array.from({length: model.N}, (unused, index) => index)
+                    .filter(index => model.nameOf(index) === 'open');
+                model.select(indices[occurrence]);
+            }''', occurrence)
+            detail = page.locator('.tl-detail')
+            self.assertEqual(detail.locator('.tl-argument').all_text_contents(), [
+                f'pathname="/tmp/funcgraph-btf-values.OBCDn1/{filename}",', f'flags={flags}'])
+            self.assertIn(f'main+0x{offset}/0x196', detail.locator('.k:text-is("caller site") + .v').inner_text())
+            self.assertNotIn('offset unavailable', detail.inner_text())
+            self.assertEqual(detail.locator('.k:text-is("raw argument bytes")').count(), 0)
+            self.assertEqual(detail.locator('.k:text-is("caller return")').count(), 0)
+            raw = detail.get_by_text('Original argument bytes', exact=True)
+            self.assertFalse(raw.locator('..').evaluate('element => element.open'))
+            raw.click()
+            self.assertIn('uftrace built-in prototypes', detail.inner_text())
         self.assertEqual(errors, [])
         self.assertEqual(requests, [REPORT.as_uri()])
 

@@ -22,6 +22,23 @@ def build(value, form='leaf', database=None, separator=' '):
 
 
 class NativeReturnValueTest(unittest.TestCase):
+    def test_published_kernel_sample_keeps_pointer_and_truncated_return_tokens(self):
+        root = Path(helpers.ROOT)
+        trace = (root / 'samples/sample_io.txt').read_text()
+        model = helpers.json_script((root / 'sample.html').read_text(), 'tlData')
+        expected = {'fdget_pos': ['0xffff8881047c9c80', '0xffff888100c03080'],
+                    'make_vfsuid': ['0x3e8'],
+                    'current_time': ['0x6af31829(trunc)', '0x6af31829(trunc)']}
+        for name, values in expected.items():
+            with self.subTest(name=name):
+                indices = [index for index in range(model['n'])
+                           if model['strings'][model['cols']['name'][index]] == name]
+                self.assertEqual([model['strings'][model['cols']['ret'][index]] for index in indices], values)
+                for value in values:
+                    self.assertIn('ret=' + value, trace)
+                if name == 'fdget_pos':
+                    self.assertTrue(all(not model['cols']['flags'][index] & timeline.F_NULL_RET for index in indices))
+
     def test_literal_values_are_not_reduced_to_numeric_prefixes(self):
         for value in ['0x0', '0x12345678', '0xffffffffffffffea', '0xffffffea', '0X1234', '0XFFFFFFFFFFFFFFEA', '-22', '4294967295',
                       'true', 'false', '1764235(trunc)', '0x1234(trunc)']:

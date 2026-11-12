@@ -33,10 +33,9 @@ function detailNamedArgumentsHtml(value, names) {
     for (let position = 0; position < names.length; position++) {
         const name = names[position] === null ? 'slot' + (position + 1) : names[position];
         if (typeof name !== 'string' || !value.startsWith(name + '=', offset)) return null;
-        const end = position + 1 === names.length ? value.length : value.indexOf(', ', offset + name.length + 1);
-        if (end < 0) return null;
-        const literal = value.slice(offset + name.length + 1, end);
-        if (!/^(?:-?\d+|0x[\da-fA-F]+)$/.test(literal)) return null;
+        const match = value.slice(offset + name.length + 1).match(/^("(?:\\.|[^"\\])*"|-?\d+|0x[\da-fA-F]+)(?=, |$)/);
+        if (!match) return null;
+        const literal = match[0], end = offset + name.length + 1 + literal.length;
         const separator = end < value.length ? ',' : '';
         parts.push(detailArgumentUnit(detailToken('parameter', name) + '=' + detailValueHtml(literal) + separator));
         offset = end + (separator ? 2 : 0);
@@ -436,7 +435,8 @@ function showDetail(i) {
             (!userSite ? '<div class="tl-context-note">Call-site source unavailable; function entry is a fallback.</div>' : ''));
         else h += kv('caller site', '<span class="tl-muted">Not recorded · capture with -T &apos;.@callsite&apos;</span>');
         if (userDetail.args !== undefined) {
-            const provenance = '<div class="tl-context-note">' + (userDetail.arg_names ?
+            const provenance = '<div class="tl-context-note">' + (userDetail.arg_name_sources?.includes('prototype') ?
+                'Names from uftrace built-in prototypes matched to the saved capture specification; recorded user DWARF takes precedence. Unnamed values use slotN placeholders.' : userDetail.arg_names ?
                 'Names from recorded user DWARF; values follow the saved capture specification. Unnamed values use slotN placeholders.' :
                 'Parameter names were not recorded; slotN identifies a captured value, not a source parameter name.') + '</div>';
             h += kv('user args', detailArgumentsHtml(userDetail.args, userDetail.arg_names) +

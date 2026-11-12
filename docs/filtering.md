@@ -2,6 +2,13 @@
 
 ## Find or filter?
 
+Full screen hides the top-level User / Kernel / User → kernel legend to give
+the timeline more vertical space. It returns on exit; call-stack address-space
+labels and user/kernel boundary markers remain available in either mode.
+
+全屏时隐藏顶部 User / Kernel / User → kernel 图例，退出全屏后恢复；调用栈中的地址空间
+标记和时间轴上的用户态 / 内核态分界线不受影响。
+
 - **Find function**, in the main toolbar, highlights function-name regex matches
   and navigates between them. Enter/Shift+Enter move forward/backward and Escape
   clears the search. It only searches calls inside the active shared filter;
@@ -16,6 +23,28 @@
 
 主工具栏的 **Find function** 只高亮并定位函数名，支持正则；Enter/Shift+Enter 前后跳转，
 Escape 清除查找。它只在当前筛选结果内查找，不改变筛选条件或分析范围。
+
+Search counters keep the exact position and total, without rounding them to
+`K` or `M`. On narrow screens the numeric pair stays together; only the `calls`
+unit may wrap. Very long counters can move to the next row rather than squeeze
+the input or shrink the previous/next and full-screen touch targets.
+
+查找计数保留完整的当前位置与总数，不缩写成 `K`、`M`。窄屏保持数字组合在同一行，
+仅 `calls` 单位可以换行；极长计数允许移到下一行，避免挤压输入框或缩小跳转、全屏的
+触屏目标。
+
+The published [kernel](../sample.html) and [mixed](../sample_mixed.html) examples
+include the current filter and search controls, with refreshed overview, Text
+and mixed screenshots. They reuse the saved captures (485 and 714 calls) and
+the matching Linux `v7.4-rc2` image; this is a report rebuild, not a new capture.
+The mixed capture has also been re-exported with named string/scalar arguments
+and bounded user call sites; see [uftrace integration](uftrace.md). Missing
+parameter names still use `slotN`, and missing symbol offsets are not invented.
+
+[内核样例](../sample.html)与[混合样例](../sample_mixed.html)已同步当前筛选、查找控件及
+概览、Text、混合模式截图。重建复用已有的 485 / 714 次调用和匹配的 Linux `v7.4-rc2`
+镜像，不是重新采集。混合采集还重新导出了带名称的字符串 / 标量参数及用户调用点的符号范围，
+见 [uftrace 说明](uftrace.cn.md)；缺失的参数名仍以 `slotN` 明示，符号偏移不猜测补全。
 
 **Tools → Filter calls** 位于下拉菜单顶部，与 Text、分析共用筛选结果。未匹配调用会变暗；
 **Hide unmatched tracks** 可额外隐藏没有匹配调用的轨道，CPU 事件轨道仍保留。

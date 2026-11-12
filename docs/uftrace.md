@@ -36,8 +36,18 @@ on November 11, 2026, with `--auto-args --srcline -T '.@callsite'`. It contains 
 689 kernel calls, 25 recorded user call-site events and five linked transitions.
 The extract keeps the original call records and call-site events (including
 addresses, parameters and raw return values), but not scheduler/perf events.
-Sixteen user calls have decoded arguments and nineteen have decoded returns,
+Nineteen user calls have decoded, named arguments and nineteen have decoded returns,
 covering `main`, `run_round`, file transfer and the multi-layer UDP path.
+The original capture has been re-exported with the updated native exporter:
+`open` shows `pathname="/tmp/…/input.bin", flags=0` (and the output path with
+`flags=1`), rather than an undecoded hexadecimal payload. These two names come
+from uftrace's built-in prototype, not kernel BTF. Application parameter names
+are recovered from the original ELF with build ID
+`cd90ee161534e786e7bdd7dc67f8d400bfce81df`; its symbol offsets, source lines and
+argument/return specifications match the saved debug metadata. All 25 user
+call sites now have captured symbol bounds and display `function+offset/size`,
+including `main+0x73/0x196` for the first `open`. Original timestamps, addresses,
+payloads, decoded scalars, source positions and all 714 calls remain unchanged.
 The published report uses the matching kernel debug image: 306 unique kernel
 functions retain entry locations in the call stack, and 465 unique captured
 kernel call sites resolve to source, including 282 inline chains. Links are pinned
@@ -277,9 +287,19 @@ kernel names separately, even when their symbols have identical spelling.
 - **User arguments:** compile with debug information and record with `--auto-args`,
   or specify `-A` / `-R` explicitly. For example,
   `fguftrace record --auto-args --srcline -T '.@callsite' -d capture.data ./app`.
-  Automatic scalar values follow uftrace replay's number formatting. Unsupported
-  strings, floats, enums and aggregates retain their bytes; absent specifications
-  are not guessed. Kernel BTF never trims or names user parameters. Old captures
+  Automatic scalar values follow uftrace replay's number formatting. Saved
+  length-prefixed C/C++ strings are displayed as quoted literals; quotes,
+  backslashes and nonprintable/non-ASCII bytes are escaped. Enum arguments retain
+  their numeric values. A recorded string `"NULL"` remains a string: the native
+  payload cannot distinguish it from uftrace's null-string marker. Original
+  bytes remain expandable. Floats, aggregates and other unsupported layouts
+  retain the complete raw payload, never a partially decoded argument list.
+  For PLT calls, names from uftrace's built-in prototypes are used only when the
+  saved index, ABI location, format, width and enum identity match. The provenance
+  explicitly distinguishes these from recorded user DWARF, which takes priority;
+  mismatches remain `slotN`. Variadic arguments such as `open`'s optional mode
+  are not invented when the capture contains only pathname and flags.
+  Absent specifications are not guessed. Kernel BTF never trims or names user parameters. Old captures
   without argument payloads must be recorded again.
 - **Filtering:** with `--filter`, use `space:user` or `space:kernel` in Text
   or Timeline's shared Filter. Sidecar reports can apply this filter before

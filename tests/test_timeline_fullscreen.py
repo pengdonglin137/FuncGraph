@@ -1,9 +1,12 @@
 """Timeline full-screen lifecycle, state preservation and compact controls."""
 
 from itertools import product
+from pathlib import Path
+import threading
 import unittest
 
 import helpers
+from fglib.viewer import create_server
 
 try:
     from playwright.sync_api import sync_playwright
@@ -248,6 +251,47 @@ class TimelineFullscreenTest(unittest.TestCase):
                 self.page.keyboard.press('Escape')
                 self.page.locator('[data-act=max]').tap()
                 self.wait_mode(False)
+
+    def test_mixed_legend_hides_only_in_fullscreen_in_both_delivery_modes(self):
+        trace = str(Path(helpers.ROOT) / 'samples' / 'sample_mixed.jsonl')
+        for mode in ('single', 'sidecar'):
+            output = 'mixed.html' if mode == 'single' else 'mixed-sidecar'
+            self.kernel.run(trace, '--timeline', '--filter', '--report-mode', mode, out=output)
+            with create_server(Path(self.kernel.dir) / output) as server:
+                thread = threading.Thread(target=server.serve_forever, daemon=True)
+                thread.start()
+                try:
+                    for native, mobile, theme in product((True, False), (True, False), ('light', 'dark')):
+                        with self.subTest(mode=mode, native=native, mobile=mobile, theme=theme):
+                            self.context.close()
+                            self.context = self.browser.new_context(
+                                viewport={'width': 390 if mobile else 1400, 'height': 844},
+                                has_touch=mobile, is_mobile=mobile)
+                            self.page = self.context.new_page()
+                            self.page.on('pageerror', lambda error: self.errors.append(str(error)))
+                            if not native:
+                                self.page.add_init_script('Element.prototype.requestFullscreen = undefined;')
+                            self.page.goto(server.url)
+                            self.page.evaluate("async () => { await fgSwitchView('timeline'); }")
+                            self.page.evaluate('theme => document.documentElement.dataset.theme = theme', theme)
+                            legend = self.page.get_by_label('Address space legend')
+                            self.assertTrue(legend.is_visible())
+                            self.assertIn('User → kernel', legend.inner_text())
+                            self.page.evaluate("() => fgView('timeline').probe().select(0)")
+                            self.page.locator('[data-act=max]').click()
+                            self.wait_mode(True)
+                            self.assertEqual(self.page.evaluate('!!document.fullscreenElement'), native)
+                            self.assertFalse(legend.is_visible())
+                            self.assertEqual(legend.bounding_box(), None)
+                            self.assertGreater(self.page.locator('.tl-canvas').bounding_box()['height'], 0)
+                            self.assertEqual(self.page.evaluate("fgView('timeline').probe().sel()"), 0)
+                            self.page.locator('[data-act=max]').click()
+                            self.wait_mode(False)
+                            self.assertTrue(legend.is_visible())
+                            self.assertEqual(self.page.evaluate("fgView('timeline').probe().sel()"), 0)
+                finally:
+                    server.shutdown()
+                    thread.join(timeout=5)
 
 
 if __name__ == '__main__':

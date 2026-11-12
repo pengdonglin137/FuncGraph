@@ -530,7 +530,8 @@ function updateSearchLabel() {
     else if (!searchQuery) elCount.textContent = '';
     else {
         const position = searchIndex(sel);
-        elCount.textContent = (position < count && searchVisibleMatches[position] === sel ? (position + 1) + ' / ' : '') + count + ' calls';
+        const value = (position < count && searchVisibleMatches[position] === sel ? (position + 1) + ' / ' : '') + count;
+        elCount.innerHTML = '<span class="tl-count-value">' + value + '</span> calls';
         if (!count) elCount.title = textHits && searchMatches.length ?
             'The shared filter excludes all matching calls. Adjust or clear it in Tools → Filter calls.' :
             'No recorded function names match this expression. Try a different case-insensitive regular expression.';

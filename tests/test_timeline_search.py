@@ -348,5 +348,78 @@ class SearchPreparationBrowserTest(unittest.TestCase):
                         self.assertLessEqual(facts['overflow'], 1)
                         self.assertGreater(facts['inputWidth'], 100)
                         self.assertGreaterEqual(facts['inputHeight'], 44)
+                    self.page.wait_for_timeout(400)
                     self.page.screenshot(path=str(screenshots / f'search-{theme}-{width}x{height}.png'))
                     self.context.close()
+
+    def test_full_search_position_stays_together_without_growing_phone_toolbar(self):
+        self.context.close()
+        for mode in ('single', 'sidecar'):
+            for theme in ('light', 'dark'):
+                with self.subTest(mode=mode, theme=theme):
+                    self.context = self.browser.new_context(viewport={'width': 390, 'height': 844}, has_touch=True)
+                    self.page = self.context.new_page()
+                    self.page.on('pageerror', lambda error: self.errors.append(str(error)))
+                    self.open_report(mode)
+                    self.page.evaluate('theme => document.documentElement.setAttribute("data-theme", theme)', theme)
+                    self.start('.*', previous=True)
+                    self.ready()
+                    self.assertEqual(self.page.locator('.tl-count').inner_text(), f'{self.count} / {self.count} calls')
+                    facts = self.page.evaluate('''() => {
+                        const value = document.querySelector('.tl-count-value');
+                        const status = value.parentElement;
+                        const range = document.createRange();
+                        range.selectNodeContents(value);
+                        return {lines:range.getClientRects().length,
+                            numberStyle:getComputedStyle(value).fontVariantNumeric,
+                            statusHeight:status.getBoundingClientRect().height,
+                            lineHeight:parseFloat(getComputedStyle(status).lineHeight),
+                            inputWidth:document.querySelector('.tl-search').getBoundingClientRect().width,
+                            toolbarHeight:document.querySelector('.tl-primary').getBoundingClientRect().height};
+                    }''')
+                    self.assertEqual(facts['lines'], 1)
+                    self.assertEqual(facts['numberStyle'], 'tabular-nums')
+                    self.assertLessEqual(facts['statusHeight'], 2 * facts['lineHeight'] + 1)
+                    self.assertGreaterEqual(facts['inputWidth'], 100)
+                    self.assertLessEqual(facts['toolbarHeight'], 92)
+                    self.assertEqual(self.selected(), self.count - 1)
+                    self.page.locator('.tl-search').press('Escape')
+                    self.assertEqual(self.page.locator('.tl-count-value').count(), 0)
+                    self.context.close()
+
+    def test_long_counter_layout_keeps_exact_digits_and_touch_targets_without_overflow(self):
+        self.context.close()
+        self.context = self.browser.new_context(viewport={'width': 390, 'height': 844}, has_touch=True)
+        self.page = self.context.new_page()
+        self.page.on('pageerror', lambda error: self.errors.append(str(error)))
+        self.open_report()
+        self.start('.*')
+        self.ready()
+        for width, height in ((320, 844), (360, 844), (390, 844), (844, 390), (1440, 900)):
+            self.page.set_viewport_size({'width': width, 'height': height})
+            self.page.evaluate('() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))')
+            for text in ('1 / 20000', '20000 / 20000', '1000000 / 1000000', '4294967295 / 4294967295'):
+                with self.subTest(viewport=(width, height), text=text):
+                    self.page.locator('.tl-count-value').evaluate('(element, text) => element.textContent = text', text)
+                    facts = self.page.evaluate('''() => {
+                        const toolbar = document.querySelector('.tl-toolbar');
+                        const input = document.querySelector('.tl-search').getBoundingClientRect();
+                        const controls = [...toolbar.querySelectorAll('.tl-search-nav button, .tl-fullscreen-button')];
+                        return {overflow:toolbar.scrollWidth - toolbar.clientWidth,
+                            inputWidth:input.width,
+                            compact:document.querySelector('#timelineView').classList.contains('tl-compact'),
+                            controls:controls.map(element => {
+                                const box = element.getBoundingClientRect();
+                                return {left:box.left, right:box.right, width:box.width, height:box.height};
+                            })};
+                    }''')
+                    self.assertEqual(self.page.locator('.tl-count').text_content(), text + ' calls')
+                    self.assertLessEqual(facts['overflow'], 1)
+                    self.assertGreaterEqual(facts['inputWidth'], 100)
+                    for box in facts['controls']:
+                        self.assertGreaterEqual(box['left'], 0)
+                        self.assertLessEqual(box['right'], width)
+                        if facts['compact']:
+                            self.assertGreaterEqual(box['width'], 44)
+                            self.assertGreaterEqual(box['height'], 44)
+        self.assertEqual(self.selected(), 0)

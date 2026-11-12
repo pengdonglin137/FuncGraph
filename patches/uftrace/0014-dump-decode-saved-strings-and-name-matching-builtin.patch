@@ -1,0 +1,702 @@
+From 770394bd77e763f93eb5d17b8c5298f8f32b74ce Mon Sep 17 00:00:00 2001
+From: pengdonglin <pengdonglin@xiaomi.com>
+Date: Thu, 12 Nov 2026 10:34:41 +0800
+Subject: [PATCH] dump: decode saved strings and name matching builtin
+ arguments
+
+Decode length-prefixed C and C++ string arguments using the recorded target endian and four-byte alignment. Preserve empty strings, quoted paths, control and arbitrary bytes as escaped literals, retain complete original payloads, and fail closed for unsupported adjacent layouts. Export enum values numerically without dropping neighboring scalar arguments.
+
+Generate a sorted parameter-name table from the pinned upstream prototypes. Use it only for PLT calls whose captured index, ABI location, format, width and enum identity match; preserve recorded DWARF priority and explicit per-argument dwarf/prototype provenance. Do not invent optional variadic arguments or borrow libc names for same-named local functions.
+
+Validated by 130 Python native/import/browser regressions including string padding, quotes, non-ASCII bytes, std::string, raw-byte fallback, manual layout mismatches, offline metadata and escaped HTML; upstream unit tests: 115 passed, one skipped.
+---
+ cmds/dump.c          |  75 +++++++-
+ misc/gen-autoargs.py |  12 ++
+ utils/argspec.h      |   1 +
+ utils/auto-args.c    |  31 +++
+ utils/auto-args.h    | 448 +++++++++++++++++++++++++++++++++++++++++++
+ 5 files changed, 565 insertions(+), 2 deletions(-)
+
+diff --git a/cmds/dump.c b/cmds/dump.c
+index 063fb068acdb..7806575fb289 100644
+--- a/cmds/dump.c
++++ b/cmds/dump.c
+@@ -1682,6 +1682,31 @@ static void dump_fgraph_header(struct uftrace_dump_ops *ops, struct uftrace_data
+ 	pr_out("}\n");
+ }
+ 
++static void fgraph_user_string(const unsigned char *text, size_t length)
++{
++	char *literal = xmalloc(4 * length + 3), *output = literal;
++	size_t position;
++
++	*output++ = '"';
++	for (position = 0; position < length; position++) {
++		unsigned char value = text[position];
++		if (value == '"' || value == '\\') {
++			*output++ = '\\';
++			*output++ = value;
++		}
++		else if (value < 32 || value >= 127) {
++			snprintf(output, 5, "\\x%02x", value);
++			output += 4;
++		}
++		else
++			*output++ = value;
++	}
++	*output++ = '"';
++	*output = '\0';
++	fgraph_string(literal);
++	free(literal);
++}
++
+ static void fgraph_user_values(struct uftrace_task_reader *task, bool retval)
+ {
+ 	const struct uftrace_fstack_args *args = &task->args;
+@@ -1689,11 +1714,17 @@ static void fgraph_user_values(struct uftrace_task_reader *task, bool retval)
+ 	const int endian = task->h->hdr.endian;
+ 	struct uftrace_arg_spec *spec;
+ 	char values[32][32];
++	const unsigned char *texts[32] = {};
++	size_t lengths[32] = {};
++	const char *sources[32] = {};
++	struct uftrace_symbol *function = task_find_sym_addr(&task->h->sessions, task,
++							task->rstack->time, task->rstack->addr);
+ 	uint64_t symbol_address = 0;
+ 	struct uftrace_dbg_info *parameters = retval ? NULL :
+ 		task_find_parameter_info(&task->h->sessions, task, &symbol_address);
+ 	const char *names[32];
+ 	bool has_names = false;
++	bool has_prototypes = false;
+ 	size_t offset = 0;
+ 	unsigned count = 0, index;
+ 
+@@ -1707,7 +1738,21 @@ static void fgraph_user_values(struct uftrace_task_reader *task, bool retval)
+ 
+ 		if (retval != (spec->idx == RETVAL_IDX))
+ 			continue;
+-		if (count >= ARRAY_SIZE(values) || (size != 1 && size != 2 && size != 4 && size != 8) ||
++		if (count >= ARRAY_SIZE(values) || offset > args->len)
++			return;
++		if (spec->fmt == ARG_FMT_STR || spec->fmt == ARG_FMT_STD_STRING) {
++			if (retval || args->len - offset < 2)
++				return;
++			size = endian == ELFDATA2LSB ? bytes[offset] | bytes[offset + 1] << 8 :
++				bytes[offset] << 8 | bytes[offset + 1];
++			padded = (size + 2 + 3) & ~3U;
++			if (padded > args->len - offset)
++				return;
++			texts[count] = bytes + offset + 2;
++			lengths[count] = size;
++			goto parameter;
++		}
++		if ((size != 1 && size != 2 && size != 4 && size != 8) ||
+ 		    padded > args->len - offset)
+ 			return;
+ 		for (index = 0; index < size; index++) {
+@@ -1719,6 +1764,7 @@ static void fgraph_user_values(struct uftrace_task_reader *task, bool retval)
+ 		signed_value = value & sign ? -(int64_t)(mask ^ value) - 1 : (int64_t)value;
+ 		switch (spec->fmt) {
+ 		case ARG_FMT_AUTO:
++		case ARG_FMT_ENUM:
+ 			if (value <= 100000 || value >= UINT64_MAX - 99999)
+ 				snprintf(values[count], sizeof(values[count]), "%" PRId64, signed_value);
+ 			else if (value > UINT64_C(0xffff0000) && value <= UINT32_MAX)
+@@ -1740,8 +1786,18 @@ static void fgraph_user_values(struct uftrace_task_reader *task, bool retval)
+ 		default:
+ 			return;
+ 		}
++	parameter:
+ 		offset += padded;
+ 		names[count] = parameters ? get_dwarf_argname(parameters, symbol_address, spec) : NULL;
++		if (names[count])
++			sources[count] = "dwarf";
++		else if (!retval && function && function->type == ST_PLT_FUNC) {
++			names[count] = get_auto_argname(function->name, spec, task->h->hdr.elf_class == ELFCLASS64);
++			if (names[count]) {
++				sources[count] = "prototype";
++				has_prototypes = true;
++			}
++		}
+ 		has_names |= names[count] != NULL;
+ 		count++;
+ 	}
+@@ -1756,7 +1812,10 @@ static void fgraph_user_values(struct uftrace_task_reader *task, bool retval)
+ 	for (index = 0; index < count; index++) {
+ 		if (index)
+ 			pr_out(",");
+-		fgraph_string(values[index]);
++		if (texts[index])
++			fgraph_user_string(texts[index], lengths[index]);
++		else
++			fgraph_string(values[index]);
+ 	}
+ 	pr_out("]");
+ 	if (has_names) {
+@@ -1771,6 +1830,18 @@ static void fgraph_user_values(struct uftrace_task_reader *task, bool retval)
+ 		}
+ 		pr_out("]");
+ 	}
++	if (has_prototypes) {
++		pr_out(",\"user_arg_name_sources\":[");
++		for (index = 0; index < count; index++) {
++			if (index)
++				pr_out(",");
++			if (sources[index])
++				fgraph_string(sources[index]);
++			else
++				pr_out("null");
++		}
++		pr_out("]");
++	}
+ }
+ 
+ static void dump_fgraph_task(struct uftrace_dump_ops *ops, struct uftrace_task_reader *task,
+diff --git a/misc/gen-autoargs.py b/misc/gen-autoargs.py
+index 1b705e1fe723..4fc32e013840 100755
+--- a/misc/gen-autoargs.py
++++ b/misc/gen-autoargs.py
+@@ -289,6 +289,7 @@ if __name__ == "__main__":
+     enum_list = ""
+     args_list = ""
+     retvals_list = ""
++    parameter_names = []
+ 
+     # operator new and delete and their variations
+     args_list     = '\t\"_Znwm@arg1/u;\"\n'   \
+@@ -342,6 +343,13 @@ if __name__ == "__main__":
+                 retvals_list += '\t"' + retval_format + ';"\n'
+             if args_format:
+                 args_list += '\t"' + args_format + ';"\n'
++                declarations = line[line.index('(') + 1:line.rindex(')')].split(',')
++                specifications = args_format.split('@', 1)[1].split(',')
++                if len(declarations) == len(specifications):
++                    for declaration, specification in zip(declarations, specifications):
++                        parameter = re.search(r'\b([A-Za-z_]\w*)\s*$', declaration)
++                        if parameter and parameter.group(1) not in type_specifier:
++                            parameter_names.append((funcname, specification, parameter.group(1)))
+ 
+     if verbose:
+         print(enum_list)
+@@ -370,6 +378,10 @@ if __name__ == "__main__":
+     fout.write("static char *auto_retvals_list =\n")
+     fout.write(retvals_list)
+     fout.write(";\n\n")
++    fout.write("static const struct { const char *function, *specification, *name; } auto_parameter_names[] = {\n")
++    for function, specification, name in sorted(parameter_names):
++        fout.write('\t{ "' + function + '", "' + specification + '", "' + name + '" },\n')
++    fout.write("};\n\n")
+     fout.write("/* clang-format on */\n")
+ 
+     if argspec_file != "-":
+diff --git a/utils/argspec.h b/utils/argspec.h
+index f858178fbe4f..692785e63b86 100644
+--- a/utils/argspec.h
++++ b/utils/argspec.h
+@@ -65,6 +65,7 @@ void setup_auto_args_str(char *args, char *rets, char *enums,
+ void finish_auto_args(void);
+ 
+ void free_arg_spec(struct uftrace_arg_spec *arg);
++const char *get_auto_argname(const char *function, const struct uftrace_arg_spec *spec, bool lp64);
+ 
+ /* possible argument value types */
+ union uftrace_arg_val {
+diff --git a/utils/auto-args.c b/utils/auto-args.c
+index 8b72b8e61656..24b6cb186040 100644
+--- a/utils/auto-args.c
++++ b/utils/auto-args.c
+@@ -21,6 +21,37 @@ static struct rb_root auto_argspec = RB_ROOT;
+ static struct rb_root auto_retspec = RB_ROOT;
+ static struct rb_root auto_enum = RB_ROOT;
+ 
++const char *get_auto_argname(const char *function, const struct uftrace_arg_spec *spec, bool lp64)
++{
++	struct uftrace_filter_setting setting = { .lp64 = lp64 };
++	size_t first = 0, last = ARRAY_SIZE(auto_parameter_names), position;
++
++	if (spec->type != ARG_TYPE_INDEX && spec->type != ARG_TYPE_FLOAT)
++		return NULL;
++	while (first < last) {
++		size_t middle = first + (last - first) / 2;
++		if (strcmp(auto_parameter_names[middle].function, function) < 0)
++			first = middle + 1;
++		else
++			last = middle;
++	}
++	for (position = first; position < ARRAY_SIZE(auto_parameter_names) &&
++	     !strcmp(auto_parameter_names[position].function, function); position++) {
++		char *description = xstrdup(auto_parameter_names[position].specification);
++		struct uftrace_arg_spec *expected = parse_argspec(description, &setting);
++		bool matches = expected && expected->idx == spec->idx && expected->type == spec->type &&
++			expected->fmt == spec->fmt && expected->size == spec->size &&
++			(!expected->type_name == !spec->type_name) &&
++			(!expected->type_name || !strcmp(expected->type_name, spec->type_name));
++		free(description);
++		if (expected)
++			free_arg_spec(expected);
++		if (matches)
++			return auto_parameter_names[position].name;
++	}
++	return NULL;
++}
++
+ extern void update_trigger(struct uftrace_filter *filter, struct uftrace_trigger *tr,
+ 			   bool exact_match);
+ extern int setup_trigger_action(char *str, struct uftrace_trigger *tr, char **module,
+diff --git a/utils/auto-args.h b/utils/auto-args.h
+index a2f1e9901f3a..603ca97c8d6a 100644
+--- a/utils/auto-args.h
++++ b/utils/auto-args.h
+@@ -480,4 +480,452 @@ static char *auto_retvals_list =
+ 	"clock_settime@retval/d32;"
+ ;
+ 
++static const struct { const char *function, *specification, *name; } auto_parameter_names[] = {
++	{ "accept", "arg1/d32", "sockfd" },
++	{ "accept", "arg2/p", "addr" },
++	{ "accept", "arg3/p", "addrlen" },
++	{ "accept4", "arg1/d32", "sockfd" },
++	{ "accept4", "arg2/p", "addr" },
++	{ "accept4", "arg3/p", "addrlen" },
++	{ "accept4", "arg4/e:uft_socket_flag", "flags" },
++	{ "access", "arg1/s", "pathname" },
++	{ "access", "arg2/e:uft_access_flag", "mode" },
++	{ "aligned_alloc", "arg1/u", "alignment" },
++	{ "aligned_alloc", "arg2/u", "size" },
++	{ "atof", "arg1/s", "str" },
++	{ "atoi", "arg1/s", "str" },
++	{ "atol", "arg1/s", "str" },
++	{ "basename", "arg1/s", "path" },
++	{ "bind", "arg1/d32", "sockfd" },
++	{ "bind", "arg2/p", "addr" },
++	{ "bind", "arg3", "addrlen" },
++	{ "bindtextdomain", "arg1/s", "domainname" },
++	{ "bindtextdomain", "arg2/s", "dirname" },
++	{ "brk", "arg1/p", "addr" },
++	{ "bsearch", "arg1/p", "key" },
++	{ "bsearch", "arg2/p", "base" },
++	{ "bsearch", "arg3/u", "nmemb" },
++	{ "bsearch", "arg4/u", "size" },
++	{ "bsearch", "arg5/p", "compar" },
++	{ "calloc", "arg1/u", "nmemb" },
++	{ "calloc", "arg2/u", "size" },
++	{ "chdir", "arg1/s", "pathname" },
++	{ "chmod", "arg1/s", "pathname" },
++	{ "chmod", "arg2/o", "mode" },
++	{ "chown", "arg1/s", "path" },
++	{ "chown", "arg2/i32", "uid" },
++	{ "chown", "arg3/i32", "gid" },
++	{ "clock_getres", "arg1/e:uft_clockid_t", "clk_id" },
++	{ "clock_getres", "arg2/p", "res" },
++	{ "clock_gettime", "arg1/e:uft_clockid_t", "clk_id" },
++	{ "clock_gettime", "arg2/p", "tp" },
++	{ "clock_settime", "arg1/e:uft_clockid_t", "clk_id" },
++	{ "clock_settime", "arg2/p", "tp" },
++	{ "close", "arg1/d32", "fd" },
++	{ "closedir", "arg1/p", "dirp" },
++	{ "connect", "arg1/d32", "sockfd" },
++	{ "connect", "arg2/p", "addr" },
++	{ "connect", "arg3", "addrlen" },
++	{ "creat", "arg1/s", "file" },
++	{ "creat", "arg2/o", "mode" },
++	{ "creat64", "arg1/s", "file" },
++	{ "creat64", "arg2/o", "mode" },
++	{ "dcgettext", "arg1/s", "domainname" },
++	{ "dcgettext", "arg2/s", "msgid" },
++	{ "dcgettext", "arg3/d32", "category" },
++	{ "dgettext", "arg1/s", "domainname" },
++	{ "dgettext", "arg2/s", "msgid" },
++	{ "dirname", "arg1/s", "path" },
++	{ "dlclose", "arg1/p", "handle" },
++	{ "dlmopen", "arg1", "lmid" },
++	{ "dlmopen", "arg2/s", "filename" },
++	{ "dlmopen", "arg3/d32", "flags" },
++	{ "dlopen", "arg1/s", "filename" },
++	{ "dlopen", "arg2/e:uft_dlopen_flag", "flags" },
++	{ "dlsym", "arg1/p", "handle" },
++	{ "dlsym", "arg2/s", "symbol" },
++	{ "dlvsym", "arg1/p", "handle" },
++	{ "dlvsym", "arg2/s", "symbol" },
++	{ "dlvsym", "arg3/s", "version" },
++	{ "dup", "arg1/d32", "oldfd" },
++	{ "dup2", "arg1/d32", "oldfd" },
++	{ "dup2", "arg2/d32", "newfd" },
++	{ "epoll_create", "arg1/d32", "size" },
++	{ "epoll_create1", "arg1/d32", "flags" },
++	{ "epoll_ctl", "arg1/d32", "efd" },
++	{ "epoll_ctl", "arg2/e:uft_epoll_op", "op" },
++	{ "epoll_ctl", "arg3/d32", "fd" },
++	{ "epoll_ctl", "arg4/p", "event" },
++	{ "epoll_pwait", "arg1/d32", "efd" },
++	{ "epoll_pwait", "arg2/p", "events" },
++	{ "epoll_pwait", "arg3/d32", "max_event" },
++	{ "epoll_pwait", "arg4/d32", "timeout" },
++	{ "epoll_pwait", "arg5/p", "mask" },
++	{ "epoll_wait", "arg1/d32", "efd" },
++	{ "epoll_wait", "arg2/p", "events" },
++	{ "epoll_wait", "arg3/d32", "max_event" },
++	{ "epoll_wait", "arg4/d32", "timeout" },
++	{ "exit", "arg1/d32", "status" },
++	{ "fallocate", "arg1/d32", "fd" },
++	{ "fallocate", "arg2/e:uft_falloc_mode", "mode" },
++	{ "fallocate", "arg3", "off" },
++	{ "fallocate", "arg4", "len" },
++	{ "fchmod", "arg1/d32", "fd" },
++	{ "fchmod", "arg2/o", "mode" },
++	{ "fchmodat", "arg1/d32", "dirfd" },
++	{ "fchmodat", "arg2/s", "pathname" },
++	{ "fchmodat", "arg3/o", "mode" },
++	{ "fchmodat", "arg4/d32", "flags" },
++	{ "fchown", "arg1/d32", "fd" },
++	{ "fchown", "arg2/i32", "uid" },
++	{ "fchown", "arg3/i32", "gid" },
++	{ "fclose", "arg1/p", "stream" },
++	{ "fcntl", "arg1/d32", "fd" },
++	{ "fcntl", "arg2/e:uft_fcntl_cmd", "uft_fcntl_cmd" },
++	{ "fcntl64", "arg1/d32", "fd" },
++	{ "fcntl64", "arg2/e:uft_fcntl_cmd", "uft_fcntl_cmd" },
++	{ "fdatasync", "arg1/d32", "fd" },
++	{ "fdopen", "arg1/d32", "fd" },
++	{ "fdopen", "arg2/s", "mode" },
++	{ "feof", "arg1/p", "stream" },
++	{ "ferror", "arg1/p", "stream" },
++	{ "fflush", "arg1/p", "stream" },
++	{ "fgetc", "arg1/p", "stream" },
++	{ "fgets", "arg1/p", "s" },
++	{ "fgets", "arg2/d32", "size" },
++	{ "fgets", "arg3/p", "stream" },
++	{ "fileno", "arg1/p", "stream" },
++	{ "fopen", "arg1/s", "path" },
++	{ "fopen", "arg2/s", "mode" },
++	{ "fopen64", "arg1/s", "filename" },
++	{ "fopen64", "arg2/s", "type" },
++	{ "fputc", "arg1/c", "c" },
++	{ "fputc", "arg2/p", "stream" },
++	{ "fputs", "arg1/s", "s" },
++	{ "fputs", "arg2/p", "stream" },
++	{ "fread", "arg1/p", "ptr" },
++	{ "fread", "arg2/u", "size" },
++	{ "fread", "arg3/u", "nmemb" },
++	{ "fread", "arg4/p", "stream" },
++	{ "free", "arg1/p", "ptr" },
++	{ "freeaddrinfo", "arg1/p", "res" },
++	{ "freopen", "arg1/s", "path" },
++	{ "freopen", "arg2/s", "mode" },
++	{ "freopen", "arg3/p", "stream" },
++	{ "fseek", "arg1/p", "stream" },
++	{ "fseek", "arg2", "offset" },
++	{ "fseek", "arg3/d32", "whence" },
++	{ "fstat", "arg1/d32", "fd" },
++	{ "fstat", "arg2/p", "statbuf" },
++	{ "fsync", "arg1/d32", "fd" },
++	{ "ftell", "arg1/p", "stream" },
++	{ "fwrite", "arg1/p", "ptr" },
++	{ "fwrite", "arg2/u", "size" },
++	{ "fwrite", "arg3/u", "nmemb" },
++	{ "fwrite", "arg4/p", "stream" },
++	{ "getaddrinfo", "arg1/s", "node" },
++	{ "getaddrinfo", "arg2/s", "service" },
++	{ "getaddrinfo", "arg3/p", "hints" },
++	{ "getaddrinfo", "arg4/p", "res" },
++	{ "getc", "arg1/p", "stream" },
++	{ "getcwd", "arg1/p", "buf" },
++	{ "getcwd", "arg2/u", "size" },
++	{ "getenv", "arg1/s", "name" },
++	{ "gethostbyaddr", "arg1/p", "addr" },
++	{ "gethostbyaddr", "arg2", "len" },
++	{ "gethostbyaddr", "arg3/e:uft_socket_domain", "type" },
++	{ "gethostbyname", "arg1/s", "name" },
++	{ "getopt", "arg1/d32", "argc" },
++	{ "getopt", "arg2/p", "argv" },
++	{ "getopt", "arg3/s", "optstr" },
++	{ "getopt_long", "arg1/d32", "argc" },
++	{ "getopt_long", "arg2/p", "argv" },
++	{ "getopt_long", "arg3/s", "optstr" },
++	{ "getopt_long_only", "arg1/d32", "argc" },
++	{ "getopt_long_only", "arg2/p", "argv" },
++	{ "getopt_long_only", "arg3/s", "optstr" },
++	{ "gettext", "arg1/s", "msgid" },
++	{ "inet_addr", "arg1/s", "cp" },
++	{ "inet_aton", "arg1/s", "cp" },
++	{ "inet_aton", "arg2/p", "inp" },
++	{ "inet_network", "arg1/s", "cp" },
++	{ "inet_ntoa", "arg1", "in" },
++	{ "inet_ntop", "arg1/e:uft_socket_domain", "af" },
++	{ "inet_ntop", "arg2/p", "src" },
++	{ "inet_ntop", "arg3/s", "dst" },
++	{ "inet_ntop", "arg4", "size" },
++	{ "inet_pton", "arg1/e:uft_socket_domain", "af" },
++	{ "inet_pton", "arg2/s", "src" },
++	{ "inet_pton", "arg3/p", "dst" },
++	{ "ioctl", "arg1/d32", "fd" },
++	{ "ioctl", "arg2/u", "request" },
++	{ "isatty", "arg1/d32", "fd" },
++	{ "kill", "arg1/i32", "pid" },
++	{ "kill", "arg2/e:uft_signal", "sig" },
++	{ "lchown", "arg1/s", "path" },
++	{ "lchown", "arg2/i32", "uid" },
++	{ "lchown", "arg3/i32", "gid" },
++	{ "lseek", "arg1/d32", "fd" },
++	{ "lseek", "arg2", "offset" },
++	{ "lseek", "arg3/e:uft_seek_whence", "whence" },
++	{ "lstat", "arg1/s", "pathname" },
++	{ "lstat", "arg2/p", "statbuf" },
++	{ "madvise", "arg1/p", "addr" },
++	{ "madvise", "arg2/u", "length" },
++	{ "madvise", "arg3/e:uft_madvise", "advice" },
++	{ "malloc", "arg1/u", "size" },
++	{ "memalign", "arg1/u", "alignment" },
++	{ "memalign", "arg2/u", "size" },
++	{ "memchr", "arg1/p", "s" },
++	{ "memchr", "arg2/d32", "c" },
++	{ "memchr", "arg3/u", "n" },
++	{ "memcmp", "arg1/p", "s1" },
++	{ "memcmp", "arg2/p", "s2" },
++	{ "memcmp", "arg3/u", "n" },
++	{ "memcpy", "arg1/p", "dest" },
++	{ "memcpy", "arg2/p", "src" },
++	{ "memcpy", "arg3/u", "n" },
++	{ "memmove", "arg1/p", "dest" },
++	{ "memmove", "arg2/p", "src" },
++	{ "memmove", "arg3/u", "n" },
++	{ "memrchr", "arg1/p", "s" },
++	{ "memrchr", "arg2/d32", "c" },
++	{ "memrchr", "arg3/u", "n" },
++	{ "memset", "arg1/p", "s" },
++	{ "memset", "arg2/d32", "c" },
++	{ "memset", "arg3/u", "n" },
++	{ "mmap", "arg1/p", "addr" },
++	{ "mmap", "arg2/u", "length" },
++	{ "mmap", "arg3/e:uft_mmap_prot", "prot" },
++	{ "mmap", "arg4/e:uft_mmap_flag", "flags" },
++	{ "mmap", "arg5/d32", "fd" },
++	{ "mmap", "arg6", "offset" },
++	{ "mmap64", "arg1/p", "addr" },
++	{ "mmap64", "arg2/u", "length" },
++	{ "mmap64", "arg3/e:uft_mmap_prot", "prot" },
++	{ "mmap64", "arg4/e:uft_mmap_flag", "flags" },
++	{ "mmap64", "arg5/d32", "fd" },
++	{ "mmap64", "arg6/d64", "offset" },
++	{ "mprotect", "arg1/p", "addr" },
++	{ "mprotect", "arg2/u", "len" },
++	{ "mprotect", "arg3/e:uft_mmap_prot", "prot" },
++	{ "munmap", "arg1/p", "addr" },
++	{ "munmap", "arg2/u", "length" },
++	{ "open", "arg1/s", "pathname" },
++	{ "open", "arg2/e:uft_open_flag", "flags" },
++	{ "open64", "arg1/s", "pathname" },
++	{ "open64", "arg2/e:uft_open_flag", "flags" },
++	{ "open64at", "arg1/d32", "fd" },
++	{ "open64at", "arg2/s", "pathname" },
++	{ "open64at", "arg3/e:uft_open_flag", "flags" },
++	{ "openat", "arg1/d32", "fd" },
++	{ "openat", "arg2/s", "pathname" },
++	{ "openat", "arg3/e:uft_open_flag", "flags" },
++	{ "opendir", "arg1/s", "name" },
++	{ "poll", "arg1/p", "fds" },
++	{ "poll", "arg2", "nfds" },
++	{ "poll", "arg3/d32", "timeout" },
++	{ "posix_fadvise", "arg1/d32", "fd" },
++	{ "posix_fadvise", "arg2", "offset" },
++	{ "posix_fadvise", "arg3", "len" },
++	{ "posix_fadvise", "arg4/e:uft_posix_fadvise", "advice" },
++	{ "posix_madvise", "arg1/p", "addr" },
++	{ "posix_madvise", "arg2/u", "len" },
++	{ "posix_madvise", "arg3/e:uft_posix_madvise", "advice" },
++	{ "posix_memalign", "arg1/p", "memptr" },
++	{ "posix_memalign", "arg2/u", "alignment" },
++	{ "posix_memalign", "arg3/u", "size" },
++	{ "ppoll", "arg1/p", "fds" },
++	{ "ppoll", "arg2", "nfds" },
++	{ "ppoll", "arg3/p", "timeout" },
++	{ "ppoll", "arg4/p", "mask" },
++	{ "pselect", "arg1/d32", "nfds" },
++	{ "pselect", "arg2/p", "rset" },
++	{ "pselect", "arg3/p", "wset" },
++	{ "pselect", "arg4/p", "eset" },
++	{ "pselect", "arg5/p", "timeout" },
++	{ "pselect", "arg6/p", "mask" },
++	{ "pthread_cancel", "arg1", "thread" },
++	{ "pthread_cond_broadcast", "arg1/p", "cond" },
++	{ "pthread_cond_signal", "arg1/p", "cond" },
++	{ "pthread_cond_timedwait", "arg1/p", "cond" },
++	{ "pthread_cond_timedwait", "arg2/p", "mutex" },
++	{ "pthread_cond_timedwait", "arg3/p", "abstime" },
++	{ "pthread_cond_wait", "arg1/p", "cond" },
++	{ "pthread_cond_wait", "arg2/p", "mutex" },
++	{ "pthread_create", "arg1/p", "thread" },
++	{ "pthread_create", "arg2/p", "attr" },
++	{ "pthread_create", "arg3/p", "start_routine" },
++	{ "pthread_create", "arg4/p", "arg" },
++	{ "pthread_detach", "arg1", "thread" },
++	{ "pthread_exit", "arg1/p", "retval" },
++	{ "pthread_join", "arg1", "thread" },
++	{ "pthread_join", "arg2/p", "retval" },
++	{ "pthread_kill", "arg1", "thread" },
++	{ "pthread_kill", "arg2/d32", "sig" },
++	{ "pthread_mutex_destroy", "arg1/p", "mutex" },
++	{ "pthread_mutex_init", "arg1/p", "mutex" },
++	{ "pthread_mutex_init", "arg2/p", "attr" },
++	{ "pthread_mutex_lock", "arg1/p", "mutex" },
++	{ "pthread_mutex_trylock", "arg1/p", "mutex" },
++	{ "pthread_mutex_unlock", "arg1/p", "mutex" },
++	{ "pthread_once", "arg1/p", "once_control" },
++	{ "pthread_once", "arg2/p", "init_routine" },
++	{ "pthread_sigmask", "arg1/e:uft_sigmask", "how" },
++	{ "pthread_sigmask", "arg2/p", "set" },
++	{ "pthread_sigmask", "arg3/p", "oldset" },
++	{ "putc", "arg1/c", "c" },
++	{ "putc", "arg2/p", "stream" },
++	{ "putchar", "arg1/c", "c" },
++	{ "puts", "arg1/s", "s" },
++	{ "pvalloc", "arg1/u", "size" },
++	{ "qsort", "arg1/p", "base" },
++	{ "qsort", "arg2/u", "nmemb" },
++	{ "qsort", "arg3/u", "size" },
++	{ "qsort", "arg4/p", "compar" },
++	{ "qsort_r", "arg1/p", "base" },
++	{ "qsort_r", "arg2/u", "nmemb" },
++	{ "qsort_r", "arg3/u", "size" },
++	{ "qsort_r", "arg4/p", "compar" },
++	{ "qsort_r", "arg5/p", "arg" },
++	{ "raise", "arg1/e:uft_signal", "sig" },
++	{ "rawmemchr", "arg1/p", "s" },
++	{ "rawmemchr", "arg2/d32", "c" },
++	{ "read", "arg1/d32", "fd" },
++	{ "read", "arg2/p", "buf" },
++	{ "read", "arg3/u", "count" },
++	{ "realloc", "arg1/p", "ptr" },
++	{ "realloc", "arg2/u", "size" },
++	{ "rmdir", "arg1/s", "pathname" },
++	{ "sbrk", "arg1", "increment" },
++	{ "select", "arg1/d32", "nfds" },
++	{ "select", "arg2/p", "rset" },
++	{ "select", "arg3/p", "wset" },
++	{ "select", "arg4/p", "eset" },
++	{ "select", "arg5/p", "timeout" },
++	{ "setegid", "arg1/i32", "id" },
++	{ "setenv", "arg1/s", "name" },
++	{ "setenv", "arg2/s", "value" },
++	{ "setenv", "arg3/d32", "overwrite" },
++	{ "seteuid", "arg1/i32", "id" },
++	{ "setgid", "arg1/i32", "id" },
++	{ "setlocale", "arg1/e:uft_locale", "category" },
++	{ "setlocale", "arg2/s", "locale" },
++	{ "setregid", "arg1/i32", "rgid" },
++	{ "setregid", "arg2/i32", "egid" },
++	{ "setresgid", "arg1/i32", "rgid" },
++	{ "setresgid", "arg2/i32", "egid" },
++	{ "setresgid", "arg3/i32", "sgid" },
++	{ "setresuid", "arg1/i32", "ruid" },
++	{ "setresuid", "arg2/i32", "euid" },
++	{ "setresuid", "arg3/i32", "suid" },
++	{ "setreuid", "arg1/i32", "ruid" },
++	{ "setreuid", "arg2/i32", "euid" },
++	{ "setuid", "arg1/i32", "id" },
++	{ "sigaction", "arg1/e:uft_signal", "signum" },
++	{ "sigaction", "arg2/p", "act" },
++	{ "sigaction", "arg3/p", "oldact" },
++	{ "sigaddset", "arg1/p", "set" },
++	{ "sigaddset", "arg2/e:uft_signal", "signum" },
++	{ "sigdelset", "arg1/p", "set" },
++	{ "sigdelset", "arg2/e:uft_signal", "signum" },
++	{ "sigemptyset", "arg1/p", "set" },
++	{ "sigfillset", "arg1/p", "set" },
++	{ "sigismember", "arg1/p", "set" },
++	{ "sigismember", "arg2/e:uft_signal", "signum" },
++	{ "signal", "arg1/e:uft_signal", "sig" },
++	{ "signal", "arg2/p", "handler" },
++	{ "sigprocmask", "arg1/e:uft_sigmask", "how" },
++	{ "sigprocmask", "arg2/p", "set" },
++	{ "sigprocmask", "arg3/p", "oldset" },
++	{ "sleep", "arg1/u", "seconds" },
++	{ "socket", "arg1/e:uft_socket_domain", "domain" },
++	{ "socket", "arg2/e:uft_socket_type", "type" },
++	{ "socket", "arg3/d32", "protocol" },
++	{ "stat", "arg1/s", "pathname" },
++	{ "stat", "arg2/p", "statbuf" },
++	{ "strcasecmp", "arg1/s", "s1" },
++	{ "strcasecmp", "arg2/s", "s2" },
++	{ "strcasestr", "arg1/s", "haystack" },
++	{ "strcasestr", "arg2/s", "needle" },
++	{ "strcat", "arg1/s", "dest" },
++	{ "strcat", "arg2/s", "src" },
++	{ "strchr", "arg1/s", "s" },
++	{ "strchr", "arg2/c", "c" },
++	{ "strchrnul", "arg1/s", "s" },
++	{ "strchrnul", "arg2/c", "c" },
++	{ "strcmp", "arg1/s", "s1" },
++	{ "strcmp", "arg2/s", "s2" },
++	{ "strcoll", "arg1/s", "s1" },
++	{ "strcoll", "arg2/s", "s2" },
++	{ "strcpy", "arg1/p", "dest" },
++	{ "strcpy", "arg2/s", "src" },
++	{ "strcspn", "arg1/s", "s" },
++	{ "strcspn", "arg2/s", "reject" },
++	{ "strdup", "arg1/s", "s" },
++	{ "strdupa", "arg1/s", "s" },
++	{ "strlen", "arg1/s", "s" },
++	{ "strncasecmp", "arg1/s", "s1" },
++	{ "strncasecmp", "arg2/s", "s2" },
++	{ "strncasecmp", "arg3/u", "n" },
++	{ "strncat", "arg1/s", "dest" },
++	{ "strncat", "arg2/s", "src" },
++	{ "strncat", "arg3/u", "n" },
++	{ "strncmp", "arg1/s", "s1" },
++	{ "strncmp", "arg2/s", "s2" },
++	{ "strncmp", "arg3/u", "n" },
++	{ "strncpy", "arg1/p", "dest" },
++	{ "strncpy", "arg2/s", "src" },
++	{ "strncpy", "arg3/u", "n" },
++	{ "strndup", "arg1/s", "s" },
++	{ "strndup", "arg2/u", "n" },
++	{ "strndupa", "arg1/s", "s" },
++	{ "strndupa", "arg2/u", "n" },
++	{ "strnlen", "arg1/s", "s" },
++	{ "strnlen", "arg2/u", "maxlen" },
++	{ "strpbrk", "arg1/s", "s" },
++	{ "strpbrk", "arg2/s", "accept" },
++	{ "strrchr", "arg1/s", "s" },
++	{ "strrchr", "arg2/c", "c" },
++	{ "strsep", "arg1/p", "stringp" },
++	{ "strsep", "arg2/s", "delim" },
++	{ "strspn", "arg1/s", "s" },
++	{ "strspn", "arg2/s", "accept" },
++	{ "strstr", "arg1/s", "haystack" },
++	{ "strstr", "arg2/s", "needle" },
++	{ "strtod", "arg1/s", "str" },
++	{ "strtod", "arg2/p", "endp" },
++	{ "strtof", "arg1/s", "str" },
++	{ "strtof", "arg2/p", "endp" },
++	{ "strtok", "arg1/s", "str" },
++	{ "strtok", "arg2/s", "delim" },
++	{ "strtok_r", "arg1/s", "str" },
++	{ "strtok_r", "arg2/s", "delim" },
++	{ "strtok_r", "arg3/p", "saveptr" },
++	{ "strtol", "arg1/s", "str" },
++	{ "strtol", "arg2/p", "endp" },
++	{ "strtol", "arg3/d32", "base" },
++	{ "strtoul", "arg1/s", "str" },
++	{ "strtoul", "arg2/p", "endp" },
++	{ "strtoul", "arg3/d32", "base" },
++	{ "textdomain", "arg1/s", "domainname" },
++	{ "umask", "arg1/o", "mask" },
++	{ "ungetc", "arg1/c", "c" },
++	{ "ungetc", "arg2/p", "stream" },
++	{ "unlink", "arg1/s", "pathname" },
++	{ "unlinkat", "arg1/d32", "dirfd" },
++	{ "unlinkat", "arg2/s", "pathname" },
++	{ "unlinkat", "arg3/d32", "flags" },
++	{ "unsetenv", "arg1/s", "name" },
++	{ "usleep", "arg1/u", "usec" },
++	{ "valloc", "arg1/u", "size" },
++	{ "wait", "arg1/p", "status" },
++	{ "waitpid", "arg1/i32", "pid" },
++	{ "waitpid", "arg2/p", "status" },
++	{ "waitpid", "arg3/d32", "options" },
++	{ "write", "arg1/d32", "fd" },
++	{ "write", "arg2/p", "buf" },
++	{ "write", "arg3/u", "count" },
++};
++
+ /* clang-format on */

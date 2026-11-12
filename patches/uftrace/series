@@ -11,3 +11,4 @@
 0011-dump-decode-recorded-automatic-scalars.patch
 0012-dump-export-bounded-caller-symbol-offsets-for-user-c.patch
 0013-dump-preserve-captured-DWARF-names-for-matching-scal.patch
+0014-dump-decode-saved-strings-and-name-matching-builtin.patch

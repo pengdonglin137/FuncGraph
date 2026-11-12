@@ -19,6 +19,7 @@ HEX = re.compile(r'0x[0-9a-fA-F]{1,16}\Z')
 SYMBOL = re.compile(r'[A-Za-z0-9_.$]+\Z')
 MODULE = re.compile(r'[A-Za-z0-9_-]+\Z')
 SCALAR = re.compile(r'(?:-?[0-9]{1,20}|0x[0-9a-fA-F]{1,16})\Z')
+USER_STRING = re.compile(r'"(?:[^"\\\x00-\x1f\x7f]|\\(?:["\\abfnrtv]|x[0-9a-fA-F]{2}|u[0-9a-fA-F]{4}))*"\Z')
 CLOCK = re.compile(r'\[([^\]]+)\]')
 KERNEL_VERSION = re.compile(r'^([0-9]+)\.([0-9]+)(?:[.+-]|$)')
 LIFECYCLE = {'sched:sched_process_exec': 'exec', 'sched:sched_process_exit': 'exit'}
@@ -91,7 +92,9 @@ def _check_record(record):
         raise UftraceInputError('invalid arguments')
     if 'user_args' in record and ((space, kind) != ('user', 'entry') or
                                   not isinstance(record['user_args'], list) or not record['user_args'] or
-                                  not all(isinstance(value, str) and SCALAR.fullmatch(value) for value in record['user_args'])):
+                                  not all(isinstance(value, str) and
+                                          (SCALAR.fullmatch(value) or USER_STRING.fullmatch(value))
+                                          for value in record['user_args'])):
         raise UftraceInputError('invalid user argument values')
     if 'user_arg_names' in record:
         names = record['user_arg_names']
@@ -101,6 +104,13 @@ def _check_record(record):
                         all(ord(character) >= 32 and ord(character) != 127 for character in name)
                         for name in names)):
             raise UftraceInputError('invalid user argument names')
+    if 'user_arg_name_sources' in record:
+        sources = record['user_arg_name_sources']
+        names = record.get('user_arg_names')
+        if (names is None or not isinstance(sources, list) or len(sources) != len(names) or
+                not all(source in ('dwarf', 'prototype') if name is not None else source is None
+                        for name, source in zip(names, sources))):
+            raise UftraceInputError('invalid user argument name sources')
     if 'user_retval' in record and ((space, kind) != ('user', 'exit') or
                                     not isinstance(record['user_retval'], str) or not SCALAR.fullmatch(record['user_retval'])):
         raise UftraceInputError('invalid user return value')
@@ -307,6 +317,8 @@ class UftraceTimeline(TimelineBuilder):
                     for position, value in enumerate(record['user_args']))
                 if names:
                     detail['arg_names'] = tuple(names)
+                if 'user_arg_name_sources' in record:
+                    detail['arg_name_sources'] = tuple(record['user_arg_name_sources'])
             if user_site:
                 detail['callsite'] = {'retaddr': user_site['retaddr']}
                 if 'name' in user_site:
