@@ -6,6 +6,8 @@ FuncGraph 支持可视化仅用户态、仅内核态和混合 uftrace 记录。�
 
 普通 CLI 输出仍是可离线打开的单文件。大报告可显式运行 `funcgraph TRACE --timeline --report-mode sidecar --output REPORT_DIRECTORY`，再用 `fgview REPORT_DIRECTORY` 打开：默认进入 Timeline，不下载或创建逐行 Text；Compare 独立加载。首次进入 Text 或跳转行号/锚点时，超过 4,096 条 Text 记录的报告按最多 4,096 条分块校验下载，提供进度、取消和重试。Text HTML 资源缓存独立限制为 4 块 / 16 MiB 已校验字节；准备阶段仍在文档外累计**全部行后再挂载**，最终布局仍可能阻塞，完整 DOM 仍常驻。Timeline 统一过滤只加载索引，不创建 Text DOM；sidecar 源码正文按最多 64 条记录按需读取，使用独立的 8 块 / 16 MiB 资源缓存，单文件源码仍内嵌。这些缓存预算不是整个报告的内存上限。可用 `--report-mode auto --sidecar-threshold BYTES` 自动分流：只有完整 HTML 超过显式字节阈值才进入 sidecar，更小或相等时在同一独立目录内保留离线 `index.html`。没有默认阈值，也不是 Text 虚拟化，详见[查看器指南](docs/viewer.cn.md)。
 
+新分块 sidecar Text 还会在浏览器支持时跳过离屏块的布局；过滤、折叠和导航仍使用完整 trace，选中/聚焦块及已展开源码保留正常布局。不支持的浏览器和打印使用完整布局。全部 DOM/模型记录仍常驻，这不是具有 DOM 上限的窗口化。
+
 [![ci](https://github.com/pengdonglin137/FuncGraph/actions/workflows/ci.yml/badge.svg)](https://github.com/pengdonglin137/FuncGraph/actions/workflows/ci.yml)
 
 [![FuncGraph 可视化示例（点击打开示例报告）](sample.png)](https://pengdonglin137.github.io/FuncGraph/sample.html)

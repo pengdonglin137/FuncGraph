@@ -73,6 +73,9 @@
             min-width: 0;
         }
         #content {
+            --fg-text-font-size: 13px;
+            --fg-text-pad-y: 1px;
+            --fg-text-pad-x: 2px;
             width: fit-content;
             min-width: 100%;
             background: var(--container-bg);
@@ -141,11 +144,11 @@
         .line-container {
             display: flex;
             align-items: center;
-            padding: 1px 2px;
+            padding: var(--fg-text-pad-y, 1px) var(--fg-text-pad-x, 2px);
             border-radius: 2px;
             white-space: pre;
             font-family: 'SF Mono', Menlo, Consolas, 'DejaVu Sans Mono', 'Courier New', monospace;
-            font-size: 13px;
+            font-size: var(--fg-text-font-size, 13px);
             cursor: default;
             -webkit-user-select: none;
             -moz-user-select: none;
@@ -157,6 +160,26 @@
                 contain: paint;
                 overflow-clip-margin: 6px;
                 will-change: transform;
+            }
+        }
+        @supports (content-visibility: auto) and (contain-intrinsic-block-size: 1px) and selector(:has(*)) {
+            #content.text-layout-auto > .text-chunk {
+                content-visibility: auto;
+                contain-intrinsic-block-size: calc(
+                    var(--fg-text-plain-rows, 0) * (var(--fg-text-font-size) * 1.5 + 4px + var(--fg-text-pad-y) * 2) +
+                    var(--fg-text-empty-rows, 0) * (var(--fg-text-font-size) * 1.5 + var(--fg-text-pad-y) * 2) +
+                    var(--fg-text-expandable-rows, 0) * (max(var(--fg-text-font-size) * 1.5 + 4px, 21px) + var(--fg-text-pad-y) * 2));
+            }
+            #content.text-layout-auto > .text-chunk.text-layout-reset {
+                content-visibility: hidden;
+            }
+            #content.text-layout-auto > .text-chunk:focus-within,
+            #content.text-layout-auto > .text-chunk:has(> .line-container.keyboard-selected),
+            #content.text-layout-auto > .text-chunk:has(> .expanded-content[style*="display: block"]) {
+                content-visibility: visible;
+            }
+            @media print {
+                #content.text-layout-auto > .text-chunk { content-visibility: visible; }
             }
         }
         .line-container.expandable {
@@ -1245,9 +1268,10 @@
                 order: 1;
                 flex: 0 0 100%;
             }
-            .line-container {
-                font-size: 11px;
-                padding: 0.5px 1px;
+            #content {
+                --fg-text-font-size: 11px;
+                --fg-text-pad-y: 0.5px;
+                --fg-text-pad-x: 1px;
             }
             .expanded-content {
                 margin-left: 25px;

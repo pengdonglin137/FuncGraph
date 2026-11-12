@@ -39,6 +39,11 @@ def measure(browser, report, timeout, mount_text, filter_query=None, text_querie
             localStorage.setItem('fg_' + (hash >>> 0).toString(36) + '_view', 'timeline');
             window.startupTasks = [];
             window.startupViolations = [];
+            window.textLayoutSkipped = new WeakSet();
+            document.addEventListener('contentvisibilityautostatechange', event => {
+                if (event.skipped) textLayoutSkipped.add(event.target);
+                else textLayoutSkipped.delete(event.target);
+            }, true);
             document.addEventListener('securitypolicyviolation', event => startupViolations.push(event.violatedDirective));
             new PerformanceObserver(list => startupTasks.push(...list.getEntries().map(entry => ({start:entry.startTime, duration:entry.duration}))))
                 .observe({type:'longtask', buffered:true});
@@ -133,6 +138,9 @@ def measure(browser, report, timeout, mount_text, filter_query=None, text_querie
                         labels:Array.from(labels), longest_task_ms:Math.max(0, ...tasks),
                         blocked_ms:tasks.reduce((sum, duration) => sum + Math.max(0, duration - 50), 0),
                         rows:document.querySelectorAll('#content .line-container').length,
+                        automatic_layout:document.getElementById('content').classList.contains('text-layout-auto'),
+                        paint_blocks:document.querySelectorAll('#content > .text-chunk').length,
+                        skipped_blocks:Array.from(document.querySelectorAll('#content > .text-chunk')).filter(chunk => textLayoutSkipped.has(chunk)).length,
                         cached_html:cached};
                 }''')
                 after = {metric['name']: metric['value']

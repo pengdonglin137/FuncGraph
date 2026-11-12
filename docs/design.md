@@ -1065,6 +1065,39 @@ python3 tests/benchmark_text_delivery.py /tmp/fg-text-before /tmp/fg-text-after 
 
 最终验证：`FG_RAW_REQUIRED=1 FG_UFTRACE_REQUIRED=1 FG_SAMPLE_BROWSER_REQUIRED=1 tests/run.sh` 共 **789 项，786 通过、3 项可选跳过**。冻结暂存代码的 `test_textchunks test_data_provider test_output test_sidecar` 专项 **154 项全部通过**。从冻结快照构建原生 wheel、sdist 和由 sdist 重建的纯 Python wheel，安装到独立虚拟环境后以 `python -I tests/smoke_installed.py` 的对应 `--with-extras --with-raw [--with-uftrace]` 模式验证：原生 **14/14 通过**，纯 Python **13 通过、1 项内置 recorder 按包类型跳过**，包含真实 CLI 分块输出及安装态 HTTP 资源校验。三份产物通过 Twine 检查；固定版本、sample HTML/PNG、依赖 pin 和 uftrace 补丁均未更改。
 
+### Text 浏览器级离屏布局（2026-11-12）
+
+网络分块后首次完整 Text 仍有约 3.4 秒最长长任务，样式/布局及采样 renderer RSS 约 3 GiB。隔离对照保留原有 paint/compositing 提示，仅增加 layout containment 没有实质改善；跳过离屏子树的布局则显著减少这部分成本。因此本轮在**新分块 sidecar Text** 上接入浏览器原生 `content-visibility: auto`，不是将纯传输优化误称为窗口化。启用前同时检查 intrinsic block size 和 `:has()`；小型/旧 sidecar、single、auto 未超限及能力不足的浏览器均保留原完整布局。
+
+`fgRefreshTextLayout` 按实际显示/分组隐藏状态统计普通非空行、空行和源码可展开行，不读取几何信息。CSS 用与真实行共享的字体/内边距变量计算离屏尺寸；13px 字体下普通非空行 25.5px、空行 21.5px，768px 窄屏断点的 11px 字体和源码按钮最小高度也纳入估算。折叠只刷新影响块，过滤/Clear/重排刷新新状态。尺寸是离屏估算，而非跨字体回退和缩放舍入的像素级总高度证明。块进入相关布局后使用实际尺寸，横向最大范围也可能随更长行/源码出现而增长。
+
+补充实测发现，即便作者没有指定 `auto` 内在尺寸，当前 Chromium 的 `content-visibility: auto` 仍可能保留已访问块的高度。先访问远处块、回到顶部、只保留 root 两行，旧实现总高度为 2,754px，完整布局仅 51px；宽窄屏切换也会保留旧字体对应的块高度。因此计数变化的已初始化块会临时切为 `hidden`，统一做一次样式刷新后同步恢复，清除记忆尺寸，不在两个状态之间绘制或测量行几何。聚焦/选中/展开源码的 `visible` 规则优先；首次准备不做此失效操作。响应式断点变化同样清除旧尺寸，包括当时正在 Timeline、Text 隐藏的情况。新增真实访问后再过滤、折叠和双向宽窄屏切换的回归；仅在最初未访问状态比较高度不足以发现这一问题。
+
+聚焦块、键盘选中块和具有 `display: block` 源码面板的块强制正常布局，保证焦点、跳行目标和可变源码高度不丢失。打印也强制正常布局。窄屏切到宽屏后跨多个跳过块做平滑滚动，在实际 Chromium 中出现整块偏移；`getBoundingClientRect()` 强制测量或关闭 scroll anchoring 都不能解决。分块离屏模式下距离超过两个视口的目标改为立即滚动，附近导航和其他报告保留平滑行为，真实视口复测覆盖此问题。另修复原有锚点 100ms 延迟回调可覆盖后续键盘导航的问题：回调核对 hash、当前选中行及视图后才执行。
+
+完整记录、HTML 传输、共享取消、校验/Retry 和源码缓存协议均不变；完整 Text DOM、折叠/过滤/导航模型仍创建并挂载。浏览器访问更多块后样式/布局内存仍可增长，开放多个源码块也会保留对应真实布局。这不是有界 DOM/模型、Worker 或只读取可见块的最终方案；第二阶段仍需继续实现真正的窗口化。
+
+同一 `/tmp/pi4/traceB.txt`（72,176 条记录）对照 `5feea28b7817` 的分块报告，CLI 仍为 `--no-config --no-btf --timeline --enable-fold --filter --report-mode sidecar`。该输入没有 DWARF/源码块，不能把结果外推为源码丰富报告的性能保证。两侧各 20 个资源的字节数/摘要通过验证，18 个 Text 块和完整过滤索引逐字节相同，Timeline 只差 `stats.build_time`；新入口确实嵌入当前三份运行时资源。
+
+Chromium 145.0.7632.6、1500×900、`fgview` HTTP，三对交替、每轮新浏览器/上下文；计时期间没有并行测试、构建或其他浏览器实验。下表是三次中位数，不混用早期 CSS 注入探针的数值：
+
+| 指标 | 基线分块报告 | 离屏布局 |
+| --- | ---: | ---: |
+| 首批已解析进度 rAF 反馈 | 75.9 ms | 76.0 ms |
+| 完整 Text 就绪（双 rAF） | 7,167.8 ms | 3,239.3 ms |
+| Text 阶段最长长任务 | 3,378 ms | 190 ms |
+| Text 阶段阻塞时间 | 4,088 ms | 140 ms |
+| script / style / layout | 1,732.4 / 1,019.7 / 2,289.2 ms | 1,800.3 / 23.8 / 34.4 ms |
+| Text 后 renderer RSS 采样 | 2,765.5 MiB | 797.7 MiB |
+| 完整 DOM / 模型记录数 | 72,176 / 72,176 | 72,176 / 72,176 |
+| Text 请求 / 绘制块 / 跳过块 | 18 / 141 / 0 | 18 / 141 / 140 |
+
+完整就绪中位数减少约 **54.8%**，主要来自减少离屏样式/布局，不是网络或解析提速：脚本时间略增，首批反馈近似不变。六次完整 Text 模型摘要均为 `bfcd594748ec635ac430b942433cff198a922f635af4ddf97573afe30fc1f9c6`，Timeline calls / frames / tracks 均为 55,186 / 55,213 / 12。HTML 缓存均在成功后释放，返回 Text 没有新增请求，浏览器错误及 CSP 违规为零。RSS 是阶段采样而非峰值或内存上限；rAF 是状态/就绪代理，不是物理呈现或任意交互延迟保证。
+
+复现仍使用 `tests/benchmark_text_delivery.py BEFORE_DIRECTORY AFTER_DIRECTORY --rounds 3 --output browser.json`，先用相同 trace/参数生成两侧报告。基准用弱集合跟踪浏览器的 `contentvisibilityautostatechange`，只统计当前绘制块，不保留已移除 DOM，也不为确认跳过状态强制所有行布局；完整模型摘要仍在计时和 RSS 采样后计算。
+
+新增浏览器覆盖真实离屏跳过但完整记录不变、过滤/父子折叠/Clear/耗时排序/任务重排后的高度对照、离屏源码及 chain/flat、远锚点/键盘边界、过期锚点回调、跨绘制块真实鼠标拖选、390/1500px 与明暗主题、触控/2× DPR、长行横向可达、空行/隐藏行不测量几何的更新，以及打印/能力不足回退。额外将真实混合样例按时间平移重复四次以进入分块路径，核对 version-3 用户/内核空间、上下文 flag、边界、过滤、用户源码和高度；保留原始记录内容，不改固定样例。
+
 ### 只读回环查看器（2026-11-10）
 
 `fgview` 的安装态入口是 `fglib.viewer:main`，源码目录可用 `./fgview` 或 `python3 -m fglib.viewer`。只绑定 `127.0.0.1`，默认端口 0，由操作系统分配；显式 `--port` 限制为 0–65535，没有全网绑定参数。先打印本次随机路径 URL，只有 `--open` 才调用浏览器，Ctrl+C 关闭监听及目录句柄。选单文件只提供该文件；选目录必须存在 index.html，提供其中的普通非隐藏文件，但不列目录。目录模式需要用户指定独立报告目录，不能当作只允许 manifest 资源的 allowlist。

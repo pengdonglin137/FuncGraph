@@ -7,11 +7,12 @@ import tempfile
 import threading
 import unittest
 from unittest import mock
+from urllib.parse import urljoin
 
 import helpers
 from fglib.output import ReportSpool
 from fglib.sidecar import _copy, write_sidecar
-from fglib import sidecar
+from fglib import sidecar, uftrace
 from fglib.textchunks import TEXT_NETWORK_ROWS, TextChunkRanges
 from fglib.viewer import create_server
 
@@ -378,3 +379,368 @@ class TextChunkBrowserTest(unittest.TestCase):
         self.page.wait_for_function('() => !fgTextDeferred()')
         self.assertTrue(self.page.evaluate('fgCurrentView() === "text" && location.hash === "#L4101"'))
         self.assertEqual(self.page.locator('#L4101').count(), 1)
+
+    def test_native_layout_skips_offscreen_blocks_without_dropping_complete_records(self):
+        result = self.page.evaluate('''async () => {
+            window.layoutStates = new Map();
+            document.addEventListener('contentvisibilityautostatechange', event => {
+                if (event.target.matches('#content > .text-chunk')) layoutStates.set(event.target, event.skipped);
+            }, true);
+            await fgSwitchView('text');
+            await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+            return {enabled:document.getElementById('content').classList.contains('text-layout-auto'),
+                skipped:Array.from(layoutStates.values()).filter(Boolean).length,
+                rows:document.querySelectorAll('#content .line-container').length,
+                records:fgGetTextFolding().records.length,
+                near:fgTextScrollBehavior(document.getElementById('L2'), {top:0}),
+                far:fgTextScrollBehavior(document.getElementById('L4101'), {top:10000}),
+                sizes:Array.from(document.querySelectorAll('#content > .text-chunk'), chunk => getComputedStyle(chunk).containIntrinsicBlockSize)};
+        }''')
+        self.assertTrue(result['enabled'])
+        self.assertGreater(result['skipped'], 0)
+        self.assertEqual(result['rows'], 4203)
+        self.assertEqual(result['records'], 4203)
+        self.assertEqual(result['near'], 'smooth')
+        self.assertEqual(result['far'], 'instant')
+        expected_sizes = ['13056px'] * 8 + ['2728.5px']
+        self.assertEqual(len(result['sizes']), len(expected_sizes))
+        for actual, expected in zip(result['sizes'], expected_sizes):
+            self.assertIn(actual, (expected, 'auto ' + expected))
+
+    def test_visited_offscreen_blocks_discard_stale_sizes_after_filter_and_fold(self):
+        result = self.page.evaluate('''async () => {
+            await fgSwitchView('text');
+            const content = document.getElementById('content');
+            const parent = Array.from(fgGetTextFolding().blocks.values()).find(block => block.entry?.getAttribute('data-func') === 'root');
+            const settle = () => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+            async function visit() {
+                for (const number of [1025, 2050, 3073, 4101, 2]) {
+                    document.getElementById('L' + number).scrollIntoView({block:'center'});
+                    await settle();
+                }
+            }
+            const samples = [];
+            async function compare(label) {
+                await settle();
+                const estimated = content.getBoundingClientRect().height;
+                const baseline = document.createElement('style');
+                baseline.textContent = '#content.text-layout-auto > .text-chunk {content-visibility:visible !important}';
+                document.head.appendChild(baseline);
+                await settle();
+                samples.push({label, estimated, full:content.getBoundingClientRect().height});
+                baseline.remove();
+                await settle();
+            }
+            await visit();
+            document.getElementById('filterInput').value = 'func:^root$';
+            applyFilter();
+            await compare('filter-after-visit');
+            clearFilter();
+            await compare('clear-after-visit');
+            await visit();
+            toggleFold(parent.id);
+            await compare('fold-after-visit');
+            toggleFold(parent.id);
+            await compare('unfold-after-visit');
+            return samples;
+        }''')
+        self.assertEqual(len(result), 4)
+        for sample in result:
+            with self.subTest(state=sample['label']):
+                self.assertAlmostEqual(sample['estimated'], sample['full'], delta=1)
+
+    def test_responsive_layout_discards_visited_block_sizes_in_both_directions(self):
+        self.page.evaluate('async () => { await fgSwitchView("text"); }')
+        for view, width in [('text', 390), ('text', 1500), ('timeline', 390), ('timeline', 1500)]:
+            self.page.evaluate('''async view => {
+                for (const number of [1025, 2050, 3073, 4101, 2]) {
+                    document.getElementById('L' + number).scrollIntoView({block:'center'});
+                    await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+                }
+                if (view === 'timeline') await fgSwitchView('timeline');
+            }''', view)
+            self.page.set_viewport_size(dict(width=width, height=900))
+            result = self.page.evaluate('''async view => {
+                if (view === 'timeline') await fgSwitchView('text');
+                const settle = () => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+                await settle();
+                const content = document.getElementById('content');
+                const estimated = content.getBoundingClientRect().height;
+                const baseline = document.createElement('style');
+                baseline.textContent = '#content.text-layout-auto > .text-chunk {content-visibility:visible !important}';
+                document.head.appendChild(baseline);
+                await settle();
+                const full = content.getBoundingClientRect().height;
+                baseline.remove();
+                await settle();
+                return {estimated, full};
+            }''', view)
+            with self.subTest(view=view, width=width):
+                self.assertAlmostEqual(result['estimated'], result['full'], delta=1)
+
+    def test_native_layout_extents_follow_complete_filter_fold_and_reorder_state(self):
+        result = self.page.evaluate('''async () => {
+            await fgSwitchView('text');
+            const content = document.getElementById('content');
+            const parent = Array.from(fgGetTextFolding().blocks.values()).find(block => block.entry?.getAttribute('data-func') === 'root');
+            const settle = () => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+            const results = [];
+            async function compare(label) {
+                await settle();
+                const estimated = content.getBoundingClientRect().height;
+                const baseline = document.createElement('style');
+                baseline.textContent = '#content.text-layout-auto > .text-chunk {content-visibility:visible !important}';
+                document.head.appendChild(baseline);
+                await settle();
+                results.push({label, estimated, full:content.getBoundingClientRect().height});
+                baseline.remove();
+            }
+            await compare('initial');
+            toggleFold(parent.id);
+            await compare('folded');
+            document.getElementById('filterInput').value = 'func:^leaf$';
+            applyFilter();
+            await compare('filtered-inside-closed-parent');
+            clearFilter();
+            await compare('clear-keeps-parent-closed');
+            toggleFold(parent.id);
+            await compare('unfolded');
+            document.getElementById('filterInput').value = 'func:^leaf$ sort:desc';
+            applyFilter();
+            await compare('sorted');
+            clearFilter();
+            fgSetTextOrder('task');
+            await compare('task-order');
+            fgSetTextOrder('time');
+            await compare('time-order');
+            return results;
+        }''')
+        self.assertEqual(len(result), 8)
+        for sample in result:
+            with self.subTest(state=sample['label']):
+                self.assertAlmostEqual(sample['estimated'], sample['full'], delta=1)
+
+    def test_expanded_source_keeps_its_block_laid_out_until_closed(self):
+        result = self.page.evaluate('''async () => {
+            await fgSwitchView('text');
+            const row = document.getElementById('L4101');
+            const chunk = row.parentElement;
+            const source = row.nextElementSibling;
+            const settle = () => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+            toggleExpand(row.dataset.lineId);
+            await fgFill(source);
+            await settle();
+            const open = {visibility:getComputedStyle(chunk).contentVisibility,
+                display:getComputedStyle(source).display, height:source.getBoundingClientRect().height,
+                layout:document.getElementById('content').getBoundingClientRect().height};
+            fgToggleSrcMode();
+            await settle();
+            const flat = getComputedStyle(chunk).contentVisibility;
+            toggleExpand(row.dataset.lineId);
+            await settle();
+            return {open, flat, closed:getComputedStyle(chunk).contentVisibility,
+                layout:document.getElementById('content').getBoundingClientRect().height};
+        }''')
+        self.assertEqual(result['open']['visibility'], 'visible')
+        self.assertEqual(result['open']['display'], 'block')
+        self.assertGreater(result['open']['height'], 0)
+        self.assertEqual(result['flat'], 'visible')
+        self.assertEqual(result['closed'], 'auto')
+        self.assertGreater(result['open']['layout'], result['layout'])
+
+    def test_offscreen_anchor_and_keyboard_boundary_reveal_in_both_themes_and_widths(self):
+        for width in [390, 1500]:
+            for theme in ['light', 'dark']:
+                with self.subTest(width=width, theme=theme):
+                    self.page.set_viewport_size(dict(width=width, height=900))
+                    self.page.evaluate('''async theme => {
+                        document.documentElement.dataset.theme = theme;
+                        await fgSwitchView('text');
+                        location.hash = '#L4101';
+                        handleAnchorNavigation();
+                    }''', theme)
+                    self.page.wait_for_function('''() => {
+                        const row = document.getElementById('L4101').getBoundingClientRect();
+                        return row.top >= document.querySelector('.controls').getBoundingClientRect().bottom && row.bottom <= innerHeight;
+                    }''')
+                    self.assertTrue(self.page.evaluate('document.getElementById("L4101").classList.contains("keyboard-selected")'))
+                    self.page.evaluate('navigateToTextBoundary(false)')
+                    self.page.wait_for_function('''() => {
+                        const row = keyboardSelectedLine.getBoundingClientRect();
+                        return row.top >= document.querySelector('.controls').getBoundingClientRect().bottom && row.bottom <= innerHeight;
+                    }''')
+
+    def test_native_layout_preserves_pointer_selection_across_a_paint_boundary(self):
+        self.page.evaluate('async () => { await fgSwitchView("text"); }')
+        selections = []
+        for force_full in [False, True]:
+            if force_full:
+                self.page.add_style_tag(content='#content.text-layout-auto > .text-chunk {content-visibility:visible !important}')
+            self.page.locator('#L512').evaluate('row => row.scrollIntoView({block:"center"})')
+            self.page.evaluate('async () => { await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))); getSelection().removeAllRanges(); }')
+            points = self.page.evaluate('''() => ['L512', 'L513'].map((id, index) => {
+                const walker = document.createTreeWalker(document.getElementById(id).querySelector('.line-content'), NodeFilter.SHOW_TEXT);
+                const nodes = [];
+                while (walker.nextNode()) nodes.push(walker.currentNode);
+                const node = index ? nodes[nodes.length - 1] : nodes[0];
+                const range = document.createRange();
+                range.setStart(node, index ? node.textContent.length : 0);
+                range.collapse(true);
+                const bounds = range.getBoundingClientRect();
+                return [bounds.x, bounds.y + bounds.height / 2];
+            })''')
+            self.page.mouse.move(*points[0])
+            self.page.mouse.down()
+            self.page.mouse.move(*points[1], steps=12)
+            self.page.mouse.up()
+            selections.append(self.page.evaluate('getSelection().toString()'))
+        self.assertTrue(selections[0].strip())
+        self.assertEqual(selections[0], selections[1])
+
+    def test_print_and_unsupported_capabilities_use_full_layout(self):
+        self.page.evaluate('async () => { await fgSwitchView("text"); }')
+        self.page.emulate_media(media='print')
+        self.assertEqual(self.page.evaluate('Array.from(document.querySelectorAll("#content > .text-chunk"), chunk => getComputedStyle(chunk).contentVisibility)'), ['visible'] * 9)
+        self.page.emulate_media(media='screen')
+        for capability in ['content-visibility: auto',
+                           'contain-intrinsic-block-size: calc(2 * (max(13px * 1.5 + 4px, 21px) + 2px))',
+                           'selector(:has(*))']:
+            with self.subTest(capability=capability):
+                self.page.goto(self.server.url, wait_until='load')
+                self.page.evaluate('''capability => {
+                    const originalSupports = CSS.supports.bind(CSS);
+                    CSS.supports = (...arguments) => arguments[0] === capability ? false : originalSupports(...arguments);
+                }''', capability)
+                self.page.evaluate('async () => { await fgSwitchView("text"); }')
+                self.assertFalse(self.page.evaluate('document.getElementById("content").classList.contains("text-layout-auto")'))
+                self.assertEqual(self.page.locator('#content .line-container').count(), 4203)
+
+    def test_layout_refresh_counts_blank_hidden_and_grouped_rows_without_geometry_reads(self):
+        result = self.page.evaluate('''async () => {
+            await fgSwitchView('text');
+            const content = document.getElementById('content');
+            const chunk = content.firstElementChild;
+            const rows = Array.from(chunk.querySelectorAll('.line-container'));
+            rows[0].querySelector('.line-content').replaceChildren();
+            rows[1].style.display = 'none';
+            rows[2].classList.add('grp-hidden');
+            content.classList.add('grouped');
+            const original = Element.prototype.getBoundingClientRect;
+            Element.prototype.getBoundingClientRect = () => { throw new Error('Layout refresh must not measure geometry'); };
+            try { fgRefreshTextLayout([chunk]); }
+            finally { Element.prototype.getBoundingClientRect = original; }
+            return getComputedStyle(chunk).containIntrinsicBlockSize;
+        }''')
+        self.assertEqual(float(result[:-2]), 21.5 + 509 * 25.5)
+
+    def test_revealed_long_rows_keep_their_horizontal_text_extent(self):
+        result = self.page.evaluate('''async () => {
+            await fgSwitchView('text');
+            const row = document.getElementById('L4101');
+            const text = row.querySelector('.line-content');
+            text.append(' long_argument=' + 'abcdefgh'.repeat(128));
+            row.scrollIntoView({block:'center', inline:'end'});
+            row.focus({preventScroll:true});
+            await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+            const chunk = row.parentElement.getBoundingClientRect();
+            const bounds = text.getBoundingClientRect();
+            return {chunkRight:chunk.right, textRight:bounds.right, width:bounds.width,
+                scrollWidth:document.documentElement.scrollWidth};
+        }''')
+        self.assertGreater(result['width'], 5000)
+        self.assertGreater(result['scrollWidth'], 5000)
+        self.assertGreaterEqual(result['chunkRight'], result['textRight'])
+
+    def test_old_anchor_scroll_cannot_override_a_new_keyboard_target(self):
+        result = self.page.evaluate('''async () => {
+            await fgSwitchView('text');
+            history.replaceState(null, '', '#L4101');
+            handleAnchorNavigation();
+            navigateToTextBoundary(false);
+            await new Promise(resolve => setTimeout(resolve, 200));
+            await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+            const row = keyboardSelectedLine.getBoundingClientRect();
+            return {selected:keyboardSelectedLine.id, top:row.top, bottom:row.bottom,
+                toolbar:document.querySelector('.controls').getBoundingClientRect().bottom, height:innerHeight};
+        }''')
+        self.assertEqual(result['selected'], 'L2')
+        self.assertGreaterEqual(result['top'], result['toolbar'])
+        self.assertLessEqual(result['bottom'], result['height'])
+
+    def test_touch_high_density_layout_keeps_fold_controls_and_far_anchors_reachable(self):
+        with self.browser.new_context(viewport=dict(width=390, height=844), device_scale_factor=2,
+                                      is_mobile=True, has_touch=True) as context:
+            page = context.new_page()
+            page.on('pageerror', lambda error: self.errors.append(str(error)))
+            page.goto(self.server.url, wait_until='load')
+            page.evaluate('async () => { await fgSwitchView("text"); }')
+            self.assertTrue(page.evaluate('matchMedia("(any-pointer: coarse)").matches'))
+            self.assertGreaterEqual(page.locator('#L2 .fold-icon').bounding_box()['width'], 44)
+            page.locator('#L2 .fold-icon').tap()
+            self.assertEqual(page.locator('#L4101').evaluate('row => row.style.display'), 'none')
+            page.locator('#L2 .fold-icon').tap()
+            self.assertEqual(page.locator('#L4101').evaluate('row => row.style.display'), '')
+            page.evaluate('''() => { location.hash = '#L4101'; }''')
+            page.wait_for_function('''() => {
+                const row = document.getElementById('L4101').getBoundingClientRect();
+                return row.top >= document.querySelector('.controls').getBoundingClientRect().bottom && row.bottom <= innerHeight;
+            }''')
+            self.assertEqual(page.locator('#content .line-container').count(), 4203)
+
+    def test_real_mixed_capture_keeps_complete_spaces_flags_sources_and_extents(self):
+        with (Path(helpers.ROOT) / 'samples/sample_mixed.jsonl').open() as source:
+            metadata, records = uftrace.read_export(source)
+        span = records[-1]['time_ns'] - records[0]['time_ns'] + 1000000
+        trace = self.directory / 'mixed-layout.jsonl'
+        with trace.open('w') as destination:
+            destination.write(json.dumps(metadata) + '\n')
+            for repetition in range(4):
+                for record in records:
+                    destination.write(json.dumps(dict(record, time_ns=record['time_ns'] + repetition * span)) + '\n')
+            destination.write(json.dumps(dict(type='end', complete=True)) + '\n')
+        self.kernel.run(str(trace), '--timeline', '--enable-fold', '--filter',
+                        '--user-src', str(Path(helpers.ROOT) / 'samples'),
+                        '--report-mode', 'sidecar', out='report/mixed-layout')
+        self.page.goto(urljoin(self.server.url, 'mixed-layout/index.html'), wait_until='load')
+        result = self.page.evaluate('''async () => {
+            await fgSwitchView('text');
+            const content = document.getElementById('content');
+            const folding = fgGetTextFolding();
+            const spaces = Array.from(new Set(folding.records.map(row => row.getAttribute('data-space')).filter(Boolean))).sort();
+            const settle = () => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+            await settle();
+            const estimated = content.getBoundingClientRect().height;
+            const baseline = document.createElement('style');
+            baseline.textContent = '#content.text-layout-auto > .text-chunk {content-visibility:visible !important}';
+            document.head.appendChild(baseline);
+            await settle();
+            const full = content.getBoundingClientRect().height;
+            baseline.remove();
+            document.getElementById('filterInput').value = 'space:kernel AND irqs:^d$';
+            applyFilter();
+            const visible = Array.from(content.querySelectorAll('.line-container')).filter(row => row.style.display !== 'none');
+            const filtered = {count:visible.length, spaces:Array.from(new Set(visible.map(row => row.dataset.space))),
+                irqs:Array.from(new Set(visible.map(row => row.dataset.irqs)))};
+            clearFilter();
+            const user = Array.from(content.querySelectorAll('.line-container.expandable[data-space=user]')).at(-1);
+            toggleExpand(user.dataset.lineId);
+            await fgFill(user.nextElementSibling);
+            await settle();
+            return {enabled:content.classList.contains('text-layout-auto'), version:folding.records[0].version,
+                rows:content.querySelectorAll('.line-container').length, records:folding.records.length, spaces,
+                estimated, full, filtered, source:user.nextElementSibling.textContent,
+                sourceLayout:getComputedStyle(user.parentElement).contentVisibility,
+                boundaries:content.querySelectorAll('[data-boundary=user-kernel]').length};
+        }''')
+        self.assertTrue(result['enabled'])
+        self.assertEqual(result['version'], 3)
+        self.assertGreater(result['rows'], 4096)
+        self.assertEqual(result['rows'], result['records'])
+        self.assertEqual(result['spaces'], ['kernel', 'user'])
+        self.assertAlmostEqual(result['estimated'], result['full'], delta=1)
+        self.assertGreater(result['filtered']['count'], 0)
+        self.assertEqual(result['filtered']['spaces'], ['kernel'])
+        self.assertEqual(set(result['filtered']['irqs']), {'d', 'D'})
+        self.assertIn('demo_mixed.c', result['source'])
+        self.assertEqual(result['sourceLayout'], 'visible')
+        self.assertGreater(result['boundaries'], 0)

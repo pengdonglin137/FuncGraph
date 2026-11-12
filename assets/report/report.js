@@ -181,6 +181,7 @@
             const parent = container.parentNode, marker = document.createComment('content');
             parent.replaceChild(marker, container);
             try { fgReorder(container, mode); } finally { parent.replaceChild(container, marker); }
+            fgRefreshTextLayout();
             const ctl = document.querySelector('.controls');
             if (ctl) document.documentElement.style.setProperty('--ctl-h', ctl.offsetHeight + 'px');
             updateExpandableLines();
@@ -333,6 +334,45 @@
         let fgFilterGeneration = 0;
         let fgFilterController = null;
         function fgTextDeferred() { return document.getElementById('content').hasAttribute('data-fg-text'); }
+        function fgResetTextLayout(chunks) {
+            const resetting = Array.from(chunks);
+            if (!resetting.length) return;
+            for (const chunk of resetting) chunk.classList.add('text-layout-reset');
+            try { getComputedStyle(resetting[resetting.length - 1]).getPropertyValue('content-visibility'); }
+            finally { for (const chunk of resetting) chunk.classList.remove('text-layout-reset'); }
+        }
+        function fgRefreshTextLayout(chunks = null) {
+            const content = document.getElementById('content');
+            if (!content?.classList.contains('text-layout-auto')) return;
+            const grouped = content.classList.contains('grouped');
+            const resetting = [];
+            for (const chunk of chunks || content.children) {
+                if (!chunk.classList.contains('text-chunk')) continue;
+                const counts = { plain: 0, empty: 0, expandable: 0 };
+                for (const row of chunk.children) {
+                    if (!row.classList.contains('line-container') || row.style.display === 'none' ||
+                        grouped && row.classList.contains('grp-hidden')) continue;
+                    counts[row.classList.contains('expandable') ? 'expandable' :
+                        row.querySelector('.line-content')?.hasChildNodes() ? 'plain' : 'empty']++;
+                }
+                let changed = false;
+                for (const [kind, count] of Object.entries(counts)) {
+                    const property = '--fg-text-' + kind + '-rows';
+                    const previous = chunk.style.getPropertyValue(property);
+                    if (previous !== String(count)) {
+                        if (previous) changed = true;
+                        chunk.style.setProperty(property, count);
+                    }
+                }
+                if (changed) resetting.push(chunk);
+            }
+            fgResetTextLayout(resetting);
+        }
+        function fgTextScrollBehavior(line, bounds = null) {
+            if (!document.getElementById('content').classList.contains('text-layout-auto')) return 'smooth';
+            const top = (bounds || line.getBoundingClientRect()).top;
+            return Math.abs(top) > window.innerHeight * 2 ? 'instant' : 'smooth';
+        }
         let textGuideRevision = 0;
         let expandableLineIndices = [];
         let keyboardHintTimer = null;
@@ -1413,6 +1453,7 @@
                 }
             } else if (fgTextSort) fgSetTextOrder(fgTextOrder);
 
+            fgRefreshTextLayout();
             updateExpandableLines();
             fgNotifyFilter(hasFilter || sortDir ? text : '', passLines);
 
@@ -1442,6 +1483,7 @@
             });
 
             if (fgTextSort) fgSetTextOrder(fgTextOrder);
+            fgRefreshTextLayout();
             updateExpandableLines();
             fgNotifyFilter('', null);
 
@@ -1688,6 +1730,7 @@
                     const lineTop = rect.top;
                     const lineBottom = rect.bottom;
                     const lineHeight = rect.height;
+                    const behavior = fgTextScrollBehavior(keyboardSelectedLine, rect);
 
                     // 判断是否需要滚动到中间
                     // 如果当前行接近视口底部（距离底部小于2行高度），则滚动到中间
@@ -1697,10 +1740,10 @@
 
                     if (nearBottom || nearTop || lineTop < 0 || lineBottom > windowHeight) {
                         // 如果接近边界或不在视口中，滚动到中间
-                        keyboardSelectedLine.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                        keyboardSelectedLine.scrollIntoView({ behavior, block: 'center' });
                     } else {
                         // 否则，使用nearest，尽可能少滚动
-                        keyboardSelectedLine.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+                        keyboardSelectedLine.scrollIntoView({ behavior, block: 'nearest' });
                     }
                 }
             }
@@ -1910,10 +1953,13 @@
         }
 
         function fgProjectFoldRecords(folding, records) {
+            const chunks = document.getElementById('content').classList.contains('text-layout-auto') ? new Set() : null;
             for (const record of records) {
                 const line = document.getElementById('L' + record.row[0]);
                 fgProjectFoldLine(line, folding.visible(record, foldedBlocks, window.fgFilterState.lines));
+                if (chunks && line) chunks.add(line.parentElement);
             }
+            if (chunks) fgRefreshTextLayout(chunks);
             updateExpandableLines();
         }
 
@@ -2883,7 +2929,10 @@
                     
                     // 平滑滚动到该行
                     setTimeout(() => {
-                        element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                        if (location.hash.substring(1) === hash && keyboardSelectedLine === element &&
+                            (typeof fgCurrentView !== 'function' || fgCurrentView() === 'text')) {
+                            element.scrollIntoView({ behavior: fgTextScrollBehavior(element), block: 'center' });
+                        }
                     }, 100);
                     
                     // 设置键盘选中
@@ -3066,6 +3115,7 @@
         function fgInitText(mounted = false, model = null, navigation = null) {
             if (fgTextInitialized || fgTextDeferred()) return;
             const root = document.getElementById('content');
+            fgRefreshTextLayout();
             total_lines = root.querySelectorAll('.line-container').length;
             if (model) {
                 if (model.records.length !== total_lines) throw new Error('Text model does not cover mounted rows');
@@ -3075,6 +3125,8 @@
                 if (navigation.order.length !== total_lines) throw new Error('Text navigation does not cover mounted rows');
                 fgTextNavigation = navigation;
             }
+            if (root.classList.contains('text-layout-auto'))
+                matchMedia('(max-width: 768px)').addEventListener('change', () => fgResetTextLayout(root.children));
             fgTextInitialized = true;
             if (mounted) {
                 fgRestoreTextOrder();
