@@ -52,6 +52,168 @@ class BrowserSmokeTest(unittest.TestCase):
     def ev(self, js, arg=None):
         return self.page.evaluate(js, arg)
 
+    def install_deferred_text_renderer(self):
+        return self.ev('''() => {
+            const indices = fgTextNavigation.expandable.slice(1,4);
+            const rows = new Map(indices.map(index => {
+                const number = fgTextNavigation.order[index], element = document.getElementById('L' + number);
+                const placeholder = document.createComment('unmounted Text row');
+                element.replaceWith(placeholder);
+                return [number, {element, placeholder}];
+            }));
+            window.textRendererQueue = [];
+            fgViews.text = {el:'content', init:() => ({ensureLine(number, {signal}) {
+                return new Promise((resolve, reject) => textRendererQueue.push({number, signal, reject,
+                    finish() {
+                        const row = rows.get(number);
+                        if (!signal.aborted && row) row.placeholder.replaceWith(row.element);
+                        resolve(row?.element || document.getElementById('L' + number));
+                    }}));
+            }})};
+            fgView('text');
+            return indices;
+        }''')
+
+    def test_text_only_report_keeps_synchronous_navigation_without_view_boot(self):
+        self.k.run(helpers.fixture('pi4_sched'), '--enable-fold', '--filter', '--func-links', out='text-only.html')
+        self.page.goto('file://' + self.k.dir + '/text-only.html', wait_until='load')
+        facts = self.ev('''() => {
+            const index = fgTextNavigation.expandable.at(-1), number = fgTextNavigation.order[index];
+            const result = setKeyboardSelectedLine(index, false);
+            history.replaceState(null, '', '#L' + number);
+            const anchor = handleAnchorNavigation();
+            return {views:typeof fgView, synchronous:!result?.then && !anchor?.then,
+                selected:keyboardSelectedLine.id, expected:'L'+number, highlighted:highlightedLine.id};
+        }''')
+        self.assertEqual(facts['views'], 'undefined')
+        self.assertTrue(facts['synchronous'])
+        self.assertEqual(facts['selected'], facts['expected'])
+        self.assertEqual(facts['highlighted'], facts['expected'])
+
+    def test_unmounted_keyboard_navigation_tracks_latest_requested_line_and_discards_late_completion(self):
+        indices = self.install_deferred_text_renderer()
+        facts = self.ev('''async indices => {
+            keyboardSelectedIndex = indices[0] - 1;
+            window.firstNavigation = navigateToExpandableLine(1);
+            window.secondNavigation = navigateToExpandableLine(1);
+            const requested = textRendererQueue.map(request => request.number);
+            const cancelled = textRendererQueue[0].signal.aborted;
+            textRendererQueue[1].finish(); await secondNavigation;
+            textRendererQueue[0].finish(); await firstNavigation;
+            return {requested, cancelled, selected:keyboardSelectedLine.id, index:keyboardSelectedIndex,
+                selectedRows:document.querySelectorAll('.keyboard-selected').length, pending:fgTextRequestedLine};
+        }''', indices)
+        numbers = self.ev('indices => indices.map(index => fgTextNavigation.order[index])', indices)
+        self.assertEqual(facts, dict(requested=numbers[:2], cancelled=True, selected='L' + str(numbers[1]),
+                                    index=indices[1], selectedRows=1, pending=None))
+
+    def test_unmounted_navigation_abort_settles_even_when_renderer_never_finishes(self):
+        indices = self.install_deferred_text_renderer()
+        facts = self.ev('''async index => {
+            const previous = keyboardSelectedLine?.id;
+            const controller = new AbortController();
+            const pending = fgEnsureTextLine(fgTextNavigation.order[index], {signal:controller.signal}).catch(error => error.name);
+            controller.abort();
+            return {result:await pending, cancelled:textRendererQueue[0].signal.aborted,
+                previous, selected:keyboardSelectedLine?.id};
+        }''', indices[0])
+        self.assertEqual(facts['result'], 'AbortError')
+        self.assertTrue(facts['cancelled'])
+        self.assertEqual(facts['previous'], facts['selected'])
+
+    def test_text_line_service_preserves_sync_rows_and_rejects_wrong_renderer_identity(self):
+        facts = self.ev('''async () => {
+            const number = fgTextNavigation.order[fgTextNavigation.expandable[0]];
+            const row = fgEnsureTextLine(number);
+            const synchronous = !row?.then && row.id === 'L' + number;
+            const previous = keyboardSelectedLine?.id;
+            const wrong = document.getElementById('L' + fgTextNavigation.order.at(-1));
+            const api = {ensureLine:() => wrong};
+            fgViews.text = {el:'content', init:() => api}; fgView('text');
+            const messages = [];
+            for (const value of [0,-1,1.5,'2',Number.MAX_SAFE_INTEGER+1]) {
+                try { await fgEnsureTextLine(value); messages.push('accepted'); }
+                catch (error) { messages.push(error.message); }
+            }
+            for (const candidate of [wrong, row.cloneNode(true)]) {
+                api.ensureLine = () => candidate;
+                try { await fgEnsureTextLine(number); messages.push('accepted'); }
+                catch (error) { messages.push(error.message); }
+            }
+            return {synchronous, messages, previous, selected:keyboardSelectedLine?.id};
+        }''')
+        self.assertTrue(facts['synchronous'])
+        self.assertEqual(facts['messages'], ['Invalid Text line identity'] * 5 +
+                         ['Text renderer returned a different line'] * 2)
+        self.assertEqual(facts['previous'], facts['selected'])
+
+    def test_unmounted_navigation_keeps_previous_selection_on_failure_and_can_retry(self):
+        indices = self.install_deferred_text_renderer()
+        facts = self.ev('''async index => {
+            const previous = keyboardSelectedLine?.id;
+            const first = setKeyboardSelectedLine(index, false);
+            textRendererQueue[0].reject(new Error('injected Text renderer failure'));
+            await first;
+            const retained = keyboardSelectedLine?.id;
+            const retry = setKeyboardSelectedLine(index, false);
+            textRendererQueue[1].finish(); await retry;
+            return {previous, retained, selected:keyboardSelectedLine.id, pending:fgTextRequestedLine};
+        }''', indices[0])
+        self.assertEqual(facts['previous'], facts['retained'])
+        self.assertEqual(facts['selected'], self.ev('index => "L" + fgTextNavigation.order[index]', indices[0]))
+        self.assertIsNone(facts['pending'])
+
+    def test_changing_view_or_escape_cancels_unmounted_navigation_without_late_focus(self):
+        indices = self.install_deferred_text_renderer()
+        facts = self.ev('''async indices => {
+            const previous = keyboardSelectedLine?.id;
+            const first = setKeyboardSelectedLine(indices[0], false);
+            fgSwitchView('timeline');
+            const cancelled = textRendererQueue[0].signal.aborted;
+            textRendererQueue[0].finish(); await first;
+            const retained = keyboardSelectedLine?.id;
+            fgSwitchView('text');
+            const second = setKeyboardSelectedLine(indices[1], false);
+            document.body.dispatchEvent(new KeyboardEvent('keydown', {key:'Escape', bubbles:true}));
+            textRendererQueue[1].finish(); await second;
+            return {previous, retained, cancelled, escape:textRendererQueue[1].signal.aborted,
+                selected:keyboardSelectedLine, pending:fgTextRequestedLine};
+        }''', indices)
+        self.assertEqual(facts['previous'], facts['retained'])
+        self.assertTrue(facts['cancelled'])
+        self.assertTrue(facts['escape'])
+        self.assertIsNone(facts['selected'])
+        self.assertIsNone(facts['pending'])
+
+    def test_late_hash_request_cannot_override_newer_keyboard_navigation(self):
+        indices = self.install_deferred_text_renderer()
+        facts = self.ev('''async indices => {
+            const target = fgTextNavigation.order[indices[0]];
+            history.replaceState(null, '', '#L' + target);
+            const anchor = handleAnchorNavigation();
+            const keyboard = setKeyboardSelectedLine(indices[1], false);
+            textRendererQueue[1].finish(); await keyboard;
+            textRendererQueue[0].finish(); await anchor;
+            await new Promise(resolve => setTimeout(resolve, 150));
+            return {selected:keyboardSelectedLine.id, highlighted:highlightedLine?.id || null,
+                cancelled:textRendererQueue[0].signal.aborted};
+        }''', indices)
+        self.assertEqual(facts['selected'], self.ev('index => "L" + fgTextNavigation.order[index]', indices[1]))
+        self.assertIsNone(facts['highlighted'])
+        self.assertTrue(facts['cancelled'])
+
+    def test_timeline_text_flash_is_cancelled_when_immediately_returning_to_timeline(self):
+        facts = self.ev('''async () => {
+            fgSwitchView('timeline');
+            fgView('timeline').probe().select(0);
+            window.dispatchEvent(new KeyboardEvent('keydown', {key:'Enter', cancelable:true}));
+            const switched = fgCurrentView();
+            fgSwitchView('timeline');
+            await new Promise(resolve => setTimeout(resolve, 100));
+            return {switched, current:fgCurrentView(), flashes:document.querySelectorAll('#content .tl-flash').length};
+        }''')
+        self.assertEqual(facts, dict(switched='text', current='timeline', flashes=0))
+
     def load_startup_report(self, saved='text', theme='light', fragment='', filename='report.html'):
         self.ev("({saved, theme}) => { lsSet('view', saved); localStorage.setItem('theme', theme); }",
                 dict(saved=saved, theme=theme))

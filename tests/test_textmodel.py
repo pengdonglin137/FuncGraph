@@ -52,6 +52,38 @@ class TextModelTest(unittest.TestCase):
             assert.equal(first.getAttribute('data-cpu'), '0');
         ''')
 
+    def test_locate_uses_original_ordinals_for_sparse_lines_regardless_of_display_order(self):
+        self.run_model('''
+            const model = drain(fgTextModel.prepare(data([
+                [2, 'header'], [8, 'later', {pid:'20'}], [101, 'first task', {pid:'1'}], [9000, 'end']])));
+            const original = model.records.slice();
+            fgTextModel.order(model, 'task');
+            for (const [ordinal, record] of original.entries()) {
+                const found = fgTextModel.locate(model, record.row[0]);
+                assert.equal(found.ordinal, ordinal); assert.equal(found.record, record);
+            }
+            for (const number of [1,3,9,102,8999,9001]) assert.equal(fgTextModel.locate(model, number), null);
+            for (const number of [0,-1,NaN,Infinity,1.5,'2',null,Number.MAX_SAFE_INTEGER+1])
+                assert.throws(() => fgTextModel.locate(model, number), /Invalid Text line identity/);
+            assert.equal(fgTextModel.locate(drain(fgTextModel.prepare(data([]))), 1), null);
+            assert.deepEqual(model.records, original);
+        ''')
+
+    def test_locate_has_logarithmic_probes_without_building_another_full_row_index(self):
+        self.run_model('''
+            const model = drain(fgTextModel.prepare(data(Array.from({length:131073}, (_, index) => [index*3+2, 'row']))));
+            let reads = 0;
+            model.records = new Proxy(model.records, {get(target, property) {
+                if (/^[0-9]+$/.test(String(property))) reads++;
+                return Reflect.get(target, property);
+            }});
+            for (const ordinal of [0,511,512,4095,4096,65536,131072]) {
+                reads = 0;
+                assert.equal(fgTextModel.locate(model, ordinal*3+2).ordinal, ordinal);
+                assert.ok(reads <= 20, String(reads));
+            }
+        ''')
+
     def test_order_plan_preserves_sparse_rows_task_headers_switches_and_exact_gaps(self):
         self.run_model('''
             const input = data([

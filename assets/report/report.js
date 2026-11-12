@@ -282,6 +282,8 @@
         let keyboardSelectedLine = null;
         let keyboardSelectedIndex = -1;
         let fgTextNavigation = null;
+        let fgTextLineRequest = null;
+        let fgTextRequestedLine = null;
         let fgTextInitialized = false;
         let fgFilterGeneration = 0;
         let fgFilterController = null;
@@ -617,13 +619,13 @@
         }
         
         // 初始化键盘导航
-        function initKeyboardNavigation() {
+        function initKeyboardNavigation(selectDefault = true) {
             // 使用updateExpandableLines来初始化所有变量
             updateExpandableLines();
             
             // 如果有可展开行，设置默认选中第一个可展开行
             const first = fgTextNavigation.boundary(false);
-            if (first >= 0) setKeyboardSelectedLine(first, false);
+            if (selectDefault && first >= 0) setKeyboardSelectedLine(first, false);
             
             // 初始显示键盘提示，但只在第一次加载页面时
             // shortcuts are shown on demand (header "?" button) instead of popping over the trace
@@ -1334,6 +1336,32 @@
             return result.value;
         }
 
+        async function fgLoadTextBlock(model, number, options = {}) {
+            if (options.signal?.aborted) throw new DOMException('Text row request canceled', 'AbortError');
+            const location = fgTextModel.locate(model, number);
+            if (!location) return null;
+            if (fgData.textChunks()?.count !== model.records.length) throw new Error('Text catalog does not cover complete records');
+            const block = await fgData.loadTextBlock(location.ordinal, options);
+            if (options.signal?.aborted) throw new DOMException('Text row request canceled', 'AbortError');
+            const parser = document.createElement('div');
+            parser.innerHTML = block.html;
+            const element = parser.firstElementChild;
+            if (parser.childNodes.length !== 1 || !element?.classList.contains('text-chunk')) throw new Error('Invalid Text paint block');
+            const rows = element.querySelectorAll('.line-container');
+            if (rows.length !== block.count) throw new Error('Text paint block row count mismatch');
+            for (let index = 0; index < rows.length; index++) {
+                const row = rows[index], record = model.records[block.first + index];
+                if (row.id !== 'L' + record.row[0] || row.getAttribute('data-line-number') !== String(record.row[0])) {
+                    throw new Error('Text paint block line identity mismatch');
+                }
+                if (model.version >= 2 && (row.classList.contains('expandable') !== (record.source !== null) ||
+                    record.source !== null && row.nextElementSibling?.getAttribute('data-src') !== String(record.source))) {
+                    throw new Error('Text paint block source identity mismatch');
+                }
+            }
+            return { first: block.first, count: block.count, element, line: rows[location.ordinal - block.first] };
+        }
+
         function applyFilter() {
             fgCancelPendingFilter(false);
             const generation = fgFilterGeneration;
@@ -1660,18 +1688,61 @@
             });
         }
 
-        // 设置键盘选中的行
-        function setKeyboardSelectedLine(index, scrollIntoView = true) {
+        function fgCancelTextNavigation() {
+            fgTextLineRequest?.controller.abort();
+            fgTextLineRequest = null;
+            fgTextRequestedLine = null;
+        }
+
+        function fgValidateTextLine(number, element, signal) {
+            if (signal?.aborted) throw new DOMException('Text navigation canceled', 'AbortError');
+            if (!Number.isSafeInteger(number) || number <= 0) throw new Error('Invalid Text line identity');
+            if (element && (element.id !== 'L' + number || !element.classList.contains('line-container') ||
+                element.getAttribute('data-line-number') !== String(number) || !document.getElementById('content').contains(element))) {
+                throw new Error('Text renderer returned a different line');
+            }
+            return element || null;
+        }
+
+        window.fgEnsureTextLine = function (number, options = {}) {
+            fgValidateTextLine(number, null, options.signal);
+            return fgValidateTextLine(number, document.getElementById('L' + number), options.signal);
+        };
+
+        function fgRequestTextLine(number, apply, options = {}) {
+            fgCancelTextNavigation();
+            const controller = new AbortController();
+            const request = { controller, current: () => fgTextLineRequest === request && !controller.signal.aborted &&
+                (typeof fgCurrentView !== 'function' || fgCurrentView() === 'text') && (!options.guard || options.guard()) };
+            fgTextLineRequest = request;
+            const failed = error => {
+                if (!request.current() || error.name === 'AbortError') return null;
+                fgTextRequestedLine = null;
+                if (options.error) options.error(error);
+                else console.warn('Text navigation failed:', error);
+                return null;
+            };
+            const finish = element => {
+                if (!request.current()) return null;
+                fgTextRequestedLine = null;
+                if (element) apply(element, request);
+                else options.missing?.();
+                return element;
+            };
+            try {
+                const value = window.fgEnsureTextLine(number, { signal: controller.signal });
+                return value?.then ? Promise.resolve(value).then(finish).catch(failed) : finish(value);
+            } catch (error) { return failed(error); }
+        }
+
+        function fgSelectMountedTextLine(element, scrollIntoView = true) {
             // 清除之前的选择
             if (keyboardSelectedLine) {
                 keyboardSelectedLine.classList.remove('keyboard-selected');
             }
 
-            if (index < 0) index = 0;
-            if (index >= fgTextNavigation.order.length) index = fgTextNavigation.order.length - 1;
-
-            keyboardSelectedIndex = index;
-            keyboardSelectedLine = document.getElementById('L' + fgTextNavigation.order[index]);
+            keyboardSelectedIndex = fgTextNavigation.indexOf(+element.getAttribute('data-line-number'));
+            keyboardSelectedLine = element;
 
             // 添加新的选择样式
             if (keyboardSelectedLine) {
@@ -1710,16 +1781,26 @@
                 }
             }
         }
+
+        function setKeyboardSelectedLine(index, scrollIntoView = true) {
+            if (!fgTextNavigation?.order.length) { fgCancelTextNavigation(); return null; }
+            index = Math.max(0, Math.min(index, fgTextNavigation.order.length - 1));
+            const number = fgTextNavigation.order[index];
+            const result = fgRequestTextLine(number, element => fgSelectMountedTextLine(element, scrollIntoView));
+            if (result?.then) fgTextRequestedLine = number;
+            return result;
+        }
         
         // 导航到下一个可展开行
         function navigateToExpandableLine(direction) {
-            const next = fgTextNavigation.next(keyboardSelectedIndex, direction);
-            if (next >= 0) setKeyboardSelectedLine(next, true);
+            const start = fgTextRequestedLine === null ? keyboardSelectedIndex : fgTextNavigation.indexOf(fgTextRequestedLine);
+            const next = fgTextNavigation.next(start, direction);
+            if (next >= 0) return setKeyboardSelectedLine(next, true);
         }
 
         function navigateToTextBoundary(last) {
             const next = fgTextNavigation.boundary(last);
-            if (next >= 0) setKeyboardSelectedLine(next, true);
+            if (next >= 0) return setKeyboardSelectedLine(next, true);
         }
         
         // 处理行点击事件 - 现在只处理单击
@@ -2402,6 +2483,7 @@
             
             // 按下ESC键取消选择
             if (event.key === 'Escape' || event.keyCode === 27) {
+                fgCancelTextNavigation();
                 // 1. 清除键盘选中（键盘导航）
                 if (keyboardSelectedLine) {
                     keyboardSelectedLine.classList.remove('keyboard-selected');
@@ -2859,38 +2941,22 @@
         
         // 处理锚点导航
         function handleAnchorNavigation() {
-            if (fgTextDeferred() && location.hash) {
-                const anchor = location.hash;
-                Promise.resolve(fgSwitchView('text')).then(api => {
-                    if (api && fgCurrentView() === 'text' && location.hash === anchor) handleAnchorNavigation();
-                });
-                return;
-            }
             const hash = window.location.hash.substring(1);
-            if (hash) {
-                // 尝试查找锚点元素
-                const element = document.getElementById(hash);
-                if (element && element.classList.contains('line-container')) {
-                    // 如果是行容器，清除其他高亮，然后高亮此行
-                    if (highlightedLine) highlightedLine.classList.remove('highlighted');
-                    highlightedLine = element;
-                    element.classList.add('highlighted');
-                    
-                    // 平滑滚动到该行
-                    setTimeout(() => {
-                        if (location.hash.substring(1) === hash && keyboardSelectedLine === element &&
-                            (typeof fgCurrentView !== 'function' || fgCurrentView() === 'text')) {
-                            fgScrollTextLine(element, { behavior: fgTextScrollBehavior(element), block: 'center' });
-                        }
-                    }, 100);
-                    
-                    // 设置键盘选中
-                    const lineIndex = fgTextNavigation.indexOf(+element.getAttribute('data-line-number'));
-                    if (lineIndex >= 0) {
-                        setKeyboardSelectedLine(lineIndex, false);
+            if (!/^L[1-9][0-9]*$/.test(hash)) { fgCancelTextNavigation(); return; }
+            const number = Number(hash.slice(1));
+            if (!Number.isSafeInteger(number)) { fgCancelTextNavigation(); return; }
+            if (fgTextDeferred()) fgSwitchView('text');
+            return fgRequestTextLine(number, (element, request) => {
+                if (highlightedLine) highlightedLine.classList.remove('highlighted');
+                highlightedLine = element;
+                element.classList.add('highlighted');
+                setTimeout(() => {
+                    if (request.current() && element.isConnected && keyboardSelectedLine === element) {
+                        fgScrollTextLine(element, { behavior: fgTextScrollBehavior(element), block: 'center' });
                     }
-                }
-            }
+                }, 100);
+                fgSelectMountedTextLine(element, false);
+            }, { guard: () => location.hash.substring(1) === hash });
         }
         
         // 初始加载时
@@ -3078,6 +3144,7 @@
 
         function fgInitText(mounted = false, model = null, navigation = null) {
             if (fgTextInitialized || fgTextDeferred()) return;
+            const pendingNavigation = fgTextLineRequest !== null;
             const root = document.getElementById('content');
             fgRefreshTextLayout();
             total_lines = root.querySelectorAll('.line-container').length;
@@ -3115,7 +3182,7 @@
             // restoreViewState(); // 注释掉，避免自动滚动
 
             // 初始化键盘导航
-            initKeyboardNavigation();
+            initKeyboardNavigation(!pendingNavigation);
 
             // 初始化统一过滤器（如果过滤框存在）
             if (document.getElementById('filterInput')) {
@@ -3123,7 +3190,7 @@
             }
 
             // 处理锚点导航
-            handleAnchorNavigation();
+            if (!pendingNavigation) handleAnchorNavigation();
 
             // P0: Apply duration heatmap
             applyDurationHeatmap();

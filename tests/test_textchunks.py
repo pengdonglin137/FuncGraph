@@ -260,6 +260,143 @@ class TextChunkBrowserTest(unittest.TestCase):
         self.assertTrue(result['deferred'])
         self.assertFalse(any(url.endswith('text-index.json') for url in self.requests))
 
+    def test_reading_an_unmounted_line_materializes_only_its_paint_block_and_exact_source_pairs(self):
+        facts = self.page.evaluate('''async () => {
+            const iterator = fgTextModel.prepare(await fgData.load('fgTextIndex'));
+            let result;
+            do { result = iterator.next(); } while (!result.done);
+            const model = result.value;
+            const block = await fgLoadTextBlock(model, 4101);
+            return {first:block.first, count:block.count, line:block.line.id,
+                rows:block.element.querySelectorAll('.line-container').length,
+                source:block.line.nextElementSibling.dataset.src,
+                expected:fgTextModel.locate(model, 4101).record.source,
+                connected:block.element.isConnected, mounted:document.querySelectorAll('#content .line-container').length,
+                deferred:fgTextDeferred(), firstReady:fgData.ready('fgText0')};
+        }''')
+        self.assertEqual(facts, dict(first=4096, count=107, line='L4101', rows=107,
+                                    source=str(facts['expected']), expected=facts['expected'], connected=False,
+                                    mounted=0, deferred=True, firstReady=False))
+        self.assertEqual(sum('/text-4096.html' in url for url in self.requests), 1)
+        self.assertFalse(any('/text-0.html' in url for url in self.requests))
+
+    def test_renderer_contract_can_reveal_an_unmounted_line_without_loading_other_text_chunks(self):
+        facts = self.page.evaluate('''async () => {
+            const iterator = fgTextModel.prepare(await fgData.load('fgTextIndex'));
+            let result;
+            do { result = iterator.next(); } while (!result.done);
+            const model = result.value;
+            const navigation = fgTextModel.prepareNavigation(model);
+            do { result = navigation.next(); } while (!result.done);
+            fgTextNavigation = result.value;
+            const root = document.getElementById('content');
+            fgViews.text = {el:'content', init:() => ({async ensureLine(number, options) {
+                const block = await fgLoadTextBlock(model, number, options);
+                if (options.signal?.aborted) throw new DOMException('Canceled', 'AbortError');
+                root.replaceChildren(block.element);
+                return block.line;
+            }})};
+            fgView('text'); fgSwitchView('text');
+            await setKeyboardSelectedLine(fgTextNavigation.indexOf(4101), false);
+            return {selected:keyboardSelectedLine.id, index:keyboardSelectedIndex, records:model.records.length,
+                mounted:root.querySelectorAll('.line-container').length, firstReady:fgData.ready('fgText0')};
+        }''')
+        self.assertEqual(facts, dict(selected='L4101', index=4100, records=4203, mounted=107, firstReady=False))
+        self.assertFalse(any('/text-0.html' in url for url in self.requests))
+
+    def test_first_timeline_jump_survives_complete_text_initialization_and_stale_hash(self):
+        for stale_hash in ['', '#L5']:
+            with self.subTest(stale_hash=stale_hash):
+                self.page.goto(self.server.url, wait_until='load')
+                self.page.locator('#timelineView .tl-canvas').wait_for(state='attached')
+                number = self.page.evaluate('''hash => {
+                    history.replaceState(null, '', hash || location.pathname);
+                    const probe = fgView('timeline').probe();
+                    const index = probe.N - 1;
+                    probe.select(index);
+                    window.dispatchEvent(new KeyboardEvent('keydown', {key:'Enter', cancelable:true}));
+                    return fgData.read('tlData').cols.line[index];
+                }''', stale_hash)
+                self.page.wait_for_function('number => !fgTextDeferred() && keyboardSelectedLine?.id === "L" + number', arg=number)
+                self.assertGreater(number, 4096)
+                self.page.locator('#L' + str(number) + '.tl-flash').wait_for(state='attached')
+                self.assertEqual(self.page.locator('#content .line-container').count(), 4203)
+                self.page.evaluate("fgSwitchView('timeline'); lsSet('view', 'timeline')")
+
+    def test_cancelling_line_subscriber_does_not_cancel_shared_complete_text_initialization(self):
+        facts = self.page.evaluate('''async () => {
+            const opening = fgSwitchView('text');
+            const controller = new AbortController();
+            const line = fgEnsureTextLine(4101, {signal:controller.signal}).catch(error => error.name);
+            controller.abort();
+            const canceled = await line;
+            const api = await opening;
+            return {canceled, ready:!!api, rows:document.querySelectorAll('#content .line-container').length,
+                deferred:fgTextDeferred(), initialized:fgTextInitialized};
+        }''')
+        self.assertEqual(facts, dict(canceled='AbortError', ready=True, rows=4203, deferred=False, initialized=True))
+
+    def test_sparse_identity_materialization_uses_original_ordinals_for_all_index_versions(self):
+        facts = self.page.evaluate('''async () => {
+            const input = await fgData.load('fgTextIndex');
+            const load = fgData.loadTextBlock;
+            const calls = [], facts = [];
+            fgData.loadTextBlock = async (ordinal, options) => {
+                calls.push(ordinal);
+                const block = await load(ordinal, options);
+                return {...block, html:block.html.replace(/(id="L|data-line-number=")([0-9]+)"/g,
+                    (_, prefix, number) => prefix + (+number*3+2) + '"')};
+            };
+            try {
+                for (const version of [1,2,3]) {
+                    const typed = version === 3;
+                    const fields = typed ? [...input.fields, 'space'] : input.fields;
+                    const rows = input.rows.map(row => [row[0]*3+2, ...row.slice(1, -1),
+                        ...(typed ? ['user'] : []), ...(version >= 2 ? [row.at(-1)] : [])]);
+                    const iterator = fgTextModel.prepare({version, fields, rows});
+                    let result;
+                    do { result = iterator.next(); } while (!result.done);
+                    fgTextModel.order(result.value, 'task');
+                    const block = await fgLoadTextBlock(result.value, 4101*3+2);
+                    facts.push({version, first:block.first, count:block.count, line:block.line.id});
+                }
+                return {calls, facts};
+            } finally { fgData.loadTextBlock = load; }
+        }''')
+        self.assertEqual(facts['calls'], [4100] * 3)
+        self.assertEqual(facts['facts'], [dict(version=version, first=4096, count=107, line='L12305')
+                                           for version in [1, 2, 3]])
+        self.assertEqual(self.page.locator('#content .line-container').count(), 0)
+
+    def test_on_demand_rows_fail_closed_for_missing_records_wrong_counts_identities_and_sources(self):
+        facts = self.page.evaluate('''async () => {
+            const iterator = fgTextModel.prepare(await fgData.load('fgTextIndex'));
+            let result;
+            do { result = iterator.next(); } while (!result.done);
+            const model = result.value;
+            const original = fgData.loadTextBlock;
+            const block = await original(4100);
+            const messages = [];
+            try {
+                for (const html of [block.html.replace('class="line-container', 'class="removed'),
+                    block.html.replace('id="L4097"', 'id="L999999"'),
+                    block.html.replace(/data-src="[0-9]+"/, 'data-src="999999"')]) {
+                    fgData.loadTextBlock = async () => ({...block, html});
+                    try { await fgLoadTextBlock(model, 4101); messages.push('accepted'); }
+                    catch (error) { messages.push(error.message); }
+                }
+                fgData.loadTextBlock = () => { throw new Error('Missing record must not load HTML'); };
+                const missing = await fgLoadTextBlock(model, 999999);
+                const controller = new AbortController(); controller.abort();
+                try { await fgLoadTextBlock(model, 4101, {signal:controller.signal}); }
+                catch (error) { messages.push(error.name); }
+                return {messages, missing};
+            } finally { fgData.loadTextBlock = original; }
+        }''')
+        self.assertEqual(facts, dict(missing=None, messages=['Text paint block row count mismatch',
+                         'Text paint block line identity mismatch', 'Text paint block source identity mismatch', 'AbortError']))
+        self.assertEqual(self.page.locator('#content .line-container').count(), 0)
+
     def test_complete_chunk_mount_preserves_cross_chunk_folding_filtering_sources_and_reentry(self):
         result = self.page.evaluate('''async () => {
             await fgSwitchView('text');

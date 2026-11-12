@@ -1086,24 +1086,25 @@ function showRangeSummary() {
 // ---- jump to the text view ----
 function gotoText(n) {
     if (D.no_text) { toast('Report generated with --no-text-view: no text view (trace line ' + n + ')'); return; }
-    if (fgTextDeferred()) return Promise.resolve(window.fgSwitchView('text')).then(api => {
-        if (api && window.fgCurrentView() === 'text') gotoText(n);
-    });
-    const el = document.getElementById('L' + n);
-    if (!el) { toast('Line ' + n + ' not found'); return; }
-    // unfold folded ancestors so the line becomes visible
-    if (typeof _setFolded === 'function' && typeof foldedBlocks === 'object') {
-        const anc = (el.getAttribute('data-fold-ancestors') || '').split(' ').filter(Boolean);
-        for (const id of anc) if (foldedBlocks[id]) _setFolded(id, false);
-    }
     window.fgSwitchView('text');
-    if (el.style.display === 'none') toast('Line ' + n + ' is hidden by the current filter');
-    setTimeout(() => {
-        el.scrollIntoView({ block: 'center' });
-        el.classList.remove('tl-flash');
-        void el.offsetWidth;
-        el.classList.add('tl-flash');
-    }, 30);
+    return fgRequestTextLine(n, (el, request) => {
+        if (typeof _setFolded === 'function' && typeof foldedBlocks === 'object') {
+            const model = fgDomTextModels.get(document.getElementById('content'));
+            const record = model ? fgTextModel.locate(model, n)?.record : el;
+            const ancestors = (record?.getAttribute('data-fold-ancestors') || '').split(' ').filter(Boolean);
+            for (const id of ancestors) if (foldedBlocks[id]) _setFolded(id, false);
+        }
+        fgSelectMountedTextLine(el, false);
+        if (el.style.display === 'none') toast('Line ' + n + ' is hidden by the current filter');
+        setTimeout(() => {
+            if (!request.current() || !el.isConnected) return;
+            el.scrollIntoView({ block: 'center' });
+            el.classList.remove('tl-flash');
+            void el.offsetWidth;
+            el.classList.add('tl-flash');
+        }, 30);
+    }, { missing: () => toast('Line ' + n + ' not found'),
+        error: error => toast('Unable to open trace line ' + n + ': ' + error.message) });
 }
 function revealLine(n) {
     let i = sliceForLine(n);

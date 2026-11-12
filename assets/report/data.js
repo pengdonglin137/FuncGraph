@@ -390,10 +390,39 @@
             return load(info.name, options).then(value => textValue(info, value));
         } catch (error) { return Promise.reject(error); }
     }
+    function textBlock(info, value, row) {
+        const marker = '<div class="text-chunk" data-chunk-size="' + info.paint_rows + '">';
+        const count = Math.ceil(info.count / info.paint_rows);
+        const selected = Math.floor((row - info.first) / info.paint_rows);
+        let start = 0, block = null;
+        for (let index = 0; index < count; index++) {
+            if (!value.startsWith(marker, start)) throw new Error('Invalid Text paint block boundary');
+            const next = value.indexOf(marker, start + marker.length);
+            const end = next < 0 ? value.length : next;
+            if ((index === count - 1) !== (next < 0) || !value.endsWith('</div></div>', end)) {
+                throw new Error('Text paint blocks do not match catalog');
+            }
+            if (index === selected) block = { first: info.first + index * info.paint_rows,
+                count: Math.min(info.paint_rows, info.count - index * info.paint_rows), html: value.slice(start, end) };
+            start = end;
+        }
+        return block;
+    }
+    function loadTextBlock(row, options = {}) {
+        try {
+            aborted(options.signal);
+            const info = textInfo(row);
+            return load(info.name, options).then(value => {
+                aborted(options.signal);
+                try { return textBlock(info, textValue(info, value), row); }
+                catch (error) { cacheRelease('data:' + info.name); throw error; }
+            });
+        } catch (error) { return Promise.reject(error); }
+    }
     window.fgData = {
         read, load, ready,
         readSource, loadSource, sourceReady: source => ready(sourceInfo(source).name),
-        textChunks, loadTextChunk,
+        textChunks, loadTextChunk, loadTextBlock,
         releaseTextChunks: () => { for (const key of Array.from(textCache.entries.keys())) cacheRelease(key); },
         release: name => cacheRelease('data:' + name),
         external: name => !!descriptorNode && !embedded(name),

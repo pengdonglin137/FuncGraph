@@ -1,5 +1,12 @@
 # FuncGraph User Guide
 
+Text keyboard navigation, `#L<n>` anchors and Timeline → Text jumps now share a
+latest-request-wins path. Leaving Text or pressing Escape cancels a pending jump;
+late loads and delayed scrolling cannot pull focus back. Mounted rows still
+respond synchronously. First Text initialization still loads all rows: **the
+windowed UI is not enabled yet**. See [on-demand row access and its current
+boundaries](performance-text-rows.md); regenerate older reports for these fixes.
+
 New chunked sidecar Text uses browser-managed offscreen layout skipping when `content-visibility`, intrinsic block sizes and `:has()` are supported. Complete rows and analysis remain available; selected/focused blocks and expanded source panels retain normal layout, while filtering, folding and reordering refresh offscreen extent estimates. Previously visited blocks discard remembered sizes after content or narrow/wide breakpoint changes, avoiding stale blank space. Far jumps in this mode are immediate to avoid smooth-scroll targets drifting during layout changes; nearby navigation stays smooth. Unsupported browsers and printing use full layout. Horizontal extent can grow when longer rows become relevant. This reduces avoidable offscreen rendering, not the number of DOM/model records or a guaranteed memory limit; regenerate older reports to use it.
 
 New large sidecar Text reports (more than 4,096 original records, including headers) use network resources of up to 4,096 records instead of downloading a monolithic `text.html` before preparation. Each chunk preserves complete rows/source placeholders and original order, with verification, loading progress, cancellation and retry. A separate HTML-resource cache retains at most 4 chunks and 16 MiB of verified UTF-8 bytes; oversized chunks load without being cached. Cancellation discards detached nodes; reentry reuses retained chunks but must refetch evicted ones. **All records still prepare before a complete mount: this is not viewport windowing or a bound on DOM/model memory.** Small/older sidecars keep their complete `text.html`; single output and auto at/below its byte threshold do not use these external chunks. Regenerate older reports to use this delivery.

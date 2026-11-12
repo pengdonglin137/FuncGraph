@@ -271,6 +271,29 @@
     }
     window.fgView = ensure;
     window.fgEnsureText = () => views.text ? open('text') : {};
+    window.fgEnsureTextLine = function (number, options = {}) {
+        const signal = options.signal;
+        const check = () => fgValidateTextLine(number, null, signal);
+        const validate = element => fgValidateTextLine(number, element, signal);
+        const obtain = api => {
+            check();
+            return api?.ensureLine ? api.ensureLine(number, options) :
+                fgTextDeferred() ? null : document.getElementById('L' + number);
+        };
+        check();
+        const value = apis.text?.ensureLine || !fgTextDeferred() ? obtain(apis.text) : Promise.resolve(open('text')).then(obtain);
+        if (!value?.then) return validate(value);
+        return new Promise((resolve, reject) => {
+            const cleanup = () => signal?.removeEventListener('abort', cancel);
+            const cancel = () => { cleanup(); reject(new DOMException('Text navigation canceled', 'AbortError')); };
+            signal?.addEventListener('abort', cancel, { once: true });
+            Promise.resolve(value).then(element => {
+                cleanup();
+                try { resolve(validate(element)); } catch (error) { reject(error); }
+            }, error => { cleanup(); reject(error); });
+            if (signal?.aborted) cancel();
+        });
+    };
     // Page chrome, looked up once: querySelectorAll over a 1M-element text view costs ~40 ms per call.
     let chrome = null;
     function pageChrome() {
@@ -297,6 +320,7 @@
             return api;
         }
         if (current === 'text') {
+            fgCancelTextNavigation();
             textScroll = window.scrollY;
             textScrollLeft = pageChrome().textViewport?.scrollLeft || 0;
             fgCloseTextControls();

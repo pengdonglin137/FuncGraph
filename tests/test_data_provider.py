@@ -395,6 +395,59 @@ class DataProviderTest(unittest.TestCase):
         self.assertEqual(self.count('fgText0.html'), 0)
         self.assertEqual(self.count('text-index.json'), 0)
 
+    def test_text_paint_blocks_select_exact_html_and_keep_partial_final_block_and_unicode(self):
+        marker = '<div class="text-chunk" data-chunk-size="512">'
+        blocks = [marker + '<div>块🙂' + str(index) + '</div></div>' for index in range(8)]
+        last = marker + '<div>最后一个块</div></div>'
+        self.payloads.update(fgText0=''.join(blocks).encode(), fgText4096=last.encode())
+        self.publish(text_catalog=dict(version=1, count=4203, chunk_size=4096, paint_rows=512))
+        result = self.page.evaluate('''async () => {
+            const rows = [4095,512,511,0,4202];
+            const blocks = [];
+            for (const row of rows) blocks.push(await fgData.loadTextBlock(row));
+            return blocks;
+        }''')
+        self.assertEqual(result, [dict(first=3584, count=512, html=blocks[7]),
+                                  dict(first=512, count=512, html=blocks[1]),
+                                  dict(first=0, count=512, html=blocks[0]),
+                                  dict(first=0, count=512, html=blocks[0]),
+                                  dict(first=4096, count=107, html=last)])
+        self.assertEqual(self.count('fgText0.html'), 1)
+        self.assertEqual(self.count('fgText4096.html'), 1)
+        self.assertEqual(self.count('text-index.json'), 0)
+
+    def test_text_paint_block_validation_rejects_wrong_boundaries_counts_and_evicted_failures(self):
+        marker = '<div class="text-chunk" data-chunk-size="512">'
+        good = marker + '<div>完整</div></div>'
+        invalid = ['', 'prefix' + good, good + good, good[:-6], good.replace('512', '256')]
+        for value in invalid:
+            with self.subTest(value=value):
+                self.payloads['fgText0'] = value.encode()
+                self.publish(text_catalog=dict(version=1, count=10, chunk_size=4096, paint_rows=512))
+                result = self.page.evaluate('''async () => {
+                    try { await fgData.loadTextBlock(0); return 'accepted'; }
+                    catch (error) { return error.message; }
+                }''')
+                self.assertIn('Text paint block', result)
+                self.assertFalse(self.page.evaluate('fgData.ready("fgText0")'))
+
+    def test_text_paint_block_cancellation_is_independent_even_inside_one_network_chunk(self):
+        marker = '<div class="text-chunk" data-chunk-size="512">'
+        self.payloads['fgText0'] = ((marker + '<div>块</div></div>') * 8).encode()
+        self.publish(text_catalog=dict(version=1, count=4096, chunk_size=4096, paint_rows=512))
+        gate, event = self.gate('fgText0.html')
+        self.page.evaluate('''() => {
+            window.blockController = new AbortController();
+            window.firstBlock = fgData.loadTextBlock(0, {signal:blockController.signal}).catch(error => error.name);
+            window.secondBlock = fgData.loadTextBlock(4095);
+        }''')
+        self.assertTrue(event.wait(5))
+        self.page.evaluate('blockController.abort()')
+        self.assertEqual(self.page.evaluate('firstBlock'), 'AbortError')
+        gate.set()
+        self.assertEqual(self.page.evaluate('async () => (await secondBlock).first'), 3584)
+        self.assertEqual(self.count('fgText0.html'), 1)
+
     def test_text_chunk_lru_is_separate_from_sources_and_other_data_and_refreshes_real_reads(self):
         self.payloads.update({'fgText' + str(index): str(index).encode() for index in range(6)})
         self.payloads['fgSrc0'] = encode(['source'])

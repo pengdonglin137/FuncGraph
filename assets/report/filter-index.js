@@ -60,6 +60,17 @@
         }
         return { text: ast || sortDir ? text : '', lines, visible, total: model.records.length, sortDir, graphSets };
     }
+    function locate(model, number) {
+        if (!Number.isSafeInteger(number) || number <= 0) throw new Error('Invalid Text line identity');
+        let first = 0, end = model.records.length;
+        while (first < end) {
+            const middle = first + Math.floor((end - first) / 2);
+            if (model.records[middle].row[0] < number) first = middle + 1;
+            else end = middle;
+        }
+        const record = model.records[first];
+        return record?.row[0] === number ? { ordinal: first, record } : null;
+    }
     function* steps(data, text) {
         const model = yield* prepare(data);
         const { graphSets, ...result } = yield* filter(model, text);
@@ -382,7 +393,7 @@
         }
         return navigation(order, expandable);
     }
-    window.fgTextModel = { fields, prepare, filter, folding, prepareFolding, order, prepareOrder, navigation, prepareNavigation };
+    window.fgTextModel = { fields, prepare, locate, filter, folding, prepareFolding, order, prepareOrder, navigation, prepareNavigation };
     window.fgIndexedFilter = async function (data, text, signal, progress) {
         const iterator = steps(data, text);
         try {

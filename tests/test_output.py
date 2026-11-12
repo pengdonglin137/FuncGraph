@@ -1,5 +1,6 @@
 """Streaming UTF-8 accounting, section extraction and atomic report publication."""
 import io
+from html.parser import HTMLParser
 import json
 import os
 from pathlib import Path
@@ -302,7 +303,18 @@ class ReportSectionsTest(unittest.TestCase):
         text, _, _ = generate_html(lines, None, None)
         write_html(self.path, lines, None, None)
         self.assertEqual(self.path.read_bytes(), text.encode('utf-8'))
-        self.assertEqual(text.count('class="text-chunk"'), 2)
+        class ChunkCounter(HTMLParser):
+            def __init__(self):
+                super().__init__()
+                self.count = 0
+
+            def handle_starttag(self, tag, attributes):
+                if tag == 'div' and 'text-chunk' in dict(attributes).get('class', '').split():
+                    self.count += 1
+
+        chunks = ChunkCounter()
+        chunks.feed(text)
+        self.assertEqual(chunks.count, 2)
 
     def test_streaming_path_does_not_call_full_string_builders(self):
         with patch.object(HtmlGenerator, 'generate', side_effect=AssertionError('full document')):
