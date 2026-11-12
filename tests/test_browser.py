@@ -3529,7 +3529,9 @@ class BrowserSmokeTest(unittest.TestCase):
         self.assertRegex(count, r'^\d+ of \d+ calls$')
         helpers.click_timeline_tool(self.page, '.tl-filterbar [data-act=fclear]')
         self.page.wait_for_timeout(300)
-        self.assertEqual(self.ev("document.querySelector('.tl-fcount').textContent"), '')
+        total = self.ev('fgView("timeline").probe().N')
+        self.assertEqual(self.ev("document.querySelector('.tl-fcount').textContent"), 'All ' + str(total) + ' calls')
+        self.assertIsNone(self.ev('fgFilterState.lines'))
 
     def test_detail_call_site_source(self):
         # the detail panel reuses the text view's resolved source block of the call site
