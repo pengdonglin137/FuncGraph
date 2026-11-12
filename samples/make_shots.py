@@ -57,7 +57,7 @@ def main():
             raise RuntimeError('sample_mixed.html is missing the recorded UDP path')
         shots.zoom(page, sendto, pad=0.04, select=False)
         page.evaluate('index => fgView("timeline").probe().select(index)', dispatch)
-        page.locator('.k', has_text='recorded address').wait_for(state='visible')
+        page.locator('.k', has_text='user args').wait_for(state='visible')
         page.locator('.tl-cs > summary', has_text='User call site source').wait_for(state='visible')
         handle = page.locator('.tl-resizer').bounding_box()
         page.mouse.move(handle['x'] + handle['width'] / 2, handle['y'] + handle['height'] / 2)

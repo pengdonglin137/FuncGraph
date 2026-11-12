@@ -312,7 +312,7 @@ class MixedSampleBrowserTest(unittest.TestCase):
                 .find(candidate => model.nameOf(candidate) === 'dispatch_datagram');
             model.select(index);
         }''')
-        page.locator('.k', has_text='recorded address').wait_for(state='visible')
+        page.locator('.k', has_text='user args').wait_for(state='visible')
         self.assertIn('512', page.locator('.k:has-text("user args") + .v').inner_text())
         self.assertEqual(page.locator('.k:has-text("user return") + .v').inner_text(), '512')
         self.assertEqual(page.get_by_text('BH off', exact=True).count(), 0)

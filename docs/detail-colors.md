@@ -5,6 +5,9 @@ role of text, not whether a value is correct or an operation succeeded. The same
 rules apply to user and kernel calls; address-space badges and boundaries remain
 separate from syntax colors. No new controls or dependencies are required.
 
+The reading hierarchy and argument wrapping are described in
+[detail-layout.md](detail-layout.md).
+
 详情区使用低饱和、适配明暗主题的语义配色。颜色表示文字的角色，不代表数据是否正确或
 操作是否成功。用户态与内核态使用同一套规则，地址空间仍通过原有标识和分界线区分。
 不增加按钮、彩色底块或依赖。

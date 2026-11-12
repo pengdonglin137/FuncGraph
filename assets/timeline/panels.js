@@ -25,6 +25,52 @@ function detailValueHtml(value, parameters = false) {
     }
     return html + esc(value.slice(offset));
 }
+function detailArgumentUnit(html) { return '<span class="tl-argument">' + html + '</span>'; }
+function detailNamedArgumentsHtml(value, names) {
+    if (!Array.isArray(names) || !names.length) return null;
+    const parts = [];
+    let offset = 0;
+    for (let position = 0; position < names.length; position++) {
+        const name = names[position] === null ? 'slot' + (position + 1) : names[position];
+        if (typeof name !== 'string' || !value.startsWith(name + '=', offset)) return null;
+        const end = position + 1 === names.length ? value.length : value.indexOf(', ', offset + name.length + 1);
+        if (end < 0) return null;
+        const literal = value.slice(offset + name.length + 1, end);
+        if (!/^(?:-?\d+|0x[\da-fA-F]+)$/.test(literal)) return null;
+        const separator = end < value.length ? ',' : '';
+        parts.push(detailArgumentUnit(detailToken('parameter', name) + '=' + detailValueHtml(literal) + separator));
+        offset = end + (separator ? 2 : 0);
+    }
+    return offset === value.length ? parts.join(' ') : null;
+}
+function detailArgumentsHtml(value, names) {
+    const named = detailNamedArgumentsHtml(value, names);
+    if (named !== null) return named;
+    const parts = [], closing = [];
+    let quote = '', escaped = false, offset = 0;
+    for (let position = 0; position < value.length; position++) {
+        const character = value[position];
+        if (quote) {
+            if (escaped) escaped = false;
+            else if (character === '\\') escaped = true;
+            else if (character === quote) quote = '';
+        } else if (character === '"' || character === "'") quote = character;
+        else if ('([{'.includes(character)) closing.push({ '(': ')', '[': ']', '{': '}' }[character]);
+        else if (')]}'.includes(character)) {
+            if (closing.pop() !== character) return detailArgumentUnit(detailValueHtml(value, true));
+        } else if (character === ',' && !closing.length) {
+            parts.push(value.slice(offset, position + 1));
+            offset = position + 1;
+        }
+    }
+    if (quote || closing.length) return detailArgumentUnit(detailValueHtml(value, true));
+    parts.push(value.slice(offset));
+    return parts.map(part => {
+        const leading = part.match(/^\s*/)[0], trailing = part.slice(leading.length).match(/\s*$/)[0];
+        const body = part.slice(leading.length, part.length - trailing.length);
+        return esc(leading) + (body ? detailArgumentUnit(detailValueHtml(body, true)) : '') + esc(trailing);
+    }).join('');
+}
 const PROCESS_PAGE = 100;
 const processView = { page: 0 };
 function showProcessEvents(reset = true) {
@@ -357,25 +403,18 @@ function showDetail(i) {
         (modOf(i) ? ' [' + esc(modOf(i)) + ']' : '') + '</span>' + pills + '<span class="sp"></span>' +
         '<a class="tl-link" data-dist="' + sName[i] + '">Duration distribution (H)</a>&nbsp;&nbsp;' +
         lineLink(sLine[i], 'Open in text view ↵') + '<button class="tl-close" title="Close (Esc)">×</button></div>';
-    h += callNavigationHtml(i) + '<div class="tl-detail-body"><div class="tl-left"><div class="tl-kv">';
+    h += callNavigationHtml(i) + '<div class="tl-detail-body"><div class="tl-left"><div class="tl-kv tl-call-facts">';
     h += kv('duration', f & FL.ORPHAN && D.uftrace ? 'unknown · entry not recorded' :
         fmtDur(d) + (f & FL.EST ? ' (estimated)' : f & FL.TRUNC && D.uftrace ? ' (incomplete span)' : ''));
     h += kv('self', fmtDur(sSelf[i]) + (d > 0 ? ' (' + (100 * sSelf[i] / d).toFixed(1) + '%)' : ''));
     h += kv('start', '+' + fmtDur(sStart[i]) + (MODE === 'abs' ? ' &nbsp;' + fmtAbs(sStart[i]) + ' s' : ''));
-    h += kv('task', esc(trackLabel(t)) + (cpuOf(i) >= 0 ? ' &nbsp;on CPU ' + cpuOf(i) : ''));
-    h += kv('depth', String(sDepth[i]));
-    if (f & FL.LAT) h += kv('flags', esc(ctxFlagText(f).replace(/^ · /, '').replace(' (preempt off)', '') || 'none') +
+    let metadata = kv('task', esc(trackLabel(t)) + (cpuOf(i) >= 0 ? ' &nbsp;on CPU ' + cpuOf(i) : ''));
+    metadata += kv('depth', String(sDepth[i]));
+    if (f & FL.LAT) metadata += kv('flags', esc(ctxFlagText(f).replace(/^ · /, '').replace(' (preempt off)', '') || 'none') +
         ((f >> FL.PR_SHIFT) & 15 ? ' <span class="d">(baseline ' + PBASE + ': ' + (pd > 0 ? 'preemption disabled ' + pd + ' level' + (pd > 1 ? 's' : '') : 'preemptible') + ')</span>' : ''));
     const r = retOf(i), rawReturn = rawRetOf(i), typedReturn = kernelTypesOf(i)?.ret;
-    if (r !== null) {
-        let rv = detailValueHtml(r);
-        if (eRole[i] >= 0) rv += ' ' + esc(errName(eErr[i])) + ' · ' + esc(errRoleText(i));
-        else if (f & FL.NULLRET) rv += ' (' + detailToken('keyword', 'NULL') + ')';
-        h += kv(typedReturn ? 'return (BTF)' : D.uftrace ? 'raw return' : 'return', rv, eRole[i] >= 0 ? 'err' : '');
-    }
-    if (typedReturn && rawReturn !== null) h += kv('raw return',
-        '<details class="tl-context-note"><summary>' + (typedReturn[0] === 'void' ? 'void (BTF) · original bits' : 'Original return bits') +
-        '</summary>' + detailToken('raw', rawReturn) + '</details>');
+    if (typedReturn && rawReturn !== null) metadata += kv('raw return', detailToken('raw', rawReturn) +
+        (typedReturn[0] === 'void' ? '<div class="tl-context-note">void (BTF) · these bits are not a return value.</div>' : ''));
     const c = callerOf(i);
     if (c) h += kv('caller site', detailSymbolHtml(c) + '<span class="tl-cs-at"></span>' + (f & FL.MISMATCH ? '<div class="tl-context-note tl-tail-note">' + esc(callerRelationText(i)) + '</div>' : ''));
     const tailJump = tailJumpOf(i);
@@ -389,28 +428,38 @@ function showDetail(i) {
     const a = argsOf(i);
     const userDetail = f & FL.USER ? D.uftrace?.user_details?.[sLine[i]] : null;
     if (userDetail) {
-        h += kv('recorded address', detailToken('raw', userDetail.address) + '<div class="tl-context-note">Function entry address, not the call site.</div>');
+        metadata += kv('recorded address', detailToken('raw', userDetail.address) + '<div class="tl-context-note">Function entry address, not the call site.</div>');
         const callAddress = userCallAddress(i);
         const userSite = userCallSite(i);
         if (callAddress) h += kv('caller site', detailSymbolHtml(callAddress) +
             '<span class="tl-cs-at">' + (userSite ? '<br><span data-callsite-position>' + esc(userSite[0] + ':' + userSite[1]) + '</span>' : '') + '</span>' +
             (!userSite ? '<div class="tl-context-note">Call-site source unavailable; function entry is a fallback.</div>' : ''));
         else h += kv('caller site', '<span class="tl-muted">Not recorded · capture with -T &apos;.@callsite&apos;</span>');
-        if (userDetail.args !== undefined) h += kv('user args', detailValueHtml(userDetail.args, true) +
-            (userDetail.arg_names ? '<div class="tl-context-note">Names from recorded user DWARF; values follow the saved capture specification.</div>' : '') +
-            (a ? '<details class="tl-context-note"><summary>Original argument bytes</summary>' + detailToken('raw', a) + '</details>' : ''));
+        if (userDetail.args !== undefined) {
+            const provenance = userDetail.arg_names ? '<div class="tl-context-note">Names from recorded user DWARF; values follow the saved capture specification.</div>' : '';
+            h += kv('user args', detailArgumentsHtml(userDetail.args, userDetail.arg_names) +
+                (a || provenance ? '<details class="tl-context-note"><summary>' + (a ? 'Original argument bytes' : 'Argument provenance') +
+                    '</summary>' + provenance + (a ? detailToken('raw', a) : '') + '</details>' : ''), 'tl-arguments');
+        }
         else if (a) h += kv('raw argument bytes', detailToken('raw', a));
         if (userDetail.retval !== undefined) h += kv('user return', detailValueHtml(userDetail.retval));
         else if (userDetail.return_payload) h += kv('raw return bytes', detailToken('raw', userDetail.return_payload));
     } else if (a) {
         const namedArgs = namedArgsOf(i);
-        if (namedArgs) h += kv('args (BTF)', detailValueHtml(namedArgs, true) + '<details class="tl-context-note"><summary>Raw argument slots</summary>' + detailToken('raw', a) + '</details>');
+        if (namedArgs) h += kv('args (BTF)', detailArgumentsHtml(namedArgs) + '<details class="tl-context-note"><summary>Raw argument slots</summary>' + detailToken('raw', a) + '</details>', 'tl-arguments');
         else h += kv(D.uftrace ? (f & FL.USER ? 'raw payload' : 'raw args') : 'args',
-            D.uftrace ? detailToken('raw', a) : detailValueHtml(a, true));
+            D.uftrace ? detailToken('raw', a) : detailArgumentsHtml(a), D.uftrace ? '' : 'tl-arguments');
+    }
+    if (r !== null) {
+        let rv = detailValueHtml(r);
+        if (eRole[i] >= 0) rv += ' ' + esc(errName(eErr[i])) + ' · ' + esc(errRoleText(i));
+        else if (f & FL.NULLRET) rv += ' (' + detailToken('keyword', 'NULL') + ')';
+        h += kv(typedReturn ? 'return (BTF)' : D.uftrace ? 'raw return' : 'return', rv, eRole[i] >= 0 ? 'err' : '');
     }
     if (ATOMIC.has(i)) h += kv('context', 'called with ' + esc(atomicText(ATOMIC.get(i))) + ' (sleeping function in atomic context)', 'err');
-    h += kv('trace lines', lineLink(sLine[i]) + (sEline && sEline[i] && sEline[i] !== sLine[i] ? ' → ' + lineLink(sEline[i]) : ''));
-    h += '</div><details class="tl-cs" open><summary class="tl-sec">' + (f & FL.USER ? userCallSite(i) ? 'User call site source' : 'User function source (entry)' : D.uftrace && !D.sources?.callers?.[sCaller?.[i]]?.length ? 'Kernel function source' : 'Call site source') + '</summary><div class="tl-cs-src"></div></details></div><div>';
+    metadata += kv('trace lines', lineLink(sLine[i]) + (sEline && sEline[i] && sEline[i] !== sLine[i] ? ' → ' + lineLink(sEline[i]) : ''));
+    h += '</div><details class="tl-metadata" data-trace-metadata><summary>Trace metadata</summary><div class="tl-kv tl-call-facts">' + metadata + '</div></details>' +
+        '<details class="tl-cs" open><summary class="tl-sec">' + (f & FL.USER ? userCallSite(i) ? 'User call site source' : 'User function source (entry)' : D.uftrace && !D.sources?.callers?.[sCaller?.[i]]?.length ? 'Kernel function source' : 'Call site source') + '</summary><div class="tl-cs-src"></div></details></div><div>';
     h += breakdownHtml(i);
     if (context.lists.has('error')) h += detailListHtml('error');
     h += detailListHtml('stack') + detailContextHint();
@@ -544,8 +593,17 @@ function setDetailExpanded(on) {
 }
 function openDetail(html) {
     const was = elDetail.classList.contains('show');
+    const previousMetadata = elDetail.querySelector('[data-trace-metadata]');
+    if (previousMetadata) prefSet('metadataOpen', previousMetadata.open ? '1' : '0');
     fgCancelSources(elDetail);
     elDetail.innerHTML = html;
+    const metadata = elDetail.querySelector('[data-trace-metadata]');
+    if (metadata) {
+        metadata.open = prefGet('metadataOpen') === '1';
+        metadata.addEventListener('toggle', () => {
+            if (metadata.isConnected) prefSet('metadataOpen', metadata.open ? '1' : '0');
+        });
+    }
     const head = elDetail.querySelector('.tl-detail-head');
     const close = head && head.querySelector('.tl-close');
     if (close) {
