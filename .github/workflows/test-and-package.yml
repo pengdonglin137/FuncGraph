@@ -117,7 +117,10 @@ jobs:
           FG_UFTRACE_REQUIRED: "1"
           FG_UFTRACE: ${{ github.workspace }}/build/uftrace-${{ matrix.arch }}/bin/uftrace
           PYTHONPATH: tests
-        run: python -m unittest test_uftrace_build test_uftrace_export test_uftrace_dist test_uftrace_runtime -v
+        run: >-
+          python -m unittest test_uftrace_build test_uftrace_export test_uftrace_dist
+          test_uftrace_runtime test_uftrace_argument_names test_uftrace_strings
+          test_uftrace_callers test_uftrace_details -v
       - name: Build the platform wheel with recorder, libraries, license and patched source
         env:
           FG_UFTRACE_PREFIX: ${{ github.workspace }}/build/uftrace-${{ matrix.arch }}

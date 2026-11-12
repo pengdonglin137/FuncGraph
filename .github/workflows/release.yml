@@ -52,6 +52,7 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
           pattern: '*-dist'
@@ -72,6 +73,10 @@ jobs:
           sha256sum -- *.whl *.tar.gz > SHA256SUMS.new
           mv SHA256SUMS.new SHA256SUMS
           args=(--verify-tag --generate-notes --title "FuncGraph $RELEASE_TAG")
+          notes="$GITHUB_WORKSPACE/docs/releases/$RELEASE_TAG.md"
+          if [ -f "$notes" ]; then
+            args+=(--notes-file "$notes")
+          fi
           if [ "$PRERELEASE" = true ]; then
             args+=(--prerelease --latest=false)
           fi

@@ -2,6 +2,8 @@ include README.cn.md
 include fgview
 include docs/design.md docs/guide.cn.md docs/guide.en.md
 include docs/releasing.md docs/releasing.cn.md
+include docs/cpu-coverage.md
+recursive-include docs/releases *.md
 include docs/raw-input.md docs/raw-input.cn.md
 include docs/viewer.md docs/viewer.cn.md
 include docs/uftrace.md docs/uftrace.cn.md
