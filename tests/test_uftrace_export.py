@@ -141,8 +141,9 @@ class UftraceExportTest(unittest.TestCase):
                 subprocess.run(['gcc', *COMPILE_FLAGS, '-g', '-O0', *flags, '-o', str(binary), *sources],
                                check=True, capture_output=True)
                 self.capture = root / (kind + '.data')
+                library_options = ['-P', '.@' + shared.name] if PATCHABLE and kind == 'dlopen' else []
                 subprocess.run([str(EXECUTABLE), 'record', '--no-sched', '--no-libcall', '--srcline',
-                                *RECORD_FLAGS, '-T', 'child@callsite', '-d', str(self.capture), str(binary)],
+                                *RECORD_FLAGS, *library_options, '-T', 'child@callsite', '-d', str(self.capture), str(binary)],
                                check=True, capture_output=True)
                 site = next(record['user_callsite'] for record in self.records() if 'user_callsite' in record)
                 self.assertEqual(site['name'], caller_name)

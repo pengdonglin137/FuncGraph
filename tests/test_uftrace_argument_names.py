@@ -12,7 +12,7 @@ import unittest
 import helpers
 from fglib import inputs, uftrace
 from fglib.viewer import create_server
-from test_uftrace_export import AVAILABLE, COMPILE_FLAGS, EXECUTABLE, RECORD_FLAGS
+from test_uftrace_export import AVAILABLE, COMPILE_FLAGS, EXECUTABLE, PATCHABLE, RECORD_FLAGS
 from test_uftrace_import import capture, stream
 from test_uftrace_details import callsite
 
@@ -163,7 +163,8 @@ class NativeArgumentNamesTest(unittest.TestCase):
                               'long (*first)(long) = dlsym(left, "child");\n'
                               'long (*second)(long) = dlsym(right, "child");\n'
                               'return first(1) + second(2) != 5; }\n', '-ldl')
-        entries = self.record(binary)
+        library_options = ['-P', '.@left.so', '-P', '.@right.so'] if PATCHABLE else []
+        entries = self.record(binary, *library_options)
         self.assertEqual([entry['user_args'] for entry in entries], [['1'], ['2']])
         self.assertEqual([entry['user_arg_names'] for entry in entries], [['left_count'], ['right_count']])
 

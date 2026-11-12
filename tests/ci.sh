@@ -16,8 +16,8 @@ if (( result == 0 && statuses[1] != 0 )); then
 fi
 if (( result != 0 )) && [[ ${GITHUB_ACTIONS:-} == true ]]; then
     message=$(tail -n 120 "$log")
-    if (( ${#message} > 16000 )); then
-        message=${message: -16000}
+    if (( ${#message} > 3000 )); then
+        message=${message: -3000}
     fi
     message=${message//'%'/'%25'}
     message=${message//$'\r'/'%0D'}

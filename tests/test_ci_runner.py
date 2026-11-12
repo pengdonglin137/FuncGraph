@@ -42,14 +42,15 @@ class CiRunnerTest(unittest.TestCase):
         self.assertNotIn('::error', result.stdout)
 
     def test_annotation_tail_is_bounded_but_the_full_log_is_retained(self):
-        result, log = self.run_command('import sys; print("x" * 20000); sys.exit(1)')
+        result, log = self.run_command('import sys; print("first diagnostic\\n" + "x" * 20000 + "\\nfinal diagnostic"); sys.exit(1)')
         self.assertEqual(result.returncode, 1)
         self.assertGreater(len(log), 20000)
         annotation = result.stdout.split('::error title=', 1)[1]
-        self.assertLess(len(annotation), 16100)
+        self.assertLess(len(annotation), 3100)
+        self.assertNotIn('first diagnostic', annotation)
+        self.assertIn('final diagnostic', annotation)
 
     def test_missing_command_has_a_helpful_usage_error(self):
         result = subprocess.run(['bash', str(Path(helpers.ROOT, 'tests/ci.sh'))], capture_output=True, text=True)
         self.assertEqual(result.returncode, 2)
         self.assertIn('Usage:', result.stderr)
-
