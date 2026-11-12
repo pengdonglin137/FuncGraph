@@ -19,6 +19,13 @@ index when rebuilding after folds or filters. Scroll feedback cannot cancel
 an in-progress rebuild. Large-model work and scattered HTML parsing still cost
 time; see the [two-size interaction comparison](performance-text-rebuild.md).
 
+Rebuilds also reuse original record ordinals in task/duration orders and compute
+heights alongside visible rows. Unfolded reports skip fold metadata; folded
+reports cache ancestor visibility only within the current operation. Complete
+filter/fold semantics, original IDs and source pairing remain unchanged. The
+ordinal arrays add up to eight bytes per record; full-model work can still block.
+See [unfolded and sparse/dense-fold measurements](performance-text-geometry.md).
+
 Scattered window rows now share one verified read per HTML network resource,
 avoiding repeated download, checksum and decoding after small-cache eviction.
 Display order and full paint-block validation are unchanged; no new option is

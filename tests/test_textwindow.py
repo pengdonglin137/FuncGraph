@@ -617,6 +617,59 @@ class TextWindowTest(unittest.TestCase):
         self.assertTrue(facts['sorted'])
         self.assertLessEqual(facts['rows'], 160)
 
+    def test_rebuild_uses_prepared_ordinals_without_full_model_point_lookups(self):
+        self.open_report()
+        facts = self.page.evaluate('''async () => {
+            const original=fgTextModel.locate, results=[];
+            let reads=0, counting=false;
+            fgTextModel.locate=function(...args) {if(counting) reads++; return original(...args)};
+            try {
+                for (const order of ['time','task']) for (const direction of ['','desc','desc','asc','']) {
+                    fgTextOrder=order; fgTextSort=direction;
+                    reads=0; counting=true;
+                    const pending=fgTextWindow.rebuild();
+                    counting=false;
+                    await pending;
+                    results.push({order,direction,reads,mounted:document.querySelectorAll('#content .line-container').length});
+                }
+                return results;
+            } finally {fgTextModel.locate=original}
+        }''')
+        self.assertEqual(len(facts), 10)
+        for result in facts:
+            with self.subTest(order=result['order'], direction=result['direction']):
+                self.assertLess(result['reads'], 1024)
+                self.assertLessEqual(result['mounted'], 160)
+
+    def test_rebuild_visibility_matches_full_reference_after_repeated_folds_filters_and_order_changes(self):
+        self.open_report()
+        facts = self.page.evaluate('''async () => {
+            const model=fgTextWindow.model, folding=fgTextModel.folding(model), original=JSON.stringify(model.records.map(record=>record.row));
+            const root=[...folding.blocks.values()].find(block=>block.entry?.getAttribute('data-func')==='root').id;
+            const child=[...folding.blocks.values()].find(block=>block.entry?.getAttribute('data-func')==='inner').id;
+            let cases=0;
+            for (const order of ['time','task']) for(const direction of ['','desc','asc']) {
+                fgTextOrder=order; fgTextSort=direction;
+                for(const folds of [{},{[root]:true},{[child]:true},{[root]:true,[child]:true},{}]) {
+                    foldedBlocks=folds;
+                    for(const matches of [null,new Set(model.records.filter((_,index)=>index%7===0).map(record=>record.row[0])),new Set()]) {
+                        fgNotifyFilter(matches===null?'':'test',matches);
+                        await fgTextWindow.rebuild();
+                        const plan=fgTextModel.order(model,order);
+                        const expected=fgTextNavigation.order.filter(number=>folding.visible(fgTextModel.locate(model,number).record,folds,matches) &&
+                            (direction || order!=='task' || !plan.hidden.has(number)));
+                        if(JSON.stringify(expected)!==JSON.stringify(fgTextWindow.visibleNumbers)) throw new Error('Visibility changed');
+                        if(fgTextNavigation.visibleCount!==expected.length) throw new Error('Navigation visibility changed');
+                        if(document.querySelectorAll('#content .line-container').length>160) throw new Error('Window grew');
+                        cases++;
+                    }
+                }
+            }
+            return {cases,unchanged:JSON.stringify(model.records.map(record=>record.row))===original};
+        }''')
+        self.assertEqual(facts['cases'], 90)
+        self.assertTrue(facts['unchanged'])
+
     def test_scattered_sort_loads_each_network_resource_once_without_changing_display_order(self):
         self.page.goto(urljoin(self.server.url, 'scattered/index.html?text=windowed'))
         self.assertTrue(self.page.evaluate('async () => !!(await fgSwitchView("text"))'))

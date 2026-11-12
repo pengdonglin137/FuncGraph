@@ -29,9 +29,16 @@ JUMP = '''async () => {
 }'''
 SCATTERED_ACTIONS = [(name, JUMP.replace('POSITION', position)) for name, position in [
     ('duration-top', '0'), ('duration-next', 'Math.min(160,numbers.length-1)'), ('duration-return', '0')]]
+FOLD_ACTIONS = [
+    ('fold-sparse', '() => {foldedBlocks=Object.fromEntries(fgBenchFoldIds.filter((_,index)=>index%31===0).slice(0,128).map(id=>[id,true]));return fgTextWindow.rebuild()}'),
+    ('fold-sparse-warm', '() => fgTextWindow.rebuild()'),
+    ('fold-dense', '() => {foldedBlocks=Object.fromEntries(fgBenchFoldIds.map(id=>[id,true]));return fgTextWindow.rebuild()}'),
+    ('fold-dense-warm', '() => fgTextWindow.rebuild()'),
+    ('unfold', '() => {foldedBlocks={};return fgTextWindow.rebuild()}'),
+]
 
 
-def measure(browser, url, timeout, scattered=False):
+def measure(browser, url, timeout, scattered=False, folded=False):
     context = browser.new_context(viewport={'width': 1440, 'height': 900})
     page = context.new_page()
     page.set_default_timeout(timeout)
@@ -50,8 +57,13 @@ def measure(browser, url, timeout, scattered=False):
             return {records:model.records.length,
                 sha256:[...new Uint8Array(digest)].map(value=>value.toString(16).padStart(2,'0')).join('')};
         }''')
+        if folded:
+            page.evaluate('window.fgBenchFoldIds=[...fgTextModel.folding(fgTextWindow.model).blocks.values()].filter(block=>block.entry).map(block=>block.id)')
         results = []
         actions = ACTIONS[:4] + SCATTERED_ACTIONS + ACTIONS[4:] if scattered else ACTIONS
+        if folded:
+            position = next(index for index, (name, action) in enumerate(actions) if name == 'filter')
+            actions = actions[:position] + FOLD_ACTIONS + actions[position:]
         for name, action in actions:
             facts = page.evaluate('''async () => {
                 for (let quiet=0; quiet<2;) {
@@ -99,6 +111,7 @@ def main():
     parser.add_argument('--rounds', type=int, default=3)
     parser.add_argument('--timeout', type=int, default=180000)
     parser.add_argument('--scattered', action='store_true', help='Visit and revisit distant sorted windows before the warm rebuild')
+    parser.add_argument('--folded', action='store_true', help='Compare sparse/dense collapsed-state rebuilds and unfolding before filtering')
     parser.add_argument('--output', type=Path, required=True)
     arguments = parser.parse_args()
     if min(arguments.rounds, arguments.timeout) < 1:
@@ -107,7 +120,7 @@ def main():
     servers, threads = {}, []
     output = dict(reports={name: report_info(path / 'index.html') for name, path in reports.items()},
                   trace=dict(path=str(arguments.trace.resolve()), bytes=arguments.trace.stat().st_size,
-                             sha256=hashlib.sha256(arguments.trace.read_bytes()).hexdigest()), runs=[], scattered=arguments.scattered,
+                             sha256=hashlib.sha256(arguments.trace.read_bytes()).hexdigest()), runs=[], scattered=arguments.scattered, folded=arguments.folded,
                   basis='No CPU profiler; alternating independent Chromium processes; same actions; API, synchronous-prefix and two-rAF timings; full model and per-action complete visibility/order digests; not a frame or total-memory bound')
     try:
         for name, path in reports.items():
@@ -121,7 +134,7 @@ def main():
                     browser = playwright.chromium.launch()
                     try:
                         facts = dict(variant=variant, round=iteration + 1,
-                                     **measure(browser, servers[variant].url, arguments.timeout, arguments.scattered))
+                                     **measure(browser, servers[variant].url, arguments.timeout, arguments.scattered, arguments.folded))
                         if output['runs']:
                             reference = output['runs'][0]
                             if facts['model'] != reference['model'] or [item['sha256'] for item in facts['actions']] != [item['sha256'] for item in reference['actions']]:

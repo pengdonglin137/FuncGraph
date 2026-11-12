@@ -171,6 +171,22 @@
                 return !(record.getAttribute('data-fold-type') !== 'entry' && folds[own] === true) &&
                     !ancestors(record).some(ancestor => folds[ancestor] === true);
             },
+            visibility(folds, matches) {
+                const hasFolds = Object.keys(folds).some(id => folds[id] === true), ancestryVisible = new Map();
+                return record => {
+                    if (matches !== null && !matches.has(record.row[0])) return false;
+                    if (!hasFolds) return true;
+                    const own = record.getAttribute('data-fold-id');
+                    if (record.getAttribute('data-fold-type') !== 'entry' && folds[own] === true) return false;
+                    const key = record.getAttribute('data-fold-ancestors') || '';
+                    let visible = ancestryVisible.get(key);
+                    if (visible === undefined) {
+                        visible = !ancestors(record).some(ancestor => folds[ancestor] === true);
+                        ancestryVisible.set(key, visible);
+                    }
+                    return visible;
+                };
+            },
             visibleLines(folds, matches) {
                 const lines = new Set();
                 for (const record of model.records) {
@@ -193,6 +209,7 @@
         const cached = orderModels.get(model)?.get(mode);
         if (cached) return cached;
         const order = [], boundaries = [], hidden = new Set(), switches = new Set();
+        const ordinals = mode === 'task' ? new Uint32Array(model.records.length) : null;
         if (mode === 'time') {
             for (const record of model.records) {
                 order.push(record.row[0]);
@@ -223,7 +240,10 @@
                 }
                 if ((index + 1) % 512 === 0) yield 'Grouping complete Text rows: ' + (index + 1) + ' / ' + model.records.length + '…';
             }
-            for (const index of head) order.push(model.records[index].row[0]);
+            for (const index of head) {
+                ordinals[order.length] = index;
+                order.push(model.records[index].row[0]);
+            }
             const tasks = Array.from(groups).sort((left, right) => {
                 const leftIdle = left[0].startsWith('idle'), rightIdle = right[0].startsWith('idle');
                 return leftIdle !== rightIdle ? leftIdle ? 1 : -1 : right[1].length - left[1].length;
@@ -262,6 +282,7 @@
                     if (switched) { pendingSwitch = switched; switches.add(number); }
                     if (timestamp) previousTime = parseFloat(timestamp[1]);
                     if (!hidden.has(number)) previous = index;
+                    ordinals[order.length] = index;
                     order.push(number);
                     if (order.length % 512 === 0) yield 'Ordering task rows: ' + order.length + ' / ' + model.records.length + '…';
                 }
@@ -269,7 +290,7 @@
         }
         if (!orderModels.has(model)) orderModels.set(model, new Map());
         const plans = orderModels.get(model);
-        if (!plans.has(mode)) plans.set(mode, { order, boundaries, hidden, switches });
+        if (!plans.has(mode)) plans.set(mode, { order, ordinals, boundaries, hidden, switches });
         return plans.get(mode);
     }
     function order(model, mode) {

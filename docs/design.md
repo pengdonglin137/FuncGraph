@@ -1272,6 +1272,26 @@ time/task plan 与方向相同的耗时排序仅保留一份数值排列缓存�
 2,998.0 → 2,591.5ms；完整模型及分散 DOM 解析仍有明显阻塞，未改变默认开启策略、
 网络粒度或峰值内存边界。方法、其他操作与复现见[重建记录](performance-text-rebuild.md)。
 
+### Text 重建的原始记录索引与折叠判断（2026-11-13）
+
+task plan 在完整原始行号排列之外保存 `Uint32Array` ordinal；time plan 原序直接使用
+迭代位置，不分配该数组。耗时排序携带 ordinal，并在当前单份排列缓存中保存对应
+typed array；相同耗时仍稳定排序。ordinal 只表示原始记录位置，不截断或转换真实
+行号，稀疏、非 1 起点及大行号仍保留。窗口重建以 ordinal 直接读取完整模型，在
+构造可见序列时一并写高度，避免排序、可见性和高度阶段逐项调用 point lookup。
+
+折叠 predicate 每次同步重建新建，不跨操作复用结果。无严格 true 的折叠标志时
+跳过折叠元数据；否则先按 filter/own-entry 规则判断，并按祖先字符串缓存剩余
+可见性。仅检测是否存在启用标志，不复制整个 fold-state，避免密集折叠的额外成本。
+fold-state 与 matches 在本次同步遍历中只读，之后的折叠/筛选必定新建 predicate。
+普通完整 DOM 路径的逐行 reference 判断不变。
+
+task plan 和当前耗时排列各增加 `4 × N` 字节；共用任务 plan 的默认完整 renderer
+也有前一项成本。祖先结果缓存和 Object.keys 临时数组不跨操作保留，不是零内存
+增长或即时 GC 保证；现有完整模型、导航/高度和网络暂存仍另计。不改变 160 单元挂载预算、逐块
+完整校验、取消、错误保留或 Full Text fallback，也不改变默认 renderer/sidecar
+阈值。实测与复现见[Text 重建热点优化](performance-text-geometry.md)。
+
 ### Text 分散窗口的网络资源分组（2026-11-13）
 
 耗时排序后，相邻展示行可能属于不同原始绘制块。此前四个 collector 按展示顺序

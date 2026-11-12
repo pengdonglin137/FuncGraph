@@ -115,6 +115,9 @@ class TextModelTest(unittest.TestCase):
             const original = JSON.stringify(input), model = drain(fgTextModel.prepare(input));
             const task = drain(fgTextModel.prepareOrder(model, 'task'));
             assert.deepEqual(task.order, [2,4,10,12,17,40,25,28,45]);
+            assert.ok(task.ordinals instanceof Uint32Array);
+            assert.deepEqual(Array.from(task.ordinals), [0,1,2,3,4,7,5,6,8]);
+            assert.deepEqual(Array.from(task.ordinals, ordinal=>model.records[ordinal].row[0]), task.order);
             assert.deepEqual([...task.hidden], [17,28]);
             assert.deepEqual([...task.switches], [12]);
             assert.deepEqual(task.boundaries, [
@@ -122,6 +125,7 @@ class TextModelTest(unittest.TestCase):
                 {at:5, kind:'task-gap', text:'⇣ switched out on CPU 0 → other-9; resumes at line 40 after 2.000 ms (1 lines of other tasks in between)'},
                 {at:6, kind:'task-group-head', text:'other  9   ·  2 lines  ·  CPU 1,10'}]);
             const time = fgTextModel.order(model, 'time');
+            assert.equal(time.ordinals, null);
             assert.deepEqual(time.order, [2,4,10,12,17,25,28,40,45]);
             assert.deepEqual(time.boundaries, []);
             assert.equal(time.hidden.size, 0); assert.equal(time.switches.size, 0);
@@ -471,6 +475,86 @@ class TextModelTest(unittest.TestCase):
             assert.equal(cached.value, folding);
             assert.equal(fgTextModel.folding(model), folding);
             assert.deepEqual(Array.from(folding.visibleLines({root:true}, null)), [1]);
+        ''')
+
+    def test_operation_visibility_matches_reference_for_nested_filtered_and_unusual_fold_ids(self):
+        self.run_model('''
+            const rows = [[2,'A',{'fold-id':'root','fold-type':'entry'}],
+                [5,'B',{'fold-id':'child','fold-type':'entry','fold-ancestors':'root'}],
+                [8,'leaf',{'fold-id':'child','fold-type':'inner','fold-ancestors':'root child child'}],
+                [11,'B exit',{'fold-id':'child','fold-type':'exit','fold-ancestors':'root'}],
+                [14,'A exit',{'fold-id':'root','fold-type':'exit'}],
+                [17,'outside',{}], [20,'missing',{'fold-ancestors':'lost lost'}],
+                [23,'odd',{'fold-id':'constructor','fold-type':'inner','fold-ancestors':'__proto__'}],
+                [26,'empty',{'fold-id':'','fold-type':'inner'}]];
+            const original = JSON.stringify(rows), model = drain(fgTextModel.prepare(data(rows)));
+            const folding = fgTextModel.folding(model);
+            for (const folds of [{}, {root:true}, {child:true}, {root:true,child:true},
+                {root:false,child:'true',lost:1}, {lost:true}, {null:true}, {'':true},
+                JSON.parse('{"__proto__":true,"constructor":true}')]) {
+                for (const matches of [null,new Set(),new Set([2,5,8,17,20,23,26])]) {
+                    const predicate = folding.visibility(folds,matches);
+                    assert.deepEqual(model.records.map(predicate), model.records.map(record=>folding.visible(record,folds,matches)));
+                    assert.deepEqual([...model.records].reverse().map(predicate), [...model.records].reverse().map(record=>folding.visible(record,folds,matches)));
+                }
+            }
+            assert.equal(JSON.stringify(rows), original);
+        ''')
+
+    def test_operation_visibility_avoids_all_fold_metadata_when_no_true_flags_are_set(self):
+        self.run_model('''
+            const model = drain(fgTextModel.prepare(data([[2,'entry',{'fold-id':'root','fold-type':'entry'}],
+                [7,'inner',{'fold-id':'root','fold-type':'inner','fold-ancestors':'root'}]])));
+            const folding = fgTextModel.folding(model);
+            for (const record of model.records) record.getAttribute = () => {throw new Error('Unnecessary fold lookup')};
+            for (const folds of [{}, {root:false}, {root:1,child:'true'}]) {
+                assert.deepEqual(model.records.map(folding.visibility(folds,null)), [true,true]);
+                assert.deepEqual(model.records.map(folding.visibility(folds,new Set([7]))), [false,true]);
+                assert.deepEqual(model.records.map(folding.visibility(folds,new Set())), [false,false]);
+            }
+            assert.deepEqual(model.records.map(folding.visibility({root:true},new Set())), [false,false]);
+        ''')
+
+    def test_operation_visibility_reuses_deep_ancestry_only_within_one_operation(self):
+        self.run_model('''
+            const chain = Array.from({length:600}, (_,index)=>'scope'+index).join(' ');
+            const model = drain(fgTextModel.prepare(data(Array.from({length:2500},(_,index)=>
+                [index*3+1,'leaf',{'fold-id':'leaf','fold-type':'inner','fold-ancestors':chain}]))));
+            const folding = fgTextModel.folding(model), original = Array.prototype.some;
+            let scans = 0;
+            Array.prototype.some = function(predicate,...arguments) {
+                if (this[0]==='scope0') scans++;
+                return original.call(this,predicate,...arguments);
+            };
+            try {
+                const folds = {unrelated:true};
+                assert.equal(model.records.filter(folding.visibility(folds,null)).length,2500);
+                assert.equal(scans,1);
+                folds.scope599 = true;
+                assert.equal(model.records.filter(folding.visibility(folds,null)).length,0);
+                assert.equal(scans,2);
+                delete folds.scope599;
+                assert.equal(model.records.filter(folding.visibility(folds,null)).length,2500);
+                assert.equal(scans,3);
+            } finally {Array.prototype.some=original}
+        ''')
+
+    def test_task_ordinals_preserve_large_sparse_identities_and_cancelled_preparation(self):
+        self.run_model('''
+            const rows = Array.from({length:2501},(_,index)=>[2**40+index*7,'row',
+                {pid:String(index%3),cpu:String(index%5),comm:'task'}]);
+            const model = drain(fgTextModel.prepare(data(rows))), cancelled = fgTextModel.prepareOrder(model,'task');
+            assert.equal(cancelled.next().done,false);
+            cancelled.return();
+            const task = drain(fgTextModel.prepareOrder(model,'task'));
+            assert.equal(task.ordinals.length,rows.length);
+            assert.equal(new Set(task.ordinals).size,rows.length);
+            assert.deepEqual(Array.from(task.ordinals,ordinal=>model.records[ordinal].row[0]),task.order);
+            assert.equal(fgTextModel.order(model,'task').ordinals,task.ordinals);
+            assert.equal(fgTextModel.order(model,'time').ordinals,null);
+            assert.deepEqual(model.records.map(record=>record.row[0]),rows.map(row=>row[0]));
+            const empty=fgTextModel.order(drain(fgTextModel.prepare(data([]))),'task');
+            assert.equal(empty.ordinals.length,0);
         ''')
 
     def test_fold_members_use_prepared_ranges_without_rescanning_record_attributes(self):

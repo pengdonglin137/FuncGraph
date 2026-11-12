@@ -59,6 +59,11 @@ The experimental renderer does not claim native selection or find across unmount
 
 ## 数据与边界
 
+- 窗口重建复用原始记录 ordinal，并在每次操作内缓存折叠判断；任务 plan 和当前
+  耗时排列各增加 `4 × N` 字节的 typed array，时间原序无需该数组。共享任务 plan
+  的默认完整 renderer 也承担前一项内存成本。完整模型仍遍历，不能据此保证逐帧
+  响应；稀疏/密集折叠对照及内存边界见[重建热点优化](performance-text-geometry.md)。
+
 - sidecar presentation index **v4**：原有 14 个过滤字段之后依次追加 `space`、
   `sort-duration`、`fold-ret`、`call-depth`，最后仍为实际 source ID/null。
   源码 0、零返回值、原始返回表示、精确排序耗时及空值语义均保留；旧 v1/v2/v3 可读。

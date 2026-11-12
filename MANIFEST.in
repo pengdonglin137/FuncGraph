@@ -10,6 +10,7 @@ include docs/performance-text-order.md
 include docs/performance-text-rows.md
 include docs/performance-text-window.md
 include docs/performance-text-rebuild.md
+include docs/performance-text-geometry.md
 include docs/performance-text-block-locality.md
 include docs/design.md docs/guide.cn.md docs/guide.en.md
 include docs/detail-layout.md

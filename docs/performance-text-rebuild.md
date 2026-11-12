@@ -5,6 +5,10 @@ visible subset. Defaults, sidecar thresholds, the 160-unit mounted budget and
 whole-document fallback remain unchanged. Regenerate reports to use the new
 runtime; see [windowed usage and limitations](performance-text-window.md).
 
+后续优化复用 task/duration ordinal，合并高度构建，并按次缓存折叠可见性。
+新的无折叠、稀疏/密集折叠基准及额外内存成本见[重建热点优化](performance-text-geometry.md)；
+下文保留原阶段的基线与测量结果，不将不同阶段的数字混比。
+
 ## 实现与准确性
 
 - 原始行号连续时，先用首行号与目标行号之差探测对应 ordinal，**核对真实 ID 后**

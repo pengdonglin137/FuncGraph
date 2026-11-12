@@ -17,6 +17,10 @@ In windowed **Order: by task**, the current task stays pinned below the toolbar 
 Windowed Text also reuses unchanged complete navigation/duration orders and
 prevents scroll feedback from interrupting rebuilds. See the [72k/372k-row
 interaction measurements and remaining bottlenecks](docs/performance-text-rebuild.md).
+Rebuilds also reuse prepared row ordinals and cache ancestor visibility for each
+operation, avoiding repeated line lookups and fold checks. Task/duration ordinal
+arrays add up to eight bytes per record; full-model work can still block. See
+[folded/unfolded rebuild measurements](docs/performance-text-geometry.md).
 
 ## What is FuncGraph?
 
