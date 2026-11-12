@@ -7,9 +7,6 @@ import re
 from statistics import median
 import tempfile
 
-from playwright.sync_api import sync_playwright
-
-
 def fixture(report, destination, count):
     html = report.read_text(encoding='utf-8')
     match = re.search(r'(<script type="application/json" id="tlData">)(.*?)(</script>)', html, re.S)
@@ -81,6 +78,8 @@ def measure(browser, report, count):
 
 
 def main():
+    from playwright.sync_api import sync_playwright
+
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('before', type=Path)
     parser.add_argument('after', type=Path)

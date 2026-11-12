@@ -111,8 +111,9 @@ class ModuleIndexTest(_ModuleTree):
     def test_all_positive_and_negative_lookups_share_one_lazy_scan(self):
         first = self.module('a/first-module.ko')
         second = self.module('b/second.ko.debug')
-        with patch('fglib.modules.os.walk', wraps=os.walk) as walk, \
+        with patch('fglib.modules.os', wraps=os, sep=os.sep) as module_os, \
                 patch('fglib.util.subprocess.run') as run:
+            walk = module_os.walk
             index = ModuleIndex([self.root])
             walk.assert_not_called()
             for iteration in range(3):
@@ -126,7 +127,8 @@ class ModuleIndexTest(_ModuleTree):
         expected = self.module('child/deeper/demo.ko')
         alias = self.root / 'alias'
         alias.symlink_to(self.root / 'child', target_is_directory=True)
-        with patch('fglib.modules.os.walk', wraps=os.walk) as walk:
+        with patch('fglib.modules.os', wraps=os, sep=os.sep) as module_os:
+            walk = module_os.walk
             index = ModuleIndex([self.root, self.root / 'child', alias, self.root])
             self.assertEqual(index.find('demo'), expected)
             self.assertEqual(walk.call_count, 1)
@@ -183,9 +185,10 @@ class ModulePipelineTest(unittest.TestCase):
         index = ModuleIndex([self.modules])
         arguments = SimpleNamespace(no_btf=False, btf=None, verbose=False)
         environment = dict(FAKE_SRC=self.kernel.ksrc, FAKE_SOURCE_FILE=self.kernel.source_file)
-        with patch.dict(os.environ, environment), patch('fglib.modules.os.walk', wraps=os.walk) as walk, \
+        with patch.dict(os.environ, environment), patch('fglib.modules.os', wraps=os, sep=os.sep) as module_os, \
                 patch('fglib.report.call_faddr2line_for_func_names', wraps=call_faddr2line_for_func_names) as names, \
                 patch('fglib.report.call_faddr2line_batch', wraps=call_faddr2line_batch) as addresses:
+            walk = module_os.walk
             database = cli.load_rettypes(lines, self.kernel.vmlinux, [str(self.modules)], arguments,
                                          module_index=index)
             generator = HtmlGenerator(lines, self.kernel.vmlinux,
@@ -225,11 +228,11 @@ class ModulePipelineTest(unittest.TestCase):
                 with patch.object(sys, 'argv', arguments), patch.dict(os.environ, environment), \
                         patch('fglib.cli.ModuleIndex', side_effect=make_index), \
                         patch('fglib.report.ModuleIndex', side_effect=AssertionError('unshared module index')), \
-                        patch('fglib.modules.os.walk', wraps=os.walk) as walk, \
+                        patch('fglib.modules.os', wraps=os, sep=os.sep) as module_os, \
                         contextlib.redirect_stdout(io.StringIO()):
                     cli.main()
                 self.assertEqual(len(indexes), 1)
-                self.assertEqual(walk.call_count, 0 if thin else 1)
+                self.assertEqual(module_os.walk.call_count, 0 if thin else 1)
                 self.assertTrue((self.root / 'report.html').is_file())
                 self.assertTrue((self.root / 'stats.json').is_file())
 

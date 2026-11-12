@@ -40,7 +40,7 @@ jobs:
           FG_SAMPLE_BROWSER_REQUIRED: ${{ matrix.browser && '1' || '0' }}
         run: |
           python third_party/check_pins.py --allow-uninitialized
-          tests/run.sh
+          bash tests/ci.sh tests/run.sh
 
   raw:
     runs-on: ubuntu-24.04
@@ -118,7 +118,7 @@ jobs:
           FG_UFTRACE: ${{ github.workspace }}/build/uftrace-${{ matrix.arch }}/bin/uftrace
           PYTHONPATH: tests
         run: >-
-          python -m unittest test_uftrace_build test_uftrace_export test_uftrace_dist
+          bash tests/ci.sh python -m unittest test_uftrace_build test_uftrace_export test_uftrace_dist
           test_uftrace_runtime test_uftrace_argument_names test_uftrace_strings
           test_uftrace_callers test_uftrace_details -v
       - name: Build the platform wheel with recorder, libraries, license and patched source
