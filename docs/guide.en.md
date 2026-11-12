@@ -454,6 +454,13 @@ With the heatmap on, the whole line background has the color of its level.
 | `ret=` with a known errno (e.g. -2) | **red on light red**, followed by the name: `ret=-2 /* ENOENT */` |
 | other `ret=` values | bold grey |
 
+New ftrace Text reports put adjacent same-style `()[];` characters in one
+highlight span to remove redundant DOM. Folding braces `{` / `}` stay separate.
+Colors, original text, arguments, filters and source data are unchanged; no new
+option is needed. Regenerate old reports. This is node reduction, not DOM
+windowing or a memory bound; see [measurements and visual fidelity](performance-text-symbols.md).
+Structured uftrace Text is unaffected.
+
 The format of return values depends on the kernel:
 - **6.18 and similar**: error codes are negative decimals (`ret=-2`), everything else is hex (`ret=0x0`). Void functions print `ret=` too, with whatever was left in the register; it means nothing.
 - **Kernels with BTF-aware retval** (e.g. 7.2 trim_retval): void functions print no `ret=`; bool prints `ret=true/false`; signed integers are decimal, unsigned ones decimal or hex; types wider than long get `(trunc)`; pointers holding an ERR_PTR are printed as negative errnos.

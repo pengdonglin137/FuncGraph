@@ -436,6 +436,11 @@ python3 funcgraph.py --preset pi4 --output r.html ftrace.txt
 | `ret=` 是已知 errno（如 -2） | **红色带浅红底**，后面附上名字，例如 `ret=-2 /* ENOENT */` |
 | `ret=` 其他值 | 灰色加粗 |
 
+新生成的 ftrace Text 会把连续且同样式的 `()[];` 放入同一高亮标签，减少冗余 DOM；
+折叠使用的 `{` / `}` 仍独立。颜色、原文、参数、过滤与源码数据不变，无需新参数。
+旧报告需重新生成；这是节点精简，不是 DOM 窗口化或内存上限，实测与显示保真见
+[Text 标点节点优化](performance-text-symbols.md)。结构化 uftrace Text 不受此更改影响。
+
 返回值的格式和内核版本有关：
 - **6.18 等内核**：错误码以负的十进制打印（`ret=-2`），其他值都是十六进制（`ret=0x0`）。void 函数也会打印 `ret=`，内容是寄存器里的残留值，不代表任何意义。
 - **带 BTF 感知 retval 的内核**（如 7.2 trim_retval）：void 函数不打印 `ret=`；bool 打印成 `ret=true/false`；有符号整数用十进制，无符号用十进制或十六进制；超过 long 宽度的类型后面带 `(trunc)`；返回 ERR_PTR 的指针打印成负 errno。

@@ -119,3 +119,7 @@ large source-free performance benchmark.
 The remaining priorities are still genuinely windowed DOM, presentation of
 unmounted navigation targets, complete metadata preparation/retention, and
 final layout/GC. This delivery optimization does not close those obligations.
+
+The next [punctuation-node comparison](performance-text-symbols.md) uses this
+Worker/lookahead runtime as its baseline. It removes redundant syntax spans,
+not records, and reports its own independent measurements and residual DOM cost.

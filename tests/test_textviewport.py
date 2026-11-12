@@ -88,6 +88,74 @@ class TextViewportTest(unittest.TestCase):
                 })};
         }''')
 
+    def test_compact_symbols_preserve_pixels_character_styles_and_native_selection(self):
+        for mode in ['single', 'sidecar']:
+            for width in [390, 1500]:
+                for theme in ['light', 'dark']:
+                    with self.subTest(mode=mode, width=width, theme=theme):
+                        page = self.open_report(mode, width, theme)
+                        page.evaluate('''async () => {
+                            await document.fonts.ready;
+                            const content = document.querySelector('#L4 .line-content');
+                            const run = Array.from(content.querySelectorAll('.hl-symbol')).find(node => node.textContent === '();');
+                            if (!run) throw new Error('Expected one compact leaf terminator');
+                            run.scrollIntoView({block:'nearest', inline:'center'});
+                            window.symbolSnapshot = () => {
+                                const walker = document.createTreeWalker(content, NodeFilter.SHOW_TEXT);
+                                const characters = [];
+                                while (walker.nextNode()) {
+                                    const node = walker.currentNode, style = getComputedStyle(node.parentElement);
+                                    for (let offset = 0; offset < node.length; offset++) {
+                                        const range = document.createRange();
+                                        range.setStart(node, offset); range.setEnd(node, offset + 1);
+                                        const bounds = range.getBoundingClientRect();
+                                        characters.push([node.data[offset], style.color, style.fontFamily,
+                                            style.fontSize, style.fontWeight, style.letterSpacing,
+                                            bounds.x, bounds.y, bounds.width, bounds.height]);
+                                    }
+                                }
+                                return {text:content.textContent, characters};
+                            };
+                            await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+                        }''')
+                        compact = page.evaluate('symbolSnapshot()')
+                        bounds = page.locator('#L4').bounding_box()
+                        clip = dict(x=max(0, bounds['x']), y=bounds['y'],
+                                    width=min(width, bounds['x'] + bounds['width']) - max(0, bounds['x']),
+                                    height=bounds['height'])
+                        compact_pixels = page.screenshot(clip=clip, animations='disabled')
+                        selection = '''() => {
+                            const content = document.querySelector('#L4 .line-content');
+                            const range = document.createRange(); range.selectNodeContents(content);
+                            const selection = getSelection(); selection.removeAllRanges(); selection.addRange(range);
+                            const selected = selection.toString(); selection.removeAllRanges(); return selected;
+                        }'''
+                        self.assertEqual(page.evaluate(selection), compact['text'])
+                        expanded = page.evaluate('''async () => {
+                            const content = document.querySelector('#L4 .line-content');
+                            let removed = 0;
+                            for (const run of Array.from(content.querySelectorAll('.hl-symbol'))) {
+                                if (run.textContent.length < 2) continue;
+                                const fragment = document.createDocumentFragment();
+                                for (const character of run.textContent) {
+                                    const symbol = run.cloneNode(false); symbol.textContent = character;
+                                    fragment.appendChild(symbol);
+                                }
+                                removed += run.textContent.length - 1; run.replaceWith(fragment);
+                            }
+                            await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+                            return {removed, snapshot:symbolSnapshot()};
+                        }''')
+                        self.assertEqual(expanded['removed'], 2)
+                        self.assertEqual(page.screenshot(clip=clip, animations='disabled'), compact_pixels)
+                        self.assertEqual(expanded['snapshot']['text'], compact['text'])
+                        self.assertEqual(len(expanded['snapshot']['characters']), len(compact['characters']))
+                        for before, after in zip(compact['characters'], expanded['snapshot']['characters']):
+                            self.assertEqual(before[:6], after[:6])
+                            for compact_position, expanded_position in zip(before[6:], after[6:]):
+                                self.assertAlmostEqual(compact_position, expanded_position, delta=1 / 32)
+                        self.assertEqual(page.evaluate(selection), compact['text'])
+
     def test_text_interactions_use_two_delegates_instead_of_per_row_handlers(self):
         for mode in ['single', 'sidecar']:
             with self.subTest(mode=mode):

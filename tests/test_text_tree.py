@@ -1,4 +1,5 @@
 from html.parser import HTMLParser
+import re
 import unittest
 
 import helpers
@@ -21,6 +22,75 @@ class Markup(HTMLParser):
 
 
 class TextTreeMarkupTest(unittest.TestCase):
+    def test_adjacent_nonstructural_punctuation_shares_one_style_span(self):
+        for punctuation in ['()', '();', '[]', '[[]]();', ';(())', '())];;']:
+            with self.subTest(punctuation=punctuation):
+                result = highlight_ftrace_line(punctuation)
+                self.assertEqual(result, '<span class="hl-symbol">' + punctuation + '</span>')
+                self.assertEqual(''.join(Markup(result).text), punctuation)
+
+    def test_symbol_runs_keep_structural_braces_separate_and_foldable(self):
+        result = highlight_ftrace_line('call(){}[];')
+        self.assertEqual(re.findall(r'<span class="hl-symbol">([^<]*)</span>', result),
+                         ['()', '{', '}', '[];'])
+        entry = HtmlGenerator._fold_line_html(result, 'entry', 'call')
+        controls = [attributes for tag, attributes in Markup(entry).tags if tag == 'button']
+        self.assertEqual(len(controls), 2)
+        self.assertEqual(''.join(Markup(entry).text), 'call(){}[];')
+        closing = HtmlGenerator._fold_line_html(highlight_ftrace_line('}[];'), 'exit', 'call')
+        self.assertIn('<span class="hl-symbol fold-close">}</span>', closing)
+
+    def test_runs_do_not_join_across_whitespace_functions_values_or_comments(self):
+        cases = {
+            '( )': ['(', ')'],
+            '(\t);': ['(', ');'],
+            'outer(inner());': ['(', '());'],
+            'leaf(value=0x42);': ['(', ');'],
+            'leaf(); /* ()[]{;} */': ['();'],
+            '() /* unchanged */ [];': ['()', '[];'],
+        }
+        for raw, expected in cases.items():
+            with self.subTest(raw=raw):
+                result = highlight_ftrace_line(raw)
+                self.assertEqual(re.findall(r'<span class="hl-symbol">([^<]*)</span>', result), expected)
+                self.assertEqual(''.join(Markup(result).text), raw)
+
+    def test_compact_symbols_preserve_the_complete_existing_character_style_stream(self):
+        class StyledMarkup(HTMLParser):
+            def __init__(self, markup):
+                super().__init__()
+                self.stack = []
+                self.runs = []
+                self.feed(markup)
+
+            def handle_starttag(self, tag, attributes):
+                self.stack.append((tag, tuple(attributes)))
+
+            def handle_endtag(self, tag):
+                self.stack.pop()
+
+            def handle_data(self, value):
+                self.runs.extend((character, tuple(self.stack)) for character in value)
+
+        cases = [' 3) 1.25 us | outer(inner()); /* caller+0x4/0x80 */',
+                 ' 3) | leaf(array[0], ptr=0xf0);',
+                 ' 0) | parent() {', ' 0) | } /* parent */',
+                 ' 3) | leaf [my_module]();', ' 3) | leaf(); /* 中文🙂 */']
+        for raw in cases:
+            with self.subTest(raw=raw):
+                compact = highlight_ftrace_line(raw)
+                expanded = re.sub(r'<span class="hl-symbol">([()\[\];]+)</span>',
+                                  lambda match: ''.join('<span class="hl-symbol">' + character + '</span>'
+                                                        for character in match[1]), compact)
+                self.assertEqual(StyledMarkup(compact).runs, StyledMarkup(expanded).runs)
+
+    def test_large_symbol_run_is_one_text_run_without_dropping_characters(self):
+        raw = '([]);' * 20000
+        result = highlight_ftrace_line(raw)
+        self.assertEqual(len(Markup(result).tags), 1)
+        self.assertEqual(''.join(Markup(result).text), raw)
+        self.assertEqual(len(result), len(raw) + len('<span class="hl-symbol"></span>'))
+
     def test_preserves_trace_columns_spaces_and_symbols(self):
         cases = [
             ('entry', ' 3)               |  parent() { /* caller+0x4/0x8 */'),

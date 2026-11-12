@@ -109,7 +109,7 @@ def highlight_ftrace_line(text):
     text = re.sub(r'([a-zA-Z_]\w*)(?=\s*(?:\[.*\])?\s*\()', r'<span class="hl-func">\1</span>', text)
 
     # 8. 高亮括号和大括号
-    text = re.sub(r'([{}()\[\];])', r'<span class="hl-symbol">\1</span>', text)
+    text = re.sub(r'([()\[\];]+|[{}])', r'<span class="hl-symbol">\1</span>', text)
 
     # 9. 恢复注释，并高亮
     for placeholder, comment in comment_placeholders:
