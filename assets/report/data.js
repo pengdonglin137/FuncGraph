@@ -390,11 +390,12 @@
             return load(info.name, options).then(value => textValue(info, value));
         } catch (error) { return Promise.reject(error); }
     }
-    function textBlock(info, value, row) {
+    function textBlocks(info, value, rows) {
         const marker = '<div class="text-chunk" data-chunk-size="' + info.paint_rows + '">';
         const count = Math.ceil(info.count / info.paint_rows);
-        const selected = Math.floor((row - info.first) / info.paint_rows);
-        let start = 0, block = null;
+        const selected = new Set(rows.map(row => Math.floor((row - info.first) / info.paint_rows)));
+        const blocks = new Map();
+        let start = 0;
         for (let index = 0; index < count; index++) {
             if (!value.startsWith(marker, start)) throw new Error('Invalid Text paint block boundary');
             const next = value.indexOf(marker, start + marker.length);
@@ -402,27 +403,34 @@
             if ((index === count - 1) !== (next < 0) || !value.endsWith('</div></div>', end)) {
                 throw new Error('Text paint blocks do not match catalog');
             }
-            if (index === selected) block = { first: info.first + index * info.paint_rows,
-                count: Math.min(info.paint_rows, info.count - index * info.paint_rows), html: value.slice(start, end) };
+            if (selected.has(index)) blocks.set(index, { first: info.first + index * info.paint_rows,
+                count: Math.min(info.paint_rows, info.count - index * info.paint_rows), html: value.slice(start, end) });
             start = end;
         }
-        return block;
+        return rows.map(row => blocks.get(Math.floor((row - info.first) / info.paint_rows)));
     }
-    function loadTextBlock(row, options = {}) {
+    function loadTextBlocks(rows, options = {}) {
         try {
             aborted(options.signal);
-            const info = textInfo(row);
+            if (!Array.isArray(rows)) throw new Error('Invalid Text block group');
+            if (!rows.length) return Promise.resolve([]);
+            const ordinals = Array.from(rows);
+            const info = textInfo(ordinals[0]);
+            if (ordinals.some(row => textInfo(row).name !== info.name)) throw new Error('Text block group crosses network chunks');
             return load(info.name, options).then(value => {
                 aborted(options.signal);
-                try { return textBlock(info, textValue(info, value), row); }
+                try { return textBlocks(info, textValue(info, value), ordinals); }
                 catch (error) { cacheRelease('data:' + info.name); throw error; }
             });
         } catch (error) { return Promise.reject(error); }
     }
+    function loadTextBlock(row, options = {}) {
+        return loadTextBlocks([row], options).then(blocks => blocks[0]);
+    }
     window.fgData = {
         read, load, ready,
         readSource, loadSource, sourceReady: source => ready(sourceInfo(source).name),
-        textChunks, loadTextChunk, loadTextBlock,
+        textChunks, loadTextChunk, loadTextBlock, loadTextBlocks,
         releaseTextChunks: () => { for (const key of Array.from(textCache.entries.keys())) cacheRelease(key); },
         release: name => cacheRelease('data:' + name),
         external: name => !!descriptorNode && !embedded(name),

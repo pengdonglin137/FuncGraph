@@ -1347,9 +1347,14 @@
             if (options.signal?.aborted) throw new DOMException('Text row request canceled', 'AbortError');
             const location = fgTextModel.locate(model, number);
             if (!location) return null;
-            if (fgData.textChunks()?.count !== model.records.length) throw new Error('Text catalog does not cover complete records');
-            const block = await fgData.loadTextBlock(location.ordinal, options);
+            const catalog = fgData.textChunks();
+            if (catalog?.count !== model.records.length) throw new Error('Text catalog does not cover complete records');
+            const block = options.block ?? await fgData.loadTextBlock(location.ordinal, options);
             if (options.signal?.aborted) throw new DOMException('Text row request canceled', 'AbortError');
+            const first = Math.floor(location.ordinal / catalog.paint_rows) * catalog.paint_rows;
+            if (block.first !== first || block.count !== Math.min(catalog.paint_rows, catalog.count - first)) {
+                throw new Error('Text paint block range mismatch');
+            }
             const parser = document.createElement('div');
             parser.innerHTML = block.html;
             const element = parser.firstElementChild;

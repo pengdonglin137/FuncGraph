@@ -260,6 +260,40 @@ class TextChunkBrowserTest(unittest.TestCase):
         self.assertTrue(result['deferred'])
         self.assertFalse(any(url.endswith('text-index.json') for url in self.requests))
 
+    def test_grouped_paint_reads_preserve_request_order_shared_blocks_and_partial_final_range(self):
+        facts = self.page.evaluate('''async () => {
+            const ordinals=[1537,1,1536,4095];
+            const pending=fgData.loadTextBlocks(ordinals);
+            ordinals[0]=4100;
+            const blocks=await pending, last=await fgData.loadTextBlocks([4202]);
+            const singles=await Promise.all([1537,1,1536,4095].map(ordinal=>fgData.loadTextBlock(ordinal)));
+            return {first:blocks.map(block=>block.first),counts:blocks.map(block=>block.count),
+                shared:blocks[0]===blocks[2],identical:JSON.stringify(blocks)===JSON.stringify(singles),
+                last:last.map(block=>({first:block.first,count:block.count})),
+                mounted:document.querySelectorAll('#content .line-container').length,deferred:fgTextDeferred()};
+        }''')
+        self.assertEqual(facts, dict(first=[1536, 0, 1536, 3584], counts=[512] * 4, shared=True,
+                                    identical=True, last=[dict(first=4096, count=107)], mounted=0, deferred=True))
+        chunks = [url for url in self.requests if '/text-' in url and url.endswith('.html')]
+        self.assertEqual(len(chunks), 2)
+        self.assertEqual(len(set(chunks)), 2)
+
+    def test_grouped_paint_reads_reject_invalid_or_cross_resource_identities_before_loading(self):
+        facts = self.page.evaluate('''async () => {
+            const errors=[];
+            for (const ordinals of [null,{},1,[undefined],[,1],[-1],[0,4096],[4203],[Number.MAX_SAFE_INTEGER+1]]) {
+                errors.push(await fgData.loadTextBlocks(ordinals).then(()=>null,error=>error.message));
+            }
+            const controller=new AbortController(); controller.abort();
+            const canceled=await fgData.loadTextBlocks([],{signal:controller.signal}).then(()=>null,error=>error.name);
+            return {errors,canceled,empty:await fgData.loadTextBlocks([])};
+        }''')
+        self.assertTrue(all(facts['errors']))
+        self.assertEqual(facts['errors'][6], 'Text block group crosses network chunks')
+        self.assertEqual(facts['canceled'], 'AbortError')
+        self.assertEqual(facts['empty'], [])
+        self.assertFalse(any('/text-' in url for url in self.requests))
+
     def test_reading_an_unmounted_line_materializes_only_its_paint_block_and_exact_source_pairs(self):
         facts = self.page.evaluate('''async () => {
             const iterator = fgTextModel.prepare(await fgData.load('fgTextIndex'));

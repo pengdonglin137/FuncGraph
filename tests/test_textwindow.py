@@ -48,6 +48,12 @@ class TextWindowTest(unittest.TestCase):
                                     [(number, 7, 202) for number in range(4201, 7801)]))
         cls.kernel.run(str(task_trace), '--no-config', '--timeline', '--enable-fold', '--filter', '--func-links',
                        '--report-mode', 'sidecar', out='report/tasks')
+        scattered = Path(cls.kernel.dir) / 'scattered.txt'
+        scattered.write_text('# tracer: function_graph\n' + ''.join(
+            f' 3) {number * 7919 % 24576 + 1:7.3f} us    |  leaf(arg={number}); /* <-root+0x4/0x80 */\n'
+            for number in range(24576)))
+        cls.kernel.run(str(scattered), '--no-config', '--timeline', '--enable-fold', '--filter', '--func-links',
+                       '--report-mode', 'sidecar', out='report/scattered')
         cls.server = create_server(Path(cls.kernel.dir) / 'report')
         cls.thread = threading.Thread(target=cls.server.serve_forever, kwargs={'poll_interval': 0.02}, daemon=True)
         cls.thread.start()
@@ -203,11 +209,11 @@ class TextWindowTest(unittest.TestCase):
         groups = self.open_task_report()
         self.seek_task_context(groups[0]['number'])
         facts = self.page.evaluate('''async number => {
-            const load=fgData.loadTextBlock;
-            fgData.loadTextBlock=async ordinal=>{throw new Error('injected task window failure')};
+            const load=fgData.loadTextBlocks;
+            fgData.loadTextBlocks=async ()=>{throw new Error('injected task window failure')};
             let failed=false;
             try { await fgEnsureTextLine(number); } catch(error) {failed=error.message.includes('injected task window failure')}
-            finally {fgData.loadTextBlock=load}
+            finally {fgData.loadTextBlocks=load}
             return {failed,text:document.querySelector('.fg-window-context').textContent,
                 hidden:document.querySelector('.fg-window-context').hidden};
         }''', groups[1]['number'])
@@ -412,11 +418,11 @@ class TextWindowTest(unittest.TestCase):
     def test_cancelled_far_navigation_cannot_replace_newer_window(self):
         self.open_report()
         facts = self.page.evaluate('''async () => {
-            const original = fgData.loadTextBlock;
+            const original = fgData.loadTextBlocks;
             let release;
-            fgData.loadTextBlock = async (ordinal, options) => {
-                if (ordinal > 8000) await new Promise(resolve => release = resolve);
-                return original(ordinal, options);
+            fgData.loadTextBlocks = async (ordinals, options) => {
+                if (ordinals.some(ordinal => ordinal > 8000)) await new Promise(resolve => release = resolve);
+                return original(ordinals, options);
             };
             const controller = new AbortController();
             const obsolete = fgEnsureTextLine(8500, {signal:controller.signal}).catch(error => error.name);
@@ -425,7 +431,7 @@ class TextWindowTest(unittest.TestCase):
             const row = await fgEnsureTextLine(5001);
             release();
             const canceled = await obsolete;
-            fgData.loadTextBlock = original;
+            fgData.loadTextBlocks = original;
             return {canceled, id:row.id, connected:row.isConnected, stale:!!document.getElementById('L8500')};
         }''')
         self.assertEqual(facts, dict(canceled='AbortError', id='L5001', connected=True, stale=False))
@@ -433,13 +439,13 @@ class TextWindowTest(unittest.TestCase):
     def test_failed_block_keeps_previous_window_and_navigation_can_retry(self):
         self.open_report()
         facts = self.page.evaluate('''async () => {
-            const original = fgData.loadTextBlock;
+            const original = fgData.loadTextBlocks;
             const before = [...document.querySelectorAll('#content .line-container')].map(row => row.id);
-            fgData.loadTextBlock = () => Promise.reject(new Error('injected network failure'));
+            fgData.loadTextBlocks = () => Promise.reject(new Error('injected network failure'));
             const error = await fgEnsureTextLine(8500).catch(error => error.message);
             const after = [...document.querySelectorAll('#content .line-container')].map(row => row.id);
             const retry = !document.querySelector('.fg-window-notice button').hidden;
-            fgData.loadTextBlock = original;
+            fgData.loadTextBlocks = original;
             const row = await fgEnsureTextLine(8500);
             return {before, after, error, retry, id:row.id};
         }''')
@@ -451,14 +457,14 @@ class TextWindowTest(unittest.TestCase):
     def test_failed_filter_rolls_back_full_state_and_retry_reaches_remote_match(self):
         self.open_report()
         facts = self.page.evaluate('''async () => {
-            const original = fgData.loadTextBlock;
+            const original = fgData.loadTextBlocks;
             const before = fgTextWindow.visibleNumbers;
-            fgData.loadTextBlock = () => Promise.reject(new Error('filter block unavailable'));
+            fgData.loadTextBlocks = () => Promise.reject(new Error('filter block unavailable'));
             document.getElementById('filterInput').value = 'params:arg=8999';
             const applied = await applyFilter();
             const after = fgTextWindow.visibleNumbers, state = fgFilterState, error = fgFilterProgress.message;
             const notice = document.querySelector('.fg-window-notice').textContent;
-            fgData.loadTextBlock = original;
+            fgData.loadTextBlocks = original;
             const retried = await applyFilter();
             return {before, after, applied, text:state.text, lines:state.lines, error, notice, retried, matches:[...fgFilterState.lines]};
         }''')
@@ -610,6 +616,83 @@ class TextWindowTest(unittest.TestCase):
         self.assertEqual(facts['groupWarm'], 3)
         self.assertTrue(facts['sorted'])
         self.assertLessEqual(facts['rows'], 160)
+
+    def test_scattered_sort_loads_each_network_resource_once_without_changing_display_order(self):
+        self.page.goto(urljoin(self.server.url, 'scattered/index.html?text=windowed'))
+        self.assertTrue(self.page.evaluate('async () => !!(await fgSwitchView("text"))'))
+        facts = self.page.evaluate('''async () => {
+            const original=fgData.loadTextBlocks, catalog=fgData.textChunks(), results=[];
+            for (const direction of ['desc','asc','desc']) {
+                const groups=[];
+                let active=0, maximum=0;
+                fgData.loadTextBlocks=async (ordinals, options)=>{
+                    groups.push(ordinals.slice()); active++; maximum=Math.max(maximum,active);
+                    try {return await original(ordinals,options)} finally {active--}
+                };
+                try {
+                    fgData.releaseTextChunks(); performance.clearResourceTimings();
+                    const expected=fgTextWindow.model.records.slice().sort((left,right)=>{
+                        const delta=parseFloat(left.getAttribute('data-sort-duration')||left.getAttribute('data-duration')||'0')-
+                            parseFloat(right.getAttribute('data-sort-duration')||right.getAttribute('data-duration')||'0');
+                        return direction==='asc' ? delta : -delta;
+                    }).map(record=>record.row[0]);
+                    fgTextSort=direction; await fgTextWindow.rebuild(expected[0]);
+                    const rows=[...document.querySelectorAll('#content .line-container')];
+                    const requests=performance.getEntriesByType('resource').filter(entry=>/\\/text-\\d+\\.html$/.test(entry.name));
+                    results.push({maximum,groups:groups.length,
+                        grouped:groups.every(group=>new Set(group.map(ordinal=>Math.floor(ordinal/catalog.chunk_size))).size===1 &&
+                            new Set(group.map(ordinal=>Math.floor(ordinal/catalog.paint_rows))).size===group.length),
+                        requests:requests.length,unique:new Set(requests.map(entry=>entry.name)).size,
+                        complete:JSON.stringify(fgTextWindow.visibleNumbers)===JSON.stringify(expected),
+                        display:JSON.stringify(rows.map(row=>+row.dataset.lineNumber))===JSON.stringify(expected.slice(0,rows.length)),
+                        sources:rows.every(row=>row.classList.contains('expandable')===!!row.nextElementSibling?.classList.contains('expanded-content')),
+                        mounted:rows.length});
+                } finally {fgData.loadTextBlocks=original}
+            }
+            return results;
+        }''')
+        for result in facts:
+            with self.subTest(result=result):
+                self.assertEqual(result['requests'], result['unique'])
+                self.assertTrue(result['complete'])
+                self.assertTrue(result['display'])
+                self.assertGreater(result['groups'], 4)
+                self.assertLessEqual(result['maximum'], 4)
+                self.assertTrue(result['grouped'])
+                self.assertEqual(result['requests'], result['groups'])
+                self.assertTrue(result['sources'])
+                self.assertLessEqual(result['mounted'], 160)
+
+    def test_grouped_window_reads_validate_unmounted_rows_and_block_ranges_before_publication(self):
+        self.open_report()
+        facts = self.page.evaluate('''async () => {
+            const original=fgData.loadTextBlocks, results=[];
+            for (const kind of ['range','identity','presentation']) {
+                await fgEnsureTextLine(100);
+                const before=[...document.querySelectorAll('#content .line-container')].map(row=>row.id);
+                fgData.loadTextBlocks=async (...args)=>{
+                    const blocks=await original(...args);
+                    return blocks.map(block=>{
+                        if (kind==='range') return {...block,first:block.first+512};
+                        const number=fgTextWindow.model.records[block.first].row[0];
+                        return {...block,html:kind==='identity' ? block.html.replace('id="L'+number+'"','id="L999999"') :
+                            block.html.replace('class="line-content"','class="unexpected-content"')};
+                    });
+                };
+                let error;
+                try {await fgEnsureTextLine(8500)} catch(failure) {error=failure.message}
+                finally {fgData.loadTextBlocks=original}
+                const after=[...document.querySelectorAll('#content .line-container')].map(row=>row.id);
+                const row=await fgEnsureTextLine(8500);
+                results.push({kind,error,retained:JSON.stringify(before)===JSON.stringify(after),retry:row.id});
+            }
+            return results;
+        }''')
+        for result, message in zip(facts, ['range', 'line identity', 'presentation metadata']):
+            with self.subTest(kind=result['kind']):
+                self.assertEqual(result['error'], 'Text paint block ' + message + ' mismatch')
+                self.assertTrue(result['retained'])
+                self.assertEqual(result['retry'], 'L8500')
 
     def test_scroll_feedback_does_not_preempt_an_explicit_window_rebuild(self):
         self.open_report()

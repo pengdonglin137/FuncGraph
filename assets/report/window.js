@@ -211,33 +211,41 @@ function fgCreateTextWindow(model, navigation, root) {
             const retained = new Map(Array.from(body.children).filter(element => element.dataset.windowLine)
                 .map(element => [+element.dataset.windowLine, element]));
             const missing = new Map();
+            const catalog = fgData.textChunks();
             const required = new Set(sequence.slice(start, stop).filter(item => typeof item === 'number' && !retained.has(item)));
             for (const number of required) {
                 const ordinal = fgTextModel.locate(model, number).ordinal;
-                const block = Math.floor(ordinal / fgData.textChunks().paint_rows);
-                if (!missing.has(block)) missing.set(block, number);
+                const chunk = Math.floor(ordinal / catalog.chunk_size);
+                if (!missing.has(chunk)) missing.set(chunk, new Map());
+                const block = Math.floor(ordinal / catalog.paint_rows);
+                if (!missing.get(chunk).has(block)) missing.get(chunk).set(block, { number, ordinal });
             }
-            const blocks = Array.from(missing.values());
+            const groups = Array.from(missing.values(), group => Array.from(group.values()));
             let next = 0;
             const collect = async () => {
-                while (next < blocks.length) {
-                    const number = blocks[next++];
-                    const loaded = await fgLoadTextBlock(model, number, { signal: own.signal });
+                while (next < groups.length) {
+                    const group = groups[next++];
+                    const blocks = await fgData.loadTextBlocks(group.map(item => item.ordinal), { signal: own.signal });
                     check(own.signal);
-                    for (const row of Array.from(loaded.element.querySelectorAll('.line-container'))) {
-                        const identity = +row.dataset.lineNumber;
-                        if (!required.has(identity)) continue;
-                        const wrapper = document.createElement('div');
-                        wrapper.dataset.windowLine = identity;
-                        const source = row.nextElementSibling;
-                        wrapper.appendChild(row);
-                        if (source?.classList.contains('expanded-content')) wrapper.appendChild(source);
-                        retained.set(identity, wrapper);
+                    for (let index = 0; index < group.length; index++) {
+                        check(own.signal);
+                        const loaded = await fgLoadTextBlock(model, group[index].number, { signal: own.signal, block: blocks[index] });
+                        check(own.signal);
+                        for (const row of Array.from(loaded.element.querySelectorAll('.line-container'))) {
+                            const identity = +row.dataset.lineNumber;
+                            if (!required.has(identity)) continue;
+                            const wrapper = document.createElement('div');
+                            wrapper.dataset.windowLine = identity;
+                            const source = row.nextElementSibling;
+                            wrapper.appendChild(row);
+                            if (source?.classList.contains('expanded-content')) wrapper.appendChild(source);
+                            retained.set(identity, wrapper);
+                        }
+                        await new Promise(resolve => setTimeout(resolve, 0));
                     }
-                    await new Promise(resolve => setTimeout(resolve, 0));
                 }
             };
-            await Promise.all(Array.from({ length: Math.min(4, blocks.length) }, collect));
+            await Promise.all(Array.from({ length: Math.min(4, groups.length) }, collect));
             check(own.signal);
             if (id !== generation) throw new DOMException('Text window replaced', 'AbortError');
             const fragment = document.createDocumentFragment();

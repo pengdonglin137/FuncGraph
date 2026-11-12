@@ -6,6 +6,8 @@
 
 后续消除完整行定位、相同导航和耗时排序的重复工作，并修复视口反馈抢占重建的
 竞态；两种规模的三轮结果与未解决瓶颈见[Text 重建性能](performance-text-rebuild.md)。
+排序后的分散窗口还会[合并同一网络资源的读取](performance-text-block-locality.md)，
+减少缓存淘汰造成的重复传输；不会跳过所需绘制块的完整校验或缓存离屏 DOM。
 
 ## 使用 / Quick start
 

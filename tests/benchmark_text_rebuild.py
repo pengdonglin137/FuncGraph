@@ -21,9 +21,17 @@ ACTIONS = [
     ('filter', '() => {document.getElementById("filterInput").value="func:mutex";return applyFilter()}'),
     ('clear', '() => clearFilter()'),
 ]
+JUMP = '''async () => {
+    const numbers=fgTextWindow.visibleNumbers, number=numbers[POSITION];
+    const row=await fgEnsureTextLine(number);
+    if (!row?.isConnected || row.id!=='L'+number) throw new Error('Sorted-window target was not mounted');
+    return true;
+}'''
+SCATTERED_ACTIONS = [(name, JUMP.replace('POSITION', position)) for name, position in [
+    ('duration-top', '0'), ('duration-next', 'Math.min(160,numbers.length-1)'), ('duration-return', '0')]]
 
 
-def measure(browser, url, timeout):
+def measure(browser, url, timeout, scattered=False):
     context = browser.new_context(viewport={'width': 1440, 'height': 900})
     page = context.new_page()
     page.set_default_timeout(timeout)
@@ -43,8 +51,15 @@ def measure(browser, url, timeout):
                 sha256:[...new Uint8Array(digest)].map(value=>value.toString(16).padStart(2,'0')).join('')};
         }''')
         results = []
-        for name, action in ACTIONS:
+        actions = ACTIONS[:4] + SCATTERED_ACTIONS + ACTIONS[4:] if scattered else ACTIONS
+        for name, action in actions:
             facts = page.evaluate('''async () => {
+                for (let quiet=0; quiet<2;) {
+                    await new Promise(requestAnimationFrame);
+                    quiet=document.getElementById('content').hasAttribute('aria-busy') ? 0 : quiet+1;
+                }
+                performance.clearResourceTimings();
+                performance.setResourceTimingBufferSize(10000);
                 const timings=[], observer=new PerformanceObserver(list=>timings.push(...list.getEntries().map(entry=>entry.duration)));
                 observer.observe({type:'longtask'});
                 const start=performance.now(), pending=ACTION();
@@ -59,7 +74,11 @@ def measure(browser, url, timeout):
                 timings.push(...observer.takeRecords().map(entry=>entry.duration)); observer.disconnect();
                 const data=JSON.stringify([fgTextWindow.visibleNumbers,fgTextNavigation.order,fgTextNavigation.visibleCount]);
                 const digest=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(data));
+                const resources=performance.getEntriesByType('resource').filter(entry=>/\\/text-\\d+\\.html$/.test(entry.name) &&
+                    entry.startTime>=start && entry.responseEnd<=start+ready_ms);
                 return {sync_ms,ready_ms,feedback_ms,longest_task_ms:Math.max(0,...timings),
+                    text_requests:resources.length,text_resources:new Set(resources.map(entry=>entry.name)).size,
+                    text_bytes:resources.reduce((total,entry)=>total+entry.encodedBodySize,0),
                     mounted:document.querySelectorAll('#content .line-container').length,
                     visible:fgTextNavigation.visibleCount,order:fgTextOrder,sort:fgTextSort,
                     sha256:[...new Uint8Array(digest)].map(value=>value.toString(16).padStart(2,'0')).join('')};
@@ -79,6 +98,7 @@ def main():
     parser.add_argument('--trace', type=Path, required=True)
     parser.add_argument('--rounds', type=int, default=3)
     parser.add_argument('--timeout', type=int, default=180000)
+    parser.add_argument('--scattered', action='store_true', help='Visit and revisit distant sorted windows before the warm rebuild')
     parser.add_argument('--output', type=Path, required=True)
     arguments = parser.parse_args()
     if min(arguments.rounds, arguments.timeout) < 1:
@@ -87,7 +107,7 @@ def main():
     servers, threads = {}, []
     output = dict(reports={name: report_info(path / 'index.html') for name, path in reports.items()},
                   trace=dict(path=str(arguments.trace.resolve()), bytes=arguments.trace.stat().st_size,
-                             sha256=hashlib.sha256(arguments.trace.read_bytes()).hexdigest()), runs=[],
+                             sha256=hashlib.sha256(arguments.trace.read_bytes()).hexdigest()), runs=[], scattered=arguments.scattered,
                   basis='No CPU profiler; alternating independent Chromium processes; same actions; API, synchronous-prefix and two-rAF timings; full model and per-action complete visibility/order digests; not a frame or total-memory bound')
     try:
         for name, path in reports.items():
@@ -101,7 +121,7 @@ def main():
                     browser = playwright.chromium.launch()
                     try:
                         facts = dict(variant=variant, round=iteration + 1,
-                                     **measure(browser, servers[variant].url, arguments.timeout))
+                                     **measure(browser, servers[variant].url, arguments.timeout, arguments.scattered))
                         if output['runs']:
                             reference = output['runs'][0]
                             if facts['model'] != reference['model'] or [item['sha256'] for item in facts['actions']] != [item['sha256'] for item in reference['actions']]:
