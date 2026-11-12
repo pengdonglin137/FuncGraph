@@ -48,12 +48,18 @@ let sDur = sDurRaw;
 let adjOn = false;
 function durOf(i) { return sDur[i]; }
 const sSelf = new Float64Array(N);
-let maxSelf = 1;
+let maxSelf = 0, maxDuration = 0, selfColorLog = 0, durationColorLog = 0;
 function computeSelf() {
-    for (let i = 0; i < N; i++) sSelf[i] = sDur[i];
+    maxDuration = 0;
+    for (let i = 0; i < N; i++) {
+        sSelf[i] = sDur[i];
+        if (sDur[i] > maxDuration) maxDuration = sDur[i];
+    }
     for (let i = 0; i < N; i++) { const p = sParent[i]; if (p >= 0) sSelf[p] -= sDur[i]; }
-    maxSelf = 1;
+    maxSelf = 0;
     for (let i = 0; i < N; i++) { if (sSelf[i] < 0) sSelf[i] = 0; if (sSelf[i] > maxSelf) maxSelf = sSelf[i]; }
+    selfColorLog = Math.log1p(maxSelf);
+    durationColorLog = Math.log1p(maxDuration);
 }
 computeSelf();
 const sSelfRaw = Float64Array.from(sSelf);      // measured self time (for breakdowns)
@@ -739,14 +745,20 @@ tlRoot.innerHTML = `
       <p>Examples replace the draft only; edit the value and choose Apply.</p>
     </details>
   </div>
-  <span class="tl-group"><span class="tl-label">Color</span>
-    <span class="tl-seg" data-role="color">
-      <button data-v="ctx" class="on" title="Execution context (task / softirq / hardirq / NMI)">Context</button>
-      <button data-v="name" title="Hash of function name">Function</button>
-      <button data-v="heat" title="Self time, log scale">Self time</button>
-      <button data-v="cpu" title="CPU the call ran on">CPU</button>
-      <button data-v="module" title="Kernel module">Module</button>
-    </span></span>
+  <span class="tl-group" role="group" aria-label="Slice color settings"><label class="tl-label" for="tlColorMode">Color</label>
+    <select class="tl-color-picker" id="tlColorMode" data-role="color">
+      <option value="ctx">Context</option>
+      <option value="name">Function</option>
+      <option value="total"${N && MODE !== 'count' ? '' : ' hidden disabled'}>Total time</option>
+      <option value="heat"${N && MODE !== 'count' ? '' : ' hidden disabled'}>Self time</option>
+      <option value="cpu"${sCpu ? '' : ' hidden disabled'}>CPU</option>
+      <option value="module"${sMod ? '' : ' hidden disabled'}>Module</option>
+    </select>
+    <span class="tl-heat-scale" id="tlHeatScale" hidden role="status" aria-live="polite" aria-atomic="true">
+      <span class="tl-heat-ramp" aria-hidden="true"></span><span class="tl-heat-caption"></span>
+      <span class="tl-heat-note"></span>
+    </span>
+  </span>
   <span class="tl-group"><span class="tl-label">Overlay</span>
     <button class="tl-chip" data-ov="err"><i class="dot" style="background:#d32f2f"></i>Errors</button>
     <button class="tl-chip" data-ov="irq"><i class="dot" style="background:repeating-linear-gradient(135deg,#555 0 2px,transparent 2px 4px)"></i>IRQs off</button>

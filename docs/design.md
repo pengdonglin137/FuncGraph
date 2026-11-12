@@ -271,6 +271,8 @@ lost[]    [cpu, count, line]
 | 19 | 调用点与记录父切片不一致（尾调用、内联或未跟踪代码等，原因未确定） |
 | 20 / 21 / 22 | 返回 NULL / 叶子 / 上下文是推断的 |
 
+耗时配色的 **Total time / Self time** 只读取已有的真实调用耗时；最大值及对数分母随自身耗时计算一起更新，不在每次绘制时扫描全部调用。两种模式共用 20 档明暗主题色阶，菜单内的原生下拉框避免模式按钮在窄屏错落换行，并展示整份报告的范围及是否采用 Overhead 估算；过滤/缩放不改变映射，合成帧保持中性，错误叠加层仍优先。无耗时的调用顺序模式和无调用报告不显示耗时选项；混合 User/Kernel 颜色图例只适用于 Context。显示、键盘/移动端和验证边界见[耗时配色说明](timeline-colors.md)。
+
 ### 6.8 可选的尾跳转静态证据（`fglib/tailcalls.py`）
 
 `--timeline --tail-calls --vmlinux` 在 `TimelineBuilder.to_data()` 之后附加版本为 1 的 `tail_calls`，不修改 `cols`、统计、合成帧或原始 trace。默认不执行这一步；ftrace 的 `caps.tail` / `funcgraph-tail` 只是出口行是否有函数名，不是尾调用能力。

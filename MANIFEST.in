@@ -13,6 +13,7 @@ include docs/performance-text-rebuild.md
 include docs/performance-text-block-locality.md
 include docs/design.md docs/guide.cn.md docs/guide.en.md
 include docs/detail-layout.md
+include docs/timeline-colors.md
 include docs/releasing.md docs/releasing.cn.md
 include docs/cpu-coverage.md
 recursive-include docs/releases *.md

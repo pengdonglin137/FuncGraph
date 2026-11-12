@@ -6141,8 +6141,11 @@ class BrowserSmokeTest(unittest.TestCase):
         self.page.wait_for_timeout(300)
         self.assertGreater(self.ev("document.querySelectorAll('table.tl-sum tbody tr').length"), 5)
         self.ev('toggleTheme()')
-        for mode in ('name', 'heat', 'cpu', 'ctx'):
-            helpers.click_timeline_tool(self.page, f'[data-role=color] button[data-v={mode}]')
+        for mode in ('name', 'total', 'heat', 'cpu', 'ctx'):
+            helpers.open_timeline_tools(self.page)
+            self.page.get_by_label('Color', exact=True).select_option(mode)
+            self.assertEqual(self.page.get_by_label('Color', exact=True).input_value(), mode)
+            self.assertGreater(self.ev("document.querySelectorAll('table.tl-sum tbody tr').length"), 5)
         self.page.wait_for_timeout(200)
 
 

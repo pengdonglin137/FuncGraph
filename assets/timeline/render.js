@@ -27,6 +27,7 @@ function palette() {
         rs: '#f59e0b', io: '#4b5563', mis: '#8e44ad', dense: 0.85
     };
     colorCache.clear();
+    updateHeatLegend();
     hatch = makeHatch(dark ? 'rgba(0,0,0,.30)' : 'rgba(0,0,0,.20)');
     offHatch = makeHatch(dark ? 'rgba(200,205,215,.14)' : 'rgba(90,98,110,.14)');
 }
@@ -55,25 +56,53 @@ function hashOf(si) {
 }
 const colorCache = new Map();
 function hsl(h, s, l) { return 'hsl(' + h.toFixed(0) + ',' + s.toFixed(0) + '%,' + l.toFixed(0) + '%)'; }
+const HEAT_BINS = 20;
+function heatBin(sliceIndex) {
+    const value = colorMode === 'total' ? sDur[sliceIndex] : sSelf[sliceIndex];
+    const logarithm = colorMode === 'total' ? durationColorLog : selfColorLog;
+    return logarithm > 0 ? Math.min(HEAT_BINS - 1, Math.max(0, Math.floor((HEAT_BINS - 0.01) * Math.log1p(value) / logarithm))) : 0;
+}
+function heatColor(bin) {
+    const ratio = bin / (HEAT_BINS - 1);
+    return hsl(220 - 220 * ratio, 30 + 50 * ratio, dark ? 30 + 18 * ratio : 82 - 22 * ratio);
+}
+function updateHeatLegend() {
+    const legend = tlRoot.querySelector('.tl-heat-scale');
+    legend.hidden = colorMode !== 'heat' && colorMode !== 'total';
+    const picker = tlRoot.querySelector('[data-role=color]');
+    if (legend.hidden) picker.removeAttribute('aria-describedby');
+    else picker.setAttribute('aria-describedby', 'tlHeatScale');
+    const spaceKey = tlRoot.querySelector('.tl-space-key');
+    if (spaceKey) spaceKey.hidden = colorMode !== 'ctx';
+    if (legend.hidden) return;
+    const total = colorMode === 'total';
+    const colors = Array.from({ length: HEAT_BINS }, (_, bin) => heatColor(bin));
+    legend.querySelector('.tl-heat-ramp').style.background = 'linear-gradient(to right, ' + colors.join(', ') + ')';
+    legend.querySelector('.tl-heat-caption').textContent = '0–' + fmtDur(total ? maxDuration : maxSelf) + ' · log · all calls';
+    legend.querySelector('.tl-heat-note').textContent = (total ? 'Includes children and waits; not CPU time.' : 'Excludes children; not CPU time.') +
+        (adjOn ? ' Overhead estimate.' : ' Measured.');
+}
 function baseColor(i) {
     const f = sFlags[i], c = f & FL.CTX;
-    let key, h, s, l;
+    let key, h, s, l, bin;
     switch (colorMode) {
         case 'name': key = sName[i]; break;
-        case 'heat': key = 'h' + Math.min(19, Math.floor(19.99 * Math.log1p(sSelf[i]) / Math.log1p(maxSelf))); break;
+        case 'total':
+        case 'heat': bin = heatBin(i); key = colorMode + bin; break;
         case 'cpu': key = 'c' + cpuOf(i); break;
         case 'module': key = 'm' + (sMod ? sMod[i] : -1); break;
         default: key = sName[i] * 8 + c + (f & FL.USER ? 4 : 0);
     }
     let col = colorCache.get(key);
     if (col) return col;
+    if (bin !== undefined) {
+        col = heatColor(bin);
+        colorCache.set(key, col);
+        return col;
+    }
     const hh = colorMode === 'module' ? (sMod && sMod[i] >= 0 ? hashOf(sMod[i]) : 0) : hashOf(sName[i]);
     switch (colorMode) {
         case 'name': h = hh % 360; s = 48 + hh % 20; l = dark ? 38 + (hh >> 9) % 10 : 68 + (hh >> 9) % 12; break;
-        case 'heat': {
-            const r = Math.min(19, Math.floor(19.99 * Math.log1p(sSelf[i]) / Math.log1p(maxSelf))) / 19;
-            h = 220 - 220 * r; s = 30 + 50 * r; l = dark ? 30 + 18 * r : 82 - 22 * r; break;
-        }
         case 'cpu': {
             const cp = cpuOf(i);
             h = cp < 0 ? 210 : (cp * 137.508) % 360; s = cp < 0 ? 8 : 52; l = dark ? 40 : 70; break;

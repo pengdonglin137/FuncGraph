@@ -1280,12 +1280,15 @@ if (!document.getElementById('filterInput')) {
 }
 
 // ---- toolbar ----
-tlRoot.querySelector('[data-role=color]').addEventListener('click', ev => {
-    const b = ev.target.closest('button');
-    if (!b) return;
-    colorMode = b.dataset.v;
-    tlRoot.querySelectorAll('[data-role=color] button').forEach(x => x.classList.toggle('on', x === b));
+tlRoot.querySelector('[data-role=color]').addEventListener('change', ev => {
+    const picker = ev.currentTarget;
+    if (!picker.selectedOptions.length || picker.selectedOptions[0].disabled) {
+        picker.value = colorMode;
+        return;
+    }
+    colorMode = picker.value;
     colorCache.clear();
+    updateHeatLegend();
     draw();
 });
 tlRoot.querySelectorAll('[data-ov]').forEach(b => {
@@ -1352,6 +1355,7 @@ function toggleAdjusted() {
     b.textContent = 'Overhead: ' + (adjOn ? 'subtracted' : 'measured');
     b.classList.toggle('on', adjOn);
     colorCache.clear();
+    updateHeatLegend();
     refreshPanel();
     draw();
     toast(adjOn ? 'Durations: overhead subtracted (estimate)' : 'Durations: as measured');
@@ -1425,6 +1429,8 @@ elHelp.innerHTML = `
 <li><b>Filter</b>: conditions such as <code>pid:1234 AND graph:vfs_read</code>, applied with Enter and shared with Text. Analysis panels use this filter, not the search expression.</li>
 <li>Search navigation stays within the filtered calls. <b>Hide unmatched</b> hides tracks without filter matches.</li></ul>
 ${N ? '' : '<p>No function calls were recorded. Search has no call matches; shared filters apply to Text lines only and do not hide or filter event tracks.</p>'}
+<h4>Colors</h4>
+<p><b>Tools → Color → Total time</b> includes child calls and recorded waits; <b>Self time</b> excludes child calls. Both use a blue-to-red log scale from zero to the maximum across all recorded calls, independent of zoom and filters. Neither measures CPU time. The legend inside Tools follows the theme and Overhead setting; slice positions and widths stay as recorded. Error overlays take priority; turn off <b>Errors</b> to compare duration colors. Duration colors are unavailable without durations or recorded calls. <b>Context</b> remains the default.</p>
 <h4>Select</h4><ul>
 <li>Call details group <b>Duration distribution</b> and <b>Open in Text</b> under <b>Actions</b>. Use arrow keys / Home / End inside the menu; Escape closes it before leaving full screen. Text is disabled when it is not included in the report.</li>
 <li>Call details have native navigation buttons: <kbd>↑</kbd> recorded parent · <kbd>↓</kbd> first recorded child · <kbd>[</kbd>/<kbd>]</kbd> recorded siblings (task roots stay within the task); synthetic frames are skipped</li>
@@ -1472,8 +1478,6 @@ elHelp.querySelector('.tl-help-close').addEventListener('click', () => {
 palette();
 applyTextFilter();
 if (!CHAINS.length) tlRoot.querySelector('.tl-errnav').style.display = 'none';
-if (!sMod) tlRoot.querySelector('[data-v=module]').style.display = 'none';
-if (!sCpu) tlRoot.querySelector('[data-v=cpu]').style.display = 'none';
 if (!D.caps.latency) { tlRoot.querySelector('[data-ov=irq]').classList.add('na'); tlRoot.querySelector('[data-ov=preempt]').classList.add('na'); }
 if (!D.resched.length && !D.caps.latency) tlRoot.querySelector('[data-ov=rs]').classList.add('na');
 if (!D.offcpu.length) tlRoot.querySelector('[data-ov=off]').classList.add('na');
@@ -1505,7 +1509,7 @@ if (typeof ResizeObserver !== 'undefined') {
 }
 
 // probe: read access to the model and a few actions, for tests and the browser console
-const probe = () => ({ N, NA, SYN, S, sName, sStart, sEnd, sDepth, sParent, sTask, nameOf, isGhost, gapOf, TRACKS,
+const probe = () => ({ N, NA, SYN, S, sName, sStart, sEnd, sDepth, sParent, sTask, nameOf, isGhost, gapOf, TRACKS, styleOf: sliceStyle,
     select: (i) => select(i, { reveal: true }), zoomTo, sel: () => sel, view: () => [view.s, view.e],
     // page coordinates of slice i (center) / of off-CPU record r (center), for scripted mouse input
     xyOf: (i) => { const r = elCv.getBoundingClientRect(), k = W / (view.e - view.s), t = TRACKS[sTask[i]];

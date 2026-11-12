@@ -679,13 +679,20 @@ The **time mode** depends on the columns in the trace and is named at the right 
 
 ### 6.3 Color modes (Color)
 
+Choose **Timeline → Tools → Color** without changing slice positions, widths, selection or filters.
+
 | Mode | The color shows |
 |---|---|
 | **Context** (default) | execution context: **blue** task, **green** softirq, **orange** hardirq, **purple** NMI. Functions of the same context differ slightly in hue and lightness so neighbors can be told apart |
 | **Function** | the function name: same function, same color; find the calls of one function everywhere |
-| **Self time** | self time (without children), log scale, from **blue** (shortest) to **red** (longest): where the time is really spent |
+| **Total time** | total duration, including child calls and recorded waits; a **blue → red** log scale highlights longer complete calls |
+| **Self time** | total duration minus direct child-call durations, clamped to zero; the same blue-to-red palette distinguishes a parent's own duration from its children |
 | **CPU** | the CPU a call ran on, one color per CPU, grey if unknown: shows migrations |
 | **Module** | the kernel module, one color per module, light grey for the core kernel. Hidden when the trace has no module functions |
+
+Both duration modes show a scale inside Tools, from zero to the **maximum across all real calls in the report**, computed separately for each metric with 20 `log1p` bins. Zoom, search and filters do not rescale it, so a call keeps its color. For example, if A takes 10 ms and its direct child B takes 9 ms, Total time colors A by 10 ms and Self time by the remaining 1 ms. **Neither metric measures CPU execution time**: self time can still include untraced work and waits.
+
+**Overhead** updates colors and the menu scale to overhead-subtracted estimates; slice geometry stays measured. All-zero durations remain blue, with no invalid scale. Call-order reports without durations and reports without calls hide both options. Synthetic inline/gap frames stay neutral, not measured durations. **Errors** overlays take priority; switch them off for a pure duration comparison. The mixed User/Kernel color key is only shown in Context mode; address-space boundaries remain unchanged. See [duration color semantics and validation](timeline-colors.md).
 
 Without `latency-format` the context in Context mode is inferred from interrupt entry functions (`gic_handle_irq`, `__sysvec_*`, `handle_softirqs`, …); such slices say `(inferred)` in the tooltip.
 
