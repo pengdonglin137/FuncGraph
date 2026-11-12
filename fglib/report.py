@@ -11,7 +11,7 @@ from collections import defaultdict
 from pathlib import Path
 from itertools import islice
 
-from .assets import COMPARE_CSS, COMPARE_JS, REPORT_CSS, REPORT_DATA_JS, REPORT_FILTER_INDEX_JS, REPORT_JS, REPORT_TREE_CSS, TIMELINE_CSS, VIEWS_BOOT_JS, VIEWS_CSS, VIEWS_EARLY_JS, read_asset, timeline_script
+from .assets import COMPARE_CSS, COMPARE_JS, REPORT_CSS, REPORT_DATA_JS, REPORT_FILTER_INDEX_JS, REPORT_JS, REPORT_TREE_CSS, REPORT_WINDOW_JS, TIMELINE_CSS, VIEWS_BOOT_JS, VIEWS_CSS, VIEWS_EARLY_JS, read_asset, timeline_script
 from .constants import APP_AUTHOR, APP_TITLE, APP_VERSION, ERROR_CODE_MAP, PROJECT_DIR
 from .inline import parse_chain, timeline_inline_map
 from .modules import ModuleIndex
@@ -253,6 +253,7 @@ class HtmlGenerator:
                     <button class="control-btn btn-tool" id="textOrderBtn" onclick="fgToggleTextOrder()" title="Line order: as captured (all CPUs interleaved by time) or grouped by task with context switches summarized">Order: time</button>
                     <button class="control-btn btn-tool" id="srcModeBtn" onclick="fgToggleSrcMode()" title="Source blocks: inline chain (outer to inner, collapsible) or flat faddr2line order">Source: chain</button>
                 </div>
+                <button class="control-btn btn-tool" id="textWindowBtn" hidden onclick="fgOpenWindowedText()" title="Reload this sidecar report with experimental bounded-DOM Text rendering">Windowed Text</button>
                 <span class="heatmap-legend" id="heatmapLegend"></span>
                 </div>
             </div>
@@ -1470,7 +1471,7 @@ class HtmlGenerator:
 
     def _generate_javascript(self):
         """Main report JavaScript (assets/report/report.js)."""
-        return '\n    <script>\n' + read_asset(REPORT_DATA_JS) + read_asset(REPORT_FILTER_INDEX_JS) + read_asset(REPORT_JS) + '    </script>\n'
+        return '\n    <script>\n' + read_asset(REPORT_DATA_JS) + read_asset(REPORT_FILTER_INDEX_JS) + read_asset(REPORT_JS) + read_asset(REPORT_WINDOW_JS) + '    </script>\n'
 
     def _generate_css(self):
         """Main report CSS (assets/report/report.css)."""

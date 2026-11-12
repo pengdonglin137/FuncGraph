@@ -4,6 +4,11 @@
 
 ## Usage
 
+The report itself also offers an [experimental Text window renderer](performance-text-window.md)
+for newly generated chunked sidecars. Append `?text=windowed` to the complete HTTP
+URL printed by `fgview` before entering Text, or use the report's **Windowed Text**
+tool. This does not change `fgview`, the default output mode or size thresholds.
+
 After installing FuncGraph:
 
 ```bash

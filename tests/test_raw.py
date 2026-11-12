@@ -306,7 +306,7 @@ class NativeRawTest(unittest.TestCase):
                 manifest_path = output / descriptor['manifest']['file']
                 manifest = json.loads(manifest_path.read_text())
                 index = json.loads((manifest_path.parent / manifest['resources']['fgTextIndex']['file']).read_text())
-                self.assertEqual(index['version'], 2)
+                self.assertEqual(index['version'], 4)
                 self.assertTrue(all(len(row) == len(index['fields']) + 3 for row in index['rows']))
                 sources = {str(row[0]): row[-1] for row in index['rows'] if row[-1] is not None}
                 self.assertEqual(sources, {})
@@ -337,7 +337,7 @@ class NativeRawTest(unittest.TestCase):
         manifest_path = output / descriptor['manifest']['file']
         manifest = json.loads(manifest_path.read_text())
         index = json.loads((manifest_path.parent / manifest['resources']['fgTextIndex']['file']).read_text())
-        self.assertEqual(index['version'], 2)
+        self.assertEqual(index['version'], 4)
         sources = {str(row[0]): row[-1] for row in index['rows'] if row[-1] is not None}
         self.assertTrue(sources)
         self.assertIn(0, sources.values())

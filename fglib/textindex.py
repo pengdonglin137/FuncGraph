@@ -7,6 +7,7 @@ from html.parser import HTMLParser
 
 FIELDS = ('cpu', 'pid', 'comm', 'ret', 'params', 'duration', 'func',
           'fold-id', 'fold-type', 'fold-ancestors', 'irqs', 'resched', 'hirq', 'preempt')
+PRESENTATION_FIELDS = ('sort-duration', 'fold-ret', 'call-depth')
 
 
 def _dom_text(value):
@@ -32,14 +33,16 @@ class _LineText(HTMLParser):
 
 
 class TextIndexWriter:
-    def __init__(self, stream, include_space=False):
+    def __init__(self, stream, include_space=False, include_presentation=False):
         self.stream = stream
         self.digest = hashlib.sha256()
         self.byte_count = 0
         self.rows = 0
         self.parser = _LineText()
-        self.fields = FIELDS + ('space',) if include_space else FIELDS
-        version = 3 if include_space else 2
+        self.fields = FIELDS + ('space',) if include_space or include_presentation else FIELDS
+        if include_presentation:
+            self.fields += PRESENTATION_FIELDS
+        version = 4 if include_presentation else 3 if include_space else 2
         self._write(f'{{"version":{version},"fields":' + json.dumps(self.fields, separators=(',', ':')) + ',"rows":[')
 
     def _write(self, value):

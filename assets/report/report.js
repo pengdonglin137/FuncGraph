@@ -167,6 +167,10 @@
             return out;
         }
         function fgSetTextOrder(mode) {
+            if (fgTextWindow) {
+                fgTextSort = ''; fgTextOrder = mode; lsSet('textOrder', mode);
+                return fgRefreshTextWindow();
+            }
             const container = document.getElementById('content');
             if (!container) return;
             fgTextSort = '';
@@ -323,7 +327,7 @@
             fgResetTextLayout(resetting);
         }
         function fgTextScrollBehavior(line, bounds = null) {
-            if (!document.getElementById('content').classList.contains('text-layout-auto')) return 'smooth';
+            if (!fgTextWindow && !document.getElementById('content').classList.contains('text-layout-auto')) return 'smooth';
             const top = (bounds || line.getBoundingClientRect()).top;
             return Math.abs(top) > window.innerHeight * 2 ? 'instant' : 'smooth';
         }
@@ -403,12 +407,12 @@
             let guideFrame = null;
             let guideGroups = [];
             let guideRevision = -1;
-            const guideMeasure = content.querySelector('.call-indent');
             const foldControl = target => target?.closest?.('.fold-icon, .fold-brace');
             const scopeControl = target => target?.closest?.('.fold-icon, .fold-brace, .fold-marker, .fold-close');
             function drawGuideScope() {
                 guideFrame = null;
                 if (guideLayer) guideLayer.getContext('2d').clearRect(0, 0, guideLayer.width, guideLayer.height);
+                const guideMeasure = content.querySelector('.call-indent');
                 if (!guideMeasure || !guideStyle || guideStyle.sheet.disabled) return;
                 const contentRect = content.getBoundingClientRect();
                 if (contentRect.height === 0) return;
@@ -443,7 +447,7 @@
                 const baseColor = palette.getPropertyValue('--tree-guide').trim();
                 const activeColor = palette.getPropertyValue('--tree-guide-active').trim();
                 if (guideRevision !== textGuideRevision) {
-                    guideGroups = Array.from(content.children).filter(group => group.matches('.text-chunk, .line-container'));
+                    guideGroups = Array.from(content.children).filter(group => group.matches('.text-chunk, .line-container, .fg-window-rows'));
                     guideRevision = textGuideRevision;
                 }
                 const toolbarBottom = toolbar?.getBoundingClientRect().bottom || 0;
@@ -552,7 +556,10 @@
             window.addEventListener('scroll', scheduleGuideScope, {passive:true});
             textViewport?.addEventListener('scroll', scheduleGuideScope, {passive:true});
             window.addEventListener('resize', scheduleGuideScope);
-            content.addEventListener('fg-guides-change', scheduleGuideScope);
+            content.addEventListener('fg-guides-change', () => {
+                if (scopeRows.some(row => !row.isConnected)) showScope(null);
+                scheduleGuideScope();
+            });
             if (window.ResizeObserver) new ResizeObserver(scheduleGuideScope).observe(content);
             new MutationObserver(scheduleGuideScope).observe(document.documentElement,
                 {attributes:true, attributeFilter:['data-theme']});
@@ -1358,6 +1365,10 @@
                     record.source !== null && row.nextElementSibling?.getAttribute('data-src') !== String(record.source))) {
                     throw new Error('Text paint block source identity mismatch');
                 }
+                if (model.version === 4 && (row.querySelector('.line-content')?.textContent !== record.textContent ||
+                    fgTextModel.presentationFields.some(field => row.getAttribute('data-' + field) !== record.getAttribute('data-' + field)))) {
+                    throw new Error('Text paint block presentation metadata mismatch');
+                }
             }
             return { first: block.first, count: block.count, element, line: rows[location.ordinal - block.first] };
         }
@@ -1367,6 +1378,7 @@
             const generation = fgFilterGeneration;
             const filterInput = document.getElementById('filterInput');
             const text = filterInput ? filterInput.value.trim() : '';
+            if (fgTextWindow && !fgTextDeferred()) return fgApplyWindowFilter(text, generation);
             if (fgTextDeferred() && document.getElementById('content').hasAttribute('data-fg-text-index')) {
                 updateFilterTags(text);
                 return fgApplyIndexedFilter(text, generation);
@@ -1464,6 +1476,8 @@
             // Close any open dropdowns
             document.querySelectorAll('.field-dropdown').forEach(d => d.remove());
             document.querySelectorAll('.field-btn.active').forEach(b => b.classList.remove('active'));
+
+            if (fgTextWindow) return fgApplyWindowFilter('', fgFilterGeneration);
 
             const allLineElems = document.querySelectorAll('.line-container');
             const visibleLines = Object.values(foldedBlocks).some(folded => folded === true)
@@ -1984,7 +1998,8 @@
             if (line.style.display !== display) line.style.display = display;
             const content = line.nextElementSibling;
             if (!content?.classList.contains('expanded-content')) return;
-            const expanded = visible && expandedLines[line.getAttribute('data-line-id')] === true;
+            const expanded = visible && expandedLines[line.getAttribute('data-line-id')] === true &&
+                !fgTextWindow?.suppressedSources.has(line.getAttribute('data-line-id'));
             if (expanded) fgFill(content);
             else fgCancelSource(content);
             const sourceDisplay = expanded ? 'block' : 'none';
@@ -1996,6 +2011,7 @@
         }
 
         function fgProjectFoldRecords(folding, records) {
+            if (fgTextWindow) { fgRefreshTextWindow(); return; }
             const chunks = document.getElementById('content').classList.contains('text-layout-auto') ? new Set() : null;
             for (const record of records) {
                 const line = document.getElementById('L' + record.row[0]);
@@ -2066,6 +2082,7 @@
         }
 
         function toggleExpand(lineId, event) {
+            fgTextWindow?.suppressedSources.delete(lineId);
             // 保存当前滚动位置
             const scrollX = window.scrollX;
             const scrollY = window.scrollY;
@@ -2280,9 +2297,9 @@
         // 复制可见内容（纯文本模式，只复制 trace 内容）
         function copyVisibleContent(event) {
             // 获取所有可见的行（未被过滤器隐藏的）
-            const allLines = document.querySelectorAll('.line-container');
+            const allLines = fgTextWindow ? fgTextWindow.visibleNumbers.map(number => fgTextModel.locate(fgTextWindow.model, number).record) : document.querySelectorAll('.line-container');
             const visibleLines = Array.from(allLines).filter(line => {
-                return line.style.display !== 'none' && !line.classList.contains('hidden');
+                return fgTextWindow || line.style.display !== 'none' && !line.classList.contains('hidden');
             });
 
             // 构建文本，只复制 trace 内容（不包含行号）
@@ -2636,7 +2653,8 @@
             const viewportBottom = viewportTop + window.innerHeight;
             const visibleLines = [];
             
-            (fgTextNavigation?.order || []).forEach(number => {
+            const order = fgTextWindow ? Array.from(document.querySelectorAll('#content .line-container'), row => +row.dataset.lineNumber) : fgTextNavigation?.order || [];
+            order.forEach(number => {
                 const line = document.getElementById('L' + number);
                 if (!line) return;
                 const rect = line.getBoundingClientRect();
@@ -2694,8 +2712,12 @@
         }
 
         // 展开所有可展开行（异步执行，支持取消）
-        async function expandAll() {
-            const btn = event.target;
+        async function expandAll(button) {
+            const btn = button || event.target;
+            if (fgTextWindow) {
+                try { await fgTextWindow.fullText(); return expandAll(btn); }
+                catch (error) { console.warn('Expand All:', error); return; }
+            }
 
             // 如果正在等待停止，忽略点击
             if (isWaitingForStop) {
@@ -2796,8 +2818,12 @@
         }
 
         // 收起所有可展开行（异步执行，支持取消）
-        async function collapseAll() {
-            const btn = event.target;
+        async function collapseAll(button) {
+            const btn = button || event.target;
+            if (fgTextWindow) {
+                try { await fgTextWindow.fullText(); return collapseAll(btn); }
+                catch (error) { console.warn('Collapse All:', error); return; }
+            }
 
             // 如果正在等待停止，忽略点击
             if (isWaitingForStop) {
@@ -3018,8 +3044,8 @@
             for (const block of fgGetTextFolding().blocks.values()) {
                 if (!block.entry) continue;
                 const entry = document.getElementById('L' + block.entry.row[0]);
-                if (!entry) continue;
-                const depth = parseInt(entry.getAttribute('data-call-depth'));
+                if (!entry && !fgTextWindow) continue;
+                const depth = parseInt((fgTextWindow ? block.entry : entry).getAttribute('data-call-depth'));
                 if (!isNaN(depth)) changes.push([block.id, depth >= maxDepth]);
             }
             fgSetFoldStates(changes);
@@ -3062,11 +3088,11 @@
             let hasDuration = false;
             let retValue = null;
             let hasErrorReturn = false;
-            const exitEl = block.exit && document.getElementById('L' + block.exit.row[0]);
+            const exitEl = fgTextWindow ? block.exit : block.exit && document.getElementById('L' + block.exit.row[0]);
             if (exitEl) {
                 const ret = exitEl.getAttribute('data-fold-ret') || exitEl.getAttribute('data-ret');
                 if (ret) retValue = ret;
-                hasErrorReturn = exitEl.hasAttribute('data-ret');
+                hasErrorReturn = exitEl.getAttribute('data-ret') !== null;
                 const dur = exitEl.getAttribute('data-sort-duration') || exitEl.getAttribute('data-duration');
                 if (dur) {
                     totalDuration = parseFloat(dur);
@@ -3142,12 +3168,14 @@
             else handleLineClick(event, row.dataset.lineId);
         }
 
-        function fgInitText(mounted = false, model = null, navigation = null) {
+        function fgInitText(mounted = false, model = null, navigation = null, renderer = null) {
             if (fgTextInitialized || fgTextDeferred()) return;
             const pendingNavigation = fgTextLineRequest !== null;
             const root = document.getElementById('content');
             fgRefreshTextLayout();
-            total_lines = root.querySelectorAll('.line-container').length;
+            total_lines = renderer ? model.records.length : root.querySelectorAll('.line-container').length;
+            if (renderer && (renderer.model !== model || renderer.navigation !== navigation || renderer.root !== root ||
+                model.version !== 4 || fgData.textChunks()?.count !== total_lines)) throw new Error('Incomplete Text window model');
             if (model) {
                 if (model.records.length !== total_lines) throw new Error('Text model does not cover mounted rows');
                 fgDomTextModels.set(root, model);
@@ -3162,14 +3190,14 @@
             root.addEventListener('click', fgHandleTextInteraction);
             root.addEventListener('dblclick', fgHandleTextInteraction);
             if (mounted) {
-                fgRestoreTextOrder();
+                if (!renderer) fgRestoreTextOrder();
                 initTextFolds();
-                restoreFoldedState();
+                if (!renderer) restoreFoldedState();
             }
             // 恢复展开状态
-            restoreExpandedState();
+            if (!renderer) restoreExpandedState();
 
-            if (mounted) {
+            if (mounted && !renderer) {
                 const filterText = window.fgFilterProgress?.text ?? window.fgFilterState.text;
                 if (filterText) {
                     const input = document.getElementById('filterInput');

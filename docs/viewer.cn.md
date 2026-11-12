@@ -4,6 +4,10 @@
 
 ## 使用
 
+新生成的分块 sidecar 报告自身还提供[实验性 Text 窗口 renderer](performance-text-window.md)。
+在 `fgview` 输出的完整 HTTP URL 后加 `?text=windowed` 再进入 Text，或使用报告中的
+**Windowed Text** 工具。这不是查看器的虚拟化功能，不改变默认输出或大小阈值。
+
 安装 FuncGraph 后：
 
 ```bash

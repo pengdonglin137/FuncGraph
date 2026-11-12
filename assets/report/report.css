@@ -88,6 +88,37 @@
             min-width: 100%;
             background: var(--container-bg);
         }
+        #textWindowBtn[hidden], .fg-window-notice button[hidden] { display: none; }
+        .fg-window-notice {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            flex-wrap: wrap;
+            padding: 6px 8px;
+            color: var(--text-muted);
+            background: var(--container-bg);
+            border-bottom: 1px solid var(--border-color);
+            font: 12px system-ui, sans-serif;
+        }
+        .fg-window-notice button {
+            font: inherit;
+            color: var(--text-color);
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: 4px;
+            padding: 3px 7px;
+            cursor: pointer;
+        }
+        #content.fg-windowed { overflow-anchor: none; }
+        .fg-window-spacer { pointer-events: none; }
+        .fg-window-rows > div { display: flow-root; }
+        @media print {
+            #content.fg-windowed > * { display: none !important; }
+            #content.fg-windowed::before {
+                content: 'Windowed Text is not a complete printable document. Choose Full Text before printing.';
+                display: block;
+            }
+        }
         /* Compact single-line page header */
         .page-header {
             display: flex;

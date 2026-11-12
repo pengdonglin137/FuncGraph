@@ -185,7 +185,7 @@ class TextChunkRangesTest(unittest.TestCase):
         descriptor = helpers.json_script((output / 'index.html').read_text(), 'fgDataManifest')
         directory = (output / descriptor['manifest']['file']).parent
         index = json.loads((directory / 'text-index.json').read_bytes())
-        self.assertEqual(index['version'], 3)
+        self.assertEqual(index['version'], 4)
         column = index['fields'].index('space') + 2
         self.assertEqual([row[column] for row in index['rows']],
                          ['user' if number % 2 else 'kernel' for number in range(4203)])
@@ -348,10 +348,10 @@ class TextChunkBrowserTest(unittest.TestCase):
                     (_, prefix, number) => prefix + (+number*3+2) + '"')};
             };
             try {
-                for (const version of [1,2,3]) {
+                for (const version of [1,2,3,4]) {
                     const typed = version === 3;
-                    const fields = typed ? [...input.fields, 'space'] : input.fields;
-                    const rows = input.rows.map(row => [row[0]*3+2, ...row.slice(1, -1),
+                    const fields = version === 4 ? input.fields : typed ? [...fgTextModel.fields, 'space'] : [...fgTextModel.fields];
+                    const rows = input.rows.map(row => version === 4 ? [row[0]*3+2, ...row.slice(1)] : [row[0]*3+2, ...row.slice(1, fgTextModel.fields.length+2),
                         ...(typed ? ['user'] : []), ...(version >= 2 ? [row.at(-1)] : [])]);
                     const iterator = fgTextModel.prepare({version, fields, rows});
                     let result;
@@ -363,9 +363,9 @@ class TextChunkBrowserTest(unittest.TestCase):
                 return {calls, facts};
             } finally { fgData.loadTextBlock = load; }
         }''')
-        self.assertEqual(facts['calls'], [4100] * 3)
+        self.assertEqual(facts['calls'], [4100] * 4)
         self.assertEqual(facts['facts'], [dict(version=version, first=4096, count=107, line='L12305')
-                                           for version in [1, 2, 3]])
+                                           for version in [1, 2, 3, 4]])
         self.assertEqual(self.page.locator('#content .line-container').count(), 0)
 
     def test_on_demand_rows_fail_closed_for_missing_records_wrong_counts_identities_and_sources(self):

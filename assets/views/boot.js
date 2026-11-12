@@ -20,6 +20,10 @@
     if (fgTextDeferred()) {
         const chunked = !!document.getElementById('fgTextChunks');
         function* textSteps() {
+            if (chunked && new URL(location.href).searchParams.get('text') === 'windowed') {
+                try { return yield* fgWindowedTextSteps(); }
+                catch (error) { if (fgTextInitialized) textFailed = true; throw error; }
+            }
             const content = document.getElementById('content');
             const fragment = document.createDocumentFragment();
             const parser = document.createElement('div');
@@ -101,6 +105,8 @@
             return {};
         } };
         document.querySelector('.controls').inert = true;
+        const windowButton = document.getElementById('textWindowBtn');
+        if (windowButton) windowButton.hidden = !chunked;
     }
     function stopScheduled(state) {
         cancelAnimationFrame(state.frame);
@@ -358,7 +364,11 @@
         if (which === 'text') {
             if (pc.textViewport) pc.textViewport.scrollLeft = textScrollLeft;
             window.scrollTo(0, textScroll);
-            if (views.text) return open('text');
+            if (views.text) {
+                const result = open('text');
+                apis.text?.resize?.();
+                return result;
+            }
         } else {
             window.scrollTo(0, 0);
             const api = open(which);

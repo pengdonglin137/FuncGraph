@@ -1049,7 +1049,7 @@ class SidecarBrowserTest(unittest.TestCase):
                     let calls = 0;
                     fgPrepareTextNavigation = function* (rows, model) {
                         calls++;
-                        if (model.version !== 2) throw new Error('Missing structured source metadata');
+                        if (model.version !== (preload ? 4 : 2)) throw new Error('Missing structured source metadata');
                         const noDOM = new Proxy({}, {get() {throw new Error('Navigation inspected DOM rows');}});
                         return yield* prepare(noDOM, model);
                     };
@@ -1076,7 +1076,8 @@ class SidecarBrowserTest(unittest.TestCase):
         facts = self.page.evaluate('''async () => {
             const legacy = JSON.parse(JSON.stringify(await fgData.load('fgTextIndex')));
             legacy.version = 1;
-            legacy.rows.forEach(row => row.pop());
+            legacy.fields = [...fgTextModel.fields];
+            legacy.rows = legacy.rows.map(row => row.slice(0, legacy.fields.length + 2));
             const read = fgData.read;
             fgData.read = id => id === 'fgTextIndex' ? legacy : read(id);
             fgTextModel.prepareNavigation = function* () { throw new Error('Legacy source capability was inferred'); };
@@ -1396,7 +1397,8 @@ class SidecarBrowserTest(unittest.TestCase):
             return detachedTextModel.records.map(record => [+record.getAttribute('data-line-number'),
                 record.textContent, ...fgTextModel.fields.map(field => record.getAttribute('data-' + field)), record.source]);
         }''')
-        self.assertEqual(records, index['rows'])
+        fields = self.page.evaluate('Array.from(fgTextModel.fields)')
+        self.assertEqual(records, [row[:len(fields) + 2] + [row[-1]] for row in index['rows']])
         facts = self.page.evaluate('''() => {
             const evaluate = () => {
                 const iterator = fgTextModel.filter(detachedTextModel, 'duration:>1 OR func:mutex');

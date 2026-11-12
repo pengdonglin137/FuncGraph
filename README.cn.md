@@ -4,9 +4,11 @@ FuncGraph 支持可视化仅用户态、仅内核态和混合 uftrace 记录。�
 
 **raw 输入**：`funcgraph trace.dat --timeline --output trace.html` 支持带元数据的 trace-cmd 二进制容器，需要可选原生库和本机 C 编译器。支持压缩/stdin、纳秒时间戳和 `--raw-instance NAME`；不支持独立 `trace_pipe_raw` 裸页。文本模式不新增依赖。详见 [raw 使用与构建文档](docs/raw-input.cn.md)。
 
-普通 CLI 输出仍是可离线打开的单文件。大报告可显式运行 `funcgraph TRACE --timeline --report-mode sidecar --output REPORT_DIRECTORY`，再用 `fgview REPORT_DIRECTORY` 打开：默认进入 Timeline，不下载或创建逐行 Text；Compare 独立加载。首次进入 Text 或跳转行号/锚点时，超过 4,096 条 Text 记录的报告按最多 4,096 条分块校验下载，提供进度、取消和重试。Text HTML 资源缓存独立限制为 4 块 / 16 MiB 已校验字节；准备阶段仍在文档外累计**全部行后再挂载**，最终布局仍可能阻塞，完整 DOM 仍常驻。Timeline 统一过滤只加载索引，不创建 Text DOM；sidecar 源码正文按最多 64 条记录按需读取，使用独立的 8 块 / 16 MiB 资源缓存，单文件源码仍内嵌。这些缓存预算不是整个报告的内存上限。可用 `--report-mode auto --sidecar-threshold BYTES` 自动分流：只有完整 HTML 超过显式字节阈值才进入 sidecar，更小或相等时在同一独立目录内保留离线 `index.html`。没有默认阈值，也不是 Text 虚拟化，详见[查看器指南](docs/viewer.cn.md)。
+普通 CLI 输出仍是可离线打开的单文件。大报告可显式运行 `funcgraph TRACE --timeline --report-mode sidecar --output REPORT_DIRECTORY`，再用 `fgview REPORT_DIRECTORY` 打开：默认进入 Timeline，不下载或创建逐行 Text；Compare 独立加载。首次进入 Text 或跳转行号/锚点时，超过 4,096 条 Text 记录的报告按最多 4,096 条分块校验下载，提供进度、取消和重试。默认 renderer 的 Text HTML 资源缓存独立限制为 4 块 / 16 MiB 已校验字节；准备阶段仍在文档外累计**全部行后再挂载**，最终布局仍可能阻塞，完整 DOM 仍常驻。Timeline 统一过滤只加载索引，不创建 Text DOM；sidecar 源码正文按最多 64 条记录按需读取，使用独立的 8 块 / 16 MiB 资源缓存，单文件源码仍内嵌。这些缓存预算不是整个报告的内存上限。可用 `--report-mode auto --sidecar-threshold BYTES` 自动分流：只有完整 HTML 超过显式字节阈值才进入 sidecar，更小或相等时在同一独立目录内保留离线 `index.html`。没有默认阈值，也不自动启用 Text 窗口化，详见[查看器指南](docs/viewer.cn.md)。
 
 新分块 sidecar Text 还会在浏览器支持时跳过离屏块的布局；过滤、折叠和导航仍使用完整 trace，选中/聚焦块及已展开源码保留正常布局。不支持的浏览器和打印使用完整布局。全部 DOM/模型记录仍常驻，这不是具有 DOM 上限的窗口化。
+
+**实验性 Text 窗口化**：新生成的分块 sidecar 可显式启用真正的最多 160 行 DOM 窗口。在 Text 工具区选择 **Windowed Text**（会重载报告），或在 HTTP 报告 URL 后加 `?text=windowed`，再进入 Text。筛选、调用折叠、任务/耗时排序、跳行及源码展开仍以完整记录为准；**Copy** 复制所有可见 trace 记录，不限于已挂载行。**Full Text** 可恢复完整渲染，Expand/Collapse All 和整篇文档快捷键也会先切换完整模式，避免只处理当前窗口。完整元数据和 Timeline 仍常驻，**不代表总内存有上限，也没有新增自动阈值**。用法、限制及复现实测见[窗口化说明](docs/performance-text-window.md)。
 
 [![ci](https://github.com/pengdonglin137/FuncGraph/actions/workflows/ci.yml/badge.svg)](https://github.com/pengdonglin137/FuncGraph/actions/workflows/ci.yml)
 
@@ -418,7 +420,7 @@ fgcapture.sh --args -g vfs_read,vfs_write -d 1       # 采参数（不开 retadd
 - **更灵活的用法**：`--vmlinux` 可选；`--config`/`--preset` 从 INI 文件读取默认参数；输入支持 `-`（stdin）、`.gz/.xz/.bz2` 和多个文件按时间戳合并；`--source-url`/`--source-rev` 从 URL 或 git 指定版本获取源码并检查版本是否一致；`--export` 把分析结果导出为 JSON/CSV。
 - **大 trace**：超过约 15 万行时文本视图对浏览器负担太重，请用预过滤或 `--timeline --no-text-view`（36 万行：15.7 MB，约 1 秒打开）。重开停留在 Timeline/Compare 的报告时，会在解析文本行之前抑制 Text 渲染，避免先绘制整个文本页再切换。Timeline JSON 达到 1 MiB 时，首次打开时间轴显示准备阶段；**Back to Text**、**Escape** 或切换标签页可在工作块之间取消，完成的模型会缓存。文本和源码仍完整保留，行号锚点仍优先打开 Text。这是主线程协作式准备，不是文本虚拟化或后台解析，较大的单阶段和 GC 仍可能阻塞；实测效果与完整就绪耗时的取舍见 [性能数据](docs/design.md#8-性能数据)。
 
-默认单文件生成分段写出 UTF-8，完整生成后原子发布；失败保留已有报告，目标必须为普通文件而非 `/dev/null` 等设备。显式 `--report-mode sidecar` 发布独立目录，延迟完整 Text 的传输；可选 `--report-mode auto --sidecar-threshold BYTES` 只在完整 HTML 精确字节数超限时切换，否则在该目录发布离线 `index.html`，见[查看器指南](docs/viewer.cn.md)。**没有默认阈值，Text 虚拟化仍未实现**；完整 trace 的符号解析仍执行，见[生成阶段性能](docs/design.md#83-分段写出的生成阶段内存2026-11-10)。
+默认单文件生成分段写出 UTF-8，完整生成后原子发布；失败保留已有报告，目标必须为普通文件而非 `/dev/null` 等设备。显式 `--report-mode sidecar` 发布独立目录，延迟完整 Text 的传输；可选 `--report-mode auto --sidecar-threshold BYTES` 只在完整 HTML 精确字节数超限时切换，否则在该目录发布离线 `index.html`，见[查看器指南](docs/viewer.cn.md)。**没有默认阈值，也不自动启用 Text 窗口化**；实验 renderer 需要显式选择。完整 trace 的符号解析仍执行，见[生成阶段性能](docs/design.md#83-分段写出的生成阶段内存2026-11-10)。
 
 ## 抓取 Trace
 

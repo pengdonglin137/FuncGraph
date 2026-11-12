@@ -2,6 +2,8 @@
     const fields = Object.freeze(['cpu', 'pid', 'comm', 'ret', 'params', 'duration', 'func',
         'fold-id', 'fold-type', 'fold-ancestors', 'irqs', 'resched', 'hirq', 'preempt']);
     const columns = new Map(fields.map((field, index) => ['data-' + field, index + 2]));
+    const presentationFields = Object.freeze([...fields, 'space', 'sort-duration', 'fold-ret', 'call-depth']);
+    const presentationColumns = new Map(presentationFields.map((field, index) => ['data-' + field, index + 2]));
     const models = new WeakMap();
     const foldModels = new WeakMap();
     const orderModels = new WeakMap();
@@ -11,6 +13,10 @@
         get source() { return this.version >= 2 ? this.row[this.row.length - 1] : undefined; }
         getAttribute(name) {
             if (name === 'data-line-number') return String(this.row[0]);
+            if (this.version === 4) {
+                const position = presentationColumns.get(name);
+                return position === undefined ? null : this.row[position];
+            }
             if (name === 'data-space') return this.version === 3 ? this.row[fields.length + 2] : null;
             const index = columns.get(name);
             return index === undefined ? null : this.row[index];
@@ -18,8 +24,8 @@
         querySelector(selector) { return selector === '.line-content' ? this : null; }
     }
     function* prepare(data) {
-        const expected = data?.version === 3 ? [...fields, 'space'] : fields;
-        if (!data || ![1, 2, 3].includes(data.version) || !Array.isArray(data.fields) || !Array.isArray(data.rows) ||
+        const expected = data?.version === 4 ? presentationFields : data?.version === 3 ? [...fields, 'space'] : fields;
+        if (!data || ![1, 2, 3, 4].includes(data.version) || !Array.isArray(data.fields) || !Array.isArray(data.rows) ||
             data.fields.length !== expected.length || data.fields.some((field, index) => field !== expected[index])) {
             throw new Error('Unsupported Text filter index');
         }
@@ -393,7 +399,7 @@
         }
         return navigation(order, expandable);
     }
-    window.fgTextModel = { fields, prepare, locate, filter, folding, prepareFolding, order, prepareOrder, navigation, prepareNavigation };
+    window.fgTextModel = { fields, presentationFields, prepare, locate, filter, folding, prepareFolding, order, prepareOrder, navigation, prepareNavigation };
     window.fgIndexedFilter = async function (data, text, signal, progress) {
         const iterator = steps(data, text);
         try {

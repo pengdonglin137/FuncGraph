@@ -5,10 +5,26 @@ import unittest
 from unittest import mock
 
 from fglib.report import HtmlGenerator
-from fglib.textindex import FIELDS, TextIndexWriter
+from fglib.textindex import FIELDS, PRESENTATION_FIELDS, TextIndexWriter
 
 
 class TextIndexTest(unittest.TestCase):
+    def test_presentation_index_retains_exact_duration_zero_return_depth_and_space(self):
+        stream = io.BytesIO()
+        writer = TextIndexWriter(stream, include_presentation=True)
+        writer.append(7, {'space': 'kernel', 'duration': '0', 'sort-duration': '3.125',
+                          'fold-ret': '0', 'call-depth': '12'}, 'exit', source=0)
+        writer.append(9, {}, 'plain')
+        writer.finish('text-index.json')
+        data = json.loads(stream.getvalue())
+        self.assertEqual(data['version'], 4)
+        self.assertEqual(data['fields'], list(FIELDS + ('space',) + PRESENTATION_FIELDS))
+        attributes = dict(zip(data['fields'], data['rows'][0][2:-1]))
+        self.assertEqual([attributes[field] for field in ['space', 'duration', *PRESENTATION_FIELDS]],
+                         ['kernel', '0', '3.125', '0', '12'])
+        self.assertEqual(data['rows'][0][-1], 0)
+        self.assertEqual(data['rows'][1], [9, 'plain'] + [None] * (len(data['fields']) + 1))
+
     def test_empty_index_and_exact_utf8_digest(self):
         stream = io.BytesIO()
         writer = TextIndexWriter(stream)
