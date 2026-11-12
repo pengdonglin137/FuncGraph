@@ -8,6 +8,8 @@ New chunked sidecar Text also skips offscreen block layout in supported browsers
 
 **Experimental windowed Text:** newly generated chunked sidecar reports can now opt into a real, at-most-160-row DOM window. Choose **Windowed Text** in Text tools (reloads the report), or append `?text=windowed` to the HTTP report URL before opening Text. Filtering, call folding, task/duration order, line jumps and source expansion still use complete records. **Copy** covers every visible trace record, not just mounted rows. **Full Text** restores complete rendering; Expand/Collapse All and whole-document browser shortcuts switch to that mode rather than silently operating on a partial document. The full metadata and Timeline remain resident; this is **not** a total-memory limit or a new automatic threshold. See [usage, limitations and reproducible measurements](docs/performance-text-window.md).
 
+In windowed **Order: by task**, the current task stays pinned below the toolbar even after its original heading is evicted. The caption follows the viewport, stays readable during horizontal scrolling and uses the existing theme colors; its line count describes the complete task group.
+
 [![ci](https://github.com/pengdonglin137/FuncGraph/actions/workflows/ci.yml/badge.svg)](https://github.com/pengdonglin137/FuncGraph/actions/workflows/ci.yml)
 
 [![FuncGraph Visualization Example (click to open the sample report)](sample.png)](https://pengdonglin137.github.io/FuncGraph/sample.html)

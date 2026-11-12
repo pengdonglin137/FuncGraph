@@ -68,8 +68,11 @@ The experimental renderer does not claim native selection or find across unmount
   限制。已有 HTML 与 source LRU 继续独立计数，不能当作整进程或峰值内存上限。
 - 当前只在 Chromium 实测；没有据此宣称其他浏览器或任意百万行 trace 已完成验收。
   大模型解析、重排、GC 仍可能产生长任务；以后还需协作拆分、模型压缩与更多 trace 验收。
-- task 分组标题随第一个可见记录进入窗口，但不额外复制已离屏的 sticky 标题。
-  需要始终固定完整分组上下文时使用 Full Text；跨窗口固定标题仍是后续 UX 工作。
+- task 分组时，原始标题仍随首个可见记录进入窗口；滚动越过标题后，以一条固定提示
+  延续当前视口的任务上下文，原始标题被淘汰后仍有效。提示由完整可见分组边界定位，
+  不依赖选中行或仅当前 DOM；沿用现有标题配色，不新增 trace 行或扩大 160 行预算。
+  它位于横向滚动容器之外，窄屏单行省略、完整内容保留于 title；行数始终描述完整组。
+  时间/耗时排序、无结果或离开 Text 时隐藏，Full Text 清理，Copy/打印不包含提示。
 
 ## 真实 trace 三轮对照
 
@@ -86,24 +89,24 @@ The experimental renderer does not claim native selection or find across unmount
 
 | 三轮中位数 | 默认完整 Text | 实验窗口 Text |
 | --- | ---: | ---: |
-| Text API 就绪 | 2,382.8 ms | 813.3 ms |
-| 再等待两次 rAF 的反馈代理 | 2,396.3 ms | 827.8 ms |
-| 就绪窗口内最长主线程任务 | 167 ms | 95 ms |
+| Text API 就绪 | 2,359.4 ms | 798.4 ms |
+| 再等待两次 rAF 的反馈代理 | 2,392.4 ms | 811.9 ms |
+| 就绪窗口内最长主线程任务 | 165 ms | 92 ms |
 | 已挂载 trace 行 | 72,176 | 160 |
-| 整页元素 | 792,534 | 2,367 |
+| 整页元素 | 792,534 | 2,369 |
 | 完整模型记录 | 72,176 | 72,176 |
 | 首次 Text 资源数 | 18 HTML 块 | 1 索引 + 1 HTML 块 |
-| renderer VmRSS 合计取样 | 746.2 MiB | 368.4 MiB |
-| JSHeapUsedSize 取样 | 51.3 MiB | 81.6 MiB |
+| renderer VmRSS 合计取样 | 751.4 MiB | 365.4 MiB |
+| JSHeapUsedSize 取样 | 33.4 MiB | 75.4 MiB |
 
 就绪中位数约减少 **66%**；RSS 只是已知进程取样，不是峰值或严格上限。窗口模式的
 JS heap 取样**反而更高**，因为完整 JSON 文本/元数据及数值索引仍常驻，不能将 DOM
 减少等同于所有内存类别都减少，也不能从这组取样推断内存泄漏或确定的回收时机。
-三次就绪原始值分别为 complete 2,341.8/2,382.8/2,423.4 ms，windowed
-861.3/813.3/805.3 ms；保留所有轮次，没有用最佳值代替中位数。
+三次就绪原始值分别为 complete 2,359.4/2,526.6/2,335.1 ms，windowed
+798.7/784.7/798.4 ms；保留所有轮次，没有用最佳值代替中位数。
 
-计时后另外跳往原始中/末/首行；窗口模式中/末冷跳行中位数为 93.3/66.6 ms，
-完整模式为 49.2/49.1 ms。按需下载需要付出代价，**不是所有操作都更快**。
+计时后另外跳往原始中/末/首行；窗口模式中/末冷跳行中位数为 90.8/73.3 ms，
+完整模式为 50.6/51.2 ms。按需下载需要付出代价，**不是所有操作都更快**。
 六次完整模型的标准化摘要均为：
 
 ```text
@@ -124,5 +127,6 @@ PYTHONPATH=tests python3 -m unittest -v test_textwindow test_textindex test_text
 ```
 
 本机原始 JSON、生成/测试/打包日志和资源校验记录归档在
-`build/benchmarks/20261113-text-window/`，不纳入安装包，也不自动上传。
+`build/benchmarks/20261113-text-task-context/`；初次窗口化验收保留在
+`build/benchmarks/20261113-text-window/`。两者不纳入安装包，也不自动上传。
 样例 HTML 同步更新前端；固定小样例仍使用默认完整渲染，不伪装成大 trace 窗口样例。

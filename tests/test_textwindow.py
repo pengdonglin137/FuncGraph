@@ -41,6 +41,13 @@ class TextWindowTest(unittest.TestCase):
             stream.write(json.dumps(dict(type='end', complete=True)) + '\n')
         cls.kernel.run(str(mixed_trace), '--no-config', '--timeline', '--enable-fold', '--filter', '--func-links',
                        '--user-src', str(Path(helpers.ROOT) / 'samples'), '--report-mode', 'sidecar', out='report/mixed')
+        task_trace = Path(cls.kernel.dir) / 'tasks.txt'
+        task_trace.write_text('# tracer: function_graph\n' + ''.join(
+            f'  {number / 1000000:.6f} |   {cpu}) worker-{pid} |  ...1. |   1.000 us    |  leaf(arg={number}); /* <-inner+0x4/0x80 */\n'
+            for number, cpu, pid in [(number, 3, 101) for number in range(1, 4201)] +
+                                    [(number, 7, 202) for number in range(4201, 7801)]))
+        cls.kernel.run(str(task_trace), '--no-config', '--timeline', '--enable-fold', '--filter', '--func-links',
+                       '--report-mode', 'sidecar', out='report/tasks')
         cls.server = create_server(Path(cls.kernel.dir) / 'report')
         cls.thread = threading.Thread(target=cls.server.serve_forever, kwargs={'poll_interval': 0.02}, daemon=True)
         cls.thread.start()
@@ -84,6 +91,159 @@ class TextWindowTest(unittest.TestCase):
 
     def mounted(self):
         return self.page.locator('#content .line-container').count()
+
+    def open_task_report(self):
+        self.page.goto(urljoin(self.server.url, 'tasks/index.html?text=windowed'))
+        groups = self.page.evaluate('''async () => {
+            await fgSwitchView('text'); await fgSetTextOrder('task');
+            const plan=fgTextModel.order(fgTextWindow.model,'task');
+            return plan.boundaries.filter(item=>item.kind==='task-group-head')
+                .map(item=>({text:item.text,number:plan.order[item.at+1000],first:plan.order[item.at]}));
+        }''')
+        self.assertEqual(len(groups), 2)
+        return groups
+
+    def seek_task_context(self, number):
+        self.page.evaluate('''async number => {
+            const row=await fgEnsureTextLine(number);
+            row.scrollIntoView({block:'center',behavior:'instant'});
+        }''', number)
+        self.page.wait_for_timeout(100)
+        return self.page.evaluate('''() => {
+            const context=document.querySelector('.fg-window-context'), rect=context?.getBoundingClientRect();
+            return {text:context?.textContent,hidden:context?.hidden,top:rect?.top,width:rect?.width,
+                controls:document.querySelector('.controls').getBoundingClientRect().bottom,
+                headings:document.querySelectorAll('#content .task-group-head').length,
+                contexts:document.querySelectorAll('.fg-window-context').length,
+                rows:document.querySelectorAll('#content .line-container').length};
+        }''')
+
+    def test_task_context_survives_eviction_and_follows_both_group_directions(self):
+        groups = self.open_task_report()
+        for group in [groups[0], groups[1], groups[0]]:
+            facts = self.seek_task_context(group['number'])
+            self.assertEqual(facts.get('text'), group['text'])
+            self.assertFalse(facts['hidden'])
+            self.assertEqual(facts['contexts'], 1)
+            self.assertEqual(facts['headings'], 0)
+            self.assertAlmostEqual(facts['top'], facts['controls'], delta=1)
+            self.assertLessEqual(facts['rows'], 160)
+
+    def test_task_context_changes_at_viewport_boundary_not_selected_row(self):
+        groups = self.open_task_report()
+        self.seek_task_context(groups[1]['first'])
+        self.page.evaluate('''() => {
+            const heading=document.querySelector('#content .task-group-head');
+            const inset=document.querySelector('.controls').getBoundingClientRect().bottom;
+            scrollTo({top:scrollY+heading.getBoundingClientRect().top-inset+2,behavior:'instant'});
+        }''')
+        self.page.wait_for_function('text => !document.querySelector(".fg-window-context").hidden && document.querySelector(".fg-window-context").textContent===text', arg=groups[1]['text'])
+        self.page.evaluate('scrollBy({top:-60,behavior:"instant"})')
+        self.page.wait_for_function('text => document.querySelector(".fg-window-context").textContent===text', arg=groups[0]['text'])
+        self.assertLessEqual(self.mounted(), 160)
+
+    def test_task_context_does_not_cover_nearest_keyboard_navigation(self):
+        groups = self.open_task_report()
+        self.seek_task_context(groups[0]['number'])
+        covered = self.page.evaluate('''async number => {
+            const row=document.getElementById('L'+number);
+            const caption=document.querySelector('.fg-window-context > .task-group-head');
+            scrollBy({top:row.getBoundingClientRect().top-caption.getBoundingClientRect().bottom+1,behavior:'instant'});
+            await new Promise(requestAnimationFrame);
+            return row.getBoundingClientRect().top<caption.getBoundingClientRect().bottom;
+        }''', groups[0]['number'])
+        self.assertTrue(covered)
+        self.page.evaluate('number => fgSelectMountedTextLine(document.getElementById("L"+number),true)', groups[0]['number'])
+        self.page.wait_for_timeout(500)
+        facts = self.page.evaluate('''number => ({top:document.getElementById('L'+number).getBoundingClientRect().top,
+            caption:document.querySelector('.fg-window-context > .task-group-head').getBoundingClientRect().bottom})''', groups[0]['number'])
+        self.assertGreaterEqual(facts['top'], facts['caption'])
+
+    def test_task_context_resets_for_filter_empty_duration_and_time_order(self):
+        groups = self.open_task_report()
+        self.seek_task_context(groups[1]['number'])
+        self.page.evaluate('''async () => {
+            document.getElementById('filterInput').value='pid:202'; await applyFilter();
+        }''')
+        self.assertEqual(self.seek_task_context(groups[1]['number'])['text'], groups[1]['text'])
+        for query in ['func:^absent$', 'func:^leaf$ sort:desc']:
+            self.page.evaluate('''async query => {
+                document.getElementById('filterInput').value=query; await applyFilter();
+            }''', query)
+            self.assertTrue(self.page.locator('.fg-window-context').evaluate('element=>element.hidden'), query)
+        self.page.evaluate('async () => { await clearFilter(); await fgSetTextOrder("time"); }')
+        self.assertTrue(self.page.locator('.fg-window-context').evaluate('element=>element.hidden'))
+        self.page.evaluate('async () => await fgSetTextOrder("task")')
+        self.assertEqual(self.seek_task_context(groups[0]['number'])['text'], groups[0]['text'])
+
+    def test_task_context_is_not_copied_printed_or_leaked_across_views_and_full_text(self):
+        groups = self.open_task_report()
+        self.seek_task_context(groups[0]['number'])
+        facts = self.page.evaluate('''async () => {
+            const context=document.querySelector('.fg-window-context');
+            Object.defineProperty(navigator,'clipboard',{configurable:true,value:{writeText:async text=>window.taskCopied=text}});
+            await copyVisibleContent({target:document.createElement('button')});
+            const expected=fgTextWindow.visibleNumbers.map(number=>fgTextModel.locate(fgTextWindow.model,number).record.textContent).join('\\n');
+            await fgSwitchView('timeline');
+            const hidden=context.hidden;
+            await fgSwitchView('text');
+            await new Promise(requestAnimationFrame);
+            return {copied:taskCopied===expected,hidden,resumed:!context.hidden,
+                contexts:document.querySelectorAll('.fg-window-context').length};
+        }''')
+        self.assertEqual(facts, dict(copied=True, hidden=True, resumed=True, contexts=1))
+        self.page.emulate_media(media='print')
+        self.assertEqual(self.page.locator('.fg-window-context').evaluate('element=>getComputedStyle(element).display'), 'none')
+        self.page.emulate_media(media='screen')
+        self.page.evaluate('async () => await fgTextWindow.fullText()')
+        self.assertEqual(self.page.locator('.fg-window-context').count(), 0)
+        self.assertGreater(self.mounted(), 7000)
+
+    def test_task_context_retains_previous_group_when_remote_loading_fails(self):
+        groups = self.open_task_report()
+        self.seek_task_context(groups[0]['number'])
+        facts = self.page.evaluate('''async number => {
+            const load=fgData.loadTextBlock;
+            fgData.loadTextBlock=async ordinal=>{throw new Error('injected task window failure')};
+            let failed=false;
+            try { await fgEnsureTextLine(number); } catch(error) {failed=error.message.includes('injected task window failure')}
+            finally {fgData.loadTextBlock=load}
+            return {failed,text:document.querySelector('.fg-window-context').textContent,
+                hidden:document.querySelector('.fg-window-context').hidden};
+        }''', groups[1]['number'])
+        self.assertEqual(facts, dict(failed=True, text=groups[0]['text'], hidden=False))
+        self.assertEqual(self.seek_task_context(groups[1]['number'])['text'], groups[1]['text'])
+
+    def test_task_context_stays_readable_on_narrow_dark_horizontal_scroll_and_toolbar_resize(self):
+        self.context.close()
+        self.context = self.browser.new_context(viewport={'width':320,'height':740}, is_mobile=True, has_touch=True)
+        self.page = self.context.new_page()
+        self.page.on('pageerror', lambda error: self.errors.append(str(error)))
+        self.page.add_init_script('localStorage.setItem("theme","dark")')
+        groups = self.open_task_report()
+        facts = self.seek_task_context(groups[1]['number'])
+        self.assertLessEqual(facts['width'], 320)
+        self.assertAlmostEqual(facts['top'], facts['controls'], delta=1)
+        horizontal = self.page.evaluate('''async () => {
+            const context=document.querySelector('.fg-window-context');
+            const left=context.getBoundingClientRect().left;
+            const viewport=document.getElementById('textViewport'); viewport.scrollLeft=10000;
+            await new Promise(requestAnimationFrame);
+            return {left,after:context.getBoundingClientRect().left,scroll:viewport.scrollLeft,
+                overflow:document.documentElement.scrollWidth>innerWidth,
+                title:context.firstElementChild.title,text:context.textContent};
+        }''')
+        self.assertGreater(horizontal['scroll'], 0)
+        self.assertEqual(horizontal['left'], horizontal['after'])
+        self.assertFalse(horizontal['overflow'])
+        self.assertEqual(horizontal['title'], groups[1]['text'])
+        self.assertEqual(horizontal['text'], groups[1]['text'])
+        self.page.evaluate('document.querySelector(".controls").style.display="none"')
+        self.page.wait_for_function('() => document.querySelector(".fg-window-context").getBoundingClientRect().top===0')
+        self.page.evaluate('document.querySelector(".controls").style.display=""')
+        self.page.wait_for_function('''() => Math.abs(document.querySelector('.fg-window-context').getBoundingClientRect().top-
+            document.querySelector('.controls').getBoundingClientRect().bottom)<1''')
+        self.assertLessEqual(self.mounted(), 160)
 
     def test_cold_text_mounts_only_one_bounded_window_and_one_network_chunk(self):
         self.open_report()

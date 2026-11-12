@@ -7,6 +7,9 @@ respond synchronously in the default renderer. Default Text initialization still
 New chunked sidecar reports now offer **experimental windowed Text**: use the
 **Windowed Text** tool or append `?text=windowed` to the HTTP URL before entering Text.
 It mounts at most 160 trace rows while retaining complete filter/fold/order metadata.
+In task order, a caption below the toolbar preserves the viewport's current task
+across eviction and horizontal scrolling. Its count covers the complete task group,
+not filtered hits; time and duration order do not show this caption.
 Use **Full Text** for whole-document browser operations. See [windowed usage and
 limits](performance-text-window.md) and [the underlying row-access contract](performance-text-rows.md);
 regenerate older reports for the new renderer and presentation index.

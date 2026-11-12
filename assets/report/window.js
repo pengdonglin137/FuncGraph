@@ -91,7 +91,7 @@ function fgCreateTextWindow(model, navigation, root) {
     let heights = new Float64Array(model.records.length);
     const positions = new Map();
     const suppressedSources = new Set();
-    let sequence = [], tree = new Float64Array(1), sizes = [], plan = null;
+    let sequence = [], tree = new Float64Array(1), sizes = [], plan = null, taskGroups = [];
     let first = 0, end = 0, generation = 0, controller = null, frame = null, pendingStart = null;
     let destroyed = false, suspended = false, fullJob = null, fullController = null, currentJob = null, navigating = 0;
     let measuredWidth = innerWidth, widest = 0, filterError = '';
@@ -110,6 +110,11 @@ function fgCreateTextWindow(model, navigation, root) {
     full.title = 'Mount all rows for browser Find, selection across the whole trace and printing';
     notice.append(status, retry, full);
     root.before(notice);
+    const context = document.createElement('div'), contextHeading = document.createElement('div');
+    context.className = 'fg-window-context'; context.hidden = true;
+    context.setAttribute('role', 'note'); context.setAttribute('aria-label', 'Current task');
+    contextHeading.className = 'task-group-head'; context.appendChild(contextHeading);
+    (root.closest('#textViewport') || root).before(context);
     root.classList.add('fg-windowed');
     root.replaceChildren(top, body, bottom);
 
@@ -141,6 +146,30 @@ function fgCreateTextWindow(model, navigation, root) {
     const check = signal => {
         if (signal?.aborted || destroyed || suspended) throw new DOMException('Text window canceled', 'AbortError');
     };
+    function updateTaskContext() {
+        const inset = Math.max(0, document.querySelector('.controls')?.getBoundingClientRect().bottom || 0);
+        const position = scrollY + inset - offset();
+        if (destroyed || suspended || fgTextOrder !== 'task' || fgTextSort || !taskGroups.length ||
+            position < 0 || position >= prefix(sequence.length)) {
+            context.hidden = true;
+            return;
+        }
+        const at = indexAt(position);
+        let low = 0, high = taskGroups.length;
+        while (low < high) {
+            const middle = Math.floor((low + high) / 2);
+            if (taskGroups[middle].index <= at) low = middle + 1;
+            else high = middle;
+        }
+        const group = taskGroups[low - 1];
+        if (!group || position <= prefix(group.index) + 0.5) { context.hidden = true; return; }
+        if (contextHeading.textContent !== group.text) {
+            contextHeading.textContent = group.text;
+            contextHeading.title = group.text;
+        }
+        context.style.top = inset + 'px';
+        context.hidden = false;
+    }
     function measure() {
         if (destroyed || suspended || !body.childElementCount) return;
         const viewportY = Math.max(0, scrollY - offset());
@@ -161,8 +190,12 @@ function fgCreateTextWindow(model, navigation, root) {
         padding();
         const target = offset() + prefix(anchor) + within;
         if (scrollY >= offset() && Math.abs(target - scrollY) > 0.5) scrollTo({ top: target, behavior: 'instant' });
+        updateTaskContext();
     }
     const observer = new ResizeObserver(() => { measure(); schedule(); });
+    const controlsObserver = new ResizeObserver(schedule);
+    const controls = document.querySelector('.controls');
+    if (controls) controlsObserver.observe(controls);
     async function paint(start, signal) {
         check(signal);
         const stop = Math.min(sequence.length, start + limit);
@@ -257,10 +290,11 @@ function fgCreateTextWindow(model, navigation, root) {
         }
     }
     function schedule() {
-        if (frame !== null || destroyed || suspended || fullJob) return;
+        if (frame !== null || destroyed || suspended) return;
         frame = requestAnimationFrame(() => {
             frame = null;
-            if (navigating) return;
+            updateTaskContext();
+            if (navigating || fullJob) return;
             if (selected()) { showStatus('Selection pinned · clear selection to scroll, or choose Full Text'); return; }
             const at = indexAt(Math.max(0, scrollY - offset()));
             const last = indexAt(Math.max(0, scrollY + innerHeight - offset()));
@@ -287,7 +321,7 @@ function fgCreateTextWindow(model, navigation, root) {
             order = ranked.map(item => item.number);
         }
         navigation.reorder(order);
-        positions.clear(); sequence = [];
+        positions.clear(); sequence = []; taskGroups = [];
         const boundaries = new Map();
         if (!fgTextSort) for (const boundary of plan.boundaries) {
             const number = plan.order[boundary.at];
@@ -305,7 +339,11 @@ function fgCreateTextWindow(model, navigation, root) {
                 (fgTextSort || fgTextOrder !== 'task' || !plan.hidden.has(number));
             navigation.setVisible(number, !!visible);
             if (!visible) continue;
-            sequence.push(...pendingBoundaries); pendingBoundaries = [];
+            for (const boundary of pendingBoundaries) {
+                if (boundary.kind === 'task-group-head') taskGroups.push({ index: sequence.length, text: boundary.text });
+                sequence.push(boundary);
+            }
+            pendingBoundaries = [];
             positions.set(number, sequence.length); sequence.push(number);
         }
         const style = getComputedStyle(root);
@@ -345,16 +383,16 @@ function fgCreateTextWindow(model, navigation, root) {
     }
     function dispose() {
         destroyed = true; generation++; controller?.abort();
-        observer.disconnect(); cancelAnimationFrame(frame);
+        observer.disconnect(); controlsObserver.disconnect(); cancelAnimationFrame(frame);
         fgCancelSources(body); body.replaceChildren();
-        positions.clear(); sequence = []; sizes = []; plan = null;
+        positions.clear(); sequence = []; sizes = []; plan = null; taskGroups = [];
         heights = new Float64Array(0); tree = new Float64Array(1);
         removeEventListener('scroll', schedule); removeEventListener('resize', resize);
         document.removeEventListener('selectionchange', schedule);
         document.removeEventListener('keydown', wholeDocumentAction, true);
         root.classList.remove('fg-windowed'); root.style.minWidth = '';
         root.removeAttribute('aria-busy');
-        notice.remove();
+        notice.remove(); context.remove();
     }
     async function fullText() {
         if (destroyed) return;
@@ -428,7 +466,7 @@ function fgCreateTextWindow(model, navigation, root) {
     return { model, navigation, root, rebuild, ensureLine, fullText, resize, dispose, anchor, suppressedSources,
         reportFilterError(message) { filterError = message; showStatus(); },
         invalidateHeights() { heights.fill(0); },
-        suspend() { suspended = true; controller?.abort(); fullController?.abort(); },
+        suspend() { suspended = true; context.hidden = true; controller?.abort(); fullController?.abort(); },
         get visibleNumbers() { return sequence.filter(item => typeof item === 'number'); },
         get mountedLimit() { return limit; },
         get settled() { return currentJob; } };

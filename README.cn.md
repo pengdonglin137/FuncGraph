@@ -10,6 +10,8 @@ FuncGraph 支持可视化仅用户态、仅内核态和混合 uftrace 记录。�
 
 **实验性 Text 窗口化**：新生成的分块 sidecar 可显式启用真正的最多 160 行 DOM 窗口。在 Text 工具区选择 **Windowed Text**（会重载报告），或在 HTTP 报告 URL 后加 `?text=windowed`，再进入 Text。筛选、调用折叠、任务/耗时排序、跳行及源码展开仍以完整记录为准；**Copy** 复制所有可见 trace 记录，不限于已挂载行。**Full Text** 可恢复完整渲染，Expand/Collapse All 和整篇文档快捷键也会先切换完整模式，避免只处理当前窗口。完整元数据和 Timeline 仍常驻，**不代表总内存有上限，也没有新增自动阈值**。用法、限制及复现实测见[窗口化说明](docs/performance-text-window.md)。
 
+窗口模式选择 **Order: by task** 后，即使原分组标题已淘汰，当前任务仍固定在工具栏下方；提示跟随视口而非选中行，横向滚动时保持可读，沿用现有主题配色。标题中的行数表示完整任务组，不是当前筛选命中数。
+
 [![ci](https://github.com/pengdonglin137/FuncGraph/actions/workflows/ci.yml/badge.svg)](https://github.com/pengdonglin137/FuncGraph/actions/workflows/ci.yml)
 
 [![FuncGraph 可视化示例（点击打开示例报告）](sample.png)](https://pengdonglin137.github.io/FuncGraph/sample.html)

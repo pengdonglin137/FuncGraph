@@ -6,6 +6,8 @@ Text 跳行统一处理键盘、`#L<n>` 和 Timeline → Text 的定位请求。
 新生成的分块 sidecar 可选择 **Windowed Text** 工具，或在 HTTP URL 后加
 `?text=windowed` 再进入 Text，显式使用**实验性窗口化 UI**。它最多挂载 160 条
 trace 行，筛选、折叠和重排仍依赖完整记录；整篇浏览器操作使用 **Full Text**。
+任务分组时，工具栏下方固定当前视口对应的任务提示，跨窗口淘汰和横向滚动不丢失
+上下文；标题行数仍是完整任务组的数量，不是筛选命中数。时间/耗时排序不显示该提示。
 用法与限制见[窗口化说明](performance-text-window.md)，旧报告需重新生成。
 内部按行取块能力与验证边界见[按行读取与定位](performance-text-rows.md)。旧报告需重新生成。
 

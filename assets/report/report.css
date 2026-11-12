@@ -112,7 +112,25 @@
         #content.fg-windowed { overflow-anchor: none; }
         .fg-window-spacer { pointer-events: none; }
         .fg-window-rows > div { display: flow-root; }
+        .fg-window-context {
+            position: sticky;
+            top: var(--ctl-h, 100px);
+            z-index: 5;
+            height: 0;
+            pointer-events: none;
+            user-select: none;
+        }
+        .fg-window-context[hidden] { display: none; }
+        .fg-window-context > .task-group-head {
+            position: static;
+            margin: 0;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        #content.fg-windowed .task-group-head { position: static; }
         @media print {
+            .fg-window-context { display: none !important; }
             #content.fg-windowed > * { display: none !important; }
             #content.fg-windowed::before {
                 content: 'Windowed Text is not a complete printable document. Choose Full Text before printing.';
