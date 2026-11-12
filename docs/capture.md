@@ -4,6 +4,9 @@
 recording through the same entry point. `fgcapture.sh --user` / `--mixed`
 also delegate to it when the Python package is installed.
 
+To explore saved recordings without preparing a capture environment, start with
+[offline replay, presets, comparison and large-report examples](examples.md).
+
 ## Choose a package and capture mode
 
 Download the wheel for the **recording host** from GitHub Releases and install

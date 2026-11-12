@@ -14,6 +14,9 @@ This guide covers the whole workflow from capturing a trace to reading the repor
 
 ## Contents
 
+For a first run, use the [scenario examples](examples.md) to replay saved data,
+then choose kernel-only, user-only or mixed recording.
+
 1. [Overview](#1-overview)
 2. [Installation](#2-installation)
 3. [Capturing a trace](#3-capturing-a-trace)

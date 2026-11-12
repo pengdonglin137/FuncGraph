@@ -17,11 +17,11 @@ FuncGraph 支持可视化仅用户态、仅内核态和混合 uftrace 记录。�
 >
 > **详细使用指南**：[中文](docs/guide.cn.md) · [English](docs/guide.en.md)（采集选项、各视图字段与配色的含义、分析面板、对比、导出、常见问题）。设计文档：[docs/design.md](docs/design.md)。
 >
-> **从采集到报告**：[三种模式的完整案例](docs/capture.cn.md) · [pigz + zlib 业务案例](docs/pigz.cn.md)（含编译选项、原始记录、源码配置、结果核对和产物说明）。
+> **按场景上手**：[离线复现、预设、对比与大报告](docs/examples.cn.md) · [三种模式的完整采集案例](docs/capture.cn.md) · [pigz + zlib 业务案例](docs/pigz.cn.md)（含编译选项、原始记录、源码配置、结果核对和产物说明）。
 
 ## FuncGraph 是什么？
 
-FuncGraph 将 `function_graph` 的 ftrace 输出转换为交互式、可过滤的 HTML 报告，适用于内核开发与性能排查：支持源码跳转、高速地址解析、参数/耗时过滤与键盘友好折叠。
+FuncGraph 将内核 `function_graph` 文本、trace-cmd raw 容器和 uftrace 用户态 / 混合记录转换为交互式、可过滤的 HTML 报告，适用于内核开发与应用到内核的调用分析：支持源码跳转、高速地址解析、参数/耗时过滤与键盘友好折叠。没有匹配的调试镜像也能先查看调用结构；源码与类型解析需要对应的调试信息。
 
 ## 速查（Cheat Sheet）
 

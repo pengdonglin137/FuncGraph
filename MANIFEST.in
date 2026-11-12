@@ -2,6 +2,7 @@ include README.cn.md
 include fgview
 include fgcapture
 include docs/capture.md docs/capture.cn.md
+include docs/examples.md docs/examples.cn.md
 include docs/capture-validation.md
 include docs/performance-text-delivery.md
 include docs/design.md docs/guide.cn.md docs/guide.en.md

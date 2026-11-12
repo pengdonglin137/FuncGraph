@@ -12,13 +12,13 @@ New chunked sidecar Text also skips offscreen block layout in supported browsers
 
 ## What is FuncGraph?
 
-FuncGraph converts `function_graph` ftrace output into an interactive, filterable HTML report for kernel developers and performance engineers. It is optimized for fast triage: source linking, high-speed address resolution, parameter and duration filtering, and keyboard-friendly call folding.
+FuncGraph converts kernel `function_graph` text, trace-cmd raw containers and uftrace user/mixed recordings into interactive, filterable HTML reports for kernel development and application-to-kernel call analysis. It supports source linking, high-speed address resolution, parameter and duration filtering, and keyboard-friendly call folding. Call structure can be viewed without a matching debug image; source and type enrichment need the corresponding debug information.
 
 > **Try it online**: [home page](https://pengdonglin137.github.io/FuncGraph/) · [mixed user + kernel](https://pengdonglin137.github.io/FuncGraph/sample_mixed.html) · [kernel-only](https://pengdonglin137.github.io/FuncGraph/sample.html) (opens in the browser, no install).
 >
 > **User guide** (detailed: capture options, every field and color in the views, panels, compare, export, FAQ): [English](docs/guide.en.md) · [中文](docs/guide.cn.md). Design: [docs/design.md](docs/design.md).
 >
-> **Capture to report**: [complete cases for all three modes](docs/capture.md) · [pigz + zlib business case](docs/pigz.md), with build flags, original recordings, separate source configuration, result checks and artifact inventories.
+> **Start by use case**: [offline replay, presets, comparison and large reports](docs/examples.md) · [complete capture cases for all three modes](docs/capture.md) · [pigz + zlib business case](docs/pigz.md), with build flags, original recordings, separate source configuration, result checks and artifact inventories.
 
 ## Cheat Sheet
 
