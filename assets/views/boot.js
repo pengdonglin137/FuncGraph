@@ -9,6 +9,7 @@
     const pausedSources = {};
     let current = 'text';
     let textScroll = 0;
+    let textScrollLeft = 0;
     let textFailed = false;
     const get = k => (typeof lsGet === 'function' ? lsGet(k) : null);
     const set = (k, v) => { if (typeof lsSet === 'function') lsSet(k, v); };
@@ -272,6 +273,7 @@
             wide: [one('.container')].filter(Boolean),
             top: [one('.page-header'), tabs].filter(Boolean),
             tabs: tabs ? Array.from(tabs.querySelectorAll('.view-tab')) : [],
+            textViewport: one('#textViewport'),
         };
         return chrome;
     }
@@ -286,6 +288,7 @@
         }
         if (current === 'text') {
             textScroll = window.scrollY;
+            textScrollLeft = pageChrome().textViewport?.scrollLeft || 0;
             fgCloseTextControls();
         }
         if (typeof closeKeyboardHint === 'function') closeKeyboardHint();
@@ -299,6 +302,11 @@
         const off = which !== 'text';
         const pc = pageChrome();
         pc.hide.forEach(e => e.classList.toggle('fg-off', off));
+        if (pc.textViewport) {
+            pc.textViewport.style.height = off ? '0px' : '';
+            pc.textViewport.style.overflow = off ? 'hidden' : '';
+            pc.textViewport.setAttribute('aria-hidden', String(off));
+        }
         pc.wide.forEach(e => e.classList.toggle('fg-wide', off));
         // body class only for body's own rules (no descendant selectors on it)
         document.body.classList.toggle('tl-active', off);
@@ -314,6 +322,7 @@
         }
         delete pausedSources[which];
         if (which === 'text') {
+            if (pc.textViewport) pc.textViewport.scrollLeft = textScrollLeft;
             window.scrollTo(0, textScroll);
             if (views.text) return open('text');
         } else {

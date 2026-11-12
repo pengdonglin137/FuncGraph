@@ -72,6 +72,14 @@
             width: auto;
             min-width: 0;
         }
+        #textViewport {
+            min-width: 0;
+            max-width: 100%;
+            overflow-x: auto;
+        }
+        @media print {
+            #textViewport { overflow: visible; }
+        }
         #content {
             --fg-text-font-size: 13px;
             --fg-text-pad-y: 1px;
@@ -165,6 +173,7 @@
         @supports (content-visibility: auto) and (contain-intrinsic-block-size: 1px) and selector(:has(*)) {
             #content.text-layout-auto > .text-chunk {
                 content-visibility: auto;
+                contain-intrinsic-inline-size: auto 0px;
                 contain-intrinsic-block-size: calc(
                     var(--fg-text-plain-rows, 0) * (var(--fg-text-font-size) * 1.5 + 4px + var(--fg-text-pad-y) * 2) +
                     var(--fg-text-empty-rows, 0) * (var(--fg-text-font-size) * 1.5 + var(--fg-text-pad-y) * 2) +
@@ -399,10 +408,14 @@
             display: none;
             font-size: 11px;
             gap: 2px;
+            flex-wrap: wrap;
+            max-width: 100%;
+            min-width: 0;
             align-items: center;
             color: var(--text-color);
         }
         .heatmap-legend.visible { display: inline-flex; }
+        .heatmap-legend-level { display: inline-flex; flex: none; gap: 2px; align-items: center; }
         .heatmap-legend-item {
             display: inline-block;
             width: 12px;
@@ -566,7 +579,7 @@
         }
         .controls .toolbar { box-shadow: none; border: none; padding: 0; background: transparent; }
         .controls .filter-box { box-shadow: none; padding: 4px 0 0; border: none; border-top: 1px dashed var(--border-color); border-radius: 0; background: transparent; }
-        .controls .filter-input-row input { max-width: 720px; }
+        .controls .filter-input-row input { min-width: 0; max-width: 720px; }
         /* anchors must not hide under the sticky bar */
         .line-container { scroll-margin-top: calc(var(--ctl-h, 86px) + 4px); }
         .toolbar {

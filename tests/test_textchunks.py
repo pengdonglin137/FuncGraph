@@ -601,6 +601,7 @@ class TextChunkBrowserTest(unittest.TestCase):
         self.page.evaluate('async () => { await fgSwitchView("text"); }')
         self.page.emulate_media(media='print')
         self.assertEqual(self.page.evaluate('Array.from(document.querySelectorAll("#content > .text-chunk"), chunk => getComputedStyle(chunk).contentVisibility)'), ['visible'] * 9)
+        self.assertEqual(self.page.locator('#textViewport').evaluate('node => getComputedStyle(node).overflowX'), 'visible')
         self.page.emulate_media(media='screen')
         for capability in ['content-visibility: auto',
                            'contain-intrinsic-block-size: calc(2 * (max(13px * 1.5 + 4px, 21px) + 2px))',
@@ -645,10 +646,12 @@ class TextChunkBrowserTest(unittest.TestCase):
             const chunk = row.parentElement.getBoundingClientRect();
             const bounds = text.getBoundingClientRect();
             return {chunkRight:chunk.right, textRight:bounds.right, width:bounds.width,
-                scrollWidth:document.documentElement.scrollWidth};
+                scrollWidth:document.getElementById('textViewport').scrollWidth,
+                rootWidth:document.documentElement.scrollWidth, viewportWidth:document.documentElement.clientWidth};
         }''')
         self.assertGreater(result['width'], 5000)
         self.assertGreater(result['scrollWidth'], 5000)
+        self.assertLessEqual(result['rootWidth'], result['viewportWidth'])
         self.assertGreaterEqual(result['chunkRight'], result['textRight'])
 
     def test_old_anchor_scroll_cannot_override_a_new_keyboard_target(self):

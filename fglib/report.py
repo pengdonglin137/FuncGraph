@@ -258,6 +258,7 @@ class HtmlGenerator:
             </div>
         </div>
 
+        <div id="textViewport" role="region" aria-label="Trace text">
         <div id="content">
 """
 
@@ -276,6 +277,7 @@ class HtmlGenerator:
             yield section('text', fragment)
 
         yield section('chrome', """
+        </div>
         </div>""" + self._view_containers() + """
     </div>
 

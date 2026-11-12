@@ -326,8 +326,10 @@ Rules:
 
 - **Header**: total lines, expandable lines and resolved kernel functions; with Timeline enabled, `N recorded calls` now appears here rather than on the Timeline tab. This is the report's total recorded call count, not unique functions or trace lines (one call may have separate entry/exit lines). It excludes synthetic inline/untraced frames and does not change with display filters. It indicates report size and capture volume, not pending work; hover for its definition. Filter matches remain separate in each view, with `Filtered: N` while a Text filter is active. On the right: **Theme** (dark/light), **?** (shortcuts) and **ⓘ** (info panel: environment, processing times, source origin and version check, the options used).
 - **Tabs**: Text / Timeline / Compare.
-- The header stays within the window width even when trace lines are very long. On narrow screens, statistics move to a separate row so Theme, ? and ⓘ remain reachable. Trace content keeps its original formatting and can still scroll horizontally.
+- The header, tabs and toolbar stay within the window width even when trace lines are very long. On narrow screens, statistics move to a separate row so Theme, ? and ⓘ remain reachable. Only the Text body scrolls horizontally, retaining original formatting and complete arguments/source. Use a touch swipe, horizontal trackpad/mouse scrolling, or `h` / `l` (also `H` / `L`); input fields still accept these letters normally. Vertical scrolling remains on the page. Vertical keyboard navigation and line anchors retain the horizontal reading position, as does returning from another view. Regenerate older HTML to use this layout.
 - **Top toolbar** (stays at the top while scrolling):
+
+In narrow windows, heatmap keys wrap as color/threshold pairs. Filter fields can shrink without losing their values, keeping Apply, Clear and help inside the window.
 
 | Button | Action |
 |---|---|

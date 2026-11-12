@@ -258,21 +258,24 @@ class BrowserSmokeTest(unittest.TestCase):
             window.scrollTo(0, 0);
             const target = fgTextNavigation.expandable[fgTextNavigation.expandableCount - 2];
             const row = document.getElementById('L' + fgTextNavigation.order[target]);
-            const original = row.scrollIntoView;
+            const original = window.scrollBy;
             const calls = [];
             const before = scrollY;
             const initialTop = row.getBoundingClientRect().top;
-            row.scrollIntoView = function(options) {
+            window.scrollBy = function(options) {
                 calls.push({options, focused:document.activeElement === row, scroll:scrollY});
                 return original.call(this, options);
             };
             try { setKeyboardSelectedLine(target); }
-            finally { row.scrollIntoView = original; }
+            finally { window.scrollBy = original; }
             return {before, initialTop, height:innerHeight, calls};
         }''')
         self.assertGreater(facts['initialTop'], facts['height'])
-        self.assertEqual(facts['calls'], [dict(options=dict(behavior='smooth', block='center'),
-                                            focused=True, scroll=facts['before'])])
+        self.assertEqual(len(facts['calls']), 1)
+        self.assertEqual(facts['calls'][0]['options']['behavior'], 'smooth')
+        self.assertGreater(facts['calls'][0]['options']['top'], 0)
+        self.assertTrue(facts['calls'][0]['focused'])
+        self.assertEqual(facts['calls'][0]['scroll'], facts['before'])
         self.page.wait_for_function('''() => {
             const bounds = keyboardSelectedLine.getBoundingClientRect();
             return bounds.top >= document.querySelector('.controls').getBoundingClientRect().bottom
@@ -294,19 +297,21 @@ class BrowserSmokeTest(unittest.TestCase):
                     window.scrollTo(0, row.getBoundingClientRect().top - toolbarHeight + height / 2);
                     const top = row.getBoundingClientRect().top;
                     const toolbarBottom = toolbar.getBoundingClientRect().bottom;
-                    const original = row.scrollIntoView;
+                    const original = window.scrollBy;
                     const calls = [];
-                    row.scrollIntoView = function(options) {
+                    window.scrollBy = function(options) {
                         calls.push(options);
                         return original.call(this, options);
                     };
                     try { setKeyboardSelectedLine(target); }
-                    finally { row.scrollIntoView = original; }
+                    finally { window.scrollBy = original; }
                     return {top, height, toolbarBottom, calls};
                 }''', theme)
                 self.assertGreater(facts['top'], facts['height'])
                 self.assertLess(facts['top'], facts['toolbarBottom'])
-                self.assertEqual(facts['calls'], [dict(behavior='smooth', block='center')])
+                self.assertEqual(len(facts['calls']), 1)
+                self.assertEqual(facts['calls'][0]['behavior'], 'smooth')
+                self.assertLess(facts['calls'][0]['top'], 0)
                 self.page.wait_for_function('''() => {
                     const bounds = keyboardSelectedLine.getBoundingClientRect();
                     return bounds.top >= document.querySelector('.controls').getBoundingClientRect().bottom
@@ -620,10 +625,9 @@ class BrowserSmokeTest(unittest.TestCase):
                     self.assertLessEqual(bounds[1], bounds[4] + 1)
                     self.assertLessEqual(bounds[3], bounds[4] + 1)
                     self.assertLessEqual(bounds[2], 80)
+                    self.assertLessEqual(self.ev('document.documentElement.scrollWidth'), width)
                     if view == 'text':
-                        self.assertGreater(self.ev('document.documentElement.scrollWidth'), width)
-                    else:
-                        self.assertLessEqual(self.ev('document.documentElement.scrollWidth'), width)
+                        self.assertGreater(self.ev('document.getElementById("textViewport").scrollWidth'), width)
 
     def test_timeline_compact_layout_keeps_canvas_and_detail_reachable(self):
         self.open_timeline()
@@ -1156,6 +1160,7 @@ class BrowserSmokeTest(unittest.TestCase):
                     clip = dict(x=max(0, bounds['x'] - 5), y=max(0, bounds['y'] - 5),
                                 width=bounds['width'] + 10, height=bounds['height'] + 10)
                     geometry = """() => ({pageWidth:document.documentElement.scrollWidth, pageHeight:document.documentElement.scrollHeight,
+                        textWidth:document.getElementById('textViewport').scrollWidth,
                         rows:Array.from(document.querySelectorAll('#content .line-container'), row => {
                             const rect = row.getBoundingClientRect();
                             return [row.id, rect.x, rect.y, rect.width, rect.height, row.scrollWidth];
@@ -1212,7 +1217,8 @@ class BrowserSmokeTest(unittest.TestCase):
                     self.assertEqual(icon.evaluate("control => getComputedStyle(control.closest('.text-chunk')).contain"), 'paint')
                     self.assertEqual(icon.evaluate("control => getComputedStyle(control.closest('.text-chunk')).willChange"), 'transform')
                     self.assertEqual(icon.evaluate("control => getComputedStyle(control.closest('.line-container')).contain"), 'none')
-                    self.assertGreater(before_geometry['pageWidth'], width)
+                    self.assertLessEqual(before_geometry['pageWidth'], width)
+                    self.assertGreater(before_geometry['textWidth'], width)
                     self.ev('document.activeElement.blur()')
         self.ev("window.chunkGuideChanges = 0; document.getElementById('content').addEventListener('fg-guides-change', () => chunkGuideChanges++)")
         self.ev("toggleFold(document.getElementById('L512').dataset.foldId, 'entry')")

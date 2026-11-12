@@ -75,6 +75,12 @@ Publication stages a complete bundle beside the destination. New/empty directori
 
 The viewer fixes the selected root through an open directory handle. Symlinks below that root, traversal paths, hidden paths, FIFOs and other non-regular files are not served. Selecting a path that is itself a symlink explicitly selects its resolved target. Platforms must support directory-relative, no-follow file access; unsupported platforms fail clearly instead of falling back to an unrestricted server.
 
+## Horizontal Text Reading
+
+New reports isolate horizontal Text scrolling from the header, tabs and toolbar. Long arguments, symbols, paths and source remain complete rather than truncating trace data to fit the screen. Touch swipes, horizontal mouse/trackpad scrolling and `h` / `l` (including uppercase) move only the body; input fields do not intercept these letters. Vertical scrolling stays on the page, without introducing a nested vertical list. Line anchors, vertical keyboard navigation and view roundtrips retain the horizontal reading position; filtering away content or widening the window can still clamp it to the actual range.
+
+Chunked sidecar reports continue skipping offscreen layout and remember laid-out blocks' inline sizes, so jumping away from an unusually wide row does not reset horizontal reading merely because that row is skipped. Longer unvisited rows may still extend the horizontal range. Existing content/responsive-size invalidation remains in place. This does not reduce DOM, model or loaded-record counts and is not bounded memory or windowing. Both single-file and sidecar reports use this layout; regenerate older reports. Implementation, measurements and limits: [horizontal Text reading](performance-text-viewport.md).
+
 ## Security And Loading
 
 Only GET and HEAD are supported. Requests require a valid loopback Host and the random path; explicit cross-origin requests are rejected. The viewer does not enable CORS or offer upload, editing, deletion or shell endpoints. Responses disable caching and MIME sniffing, restrict cross-origin use and apply a Content Security Policy compatible with the generated report's inline scripts/styles and same-origin fetches.

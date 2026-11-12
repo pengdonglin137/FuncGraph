@@ -373,6 +373,18 @@
             const top = (bounds || line.getBoundingClientRect()).top;
             return Math.abs(top) > window.innerHeight * 2 ? 'instant' : 'smooth';
         }
+        function fgScrollTextLine(line, options, bounds = null) {
+            if (!document.getElementById('textViewport')) {
+                line.scrollIntoView(options);
+                return;
+            }
+            const rect = bounds || line.getBoundingClientRect();
+            const visibleTop = Math.max(0, document.querySelector('.controls')?.getBoundingClientRect().bottom || 0);
+            const top = options.block === 'center' ?
+                rect.top - visibleTop - Math.max(0, (window.innerHeight - visibleTop - rect.height) / 2) :
+                rect.bottom > window.innerHeight ? rect.bottom - window.innerHeight : Math.min(0, rect.top - visibleTop);
+            window.scrollBy({top, behavior: options.behavior});
+        }
         let textGuideRevision = 0;
         let keyboardHintTimer = null;
         // 记录当前滚动位置
@@ -412,6 +424,8 @@
         function initTextFolds() {
             const content = document.getElementById('content');
             if (!content) return;
+            const toolbar = document.querySelector('.controls');
+            const textViewport = document.getElementById('textViewport');
             const guideStyle = document.getElementById('fgTreeGuides');
             content.classList.toggle('has-fold-controls', !!guideStyle);
             const guideButton = document.getElementById('foldGuidesBtn');
@@ -478,13 +492,16 @@
                     guideGroups = Array.from(content.children).filter(group => group.matches('.text-chunk, .line-container'));
                     guideRevision = textGuideRevision;
                 }
-                const toolbarBottom = content.previousElementSibling?.getBoundingClientRect().bottom || 0;
+                const toolbarBottom = toolbar?.getBoundingClientRect().bottom || 0;
                 const viewportTop = Math.max(0, contentRect.top, toolbarBottom);
+                const viewportRect = textViewport?.getBoundingClientRect();
+                const viewportLeft = Math.max(0, viewportRect?.left || 0);
+                const viewportRight = Math.min(viewportWidth, viewportRect?.right ?? viewportWidth);
                 const bottom = Math.min(viewportHeight, contentRect.bottom);
-                if (bottom <= viewportTop) return;
+                if (bottom <= viewportTop || viewportRight <= viewportLeft) return;
                 context.save();
                 context.beginPath();
-                context.rect(0, viewportTop, viewportWidth, bottom - viewportTop);
+                context.rect(viewportLeft, viewportTop, viewportRight - viewportLeft, bottom - viewportTop);
                 context.clip();
                 let lower = 0;
                 let upper = guideGroups.length;
@@ -579,6 +596,7 @@
                 }
             });
             window.addEventListener('scroll', scheduleGuideScope, {passive:true});
+            textViewport?.addEventListener('scroll', scheduleGuideScope, {passive:true});
             window.addEventListener('resize', scheduleGuideScope);
             content.addEventListener('fg-guides-change', scheduleGuideScope);
             if (window.ResizeObserver) new ResizeObserver(scheduleGuideScope).observe(content);
@@ -1734,10 +1752,10 @@
 
                     if (nearBottom || nearTop || lineTop < 0 || lineBottom > windowHeight) {
                         // 如果接近边界或不在视口中，滚动到中间
-                        keyboardSelectedLine.scrollIntoView({ behavior, block: 'center' });
+                        fgScrollTextLine(keyboardSelectedLine, { behavior, block: 'center' }, rect);
                     } else {
                         // 否则，使用nearest，尽可能少滚动
-                        keyboardSelectedLine.scrollIntoView({ behavior, block: 'nearest' });
+                        fgScrollTextLine(keyboardSelectedLine, { behavior, block: 'nearest' }, rect);
                     }
                 }
             }
@@ -2480,21 +2498,12 @@
             
             // 处理水平滚动（h/l 键）
             // 支持大小写，Shift+h 和 Shift+l 也有效
-            if (keyLower === 'h') {
+            if (keyLower === 'h' || keyLower === 'l') {
                 event.preventDefault();
                 handled = true;
-                // 向左滚动容器
-                var container = document.querySelector('.container');
+                const container = document.getElementById('textViewport') || document.scrollingElement;
                 if (container) {
-                    container.scrollBy({ left: -100, behavior: 'smooth' });
-                }
-            } else if (keyLower === 'l') {
-                event.preventDefault();
-                handled = true;
-                // 向右滚动容器
-                var container = document.querySelector('.container');
-                if (container) {
-                    container.scrollBy({ left: 100, behavior: 'smooth' });
+                    container.scrollBy({ left: keyLower === 'h' ? -100 : 100, behavior: 'smooth' });
                 }
             }
             
@@ -2921,7 +2930,7 @@
                     setTimeout(() => {
                         if (location.hash.substring(1) === hash && keyboardSelectedLine === element &&
                             (typeof fgCurrentView !== 'function' || fgCurrentView() === 'text')) {
-                            element.scrollIntoView({ behavior: fgTextScrollBehavior(element), block: 'center' });
+                            fgScrollTextLine(element, { behavior: fgTextScrollBehavior(element), block: 'center' });
                         }
                     }, 100);
                     
@@ -2955,8 +2964,9 @@
                     { color: 'rgba(183,28,28,0.7)',   label: '>1s' }
                 ];
                 legend.innerHTML = levels.map(l =>
+                    '<span class="heatmap-legend-level">' +
                     '<span class="heatmap-legend-item" style="background:' + l.color + '"></span>' +
-                    '<span class="heatmap-legend-label">' + l.label + '</span>'
+                    '<span class="heatmap-legend-label">' + l.label + '</span></span>'
                 ).join('');
             }
             updateHeatmapVisibility();
