@@ -565,14 +565,15 @@ class UftraceTimeline(TimelineBuilder):
         lines = [UftraceLine(raw_line=header, record_type='metadata'), FtraceLine(raw_line='# timestamp | CPU | task | space | call / event')]
         if not include_text:
             return lines
-        fold_ids, ancestors = {}, {}
+        fold_ids, ancestors, active_calls = {}, {}, {}
         positions = tuple(self.position_ids)
         for lineno, record in enumerate(self.records, 3):
             kind, space = record['type'], record.get('space')
             tid, cpu = record.get('tid'), record.get('cpu')
             seconds, nanos = divmod(record['time_ns'], 1000000000)
             tag = ('U' if space == 'user' else 'K') if self.mixed and space else ' '
-            prefix = f'{seconds:>7}.{nanos:09d} | {str(cpu) if cpu is not None else "–":>3} | {str(tid) if tid is not None else "–":>7} | {tag} | '
+            prefix = f'{seconds:>7}.{nanos:09d} | {str(cpu) if cpu is not None else "–":>3} | {str(tid) if tid is not None else "–":>7} | {tag} |  '
+            stack_key = (space, tid)
             index = self.record_slices.get(lineno)
             name = args = fold_id = fold_type = depth = duration = source = source_kind = comm = func_info = None
             path = ''
@@ -631,13 +632,31 @@ class UftraceTimeline(TimelineBuilder):
                         fold_type, fold_id = 'inner', path.rsplit(' ', 1)[-1]
                     if kind == 'entry':
                         ancestors[index] = (path + ' ' + fold_id).strip() if fold_type == 'entry' else path
+                        active_calls[stack_key] = (index, cpu)
+                    elif parent >= 0 and bool(self.s_flags[parent] & F_USER) == (space == 'user'):
+                        active_calls[stack_key] = (parent, cpu)
+                    else:
+                        active_calls.pop(stack_key, None)
                 body = '  ' * depth + body
             elif kind == 'lost':
+                for key, (_, last_cpu) in list(active_calls.items()):
+                    if key == stack_key or space == 'kernel' and key[0] == 'kernel' and last_cpu == cpu:
+                        active_calls.pop(key)
                 body = f'/* Lost {record["count"] if record["count"] >= 0 else "unknown number of"} records */'
                 if space == 'user' and record['time_ns'] == 0:
                     prefix = '     timestamp ? |   – | ' + f'{tid:>7} | {tag} | '
             else:
                 body = '/* ' + _display(record.get('name', 'perf event')) + ': ' + _display(record.get('text', '')) + ' */'
+                active = active_calls.get(stack_key)
+                if enable_fold and active is not None:
+                    parent = active[0]
+                    path = ancestors.get(parent, '')
+                    if path and not self.s_flags[parent] & (F_ORPHAN | F_TRUNCATED):
+                        fold_type, fold_id = 'inner', path.rsplit(' ', 1)[-1]
+                        depth = self.s_depth[parent] + 1
+                        comm = self.task_list[self.s_task[parent]].comm
+                        body = '  ' * depth + body
+                    active_calls[stack_key] = (parent, cpu)
             _, _, lat = _latency(record, self.lazy_resched) if space == 'kernel' else (0, None, None)
             lines.append(UftraceLine(raw_line=prefix + body, raw_func_name=name if kind == 'entry' else None,
                                      expandable=bool(func_info), func_info=func_info,

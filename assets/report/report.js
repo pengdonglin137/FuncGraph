@@ -477,16 +477,16 @@
                         const end = snap(Math.min(bottom, rect.bottom));
                         const ancestors = (row.getAttribute('data-fold-ancestors') || '').split(' ');
                         const related = activeOffset !== null && ancestors.includes(scopeId);
-                        const start = Math.max(0, Math.ceil((-indentRect.left - unit) / step));
-                        const limit = Math.min(indentRect.right - step, viewportWidth);
-                        for (let column = start; indentRect.left + unit + column * step < limit; column++) {
-                            const offset = unit + column * step;
+                        const axis = indentRect.right - unit;
+                        const start = Math.max(1, Math.ceil((axis - viewportWidth) / step));
+                        const limit = Math.min(Math.floor((axis - indentRect.left) / step), Math.floor(axis / step));
+                        for (let column = start; column <= limit; column++) {
+                            const offset = indentRect.width - unit - column * step;
                             context.fillStyle = related && Math.abs(offset - activeOffset) < unit / 2 ? activeColor : baseColor;
                             context.fillRect(strokeOrigin(indentRect.left + offset), top, stroke, end - top);
                         }
                         const own = activeOffset !== null && row.getAttribute('data-fold-id') === scopeId;
                         context.fillStyle = own ? activeColor : baseColor;
-                        const axis = indentRect.right - unit;
                         if (axis < 0 || axis > viewportWidth) continue;
                         if (row.classList.contains('fold-entry') && !row.classList.contains('folded')) {
                             const from = snap(rect.top + rect.height / 2 + 6);

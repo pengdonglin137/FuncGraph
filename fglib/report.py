@@ -1222,6 +1222,8 @@ class HtmlGenerator:
     @staticmethod
     def _fold_line_html(text, fold_type, func_name):
         opening = r'<span class="hl-symbol">}' if fold_type == 'exit' else r'(?:<span class="hl-func">|<a class="func-name-link")'
+        if fold_type == 'inner':
+            opening = r'(?:/\*|<span class="hl-comment">|' + opening + ')'
         match = re.search(r'\|([ \t]*)(?=' + opening + ')', text)
         if match:
             prefix = text[:match.start(1)]
