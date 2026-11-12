@@ -4147,7 +4147,10 @@ class BrowserSmokeTest(unittest.TestCase):
             self.page.wait_for_function("localStorage.getItem('fgTl.csOpen') === '0'")
             self.ev('index => fgView("timeline").probe().select(index)', selected)
             self.assertFalse(self.page.locator('.tl-cs').evaluate('element => element.open'))
-            self.page.locator('.tl-detail [data-line]').first.click()
+            self.page.locator('.tl-detail [data-call-actions]').click()
+            self.assertTrue(self.page.locator('#tlCallActions [data-call-action=text]').is_disabled())
+            self.assertIn('Text view is not included', self.page.locator('#tlCallActionsNote').inner_text())
+            self.page.keyboard.press('Escape')
             self.assertEqual(self.ev('fgCurrentView()'), 'timeline')
             self.assertEqual(self.ev("fgView('timeline').probe().sel()"), selected)
         finally:

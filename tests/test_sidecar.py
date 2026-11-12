@@ -1620,10 +1620,11 @@ class SidecarBrowserTest(unittest.TestCase):
 
     def test_timeline_jump_loads_text_and_reveals_the_original_trace_line(self):
         self.page.evaluate('fgView("timeline").probe().select(0)')
-        link = self.page.locator('.tl-detail [data-line]').first
-        number = link.get_attribute('data-line')
-        link.click()
-        self.page.locator('#L' + number + '.tl-flash').wait_for()
+        number = self.page.evaluate('fgData.read("tlData").cols.line[0]')
+        self.page.locator('[data-call-actions]').click()
+        self.assertFalse(self.page.evaluate('fgData.ready("fgText")'))
+        self.page.locator('#tlCallActions [data-call-action=text]').click()
+        self.page.locator('#L' + str(number) + '.tl-flash').wait_for()
         self.assertEqual(self.page.evaluate('fgCurrentView()'), 'text')
         self.assertGreater(self.page.locator('#content .line-container').count(), 100)
 

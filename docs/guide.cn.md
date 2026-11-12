@@ -721,7 +721,9 @@ python3 funcgraph.py --timeline --tail-calls --fast --func-links \
   - **Error chain**：完整的记录内传播路径，按最外层传播帧到源头排列，不再默默停在 64 帧。顶端/长度元数据不一致、无效父子边或循环会明确提示，不冒充完整路径。
   - **Call stack**：从最外层到选中调用的全部已记录祖先，不再限制为 128 帧。耗时属于真实调用；内联帧和缺失深度分别标为 `inline` / `untraced`，不编造实测值。只有最早可见祖先确实从非零深度开始，才显示“... N frame(s) outside trace window”，不会把显示上限隐藏的祖先误称为采集范围之外。
   - **Children**：跨过缺失深度后的真实直接记录子调用，按函数分组、总耗时排序，`×N` 表示调用次数。紧凑预览最多显示八个函数，超过时标注前八项及总数。原生按钮打开对应函数的**最长**调用，不再随意选第一个。**Explore all children** 可查看完整分组及逐次调用（7.8 节），包括预览之外的函数。
-- 右上角链接：**Duration distribution (H)**（见 7.2 节）和 **Open in text view ↵**。
+- 右上角 **Actions ▾** 菜单收纳 **Duration distribution**（见 7.2 节，快捷键 `H`）
+  和 **Open in Text**（快捷键 `Enter`），不再把两个链接平铺在函数名旁。支持鼠标、触屏
+  和键盘；不包含 Text 的报告将跳转项禁用并说明原因。交互细节见[详情布局](detail-layout.md)。
 
 调用栈中的耗时/类型、函数符号、源码位置使用整份可见列表共享的三列，而不是各行分别计算列宽。较长耗时、`inline` / `untraced`、窗口外提示和加粗选中帧不会单独推移函数名；增大字体时也保持同列对齐。显式行高为下划线和下伸字母保留空间，不用隐藏前导下划线来制造“对齐”。加载更多和切换 Overhead 时，列宽随已显示内容统一更新，不额外扫描 trace。
 
@@ -875,7 +877,7 @@ python3 funcgraph.py --timeline --tail-calls --fast --func-links \
 
 *耗时分布（tests/data/pi4_sched.txt 里的 `unwind_find_stack.constprop.0`，115 次调用）：分位数、对数直方图与耗时降序排列的第 1–50 条调用。图中向上拖动了详情分隔条；默认高度下也可以用 **Histogram** 收起图表，把空间留给调用列表。*
 
-选中一个切片后按 `H`，或点详情面板里的 **Duration distribution**：
+选中一个切片后按 `H`，或打开详情标题的 **Actions ▾ → Duration distribution**：
 
 - **统计值**：当前函数和所选调用点中，满足过滤条件的调用的 min、p50、p90、p99、max 和 mean。所有分位数（包括调用点表格）统一取升序样本中下标为 `round(p × (count − 1))` 的值。Overhead 开关更新耗时和自身耗时，但时间轴位置仍按原始测量值。
 - **Histogram 开关**：默认显示直方图；标题右侧的按钮支持鼠标、触控和 Enter / Space。收起后六个统计值紧凑排列，区间选择、当前页、调用行和 CSV 范围不变。选择在当前报告内跨刷新、重开及切换函数保留，重新加载页面后恢复默认；不会修改保存的详情分隔位置。手机上控件至少 44px 高，区间菜单仍有可访问名称。布局实测与紧凑视图截图见[分页与布局记录](performance-duration-calls.md#compact-histogram-follow-up)。

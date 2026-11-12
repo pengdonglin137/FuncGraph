@@ -176,6 +176,7 @@ function clampDetailH(h) {
 
 // ---- main canvas ----
 function resize() {
+    closeMovedCallActions();
     DPR = window.devicePixelRatio || 1;
     const top = Math.max(0, tlRoot.getBoundingClientRect().top);
     const fullscreen = tlRoot.classList.contains('tl-fullscreen');

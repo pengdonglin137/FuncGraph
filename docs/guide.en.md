@@ -734,7 +734,10 @@ New reports use the compact call-site position index for this tooltip, including
   - **Error chain**: the complete recorded propagation path, ordered from the outermost propagation frame to the origin. It no longer silently stops at 64 frames. Inconsistent top/length metadata or invalid/cyclic parent links are reported, not treated as complete paths.
   - **Call stack**: all recorded ancestors, ordered outermost to selected, without a 128-frame cutoff. Durations belong to recorded calls; inline frames and skipped depths have explicit `inline` / `untraced` labels and no fabricated measurements. "… N frame(s) outside trace window" appears only when the oldest observed ancestor actually starts below depth zero, never because a display limit hid recorded ancestors.
   - **Children**: real direct recorded children, even across skipped depths, grouped by function and ordered by total duration; `×N` = number of calls. The compact preview shows up to eight functions and labels the top-eight/total. Its native buttons open the **longest** call of each function, not an arbitrary first call. **Explore all children** opens complete groups and individual calls (7.8), including functions outside the preview.
-- Links at the top right: **Duration distribution (H)** (7.2) and **Open in text view ↵**.
+- **Actions ▾** at the top right groups **Duration distribution** (7.2, shortcut `H`)
+  and **Open in Text** (shortcut `Enter`) instead of repeating two links beside
+  the symbol. It supports mouse, touch and keyboard; reports without Text disable
+  that action with an explanation. See [detail layout](detail-layout.md) for interaction details.
 
 The visible stack shares three columns for duration/type, function symbol and source position instead of sizing each row independently. Long durations, `inline` / `untraced`, outside-window notes and bold selected frames cannot shift only their own symbol; columns also stay aligned with larger fonts. Explicit line height leaves room for underscores and descenders rather than hiding leading underscores to simulate alignment. Loading more rows or toggling Overhead updates the shared columns using displayed content only, without another trace scan.
 
@@ -896,7 +899,7 @@ The range panel stays open when filtering or switching Overhead, even if an anal
 
 *Duration distribution (`unwind_find_stack.constprop.0` in tests/data/pi4_sched.txt, 115 calls): percentiles, log histogram and calls 1–50, slowest first. The detail divider is dragged upward; at the default height, **Histogram** can instead collapse the chart to leave room for calls.*
 
-Press `H` with a slice selected, or click **Duration distribution** in the detail panel:
+Press `H` with a slice selected, or choose **Actions ▾ → Duration distribution** in the detail heading:
 
 - **Statistics**: min, p50, p90, p99, max and mean over matching calls of the function and selected call site. Percentiles consistently use the ascending sample at `round(p × (count − 1))`, including the call-site table. The Overhead switch updates durations and self time; positions on the timeline remain measured.
 - **Histogram toggle**: the chart is open by default. The header button supports mouse, touch and Enter / Space. Collapsing it keeps all six statistics in a compact layout without changing the bucket, current page, call rows or CSV scope. The choice survives refreshes, reopening and switching functions within this report; reloading the page restores the default. It never changes the saved detail split. Touch controls are at least 44px tall and the bucket selector keeps its accessible name. See the [paging and layout record](performance-duration-calls.md#compact-histogram-follow-up) for measurements and a compact-view screenshot.

@@ -781,6 +781,11 @@ ${N ? '' : '<div class="tl-event-only" role="note">No recorded function calls. S
 </div>
 <div class="tl-resizer" title="Drag to resize the panel, double-click to reset"></div>
 <div class="tl-detail"></div>
+<div class="tl-call-actions-panel" id="tlCallActions" role="menu" aria-label="Selected call actions"${D.no_text ? ' aria-describedby="tlCallActionsNote"' : ''} hidden>
+  <button type="button" role="menuitem" tabindex="-1" data-call-action="distribution"><span>Duration distribution</span><kbd>H</kbd></button>
+  <button type="button" role="menuitem" tabindex="-1" data-call-action="text"${D.no_text ? ' disabled' : ''}><span>Open in Text</span><kbd>Enter</kbd></button>
+  ${D.no_text ? '<p id="tlCallActionsNote" class="tl-context-note">Text view is not included in this report.</p>' : ''}
+</div>
 <div class="tl-tip"></div>
 <dialog class="tl-position" aria-labelledby="tlPositionTitle" aria-describedby="tlPositionHint">
   <form novalidate>
@@ -800,6 +805,8 @@ const elCv = tlRoot.querySelector('.tl-canvas');
 const elSpacer = tlRoot.querySelector('.tl-spacer');
 const elStage = tlRoot.querySelector('.tl-stage');
 const elDetail = tlRoot.querySelector('.tl-detail');
+const elCallActions = tlRoot.querySelector('.tl-call-actions-panel');
+let callActionsTrigger = null, callActionsSelection = -1, callActionsLayout = null;
 const elTip = tlRoot.querySelector('.tl-tip');
 const elHelp = tlRoot.querySelector('.tl-help');
 const elNotes = tlRoot.querySelector('.tl-notes');

@@ -10,6 +10,46 @@ are unchanged. This is a presentation change, not a new decoding mode.
 参数和返回值；调用栈对齐、源码链接、用户/内核分界及测量含义不变。本次只调整阅读层级，
 不增加解码或推断。
 
+## Selected-call actions / 所选调用操作
+
+- **Actions** in the selected-call heading groups **Duration distribution** and
+  **Open in Text** instead of repeating two links beside the symbol. Existing
+  Timeline shortcuts **H** and **Enter** are unchanged.
+- Click or tap the button, or focus it and press Enter, Space, Arrow Down or
+  Arrow Up. In the menu, Arrow Up/Down, Home and End move between enabled actions;
+  Enter or Space activates one. Escape closes the menu and restores button
+  focus; Tab closes it and continues normal keyboard navigation. Horizontal
+  arrow keys stay within the menu instead of panning the underlying Timeline.
+- Activating an action moves focus to a visible destination: the Timeline
+  control after opening the distribution, or the Text tab after switching views.
+  It never leaves focus on an item inside the now-hidden menu.
+- **Open in Text** is disabled with an explanation in reports generated with
+  `--no-text-view`. Synthetic inline and untraced frames do not offer actions
+  that imply a recorded call.
+- The menu stays within the viewport, outside the detail panel's scroll clip,
+  including in full screen and short landscape windows. Touch targets are at
+  least 44px high. Theme colors and keyboard focus follow the existing controls.
+- Opening or dismissing the menu does not traverse calls, change selection,
+  alter the time range/filter, or load Text. Sidecar Text loads only when
+  **Open in Text** is activated. Changing the selection, view or analysis closes
+  the menu so an old action cannot operate on a different call.
+
+所选调用标题中的 **Actions** 收纳 **Duration distribution（耗时分布）** 和
+**Open in Text（跳到文本）**，不再把两个次要链接平铺在函数名旁。
+原有 Timeline 快捷键 **H / Enter** 保持不变。
+
+鼠标点击、触屏点击或聚焦按钮后按 Enter、空格、上下箭头均可打开；菜单内用上下箭头、
+Home / End 切换可用项，Enter / 空格执行。Escape 仅关闭菜单并恢复按钮焦点；Tab 关闭后
+继续正常移动焦点；左右箭头不会穿透菜单、平移下方的 Timeline。在全屏中，先按 Escape
+关闭菜单，再按 Escape 才退出全屏。
+执行操作后焦点落在可见目标：耗时分布返回 Timeline 控件，跳到文本则聚焦 Text 标签，
+不会留在已经隐藏的菜单项中。
+
+`--no-text-view` 报告将 Text 项禁用并解释原因；内联和未采集帧不会伪装为真实记录的调用。
+菜单不被短详情区裁剪，保持在视口内；触屏目标至少 44px，沿用已有主题和焦点配色。
+打开菜单不遍历调用、不改变选择/视野/过滤，也不预加载 Text；sidecar 仅执行跳转时加载。
+切换调用、页面或分析会关闭旧菜单，防止误操作另一个调用。
+
 ## Trace metadata
 
 - Open **Trace metadata** below the primary facts to inspect the task/CPU,
@@ -85,3 +125,23 @@ Semantic colors are documented in [detail-colors.md](detail-colors.md).
 
 重新生成报告后生效；已有 HTML、公开 sample 和原始 trace 不会被自动改写。
 配色规则见 [detail-colors.md](detail-colors.md)。
+
+## Validation / 回归检查
+
+```bash
+PYTHONPATH=tests python3 -m unittest \
+    test_detail_actions test_detail_expand test_timeline_fullscreen -v
+```
+
+These browser checks require Playwright and Chromium. The Actions suite covers
+kernel-only, user-only and mixed reports; single/sidecar delivery; light/dark
+themes; narrow, short landscape and wide touch-tablet viewports; native/page
+full screen; keyboard focus and dismissal; disabled Text; stale selection and
+synthetic frames. Menu-only operations must retain the model, call timestamps,
+track identity, selection and time range, and must not fetch deferred Text or
+Compare resources. Scroll checks require actual movement, not a synthetic event.
+
+浏览器检查需要 Playwright 和 Chromium。Actions 用例覆盖两种交付方式、三种地址空间、
+明暗主题、窄屏 / 短横屏 / 宽触屏平板、原生 / 页面全屏、键盘与触屏操作、禁用 Text、
+切换选择和合成帧。只打开或关闭菜单不能改写调用时间、轨道、选择或视野，也不能提前
+请求延迟加载的 Text / Compare。滚动用例验证实际位置变化，不靠伪造滚动事件通过。

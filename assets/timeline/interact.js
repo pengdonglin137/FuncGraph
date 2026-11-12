@@ -75,6 +75,7 @@ function revealRow(i, expand = true) {
     if (y < elScroll.scrollTop + 4 || y + ROW > elScroll.scrollTop + H - 4) elScroll.scrollTop = Math.max(0, y - H / 3);
 }
 function setSelection(index) {
+    closeCallActions();
     sel = index;
     updateSearchLabel();
 }
@@ -786,6 +787,7 @@ elPosition.addEventListener('close', () => {
 // ---- keyboard (capture phase: keeps the text view's shortcuts from firing) ----
 window.addEventListener('keydown', ev => {
     if (window.fgCurrentView() !== 'timeline') return;
+    if (callActionsKey(ev)) { ev.stopPropagation(); return; }
     if (elPosition.open) {
         ev.stopPropagation();
         if (ev.key === 'Tab') {

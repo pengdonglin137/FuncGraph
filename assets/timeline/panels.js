@@ -400,8 +400,9 @@ function showDetail(i) {
     if (f & FL.EST) pills += pill('mute', 'estimated');
     let h = '<div class="tl-detail-head tl-slice-head"><span class="tl-detail-title" title="' + esc(nameOf(i)) + '">' + detailSymbolHtml(nameOf(i)) +
         (modOf(i) ? ' [' + esc(modOf(i)) + ']' : '') + '</span>' + pills + '<span class="sp"></span>' +
-        '<a class="tl-link" data-dist="' + sName[i] + '">Duration distribution (H)</a>&nbsp;&nbsp;' +
-        lineLink(sLine[i], 'Open in text view ↵') + '<button class="tl-close" title="Close (Esc)">×</button></div>';
+        '<button class="tl-btn tl-call-actions-button" type="button" data-call-actions aria-haspopup="menu" ' +
+        'aria-controls="tlCallActions" aria-expanded="false" aria-label="Selected call actions">Actions ▾</button>' +
+        '<button class="tl-close" title="Close (Esc)">×</button></div>';
     h += callNavigationHtml(i) + '<div class="tl-detail-body"><div class="tl-left"><div class="tl-kv tl-call-facts">';
     h += kv('duration', f & FL.ORPHAN && D.uftrace ? 'unknown · entry not recorded' :
         fmtDur(d) + (f & FL.EST ? ' (estimated)' : f & FL.TRUNC && D.uftrace ? ' (incomplete span)' : ''));
@@ -593,7 +594,124 @@ function setDetailExpanded(on) {
         elDetail.querySelector('.tl-close')?.focus({ preventScroll: true });
     }
 }
+function closeCallActions(restoreFocus = false) {
+    if (elCallActions.hidden) return;
+    const trigger = callActionsTrigger;
+    elCallActions.hidden = true;
+    trigger?.setAttribute('aria-expanded', 'false');
+    callActionsTrigger = null;
+    callActionsSelection = -1;
+    callActionsLayout = null;
+    if (restoreFocus && trigger?.isConnected && trigger.getClientRects().length && window.fgCurrentView() === 'timeline')
+        trigger.focus({ preventScroll: true });
+}
+function callActionItems() {
+    return Array.from(elCallActions.querySelectorAll('[role=menuitem]:not(:disabled)'));
+}
+function openCallActions(trigger, last = false) {
+    if (sel < 0 || sel >= N) return;
+    closeCallActions();
+    setToolbarOptions(false);
+    callActionsTrigger = trigger;
+    callActionsSelection = sel;
+    trigger.setAttribute('aria-expanded', 'true');
+    elCallActions.hidden = false;
+    const viewport = window.visualViewport;
+    const left = viewport?.offsetLeft || 0, top = viewport?.offsetTop || 0;
+    const width = viewport?.width || innerWidth, height = viewport?.height || innerHeight;
+    const edge = 8, gap = 4;
+    elCallActions.style.width = Math.max(1, Math.min(248, width - 2 * edge)) + 'px';
+    elCallActions.style.maxHeight = Math.max(1, height - 2 * edge) + 'px';
+    const anchor = trigger.getBoundingClientRect(), menu = elCallActions.getBoundingClientRect();
+    callActionsLayout = { x: anchor.x, y: anchor.y, width: anchor.width, height: anchor.height,
+        scrollTop: elDetail.scrollTop, scrollX, scrollY, viewportLeft: left, viewportTop: top,
+        viewportWidth: width, viewportHeight: height };
+    const below = anchor.bottom + gap;
+    const target = below + menu.height <= top + height - edge ? below : anchor.top - gap - menu.height;
+    elCallActions.style.left = Math.max(left + edge, Math.min(anchor.right - menu.width, left + width - menu.width - edge)) + 'px';
+    elCallActions.style.top = Math.max(top + edge, Math.min(target, top + height - menu.height - edge)) + 'px';
+    elCallActions.scrollTop = 0;
+    const items = callActionItems();
+    items[last ? items.length - 1 : 0]?.focus({ preventScroll: true });
+}
+function callActionsKey(event) {
+    const trigger = event.target.closest?.('[data-call-actions]');
+    if (elCallActions.hidden) {
+        if (trigger && (event.key === 'ArrowDown' || event.key === 'ArrowUp')) {
+            event.preventDefault();
+            openCallActions(trigger, event.key === 'ArrowUp');
+            return true;
+        }
+        return false;
+    }
+    if (event.key === 'Escape' || event.key === 'Tab') {
+        if (event.key === 'Escape') event.preventDefault();
+        closeCallActions(true);
+        return true;
+    }
+    if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) {
+        event.preventDefault();
+        const items = callActionItems(), current = items.indexOf(document.activeElement);
+        const index = event.key === 'Home' ? 0 : event.key === 'End' ? items.length - 1 :
+            (current + (event.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length;
+        items[index]?.focus({ preventScroll: true });
+        return true;
+    }
+    if ((event.key === 'ArrowLeft' || event.key === 'ArrowRight') &&
+            !event.ctrlKey && !event.metaKey && !event.altKey) {
+        event.preventDefault();
+        return true;
+    }
+    if (event.key.length === 1 && event.key !== ' ' && !event.ctrlKey && !event.metaKey && !event.altKey)
+        closeCallActions(true);
+    return false;
+}
+function dismissCallActions(event) {
+    if (!elCallActions.hidden && !elCallActions.contains(event.target) && !callActionsTrigger?.contains(event.target))
+        closeCallActions();
+}
+function closeMovedCallActions() {
+    if (elCallActions.hidden) return;
+    const anchor = callActionsTrigger.getBoundingClientRect(), previous = callActionsLayout;
+    const viewport = window.visualViewport;
+    if (anchor.x !== previous.x || anchor.y !== previous.y || anchor.width !== previous.width ||
+        anchor.height !== previous.height || elDetail.scrollTop !== previous.scrollTop ||
+        scrollX !== previous.scrollX || scrollY !== previous.scrollY ||
+        (viewport?.offsetLeft || 0) !== previous.viewportLeft || (viewport?.offsetTop || 0) !== previous.viewportTop ||
+        (viewport?.width || innerWidth) !== previous.viewportWidth || (viewport?.height || innerHeight) !== previous.viewportHeight)
+        closeCallActions(elCallActions.contains(document.activeElement));
+}
+document.addEventListener('pointerdown', dismissCallActions);
+document.addEventListener('focusin', dismissCallActions);
+elDetail.addEventListener('scroll', closeMovedCallActions, { passive: true });
+window.addEventListener('scroll', closeMovedCallActions, { passive: true });
+window.visualViewport?.addEventListener('scroll', closeMovedCallActions, { passive: true });
+window.visualViewport?.addEventListener('resize', closeMovedCallActions, { passive: true });
+elCallActions.addEventListener('click', event => {
+    const action = event.target.closest('[data-call-action]');
+    if (!action || action.disabled) return;
+    const index = callActionsSelection;
+    closeCallActions();
+    if (index < 0 || index >= N || index !== sel) return;
+    if (action.dataset.callAction === 'distribution') {
+        showDist(sName[index]);
+        focusTimelineControl();
+    } else if (action.dataset.callAction === 'text') {
+        gotoText(sLine[index]);
+        if (window.fgCurrentView() === 'text') {
+            const focusTextTab = () => {
+                const active = document.activeElement;
+                if (window.fgCurrentView() === 'text' && (active === document.body || tlRoot.contains(active)))
+                    document.querySelector('.view-tab[data-view="text"]')?.focus({ preventScroll: true });
+            };
+            if (document.fullscreenElement === tlRoot)
+                document.addEventListener('fullscreenchange', focusTextTab, { once: true });
+            focusTextTab();
+        } else focusTimelineControl();
+    }
+});
 function openDetail(html) {
+    closeCallActions();
     const was = elDetail.classList.contains('show');
     const previousMetadata = elDetail.querySelector('[data-trace-metadata]');
     if (previousMetadata) prefSet('metadataOpen', previousMetadata.open ? '1' : '0');
@@ -629,6 +747,7 @@ function openDetail(html) {
     if (!was) resize();
 }
 function hideDetail() {
+    closeCallActions();
     if (!elDetail.classList.contains('show')) return;
     fgCancelSources(elDetail);
     elDetail.classList.remove('show');
@@ -677,6 +796,7 @@ function setNotes(on) {
 }
 function setToolbarOptions(on, restoreFocus = false) {
     const open = !!on;
+    if (open) closeCallActions();
     if (open && compactToolbar.matches && !elNotes.classList.contains('hide')) setNotes(false);
     elOptions.classList.toggle('open', open);
     elMore.setAttribute('aria-expanded', String(open));
@@ -764,6 +884,12 @@ document.addEventListener('fullscreenchange', () => {
     }
 });
 elDetail.addEventListener('click', ev => {
+    const actions = ev.target.closest('[data-call-actions]');
+    if (actions) {
+        if (elCallActions.hidden) openCallActions(actions);
+        else closeCallActions(true);
+        return;
+    }
     if (ev.target.closest('[data-detail-expand]')) {
         setDetailExpanded(!detailExpanded);
         return;
@@ -1283,6 +1409,7 @@ elHelp.innerHTML = `
 <li>Search navigation stays within the filtered calls. <b>Hide unmatched</b> hides tracks without filter matches.</li></ul>
 ${N ? '' : '<p>No function calls were recorded. Search has no call matches; shared filters apply to Text lines only and do not hide or filter event tracks.</p>'}
 <h4>Select</h4><ul>
+<li>Call details group <b>Duration distribution</b> and <b>Open in Text</b> under <b>Actions</b>. Use arrow keys / Home / End inside the menu; Escape closes it before leaving full screen. Text is disabled when it is not included in the report.</li>
 <li>Call details have native navigation buttons: <kbd>↑</kbd> recorded parent · <kbd>↓</kbd> first recorded child · <kbd>[</kbd>/<kbd>]</kbd> recorded siblings (task roots stay within the task); synthetic frames are skipped</li>
 <li><kbd>E</kbd>/<kbd>Shift+E</kbd> next/prev error · <kbd>/</kbd> search, <kbd>N</kbd>/<kbd>Shift+N</kbd> next/prev match</li>
 <li>Click an off-CPU segment: wait chain (who woke the task, wake latency, and who woke the waker)</li>
@@ -1374,4 +1501,4 @@ const probe = () => ({ N, NA, SYN, S, sName, sStart, sEnd, sDepth, sParent, sTas
     errors: showErrors, latency: showLatency, sections: showSections, dist: showDist, wait: showWaitChain,
     inline: (on) => { if (!!on !== inlineView) toggleInlineView(); } });
 return { resize: () => { resumeSearch(); resize(); }, revealLine: revealLine, draw: draw, probe: probe,
-    suspend: () => { suspendSearch(); if (elPosition.open) elPosition.close(); if (tlRoot.classList.contains('tl-fullscreen') || document.fullscreenElement === tlRoot) leaveFullscreen(false); setToolbarOptions(false); hideTip(); discardSceneCache(); }, showHelp: () => elHelp.classList.add('show') };
+    suspend: () => { suspendSearch(); closeCallActions(); if (elPosition.open) elPosition.close(); if (tlRoot.classList.contains('tl-fullscreen') || document.fullscreenElement === tlRoot) leaveFullscreen(false); setToolbarOptions(false); hideTip(); discardSceneCache(); }, showHelp: () => { closeCallActions(); elHelp.classList.add('show'); } };
