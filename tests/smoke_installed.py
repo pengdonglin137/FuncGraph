@@ -96,6 +96,14 @@ class InstalledPackageTest(unittest.TestCase):
         self.run_command(self.executable('fguftrace'), 'record', '--no-sched', '--no-libcall', '--srcline',
                          *record_flags,
                          '-A', 'work@arg1/i32', '-R', 'work@retval/i32', '-d', str(capture), str(binary))
+        simplified = directory / 'simplified.data'
+        self.run_command(self.executable('fgcapture'), '--user', '-o', str(simplified), '--', str(binary))
+        automatic = [json.loads(line) for line in self.run_command(
+            self.executable('fguftrace'), 'dump', '--fgraph', '--srcline', '-d', str(simplified)).splitlines()]
+        entry = next(record for record in automatic if record.get('name') == 'work' and record['type'] == 'entry')
+        self.assertEqual(entry['user_args'], ['41'])
+        self.assertEqual(entry['user_arg_names'], ['value'])
+        self.assertTrue(any('user_callsite' in record for record in automatic))
         binary.rename(binary.with_name('moved program'))
         records = [json.loads(line) for line in self.run_command(
             self.executable('fguftrace'), 'dump', '--fgraph', '--srcline', '-d', str(capture)).splitlines()]
@@ -226,7 +234,7 @@ class InstalledPackageTest(unittest.TestCase):
         self.assertTrue(data['caps']['retaddr'])
 
     def test_command_help(self):
-        for command in ('funcgraph', 'fgreport', 'fgcapture.sh'):
+        for command in ('funcgraph', 'fgreport', 'fgcapture', 'fgcapture.sh'):
             with self.subTest(command=command):
                 self.assertTrue(self.run_command(self.executable(command), '--help'))
         self.run_command(sys.executable, '-I', '-m', 'funcgraph', '--help')

@@ -7,20 +7,23 @@
 #   fgcapture.sh [options] [-- command args...]
 #
 # Scenarios:
-#   (default)      timeline: abstime + latency-format + proc + retval + retaddr + tail
-#   --args         arguments too. The kernel is probed first: where args and retaddr can be
+#   (default)      timeline options; automatically enable arguments when a small probe is
+#                  fast and preserves return addresses. --no-args skips the probe.
+#   --args         require arguments. The kernel is probed first: where args and retaddr can be
 #                  printed together (BTF print optimizations) all timeline options stay on;
 #                  otherwise (e.g. 6.18) retaddr is turned off, and -g/-p/a command is required
 #                  because formatting arguments is slow there (~36 ms/line on a Pi 4).
 #
 # Options:
+#   --user/--mixed delegate user-only / user+kernel recording to fgcapture (Python package)
+#   --no-args      explicitly disable arguments
 #   -o FILE        output file (default ./ftrace.txt)
 #   -d SECONDS     capture duration when no command is given (default 1)
 #   -p PID[,PID]   trace only these pids (set_ftrace_pid)
 #   -g FUNC[,..]   trace only the call graphs of these functions (set_graph_function)
 #   -n FUNC[,..]   do not trace these call graphs (set_graph_notrace)
 #   -b KB          per-CPU buffer size in KB (default 16384)
-#   --sched        also record sched_switch / sched_waking / sched_wakeup events
+#   --sched        also record scheduling and process exec/exit events
 #   --keep         do not restore the previous tracefs settings
 #   --calibrate    measure the tracing overhead with the same options first (vfs_read with and
 #                  without traced children, 3000 calls) and record it in the output header;
@@ -35,13 +38,24 @@
 [ -n "${BASH_VERSION:-}" ] || exec bash "$0" "$@"
 set -u
 
-T=/sys/kernel/tracing
-[ -d $T/options ] || T=/sys/kernel/debug/tracing
-OUT=./ftrace.txt DUR=1 PIDS= GRAPH= NOTRACE= BUF=16384 ARGS=0 SCHED=0 KEEP=0 CAL=0
+for argument in "$@"; do
+    [ "$argument" = -- ] && break
+    case "$argument" in
+        --user|--mixed)
+            launcher=$(dirname -- "$(readlink -f -- "$0")")/fgcapture
+            if [ -x "$launcher" ]; then exec "$launcher" "$@"; fi
+            exec python3 -m fglib.capture "$@"
+            ;;
+    esac
+done
+
+T=${FG_TRACEFS:-/sys/kernel/tracing}
+if [ -z "${FG_TRACEFS:-}" ] && [ ! -d $T/options ]; then T=/sys/kernel/debug/tracing; fi
+OUT=./ftrace.txt DUR=1 PIDS= GRAPH= NOTRACE= BUF=16384 ARGS=auto SCHED=0 KEEP=0 CAL=0
 CMD=()
 
 die() { echo "fgcapture: $*" >&2; exit 1; }
-usage() { sed -n '2,32p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-0}"; }
+usage() { sed -n '2,/^\[ -n /p' "$0" | sed '$d;s/^# \{0,1\}//'; exit "${1:-0}"; }
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -52,6 +66,7 @@ while [ $# -gt 0 ]; do
         -n) NOTRACE=$2; shift 2 ;;
         -b) BUF=$2; shift 2 ;;
         --args) ARGS=1; shift ;;
+        --no-args) ARGS=0; shift ;;
         --sched) SCHED=1; shift ;;
         --keep) KEEP=1; shift ;;
         --calibrate) CAL=1; shift ;;
@@ -64,11 +79,19 @@ done
 [ "$(id -u)" = 0 ] || die "must run as root (tracefs)"
 [ -w $T/current_tracer ] || die "tracefs not found at $T"
 grep -qw function_graph $T/available_tracers || die "function_graph tracer not available (CONFIG_FUNCTION_GRAPH_TRACER)"
+[ "$(cat $T/tracing_on)" = 0 ] || die "tracing is active; refusing to interrupt another session"
+if [ "$ARGS" = 1 ] && [ ! -e $T/options/funcgraph-args ]; then
+    die "--args requires kernel support for funcgraph-args"
+fi
+exec 9>"${FG_CAPTURE_LOCK:-/run/funcgraph-capture.lock}" || die "cannot open capture lock"
+flock -n 9 || die "another fgcapture session owns tracefs"
+[ "$(cat $T/tracing_on)" = 0 ] || die "tracing became active; refusing to interrupt another session"
 
 # ---- save current state ----
 SAVE=$(mktemp -d /tmp/fgcapture.XXXXXX)
 OPTS="funcgraph-abstime funcgraph-proc funcgraph-retval funcgraph-retaddr funcgraph-tail funcgraph-args
-      funcgraph-duration funcgraph-cpu funcgraph-overhead funcgraph-irqs latency-format"
+      funcgraph-duration funcgraph-cpu funcgraph-overhead funcgraph-irqs latency-format function-fork"
+EVENTS="sched_switch sched_wakeup sched_waking sched_process_exec sched_process_exit"
 save() {
     cat $T/current_tracer > $SAVE/tracer
     cat $T/tracing_on > $SAVE/on
@@ -77,7 +100,7 @@ save() {
         [ -e $T/$f ] && grep -v '^#' $T/$f > $SAVE/$f 2>/dev/null
     done
     for o in $OPTS; do [ -e $T/options/$o ] && cat $T/options/$o > "$SAVE/opt_$o"; done
-    for e in sched_switch sched_wakeup sched_waking; do
+    for e in $EVENTS; do
         [ -e $T/events/sched/$e/enable ] && cat $T/events/sched/$e/enable > $SAVE/ev_$e
     done
 }
@@ -91,7 +114,7 @@ restore() {
         echo > $T/$f
         [ -s $SAVE/$f ] && while read -r v; do echo "$v" >> $T/$f; done < $SAVE/$f 2>/dev/null
     done
-    for e in sched_switch sched_wakeup sched_waking; do
+    for e in $EVENTS; do
         [ -e $SAVE/ev_$e ] && cat $SAVE/ev_$e > $T/events/sched/$e/enable
     done
     cat $SAVE/buf > $T/buffer_size_kb 2>/dev/null
@@ -103,7 +126,13 @@ save
 trap 'restore' EXIT
 trap 'exit 130' INT TERM
 
-setopt() { [ -e $T/options/$1 ] && echo "$2" > $T/options/$1 || echo "fgcapture: option $1 not supported by this kernel" >&2; }
+setopt() {
+    if [ -e $T/options/$1 ]; then
+        echo "$2" > $T/options/$1 || die "cannot set $1=$2"
+    else
+        echo "fgcapture: option $1 not supported by this kernel" >&2
+    fi
+}
 setlist() {   # file comma-list
     local f=$1 v
     echo > $T/$f
@@ -121,20 +150,22 @@ echo "$BUF" > $T/buffer_size_kb
 setlist set_graph_function "$GRAPH"
 [ -e $T/set_graph_notrace ] && setlist set_graph_notrace "$NOTRACE"
 setlist set_ftrace_pid "$PIDS"
+echo > $T/set_ftrace_filter
 for o in funcgraph-duration funcgraph-cpu funcgraph-overhead funcgraph-irqs; do setopt $o 1; done
 # Probe what this kernel can do with funcgraph-args: on kernels without the BTF print
 # optimizations (e.g. 6.18) reading args is ~36 ms/line and args vanish when retaddr is on.
 ARGS_RETADDR=0 ARGS_SLOW=1
-if [ $ARGS = 1 ]; then
+if [ "$ARGS" != 0 ] && [ -e $T/options/funcgraph-args ]; then
     echo nop > $T/current_tracer; echo > $T/trace
     # the probe must not be limited by -g/-n (vfs_read would only be seen inside the graph functions)
     echo > $T/set_graph_function; [ -e $T/set_graph_notrace ] && echo > $T/set_graph_notrace
+    echo > $T/set_ftrace_pid
     echo vfs_read > $T/set_ftrace_filter          # one function only: cheap even where args are slow
     for o in funcgraph-args funcgraph-retaddr funcgraph-proc; do setopt $o 1; done
     echo function_graph > $T/current_tracer
     echo 1 > $T/tracing_on; cat /proc/version > /dev/null; head -c 1 /etc/hostname > /dev/null; echo 0 > $T/tracing_on
     t0=$(date +%s%N); cat $T/trace > $SAVE/probe; t1=$(date +%s%N)
-    n=$(grep -vc '^#' $SAVE/probe)
+    n=$(awk 'NF && $0 !~ /^#/ { count++ } END { print count+0 }' $SAVE/probe)
     if [ "$n" -gt 0 ]; then
         per_us=$(( (t1 - t0) / 1000 / n ))
         grep -q 'vfs_read(file=.*<-' $SAVE/probe && ARGS_RETADDR=1
@@ -147,9 +178,23 @@ if [ $ARGS = 1 ]; then
     echo nop > $T/current_tracer; echo > $T/trace; echo > $T/set_ftrace_filter
     setlist set_graph_function "$GRAPH"
     [ -e $T/set_graph_notrace ] && setlist set_graph_notrace "$NOTRACE"
-    if [ $ARGS_SLOW = 1 ] && [ -z "$GRAPH$PIDS" ] && [ ${#CMD[@]} = 0 ]; then
+    setlist set_ftrace_pid "$PIDS"
+    if [ "$ARGS" = auto ]; then
+        if [ "$ARGS_SLOW" = 0 ] && [ "$ARGS_RETADDR" = 1 ]; then
+            ARGS=1
+            echo "fgcapture: arguments enabled automatically"
+        else
+            ARGS=0
+            echo "fgcapture: automatic arguments disabled: probe was slow, inconclusive, or incompatible with return addresses; use scoped --args to override" >&2
+        fi
+    fi
+    if [ "$ARGS" = 1 ] && [ $ARGS_SLOW = 1 ] && [ -z "$GRAPH$PIDS" ] && [ ${#CMD[@]} = 0 ]; then
         die "--args needs -g, -p or a command on this kernel: reading the trace would take ${per_us} us per line"
     fi
+fi
+if [ "$ARGS" = auto ]; then
+    ARGS=0
+    echo "fgcapture: automatic arguments unavailable on this kernel" >&2
 fi
 if [ $ARGS = 1 ]; then
     for o in funcgraph-abstime funcgraph-proc funcgraph-retval funcgraph-args funcgraph-tail; do setopt $o 1; done
@@ -159,7 +204,7 @@ else
     for o in funcgraph-abstime funcgraph-proc funcgraph-retval funcgraph-retaddr funcgraph-tail latency-format; do setopt $o 1; done
     setopt funcgraph-args 0
 fi
-for e in sched_switch sched_wakeup sched_waking; do
+for e in $EVENTS; do
     [ -e $T/events/sched/$e/enable ] && echo $SCHED > $T/events/sched/$e/enable
 done
 

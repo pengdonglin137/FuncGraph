@@ -6,7 +6,8 @@
 树莓派 4 Linux **6.18.56-v8-MY_CUSTOM_KERNEL+** 上完成实验。
 FuncGraph 支持导入**仅用户态、仅内核态、混合**记录，不强制提供 `vmlinux`，
 不需要原生 Python 扩展。现有 ftrace 文本和 trace-cmd 输入仍可使用。
-负责保护和恢复 tracefs 状态的 `fgcapture.sh --user` 包装尚未实现。
+现在可用统一的 [`fgcapture --user` / `--mixed`](capture.cn.md) 简化采集参数，
+混合模式会保护并恢复空闲 tracefs 的设置。
 
 真实业务示例见 [pigz + zlib 压缩实战](pigz.cn.md)，包含应用和依赖库一起编译的步骤。
 
@@ -91,7 +92,8 @@ ARM64 请替换为 `linux_aarch64`。`fguftrace record ...` 和 `fguftrace dump 
 `--uftrace-bin PATH` → 内置 uftrace → `PATH` 中带补丁的 uftrace。覆盖参数不是必传项；
 无效覆盖路径或不完整的内置程序会直接报错，不会静默回退。未打补丁的上游 uftrace
 不支持 `--fgraph` 导出。读取已保存的 JSONL 不需要上述原生程序及系统运行库。
-`fgcapture.sh` 仍然是仅内核态的 tracefs 采集脚本，不支持 uftrace 用户态 / 混合采集选项。
+`fgcapture` 默认仍采集内核文本；`--user` / `--mixed` 选择简化的 uftrace 后端。
+原有 `fgcapture.sh` 也能转交这两种模式。
 
 工作负载的可执行文件 / 共享库、记录目录和用户源码路径均支持空格；shell 参数需要加引号。
 保存的映射名还会保留内部制表符与尾部空格。移走原程序或共享库后，仍可使用已保存的
@@ -131,10 +133,11 @@ x86_64 示例，不应把 `__x64_sys_*` 原样用于 ARM64。
   **`--no-sched` 不会关闭这三类内核 tracepoint。** 混合示例保留这个参数，是为了
   不再额外保存一份 perf 来源；删除它也不会关闭内核调度采集。
 
-混合采集请使用[采集安全与限制](#采集安全与限制)中的完整示例，保留
+常规混合采集推荐 `fgcapture --mixed -o CAPTURE -- ./app`，自动配置选项、调度、
+生命周期事件和 tracefs 恢复。直接调用专家接口时，使用[采集安全与限制](#采集安全与限制)中的完整示例，保留
 `-K 30 --clock=mono --kernel-full-info`，并保留对应架构的内核过滤和参数 / 返回值规格。
 不需要给 uftrace 增加 `--sched`：`fgcapture.sh --sched` 是另一个只采集内核的命令，
-不是 uftrace 用户态 / 混合采集封装。内核采集需要相应的 tracefs 访问权限，且只能
+不是原生 uftrace 的同名选项。内核采集需要相应的 tracefs 访问权限，且只能
 在空闲、已保护原有跟踪状态的专用实验环境执行。
 
 应检查实际保存的事件，而不只是 `enable=1`：
@@ -383,8 +386,9 @@ fguftrace dump --fgraph --srcline -d CAPTURE > capture.jsonl
 `uftrace record --kernel-full-info` 尝试启用可用的 args / retval / retaddr
 选项和 sched_switch、sched_waking、sched_wakeup；缺失能力会如实标记，不做模拟。
 上游的 reset 逻辑恢复的是默认值，**不是采集前的 tracefs 设置**。
-在保留状态的采集封装完成前，只能在空闲的专用实验环境中使用，并明确快照 / 恢复
-原设置；不要打断正在工作的跟踪会话。恢复设置也无法恢复已经消耗的 trace buffer。
+推荐使用 [`fgcapture --mixed`](capture.cn.md) 自动快照 / 恢复；直接运行原生
+`fguftrace record` 时仍需要独立提供同等保护。只能在空闲的专用实验环境使用，
+不要打断正在工作的跟踪会话。恢复设置也无法恢复已经消耗的 trace buffer。
 
 样例程序用 `-pg -g -O0 -fno-omit-frame-pointer` 动态编译 `samples/demo_io.c`，
 使用私有输入输出文件、统一的 `--clock=mono`、合适的内核 buffer 和对应架构的

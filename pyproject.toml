@@ -27,6 +27,7 @@ funcgraph = "fglib.cli:main"
 fastfaddr2line = "fastfaddr2line:main"
 fgview = "fglib.viewer:main"
 fguftrace = "fglib.uftrace_runtime:main"
+fgcapture = "fglib.capture:main"
 
 [project.urls]
 Homepage = "https://github.com/pengdonglin137/FuncGraph"

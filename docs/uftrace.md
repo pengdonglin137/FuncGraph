@@ -6,8 +6,9 @@ The optional native capture/export foundation is implemented and validated on
 x86_64 QEMU Linux **7.4.0-rc2** and Raspberry Pi 4 Linux
 **6.18.56-v8-MY_CUSTOM_KERNEL+**. FuncGraph imports **user-only, kernel-only and
 mixed** recordings without a required `vmlinux` or native Python dependency.
-Existing ftrace text and trace-cmd inputs still work. The state-preserving
-`fgcapture.sh --user` wrapper is not implemented.
+Existing ftrace text and trace-cmd inputs still work. The unified
+[`fgcapture --user` / `--mixed` wrapper](capture.md) now configures common
+options and protects/restores idle tracefs for mixed recording.
 
 For a real application and an instrumented third-party library, see the
 [pigz + zlib compression case](pigz.md).
@@ -111,8 +112,8 @@ run the installed recorder with a relocated libmcount path automatically.
 on `PATH`. An invalid override or incomplete bundle is an error, not a silent
 fallback. Upstream uftrace without the maintained patches cannot export `--fgraph`.
 Reading saved JSONL needs none of these native runtime libraries or executables.
-`fgcapture.sh` remains the kernel-only tracefs recorder; it does not accept
-uftrace user/mixed recording options.
+`fgcapture` defaults to the kernel-only text recorder; `--user` and `--mixed`
+select its simplified uftrace backend. `fgcapture.sh` also delegates these modes.
 
 Spaces in workload executable/shared-library paths, recording directories and
 user source paths are supported; quote their shell arguments. Captured mapping
@@ -160,12 +161,14 @@ There are two independent sources of scheduling observations:
   disable these kernel tracepoints.** It avoids retaining a second perf source
   in the mixed examples; removing it does not turn off kernel scheduling.
 
-For a mixed capture, use the full command in
+For routine mixed captures, prefer `fgcapture --mixed -o CAPTURE -- ./app`,
+which handles defaults, scheduling, lifecycle events and tracefs restoration.
+The expert raw interface uses the full command in
 [capture safety and current limits](#capture-safety-and-current-limits), keeping
 `-K 30 --clock=mono --kernel-full-info`. Keep its architecture-specific kernel
 filters and argument/return specifications. There is no need to add a uftrace
 `--sched` flag: `fgcapture.sh --sched` is a separate kernel-only capture command,
-not the uftrace user/mixed recorder. Kernel recording requires appropriate
+not the raw uftrace option. Kernel recording requires appropriate
 tracefs access and an idle, state-protected experimental environment.
 
 Verify actual saved events, not only an `enable=1` readback:
@@ -496,9 +499,10 @@ saved bytes were successfully exported.
 `uftrace record --kernel-full-info` enables available graph options and
 `sched_switch`, `sched_waking`, `sched_wakeup`; absent capabilities are reported
 as unavailable, not simulated. The current upstream reset code restores defaults,
-**not the prior tracefs configuration**. Until the state-preserving wrapper is
-implemented, run kernel recording only in an idle, dedicated experimental
-environment with explicit settings snapshot/restore. Do not use it against an
+**not the prior tracefs configuration**. Use [`fgcapture --mixed`](capture.md)
+for automatic snapshot/restoration, or provide an explicit equivalent guard
+around raw `fguftrace record`. Run kernel recording only in an idle, dedicated
+experimental environment. Do not use it against an
 active tracing session. Trace buffer contents cannot be restored by restoring
 settings.
 
@@ -547,8 +551,9 @@ every exported kernel record's timestamps, CPU/PID, type, native depth, full
 addresses, flags, preempt count and optional raw fields. It does **not** compare
 against `cat trace` after uftrace drained the live buffer; that would not be a
 same-run reference. Experimental snapshots verify every saved setting after
-completed captures, separately from byte-decoder verification; the production
-wrapper's failure/cancellation recovery is still pending.
+completed captures, separately from byte-decoder verification. The unified
+wrapper additionally tests failure/cancellation cleanup and restoration; this
+does not change the raw recorder's reset semantics.
 
 ### Local native package acceptance (2026-11-11)
 

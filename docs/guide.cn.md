@@ -96,6 +96,7 @@ fgcapture.sh -n __schedule -d 1                      # 不跟踪调度器内部�
 | `--sched` | 同时记录 `sched_switch`、`sched_waking`、`sched_wakeup` 事件，用于唤醒箭头和等待链 |
 | `--calibrate` | 先用相同的选项测量跟踪开销，结果写进输出文件的第一行 |
 | `--args` | 记录函数参数（见 3.3 节） |
+| `--no-args` | 禁用参数并跳过自动能力探测 |
 | `--keep` | 采集后不恢复 tracefs 的原有设置 |
 | `-- CMD ...` | 运行 CMD 并只跟踪它和它的子进程。命令启动时先暂停，把 pid 写入 `set_ftrace_pid` 后再继续运行 |
 
@@ -139,7 +140,10 @@ FuncGraph 能处理任意的选项组合，缺少的信息会在报告顶部用�
 - **6.18 及没有合入 BTF 打印优化的内核**：读取 `trace` 时格式化参数非常慢，树莓派 4 上实测约 36ms 一行；而且同时开着 `funcgraph-retaddr` 时参数根本不会输出。所以采参数时必须先用 `set_graph_function`、`set_ftrace_filter` 或 `set_ftrace_pid` 缩小范围，并且关掉 retaddr。
 - **带 BTF 打印优化的内核**（例如 7.2 的 trim_retval 补丁）：参数和返回地址可以同时输出，11.7 万行读出来约 1.1 秒。
 
-`fgcapture.sh --args` 会先在一个函数上做小规模探测，自动判断属于哪种情况，然后选择合适的选项组合。
+`fgcapture.sh` 现在默认在单函数上探测，快速且 args / retaddr 兼容时自动开启参数；
+否则保留调用点并解释原因。`--args` 显式要求采参数，旧内核仍需限定范围；
+`--no-args` 完全跳过探测。用户态 / 混合采集可用 `fgcapture --user` / `--mixed`，
+自动配置常见 uftrace 选项，详见[统一采集指南](capture.cn.md)。
 
 ### 3.4 跟踪开销
 

@@ -116,7 +116,7 @@ Linux x86_64 / aarch64 的 wheel **内含带补丁的 uftrace 可执行程序和
 `libelf1`、`libdw1`、`libtraceevent1`、`liblzma5`、`libstdc++6`）。
 `py3-none-any` wheel 与源码包仍作为不含原生程序的 Python-only 回退版本。
 
-安装后可使用 `funcgraph`、`fgreport`、`fguftrace`、`fastfaddr2line` 和 `fgcapture.sh`。
+安装后可使用 `funcgraph`、`fgreport`、`fguftrace`、`fgcapture`、`fastfaddr2line` 和 `fgcapture.sh`。
 基础包不依赖第三方 Python 库，`[all]` 额外安装 pyelftools 和 Pygments。
 推送与代码版本一致的 `vX.Y.Z` 标签，会自动测试、构建 wheel 和源码包，
 并发布到 GitHub Release（不发布到 PyPI）。构建及发布步骤见
@@ -138,16 +138,21 @@ Linux x86_64 / aarch64 的 wheel **内含带补丁的 uftrace 可执行程序和
 cc -pg -g -O0 -fno-omit-frame-pointer -o demo_mixed samples/demo_mixed.c
 printf 'FuncGraph demo\n' > demo-input.txt
 : > demo-output.txt
-fguftrace record --no-sched --srcline -T '.@callsite' -d user.data ./demo_mixed demo-input.txt demo-output.txt
+fgcapture --user -o user.data -- ./demo_mixed demo-input.txt demo-output.txt
 funcgraph --no-config --uftrace user.data --timeline --enable-fold --filter \
     --user-src samples --output user.html
 fgreport -P --uftrace user.data -- --user-src samples
 ```
 
-**混合采集**使用 `fguftrace record -K 30 --clock=mono --kernel-full-info ...`，完整参数及
-tracefs 保护步骤见 [uftrace 指南](docs/uftrace.cn.md) 或 [pigz + zlib 实战](docs/pigz.cn.md)。
-只能在有快照 / 恢复保护的空闲专用实验环境做内核采集；目前 `fgcapture.sh` 仍是仅内核态
-function_graph 采集脚本，尚未实现保护 tracefs 的 uftrace 包装。仅用户态或仅内核态输入
+**混合采集**现在只需一条命令，自动配置参数、调用点、统一时钟、调度和 exec/exit：
+
+```bash
+sudo "$(command -v fgcapture)" --mixed -o mixed.data -- ./demo_mixed demo-input.txt demo-output.txt
+```
+
+封装拒绝占用正在运行的 tracefs，会在完成、失败或中断后恢复并核对原有设置。
+默认采集 syscall 根下 8 层内核调用，不冒充无限深度全内核采集。范围调整与保护限制见
+[统一采集指南](docs/capture.cn.md)，业务案例见 [pigz + zlib 实战](docs/pigz.cn.md)。仅用户态或仅内核态输入
 无需特殊转换，混合展示会在两态之间显示分界线。
 
 混合报告需要**分别配置两套源码**；下面的内核镜像和提交必须替换为采集时运行的版本：
@@ -380,6 +385,10 @@ fgcapture.sh -d 0.5 -o /tmp/all.txt                 # 时间轴选项，全系�
 fgcapture.sh --sched --calibrate -- cat /nonexistent # 只跟踪一条命令（含子进程），带调度事件和开销标定
 fgcapture.sh --args -g vfs_read,vfs_write -d 1       # 采参数（不开 retaddr；必须指定 -g/-p，6.18 上读取很慢）
 ```
+
+现在默认自动探测，快速且与 retaddr 兼容时开启参数；`--no-args` 跳过探测，
+限定范围的 `--args` 显式采用旧内核兼容方式。用户态 / 混合模式也统一使用
+`fgcapture`，见[统一采集指南](docs/capture.cn.md)。
 
 `--calibrate` 用相同选项测量跟踪开销（vfs_read 跟踪子调用和不跟踪子调用各一次），把 `# fgcapture: overhead child=..ns self=..ns` 写入 trace 文件头。树莓派 4（6.18，开 lockdep）上约为每个被跟踪子调用 1.1 us、每次调用 0.46 us：跟踪时 41 us 的 `do_el0_svc`，去掉开销约 10 us。
 

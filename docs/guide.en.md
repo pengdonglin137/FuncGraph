@@ -74,7 +74,12 @@ export LLVM=1                               # or llvm-addr2line
 
 ## 3. Capturing a trace
 
-### 3.1 With fgcapture.sh (recommended)
+### 3.1 With fgcapture (recommended)
+
+`fgcapture` defaults to this kernel-only script. For automatic arguments,
+call sites, shared-clock user/kernel recording and guarded tracefs restoration,
+use `fgcapture --mixed -o mixed.data -- ./app`; `--user` records userspace
+without root. See the [unified capture guide](capture.md).
 
 `fgcapture.sh` runs on the target as root. It sets up tracefs for the scenario, captures, checks for lost events and restores every setting it changed.
 
@@ -97,6 +102,7 @@ fgcapture.sh -n __schedule -d 1                      # without the scheduler's i
 | `--sched` | also record `sched_switch`, `sched_waking`, `sched_wakeup` (for wakeup arrows and wait chains) |
 | `--calibrate` | measure the tracing overhead with the same options first; the result goes into the first line of the output |
 | `--args` | record function arguments (see 3.3) |
+| `--no-args` | disable arguments and skip the automatic capability probe |
 | `--keep` | do not restore the previous tracefs settings |
 | `-- CMD ...` | run CMD and trace only it and its children: it starts stopped, its pid is written to `set_ftrace_pid`, then it continues |
 
@@ -140,7 +146,10 @@ FuncGraph accepts any combination of options; missing information is explained b
 - **6.18 and other kernels without the BTF print optimizations**: formatting arguments while reading `trace` is very slow (about 36 ms per line on a Raspberry Pi 4), and with `funcgraph-retaddr` enabled no arguments are printed at all. Narrow the capture with `set_graph_function`, `set_ftrace_filter` or `set_ftrace_pid` first and disable retaddr.
 - **Kernels with the BTF print optimizations** (for example the 7.2 trim_retval patches): arguments and return addresses can be printed together; 117k lines are read in about 1.1 s.
 
-`fgcapture.sh --args` probes the kernel on a single function first and picks the right options automatically.
+`fgcapture.sh` now probes one function by default and enables arguments only
+when fast and compatible with return addresses. Otherwise it retains call
+sites and explains the fallback. `--args` explicitly requests arguments using
+the old-kernel scoped behavior; `--no-args` skips the probe.
 
 ### 3.4 Tracing overhead
 

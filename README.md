@@ -113,7 +113,7 @@ not manylinux wheels; they require compatible glibc and system libraries
 (`libelf1`, `libdw1`, `libtraceevent1`, `liblzma5`, `libstdc++6` on Ubuntu).
 The `py3-none-any` wheel and source distribution remain Python-only fallbacks.
 
-The package installs `funcgraph`, `fgreport`, `fguftrace`, `fastfaddr2line`, and `fgcapture.sh`;
+The package installs `funcgraph`, `fgreport`, `fguftrace`, `fgcapture`, `fastfaddr2line`, and `fgcapture.sh`;
 the base install works without Python dependencies, while `[all]` adds pyelftools
 and Pygments. Pushing a matching `vX.Y.Z` tag automatically tests, builds, and
 publishes the wheel and source package as a GitHub Release (not PyPI).
@@ -139,17 +139,24 @@ shared libraries too; see the [architecture notes](docs/uftrace.md#install-and-s
 cc -pg -g -O0 -fno-omit-frame-pointer -o demo_mixed samples/demo_mixed.c
 printf 'FuncGraph demo\n' > demo-input.txt
 : > demo-output.txt
-fguftrace record --no-sched --srcline -T '.@callsite' -d user.data ./demo_mixed demo-input.txt demo-output.txt
+fgcapture --user -o user.data -- ./demo_mixed demo-input.txt demo-output.txt
 funcgraph --no-config --uftrace user.data --timeline --enable-fold --filter \
     --user-src samples --output user.html
 fgreport -P --uftrace user.data -- --user-src samples
 ```
 
-For **mixed user/kernel recording**, use the guarded `fguftrace record -K 30
---clock=mono --kernel-full-info ...` procedure in the [uftrace guide](docs/uftrace.md),
-or follow the [pigz + zlib case study](docs/pigz.md). Kernel capture requires a
-dedicated idle tracefs session with snapshot/restore; `fgcapture.sh` is still the
-kernel-only function_graph recorder, not a state-preserving uftrace wrapper.
+For **mixed user/kernel recording**, the unified wrapper configures arguments,
+call sites, a shared clock, scheduling and exec/exit automatically:
+
+```bash
+sudo "$(command -v fgcapture)" --mixed -o mixed.data -- ./demo_mixed demo-input.txt demo-output.txt
+```
+
+It requires idle tracefs, snapshots/restores settings and checks the readback,
+including after failures and interrupts. Default scope is syscall roots with
+eight kernel levels, not unlimited kernel tracing. See the
+[capture guide](docs/capture.md) for controls and safety limits, or the
+[pigz + zlib case study](docs/pigz.md) for a business workload.
 Kernel-only and user-only inputs need no special conversion; mixed reports show
 a boundary between the two spaces.
 
@@ -390,6 +397,11 @@ fgcapture.sh -d 0.5 -o /tmp/all.txt                 # timeline options, whole sy
 fgcapture.sh --sched --calibrate -- cat /nonexistent # trace one command (+children), sched events, overhead estimate
 fgcapture.sh --args -g vfs_read,vfs_write -d 1       # arguments (no retaddr; requires -g/-p, slow to read on 6.18)
 ```
+
+Arguments are now auto-probed by default and enabled when fast and compatible
+with return addresses. `--no-args` skips this probe; scoped `--args` explicitly
+opts into old-kernel behavior. User/mixed modes use the same entry point:
+see [unified capture](docs/capture.md).
 
 `--calibrate` measures the tracing overhead with the same options (vfs_read with and without traced children) and writes `# fgcapture: overhead child=..ns self=..ns` into the trace header. On a Raspberry Pi 4 (6.18, lockdep) it is about 1.1 us per traced child call and 0.46 us per call: a traced `do_el0_svc` of 41 us is about 10 us without tracing.
 
