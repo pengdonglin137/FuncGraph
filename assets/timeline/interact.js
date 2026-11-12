@@ -496,8 +496,14 @@ function gotoErr(dir) {
 }
 
 // ---- search ----
-let searchQuery = '', searchError = '', searchTimer = 0;
-let searchNames = null, searchMatches = [], searchVisibleMatches = [];
+let searchQuery = '', searchError = '', searchErrorKind = '', searchTimer = 0;
+let searchPostingIndex = null, searchMatchQuery = null, searchNameHits = null;
+let searchMatches = new Uint32Array(0), searchVisibleMatches = searchMatches;
+let searchFilterBasis = null, searchWork = null, searchProgress = '', searchPaused = false;
+let searchReadyQuery = '';
+const searchDefaultTitle = 'Case-insensitive regular expression; highlights and navigates recorded function names. ' +
+    (document.getElementById('filterInput') ? 'Search is limited by the shared filter; it does not change that filter.' :
+        'Shared filtering is not enabled for this report.');
 function searchIndex(target) {
     let low = 0, high = searchVisibleMatches.length;
     while (low < high) {
@@ -508,55 +514,35 @@ function searchIndex(target) {
     return low;
 }
 function updateSearchLabel() {
-    const invalid = !searchTimer && !!searchError;
+    const busy = !!searchTimer || !!searchWork;
+    const invalid = !busy && searchErrorKind === 'regex';
     elSearch.classList.toggle('bad', invalid);
     elSearch.setAttribute('aria-invalid', String(invalid));
-    elSearch.title = invalid ? searchError : 'Case-insensitive regular expression; searches traced function names';
+    elSearch.title = !busy && searchError ? searchError : searchDefaultTitle;
+    elCount.setAttribute('aria-busy', String(busy));
+    elCount.title = busy ? searchProgress : searchError;
     const count = searchVisibleMatches.length;
-    elSearchPrev.disabled = elSearchNext.disabled = !!searchTimer || invalid || !count;
-    if (searchTimer) elCount.textContent = 'Searching…';
+    elSearchPrev.disabled = elSearchNext.disabled = busy || searchPaused || !!searchError || !count;
+    if (busy) elCount.textContent = searchProgress || 'Searching…';
+    else if (searchPaused) elCount.textContent = 'Search paused';
     else if (invalid) elCount.textContent = 'Invalid regex';
+    else if (searchError) elCount.textContent = 'Search unavailable';
     else if (!searchQuery) elCount.textContent = '';
     else {
         const position = searchIndex(sel);
         elCount.textContent = (position < count && searchVisibleMatches[position] === sel ? (position + 1) + ' / ' : '') + count + ' calls';
+        if (!count) elCount.title = textHits && searchMatches.length ?
+            'The shared filter excludes all matching calls. Adjust or clear it in Tools → Filter calls.' :
+            'No recorded function names match this expression. Try a different case-insensitive regular expression.';
     }
 }
-function rebuildSearchMatches() {
-    searchVisibleMatches = textHits ? searchMatches.filter(index => textHits[index]) : searchMatches;
-    updateSearchLabel();
+function cancelSearchWork() {
+    if (searchWork) clearTimeout(searchWork.timer);
+    searchWork = null;
+    searchProgress = '';
 }
-function applySearch(query) {
-    clearTimeout(searchTimer);
-    searchTimer = 0;
-    query = query.trim();
-    if (query === searchQuery) { updateSearchLabel(); return !searchError; }
-    searchQuery = query;
-    searchError = '';
-    searchHits = null;
-    searchMatches = [];
-    if (query) {
-        try {
-            const matcher = new RegExp(query, 'i');
-            if (!searchNames) {
-                searchNames = [];
-                const seen = new Uint8Array(S.length);
-                for (let index = 0; index < N; index++) {
-                    const nameIndex = sName[index];
-                    if (!seen[nameIndex]) { seen[nameIndex] = 1; searchNames.push(nameIndex); }
-                }
-            }
-            searchHits = new Uint8Array(S.length);
-            for (const index of searchNames) if (matcher.test(S[index])) searchHits[index] = 1;
-            for (let index = 0; index < N; index++) if (searchHits[sName[index]]) searchMatches.push(index);
-        } catch (error) { searchError = error.message; }
-    }
-    rebuildSearchMatches();
-    draw();
-    return !searchError;
-}
-function searchNext(dir) {
-    if (!applySearch(elSearch.value) || !searchVisibleMatches.length) return;
+function navigateSearch(dir) {
+    if (!searchVisibleMatches.length) return;
     const count = searchVisibleMatches.length;
     let position = dir > 0 ? 0 : count - 1;
     if (sel >= 0 && sel < N) {
@@ -567,8 +553,112 @@ function searchNext(dir) {
     }
     select(searchVisibleMatches[position], { reveal: true });
 }
+function* prepareSearchMatches(query, matcher, accepted) {
+    if (!searchPostingIndex) searchPostingIndex = yield* buildSearchIndex(sName, N);
+    if (searchMatchQuery !== query) {
+        const hits = yield* matchSearchNames(searchPostingIndex, S, matcher);
+        const matches = yield* collectSearchCalls(searchPostingIndex, sName, N, hits);
+        searchNameHits = hits;
+        searchMatches = matches;
+        searchMatchQuery = query;
+    }
+    const visible = yield* filterSearchCalls(searchMatches, accepted);
+    searchHits = searchNameHits;
+    searchFilterBasis = accepted;
+    return visible;
+}
+function startSearchWork(query, matcher, dir) {
+    const work = { steps: prepareSearchMatches(query, matcher, textHits), accepted: textHits, timer: 0, direction: dir };
+    searchWork = work;
+    function advance() {
+        if (searchWork !== work) return;
+        try {
+            const deadline = performance.now() + 6;
+            do {
+                const result = work.steps.next();
+                if (result.done) {
+                    searchVisibleMatches = result.value;
+                    searchReadyQuery = query;
+                    searchWork = null;
+                    searchProgress = '';
+                    updateSearchLabel();
+                    if (work.direction && searchVisibleMatches.length) navigateSearch(work.direction);
+                    else draw();
+                    return;
+                }
+                searchProgress = result.value;
+            } while (performance.now() < deadline);
+            updateSearchLabel();
+            work.timer = setTimeout(advance, 0);
+        } catch (error) {
+            cancelSearchWork();
+            searchError = 'Could not prepare function search: ' + error.message + '. Press Enter to retry.';
+            searchErrorKind = 'work';
+            searchHits = null;
+            searchVisibleMatches = new Uint32Array(0);
+            updateSearchLabel();
+            draw();
+        }
+    }
+    advance();
+}
+function rebuildSearchMatches() {
+    if (searchTimer || searchPaused || !searchQuery || searchErrorKind === 'regex') { updateSearchLabel(); return; }
+    applySearch(searchQuery, searchWork?.direction || 0);
+}
+function suspendSearch() {
+    searchPaused = !!elSearch.value.trim() || !!searchTimer || !!searchWork;
+    clearTimeout(searchTimer);
+    searchTimer = 0;
+    cancelSearchWork();
+    updateSearchLabel();
+}
+function resumeSearch() {
+    if (!searchPaused) return;
+    searchPaused = false;
+    applySearch(elSearch.value);
+}
+function applySearch(query, dir = 0) {
+    clearTimeout(searchTimer);
+    searchTimer = 0;
+    query = query.trim();
+    searchPaused = false;
+    if (query === searchQuery && !searchError) {
+        if (searchWork?.accepted === textHits) { if (dir) searchWork.direction = dir; updateSearchLabel(); return false; }
+        if (searchReadyQuery === query && searchFilterBasis === textHits) {
+            updateSearchLabel(); if (dir) navigateSearch(dir); return true;
+        }
+    }
+    cancelSearchWork();
+    searchQuery = query;
+    searchError = '';
+    searchErrorKind = '';
+    searchHits = null;
+    searchReadyQuery = null;
+    searchVisibleMatches = new Uint32Array(0);
+    if (!query) {
+        searchMatches = searchVisibleMatches;
+        searchNameHits = null;
+        searchMatchQuery = null;
+        searchFilterBasis = textHits;
+        searchReadyQuery = '';
+        updateSearchLabel(); draw(); return true;
+    }
+    let matcher;
+    try { matcher = new RegExp(query, 'i'); }
+    catch (error) {
+        searchError = error.message;
+        searchErrorKind = 'regex';
+        updateSearchLabel(); draw(); return false;
+    }
+    startSearchWork(query, matcher, dir);
+    return !searchWork && !searchError;
+}
+function searchNext(dir) { applySearch(elSearch.value, dir); }
 elSearch.addEventListener('input', () => {
     clearTimeout(searchTimer);
+    cancelSearchWork();
+    searchPaused = false;
     if (!elSearch.value.trim()) { applySearch(''); return; }
     searchTimer = setTimeout(() => applySearch(elSearch.value), 150);
     updateSearchLabel();

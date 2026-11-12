@@ -90,3 +90,67 @@ alter parser semantics or introduce another full-trace scan on each keystroke.
 
 重新生成报告后生效，不自动改写旧 HTML 或公开 sample。本次不改变解析语义，不增加实时
 筛选或每次按键的全 trace 扫描。
+
+## Large-trace function search / 大 trace 函数查找
+
+Function search now builds a compact posting index lazily on its first valid
+query, rather than adding another pass to Timeline startup. It only indexes
+recorded calls, not inline/ghost frames or argument/source strings. Regexes are
+still case-insensitive and tested once per distinct recorded function name.
+
+An exact single-name match reuses its ordered posting slice. Sparse unions merge
+their postings without scanning every call again; broad queries use a bounded
+full scan instead of sorting a large result. Matching and shared-filter
+intersection retain complete results in recorded-call index order. Previous/next
+navigation and wraparound keep their existing meaning; this is not a change to
+chronological sorting or to recorded data.
+
+Large preparation, matching and intersection work yields in batches, targeting
+roughly 6 ms between yields. The counter reports the preparation stage with
+`aria-busy=true`; navigation buttons stay disabled until the complete result is
+ready. Enter/Shift+Enter can request a jump while preparing. A newer query or
+scope supersedes old work; Escape clears it without a delayed selection. Leaving
+Timeline cancels pending work and any queued jump; returning prepares the latest
+input without moving the selection automatically. A preparation failure is
+distinct from an invalid regex and can be retried with Enter.
+
+The complete index is reused. Its typed columns use about `4 × calls + 8 ×
+distinct names` bytes, plus temporary construction maps and object overhead;
+result/filter arrays consume additional memory. Partial construction is discarded
+on cancellation; completed index storage lasts with the Timeline model. This is
+not out-of-core search or bounded total memory. Batch scheduling cannot interrupt
+one expensive regex test, allocation, detail render or canvas draw, so it is not
+a hard main-thread latency guarantee. Existing Text/shared-filter preparation
+costs are unchanged.
+
+首次有效查找才懒加载函数到调用的索引，不增加 Timeline 启动时的额外扫描。只索引真实
+采集调用，不把内联、补全帧、参数或源码字符串混进结果；仍按不同函数名各执行一次
+大小写不敏感的正则匹配。
+
+单函数命中直接复用索引切片；少量函数的联合匹配合并已有有序索引，避免再次遍历全部
+调用。广泛匹配改用分批全量扫描，不对大结果排序。筛选交集保留全部匹配，不截断；前后
+跳转及回绕仍按原有调用索引顺序，不改成按时间重新排序。
+
+较大的准备、匹配和筛选交集分批让出主线程，目标约 6 ms 一个工作片；计数区显示阶段，
+完整结果准备好后再允许跳转。准备期间按 Enter/Shift+Enter 可请求完成后的跳转；新条件、
+新范围或 Escape 会取代 / 取消旧工作，不会延迟选中旧结果。切走 Timeline 会取消工作和
+排队跳转；返回时按最新输入恢复查找，但不自动移动选择。准备失败不会误报为正则错误，
+可按 Enter 重试。
+
+完成的索引会复用，类型化列约占 `4 × 调用数 + 8 × 不同函数名数` 字节，另有构建期 Map、
+对象和结果 / 筛选数组开销；取消会丢弃未完成的构建。不是磁盘外存搜索，也不保证总内存
+固定。一次高开销正则、内存分配、详情构建或画布绘制仍可能阻塞，因此 6 ms 不是硬性
+延迟上限。本轮不改变 Text 或共享筛选本身的准备成本。
+
+For repeatable model-only measurements, run:
+
+```bash
+node tests/benchmark_search.js 1000000 1000 15
+```
+
+The benchmark compares the former full-call scan with indexed queries, checks
+every result for equality and reports cold index cost separately from warm
+query medians. It does not measure browser interaction latency or total memory.
+
+上述基准逐项校验结果，分别报告首次索引成本和热查询中位数；不代表浏览器交互延迟或
+整个进程的内存占用。
