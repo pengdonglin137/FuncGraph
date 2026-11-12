@@ -487,6 +487,7 @@ yield 'Preparing scheduling context…';
 // ---- CPU tracks: which task ran on each CPU, plus irq/softirq strips ----
 const CPU_SEGS = new Map();   // cpu -> {s: Float64Array, e: Float64Array, t: Int32Array}
 const CPU_IRQ = new Map();    // cpu -> [[s, e, ctx], ...]
+const CPU_HAS_SWITCHES = !!D.caps.sched_events;
 (function buildCpu() {
     if (!TIMED) return;
     const tmp = new Map();
@@ -535,7 +536,9 @@ function trackLabel(t) {
     return t.comm + '  ' + t.pid;
 }
 function trackSub(t) {
-    if (t.kind === 9) return CPU_LIST.length + ' CPU(s) · task on CPU, irq/softirq strip · click a segment to open its task';
+    if (t.kind === 9) return CPU_LIST.length + ' CPU(s) · ' +
+        (CPU_HAS_SWITCHES ? 'recorded scheduling, irq/softirq strip' : 'observed calls · no sched_switch') +
+        ' · click a segment to open its task';
     const parts = [];
     if (t.cpus.size) parts.push('CPU ' + Array.from(t.cpus).sort((a, b) => a - b).join(','));
     if (t.lo >= 0) parts.push((t.hi - t.lo) + ' calls');

@@ -1238,7 +1238,7 @@ function refreshPanel() {
         if (MIXED && !D.uftrace.aligned) note('Clock alignment is not verified. Address spaces are shown separately; do not compare times across them.');
         if (D.stats.detached_kernel_roots) note(D.stats.detached_kernel_roots + ' overlapping kernel roots could not be linked; shown on an unjoined lane.', true);
         if (HAS_KERNEL && !D.btf && c.retval) note('Kernel returns are raw bits; errno inference requires kernel BTF.', true);
-        if (HAS_KERNEL && !c.sched_events) note('No usable kernel sched_switch records; off-CPU periods are not inferred from user events.', true);
+        if (HAS_KERNEL && !c.sched_events) note('No usable kernel sched_switch records. CPU rows show observed kernel-call coverage, not task start/exit or continuous CPU time. User calls without a recorded CPU are not extended onto a CPU; gaps and off-CPU periods remain unknown.', true);
     } else {
     if (N && !c.latency) note('No latency columns: context is inferred from IRQ/softirq entry function names. Enable <code>options/latency-format</code> for exact irqs-off / need-resched / hardirq / softirq / preempt flags.');
     if (!c.proc && !c.switch_markers) note('No task info: tracks are per CPU. Enable <code>options/funcgraph-proc</code>.');
@@ -1265,6 +1265,7 @@ elHelp.innerHTML = `
 <button class="tl-btn tl-help-close" type="button" aria-label="Close help">×</button>
 <h4>Timeline Help</h4>
 <h4>Navigate</h4><ul>
+<li>CPU rows show recorded coverage, not the beginning of <code>main</code>. Without <code>sched_switch</code>, dashed segments span CPU-tagged observations only; their duration is not continuous CPU running time. Missing CPU placement remains unknown.</li>
 <li><kbd>W</kbd>/<kbd>S</kbd> or <kbd>Ctrl</kbd>+wheel: zoom at cursor</li>
 <li><kbd>A</kbd>/<kbd>D</kbd>, drag, or <kbd>Shift</kbd>+wheel: pan</li>
 <li>Wheel: scroll tracks · click track header: collapse</li>

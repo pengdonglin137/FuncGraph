@@ -217,8 +217,11 @@ function tipOff(r) {
 }
 function tipCpu(c) {
     const t = TRACKS[c.t];
-    let h = '<div class="t-name">' + esc(trackLabel(t)) + '</div><div><span class="t-dur">' + fmtDur(c.e - c.s) + '</span> on CPU ' + c.cpu + '</div><div class="t-sep"></div>';
-    h += '<div class="t-row"><span class="t-k">start</span><span class="t-v">' + fmtDur(c.s) + (MODE === 'abs' ? ' (' + fmtAbs(c.s) + ')' : '') + '</span></div>';
+    let h = '<div class="t-name">' + esc(trackLabel(t)) + '</div><div><span class="t-dur">' + fmtDur(c.e - c.s) +
+        '</span>' + (CPU_HAS_SWITCHES ? ' recorded on CPU ' : ' observation span on CPU ') + c.cpu + '</div><div class="t-sep"></div>';
+    h += '<div class="t-row"><span class="t-k">' + (CPU_HAS_SWITCHES ? 'start' : 'first observed') + '</span><span class="t-v">' + fmtDur(c.s) + (MODE === 'abs' ? ' (' + fmtAbs(c.s) + ')' : '') + '</span></div>';
+    h += '<div class="t-row"><span class="t-k">' + (CPU_HAS_SWITCHES ? 'end' : 'last observed') + '</span><span class="t-v">' + fmtDur(c.e) + (MODE === 'abs' ? ' (' + fmtAbs(c.e) + ')' : '') + '</span></div>';
+    if (!CPU_HAS_SWITCHES) h += '<div class="t-warn">No sched_switch records. This spans CPU-tagged observations, not continuous running time. Its edges are not task start/exit or main entry/return; CPU placement outside these observations is unknown.</div>';
     const irq = CPU_IRQ.get(c.cpu);
     if (irq) {
         const sum = [0, 0, 0, 0];

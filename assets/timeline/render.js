@@ -460,9 +460,16 @@ function drawCpuTrack(top, vs, ve, k) {
             ctx.globalAlpha = textHits && !TRACKS[tid].hits ? 0.25 : 1;
             ctx.fillStyle = taskColor(tid);
             ctx.fillRect(cx0, ry, w > 3 ? w - 1 : w, ROW - 1);
+            if (!CPU_HAS_SWITCHES && w > 3) {
+                ctx.strokeStyle = P.text;
+                ctx.lineWidth = 1;
+                ctx.setLineDash([3, 3]);
+                ctx.strokeRect(cx0 + 0.5, ry + 0.5, w - 1, ROW - 2);
+                ctx.setLineDash([]);
+            }
             const tx = Math.max(cx0, labW) + 4, tw = Math.min(x1, W) - tx - 4;
             if (tw > 30) {
-                let txt = trackLabel(TRACKS[tid]);
+                let txt = trackLabel(TRACKS[tid]) + (CPU_HAS_SWITCHES ? '' : ' · observed');
                 const maxc = Math.floor(tw / charW);
                 if (txt.length > maxc) txt = txt.slice(0, Math.max(1, maxc - 1)) + '…';
                 ctx.fillStyle = P.text;
