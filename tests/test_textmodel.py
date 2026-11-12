@@ -394,13 +394,158 @@ class TextModelTest(unittest.TestCase):
             const order = Array.from({length:131072}, (unused, index) => index + 1);
             const navigation = fgTextModel.navigation(order, order);
             let probes = 0;
-            navigation.expandable = new Proxy(navigation.expandable, {get(target, property) {
+            navigation.order = new Proxy(navigation.order, {get(target, property) {
                 if (/^\\d+$/.test(String(property))) probes++;
                 return Reflect.get(target, property);
             }});
+            Object.defineProperty(navigation, 'expandable', {get() { throw new Error('Full candidate snapshot'); }});
+            Object.defineProperty(navigation, 'visible', {get() { throw new Error('Full visibility snapshot'); }});
+            navigation.setVisible(120001, false);
+            navigation.refresh();
             assert.equal(navigation.next(120000, 1), 120001);
             assert.equal(navigation.next(120000, -1), 119999);
+            assert.equal(navigation.next(119999, 1), 120001);
+            assert.equal(navigation.boundary(false), 0);
+            assert.equal(navigation.boundary(true), order.length - 1);
+            assert.equal(navigation.expandableCount, order.length - 1);
+            assert.equal(navigation.visibleCount, order.length - 1);
             assert.ok(probes < 50, String(probes));
+        ''')
+
+    def test_navigation_local_visibility_updates_keep_lazy_snapshots_and_counts_consistent(self):
+        self.run_model('''
+            const navigation = fgTextModel.navigation([8,2,6,4], [2,4], [6]);
+            assert.equal(navigation.visibleCount, 3);
+            assert.equal(navigation.expandableCount, 2);
+            const initial = navigation.expandable;
+            assert.deepEqual(initial, [1,3]);
+            navigation.setVisible(6, false);
+            assert.equal(navigation.expandable, initial);
+            navigation.setVisible(2, false);
+            assert.equal(navigation.visibleCount, 2);
+            assert.equal(navigation.expandableCount, 1);
+            assert.equal(navigation.next(0, 1), 3);
+            assert.deepEqual(navigation.expandable, [3]);
+            assert.deepEqual(initial, [1,3]);
+            assert.deepEqual(navigation.visible, [0,3]);
+            navigation.setVisible(6, true);
+            assert.equal(navigation.visibleCount, 3);
+            assert.equal(navigation.expandableCount, 1);
+            assert.deepEqual(navigation.visible, [0,2,3]);
+            assert.equal(navigation.boundary(true), 3);
+            navigation.setVisible(4, false);
+            assert.equal(navigation.expandableCount, 0);
+            assert.equal(navigation.next(0, 1), -1);
+            assert.equal(navigation.boundary(false), 0);
+            assert.equal(navigation.boundary(true), 2);
+            navigation.setVisible(8, false);
+            navigation.setVisible(6, false);
+            assert.equal(navigation.visibleCount, 0);
+            assert.equal(navigation.boundary(false), -1);
+            assert.equal(navigation.boundary(true), -1);
+            assert.deepEqual(navigation.visible, []);
+        ''')
+
+    def test_navigation_incremental_updates_match_complete_reference_after_reordering(self):
+        self.run_model('''
+            let seed = 1234567;
+            const random = limit => { seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0; return seed % limit; };
+            for (const length of [0,1,2,3,5,7,16,31,33,127]) {
+                let order = Array.from({length}, (unused, index) => index * 3 + 2);
+                const sources = new Set(order.filter((unused, index) => index % 3 !== 0));
+                const hidden = new Set(order.filter((unused, index) => index % 5 === 0));
+                const navigation = fgTextModel.navigation(order, [...sources], [...hidden]);
+                for (let iteration = 0; iteration < 200; iteration++) {
+                    const changes = iteration % 11 === 0 ? length : Math.min(length, 3);
+                    for (let change = 0; change < changes; change++) {
+                        const line = order[random(length)], show = random(2) === 1;
+                        if (show) hidden.delete(line); else hidden.add(line);
+                        navigation.setVisible(line, show);
+                    }
+                    if (iteration % 17 === 0) {
+                        order = order.slice();
+                        for (let index = length - 1; index > 0; index--) {
+                            const partner = random(index + 1);
+                            [order[index], order[partner]] = [order[partner], order[index]];
+                        }
+                        navigation.reorder(order);
+                    }
+                    if (iteration % 3 === 0) navigation.refresh();
+                    const visible = order.flatMap((line, index) => hidden.has(line) ? [] : [index]);
+                    const expandable = visible.filter(index => sources.has(order[index]));
+                    const boundaries = expandable.length ? expandable : visible;
+                    assert.equal(navigation.visibleCount, visible.length);
+                    assert.equal(navigation.expandableCount, expandable.length);
+                    assert.deepEqual(navigation.visible, visible);
+                    assert.deepEqual(navigation.expandable, expandable);
+                    assert.equal(navigation.boundary(false), boundaries[0] ?? -1);
+                    assert.equal(navigation.boundary(true), boundaries.at(-1) ?? -1);
+                    for (const current of [-1,0,random(length + 1),length + 1]) {
+                        const after = current < 0 ? expandable[0] : expandable.find(index => index > current) ?? expandable[0];
+                        const before = current < 0 ? expandable.at(-1) : expandable.findLast(index => index < current) ?? expandable.at(-1);
+                        assert.equal(navigation.next(current, 1), after ?? -1);
+                        assert.equal(navigation.next(current, -1), before ?? -1);
+                    }
+                }
+            }
+        ''')
+
+    def test_navigation_bulk_visibility_rebuilds_once_without_per_row_tree_updates(self):
+        self.run_model('''
+            const nativeArray = Uint32Array;
+            let writes = 0;
+            globalThis.Uint32Array = class extends nativeArray {
+                constructor(length) {
+                    super(length);
+                    return new Proxy(this, {
+                        get(target, property) { return Reflect.get(target, property, target); },
+                        set(target, property, value) {
+                            if (/^\\d+$/.test(String(property))) writes++;
+                            return Reflect.set(target, property, value, target);
+                        },
+                    });
+                }
+            };
+            const length = 131071;
+            const order = Array.from({length}, (unused, index) => index + 1);
+            const navigation = fgTextModel.navigation(order, order.filter(line => line % 2 === 0));
+            let visits = 0;
+            navigation.order = new Proxy(navigation.order, {get(target, property) {
+                if (/^\\d+$/.test(String(property))) visits++;
+                return Reflect.get(target, property);
+            }});
+            for (const property of ['visible', 'expandable']) {
+                Object.defineProperty(navigation, property, {get() { throw new Error('Full candidate snapshot'); }});
+            }
+            for (let line = 1; line <= 32768; line++) navigation.setVisible(line, false);
+            writes = 0;
+            for (let line = 32769; line <= length; line++) navigation.setVisible(line, false);
+            assert.equal(writes, 0);
+            assert.equal(visits, 0);
+            assert.equal(navigation.visibleCount, 0);
+            assert.equal(navigation.expandableCount, 0);
+            navigation.refresh();
+            assert.equal(visits, length);
+            assert.ok(writes < 4 * length, String(writes));
+            assert.equal(navigation.next(-1, 1), -1);
+            assert.equal(navigation.boundary(false), -1);
+            assert.equal(visits, length);
+            visits = 0;
+            for (const line of order) navigation.setVisible(line, line % 5 !== 0);
+            assert.equal(navigation.visibleCount, order.filter(line => line % 5 !== 0).length);
+            assert.equal(navigation.expandableCount, order.filter(line => line % 2 === 0 && line % 5 !== 0).length);
+            assert.equal(visits, 0);
+            assert.equal(navigation.next(-1, 1), 1);
+            assert.equal(visits, length);
+            assert.equal(navigation.boundary(false), 1);
+            assert.equal(navigation.next(1, 1), 3);
+            navigation.refresh();
+            assert.equal(visits, length);
+            visits = 0;
+            navigation.setVisible(2, false);
+            assert.equal(navigation.next(-1, 1), 3);
+            navigation.refresh();
+            assert.equal(visits, 0);
         ''')
 
     def test_async_indexed_filter_preserves_result_shape_and_cancellation(self):

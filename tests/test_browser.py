@@ -147,7 +147,7 @@ class BrowserSmokeTest(unittest.TestCase):
                     document.activeElement.blur();
                     window.scrollTo(0, 400);
                     const before = [scrollX, scrollY];
-                    const target = expandableLineIndices[expandableLineIndices.length - 2];
+                    const target = fgTextNavigation.expandable[fgTextNavigation.expandableCount - 2];
                     setKeyboardSelectedLine(target, false);
                     return {before, after:[scrollX, scrollY],
                         focused:document.activeElement === document.getElementById('L' + fgTextNavigation.order[target])};
@@ -231,7 +231,7 @@ class BrowserSmokeTest(unittest.TestCase):
                 const rows = Array.from(document.querySelectorAll('#content .line-container'));
                 snapshots.push({order:rows.map(row => +row.dataset.lineNumber), model:fgTextNavigation.order.slice(),
                     expected:rows.filter(row => row.matches('.expandable') && row.style.display !== 'none')
-                        .map(row => +row.dataset.lineNumber), actual:expandableLineIndices.map(index => fgTextNavigation.order[index])});
+                        .map(row => +row.dataset.lineNumber), actual:fgTextNavigation.expandable.map(index => fgTextNavigation.order[index])});
             };
             check();
             fgSetTextOrder('task'); check();
@@ -243,7 +243,7 @@ class BrowserSmokeTest(unittest.TestCase):
             input.value = 'cpu:999999'; applyFilter(); check();
             const selected = keyboardSelectedLine;
             navigateToExpandableLine(1); navigateToTextBoundary(false); navigateToTextBoundary(true);
-            return {snapshots, empty:expandableLineIndices.length === 0,
+            return {snapshots, empty:fgTextNavigation.expandableCount === 0,
                 boundary:fgTextNavigation.boundary(false), unchanged:keyboardSelectedLine === selected};
         }''')
         for snapshot in facts['snapshots']:
@@ -256,7 +256,7 @@ class BrowserSmokeTest(unittest.TestCase):
     def test_text_navigation_scrolls_explicitly_after_focusing_without_native_scroll(self):
         facts = self.ev('''() => {
             window.scrollTo(0, 0);
-            const target = expandableLineIndices[expandableLineIndices.length - 2];
+            const target = fgTextNavigation.expandable[fgTextNavigation.expandableCount - 2];
             const row = document.getElementById('L' + fgTextNavigation.order[target]);
             const original = row.scrollIntoView;
             const calls = [];
@@ -286,7 +286,7 @@ class BrowserSmokeTest(unittest.TestCase):
                 facts = self.ev('''theme => {
                     document.documentElement.setAttribute('data-theme', theme);
                     window.scrollTo(0, 0);
-                    const target = expandableLineIndices[Math.floor(expandableLineIndices.length / 2)];
+                    const target = fgTextNavigation.expandable[Math.floor(fgTextNavigation.expandableCount / 2)];
                     const row = document.getElementById('L' + fgTextNavigation.order[target]);
                     const height = row.getBoundingClientRect().height;
                     const toolbar = document.querySelector('.controls');
@@ -1811,6 +1811,44 @@ class BrowserSmokeTest(unittest.TestCase):
         self.ev('id => toggleFold(id)', parent['fold'])
         self.assertTrue(self.page.locator('#' + grandchild['line'] + '_content').is_visible())
 
+    def test_local_folding_and_keyboard_navigation_never_materialize_full_candidate_snapshots(self):
+        facts = self.ev('''() => {
+            const folding = fgGetTextFolding();
+            const target = [...folding.blocks.values()].find(block => block.entry && block.calls &&
+                [...folding.members(block.id)].length < 32);
+            if (!target) throw new Error('No bounded local subtree');
+            const id = target.id;
+            const navigation = fgTextNavigation, order = navigation.order;
+            const descriptors = Object.fromEntries(['visible','expandable'].map(name =>
+                [name, Object.getOwnPropertyDescriptor(navigation, name)]));
+            let visits = 0;
+            navigation.order = new Proxy(order, {get(target, property) {
+                if (/^\\d+$/.test(String(property))) visits++;
+                return Reflect.get(target, property);
+            }});
+            for (const name of ['visible','expandable']) Object.defineProperty(navigation, name,
+                {configurable:true, get() { throw new Error('Full navigation snapshot: ' + name); }});
+            try {
+                _setFolded(id, true);
+                navigateToExpandableLine(1);
+                navigateToExpandableLine(-1);
+                navigateToTextBoundary(false);
+                navigateToTextBoundary(true);
+                _setFolded(id, false);
+            } finally {
+                navigation.order = order;
+                Object.defineProperties(navigation, descriptors);
+            }
+            const rows = [...document.querySelectorAll('#content .line-container')];
+            return {visits, total:rows.length, visible:navigation.visibleCount, expandable:navigation.expandableCount,
+                expectedVisible:rows.filter(row => row.style.display !== 'none').length,
+                expectedExpandable:rows.filter(row => row.style.display !== 'none' && row.matches('.expandable')).length};
+        }''')
+        self.assertLess(facts['visits'], 32)
+        self.assertGreater(facts['total'], facts['visits'])
+        self.assertEqual(facts['visible'], facts['expectedVisible'])
+        self.assertEqual(facts['expandable'], facts['expectedExpandable'])
+
     def test_bulk_folding_projects_once_without_dom_membership_or_summary_scans(self):
         parent, child, grandchild, outside = self.nested_fold_rows()
         facts = self.ev('''id => {
@@ -1838,7 +1876,7 @@ class BrowserSmokeTest(unittest.TestCase):
             }
             return {projections, rows, after:document.querySelectorAll('#content .line-container').length,
                 same:folding === fgGetTextFolding(),
-                navigable:expandableLineIndices.every(index =>
+                navigable:fgTextNavigation.expandable.every(index =>
                     document.getElementById('L' + fgTextNavigation.order[index]).style.display !== 'none')};
         }''', parent['fold'])
         self.assertEqual(facts['projections'], 3)

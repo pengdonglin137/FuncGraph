@@ -374,7 +374,6 @@
             return Math.abs(top) > window.innerHeight * 2 ? 'instant' : 'smooth';
         }
         let textGuideRevision = 0;
-        let expandableLineIndices = [];
         let keyboardHintTimer = null;
         // 记录当前滚动位置
         let scrollPositionBeforeClick = { x: 0, y: 0 };
@@ -653,12 +652,8 @@
             updateExpandableLines();
             
             // 如果有可展开行，设置默认选中第一个可展开行
-            if (expandableLineIndices.length > 0) {
-                setKeyboardSelectedLine(expandableLineIndices[0], false);
-            } else if (fgTextNavigation.visible.length > 0) {
-                // 如果没有可展开行，选中第一行
-                setKeyboardSelectedLine(fgTextNavigation.boundary(false), false);
-            }
+            const first = fgTextNavigation.boundary(false);
+            if (first >= 0) setKeyboardSelectedLine(first, false);
             
             // 初始显示键盘提示，但只在第一次加载页面时
             // shortcuts are shown on demand (header "?" button) instead of popping over the trace
@@ -1514,7 +1509,6 @@
                 fgTextNavigation = result.value;
             }
             fgTextNavigation.refresh();
-            expandableLineIndices = fgTextNavigation.expandable;
             if (keyboardSelectedLine) keyboardSelectedIndex = fgTextNavigation.indexOf(+keyboardSelectedLine.getAttribute('data-line-number'));
             document.getElementById('content')?.dispatchEvent(new Event('fg-guides-change'));
         }
@@ -2477,15 +2471,11 @@
             if (keyLower === 'j' || event.key === 'ArrowDown') {
                 event.preventDefault();
                 handled = true;
-                if (expandableLineIndices.length > 0) {
-                    navigateToExpandableLine(1); // 向下导航
-                }
+                navigateToExpandableLine(1);
             } else if (keyLower === 'k' || event.key === 'ArrowUp') {
                 event.preventDefault();
                 handled = true;
-                if (expandableLineIndices.length > 0) {
-                    navigateToExpandableLine(-1); // 向上导航
-                }
+                navigateToExpandableLine(-1);
             }
             
             // 处理水平滚动（h/l 键）

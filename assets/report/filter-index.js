@@ -174,16 +174,81 @@
             throw new Error('Invalid Text navigation records');
         }
         let positions = new Map();
-        let dirty = true;
+        let visibleTree = new Uint32Array(1), expandableTree = new Uint32Array(1);
+        let visibleCount = 0, expandableCount = 0;
+        let visibleSnapshot = null, expandableSnapshot = null;
+        let updates = 0, rebuildPending = false;
+        const rebuildThreshold = Math.max(1, Math.floor(order.length / Math.max(1, Math.ceil(Math.log2(order.length + 1)))));
+        function rebuildTrees() {
+            const length = result.order.length;
+            visibleTree = new Uint32Array(length + 1);
+            expandableTree = new Uint32Array(length + 1);
+            visibleCount = expandableCount = 0;
+            result.order.forEach((line, index) => {
+                if (concealed.has(line)) return;
+                visibleTree[index + 1] = 1;
+                visibleCount++;
+                if (sources.has(line)) { expandableTree[index + 1] = 1; expandableCount++; }
+            });
+            for (let index = 1; index <= length; index++) {
+                const parent = index + (index & -index);
+                if (parent <= length) {
+                    visibleTree[parent] += visibleTree[index];
+                    expandableTree[parent] += expandableTree[index];
+                }
+            }
+            updates = 0;
+            rebuildPending = false;
+        }
+        function countBefore(tree, end) {
+            let count = 0;
+            for (let index = Math.min(tree.length - 1, Math.max(0, Math.ceil(end))); index > 0; index -= index & -index) {
+                count += tree[index];
+            }
+            return count;
+        }
+        function positionAt(tree, rank) {
+            let position = 0;
+            for (let stride = 2 ** Math.floor(Math.log2(tree.length - 1)); stride >= 1; stride /= 2) {
+                const next = position + stride;
+                if (next < tree.length && tree[next] <= rank) {
+                    position = next;
+                    rank -= tree[next];
+                }
+            }
+            return position;
+        }
+        function snapshot(expandableOnly) {
+            const indices = [];
+            result.order.forEach((line, index) => {
+                if (!concealed.has(line) && (!expandableOnly || sources.has(line))) indices.push(index);
+            });
+            return indices;
+        }
         const result = {
-            order: [], expandable: [], visible: [],
+            order: [],
+            get visibleCount() { return visibleCount; },
+            get expandableCount() { return expandableCount; },
+            get visible() { return visibleSnapshot ??= snapshot(false); },
+            get expandable() { return expandableSnapshot ??= snapshot(true); },
             indexOf(line) { return positions.get(line) ?? -1; },
             setVisible(line, visible) {
                 if (!original.has(line)) throw new Error('Invalid Text navigation line');
                 if (concealed.has(line) === !visible) return;
                 if (visible) concealed.delete(line);
                 else concealed.add(line);
-                dirty = true;
+                const change = visible ? 1 : -1, expandable = sources.has(line);
+                visibleCount += change;
+                visibleSnapshot = null;
+                if (expandable) { expandableCount += change; expandableSnapshot = null; }
+                if (rebuildPending || ++updates >= rebuildThreshold) {
+                    rebuildPending = true;
+                    return;
+                }
+                for (let index = positions.get(line) + 1; index < visibleTree.length; index += index & -index) {
+                    visibleTree[index] += change;
+                    if (expandable) expandableTree[index] += change;
+                }
             },
             reorder(next) {
                 const updated = new Map(next.map((line, index) => [line, index]));
@@ -191,38 +256,25 @@
                     next.some(line => !original.has(line))) throw new Error('Invalid Text navigation order');
                 result.order = next.slice();
                 positions = updated;
-                dirty = true;
+                rebuildTrees();
+                visibleSnapshot = expandableSnapshot = null;
             },
             refresh() {
-                if (!dirty) return;
-                const visible = [], candidates = [];
-                result.order.forEach((line, index) => {
-                    if (concealed.has(line)) return;
-                    visible.push(index);
-                    if (sources.has(line)) candidates.push(index);
-                });
-                result.visible = visible;
-                result.expandable = candidates;
-                dirty = false;
+                if (rebuildPending) rebuildTrees();
+                updates = 0;
+                return result;
             },
             next(current, direction) {
+                if (!expandableCount) return -1;
                 result.refresh();
-                const candidates = result.expandable;
-                if (!candidates.length) return -1;
-                if (current < 0) return candidates[direction > 0 ? 0 : candidates.length - 1];
-                let lower = 0, upper = candidates.length;
-                while (lower < upper) {
-                    const middle = Math.floor((lower + upper) / 2);
-                    if (candidates[middle] < current || direction > 0 && candidates[middle] === current) lower = middle + 1;
-                    else upper = middle;
-                }
-                return direction > 0 ? candidates[lower % candidates.length] :
-                    candidates[(lower - 1 + candidates.length) % candidates.length];
+                if (current < 0) return positionAt(expandableTree, direction > 0 ? 0 : expandableCount - 1);
+                const rank = direction > 0 ? countBefore(expandableTree, Math.floor(current) + 1) : countBefore(expandableTree, current) - 1;
+                return positionAt(expandableTree, (rank + expandableCount) % expandableCount);
             },
             boundary(last) {
-                result.refresh();
-                const candidates = result.expandable.length ? result.expandable : result.visible;
-                return candidates.length ? candidates[last ? candidates.length - 1 : 0] : -1;
+                const count = expandableCount || visibleCount;
+                if (count) result.refresh();
+                return count ? positionAt(expandableCount ? expandableTree : visibleTree, last ? count - 1 : 0) : -1;
             },
         };
         result.reorder(order);
