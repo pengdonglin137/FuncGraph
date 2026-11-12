@@ -12,7 +12,7 @@ FuncGraph 支持可视化仅用户态、仅内核态和混合 uftrace 记录。�
 
 窗口模式选择 **Order: by task** 后，即使原分组标题已淘汰，当前任务仍固定在工具栏下方；提示跟随视口而非选中行，横向滚动时保持可读，沿用现有主题配色。标题中的行数表示完整任务组，不是当前筛选命中数。
 
-窗口重建复用预备的原始记录索引，并在每次操作内缓存祖先折叠判断，减少逐行查找与重复遍历。任务/耗时排列的 ordinal 数组最多增加每行 8 字节；全量模型处理仍可能阻塞，不改变默认开启策略。实现、稀疏/密集折叠实测和限制见[Text 重建热点优化](docs/performance-text-geometry.md)。
+窗口重建复用预备的原始记录索引；无筛选时，折叠状态复用现有范围索引，使用临时的每行 1 字节掩码，避免逐行重查祖先链；有筛选时保留逐匹配记录的判断。任务/耗时 ordinal 数组仍最多另增每行 8 字节；全量处理仍可能阻塞，不改变默认开启策略。稀疏/密集折叠实测、内存成本和限制见[折叠范围优化](docs/performance-text-fold-visibility.md)及[前一阶段](docs/performance-text-geometry.md)。
 
 [![ci](https://github.com/pengdonglin137/FuncGraph/actions/workflows/ci.yml/badge.svg)](https://github.com/pengdonglin137/FuncGraph/actions/workflows/ci.yml)
 

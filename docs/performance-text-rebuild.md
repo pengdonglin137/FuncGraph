@@ -8,6 +8,7 @@ runtime; see [windowed usage and limitations](performance-text-window.md).
 后续优化复用 task/duration ordinal，合并高度构建，并按次缓存折叠可见性。
 新的无折叠、稀疏/密集折叠基准及额外内存成本见[重建热点优化](performance-text-geometry.md)；
 下文保留原阶段的基线与测量结果，不将不同阶段的数字混比。
+无筛选折叠的进一步范围复用见[折叠范围优化](performance-text-fold-visibility.md)。
 
 ## 实现与准确性
 

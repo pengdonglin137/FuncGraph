@@ -318,7 +318,9 @@ function fgCreateTextWindow(model, navigation, root) {
         const previous = preferredNumber ?? anchor();
         controller?.abort(); generation++;
         const folding = fgTextModel.folding(model);
-        const visibleRecord = folding.visibility(foldedBlocks, window.fgFilterState.lines);
+        const matches = window.fgFilterState.lines;
+        const hidden = matches === null ? folding.hiddenMask(foldedBlocks) : null;
+        const visibleRecord = matches === null ? null : folding.visibility(foldedBlocks, matches);
         plan = fgTextModel.order(model, fgTextOrder);
         let order = plan.order, ordinals = plan.ordinals;
         if (fgTextSort) {
@@ -353,7 +355,7 @@ function fgCreateTextWindow(model, navigation, root) {
                 else pendingBoundaries.push(boundary);
             }
             const record = model.records[ordinal];
-            const visible = visibleRecord(record) &&
+            const visible = (visibleRecord ? visibleRecord(record) : hidden === null || !hidden[ordinal]) &&
                 (fgTextSort || fgTextOrder !== 'task' || !plan.hidden.has(number));
             navigation.setVisible(number, !!visible);
             if (!visible) continue;

@@ -17,10 +17,12 @@ In windowed **Order: by task**, the current task stays pinned below the toolbar 
 Windowed Text also reuses unchanged complete navigation/duration orders and
 prevents scroll feedback from interrupting rebuilds. See the [72k/372k-row
 interaction measurements and remaining bottlenecks](docs/performance-text-rebuild.md).
-Rebuilds also reuse prepared row ordinals and cache ancestor visibility for each
-operation, avoiding repeated line lookups and fold checks. Task/duration ordinal
-arrays add up to eight bytes per record; full-model work can still block. See
-[folded/unfolded rebuild measurements](docs/performance-text-geometry.md).
+Rebuilds also reuse prepared row ordinals. Without a filter, folded rows use the
+existing scope ranges and a temporary one-byte-per-record mask instead of
+rechecking every ancestor chain; filtered rows retain the selective predicate.
+Task/duration ordinal arrays still add up to eight bytes per record, and
+full-model work can still block. See [fold-range measurements and limits](docs/performance-text-fold-visibility.md)
+and the [earlier ordinal comparison](docs/performance-text-geometry.md).
 
 ## What is FuncGraph?
 

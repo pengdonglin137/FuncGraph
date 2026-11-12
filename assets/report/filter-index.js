@@ -171,6 +171,28 @@
                 return !(record.getAttribute('data-fold-type') !== 'entry' && folds[own] === true) &&
                     !ancestors(record).some(ancestor => folds[ancestor] === true);
             },
+            hiddenMask(folds) {
+                let hidden = null;
+                for (const id of Object.keys(folds)) if (folds[id] === true) {
+                    for (const key of id === 'null' ? [id, null] : [id]) {
+                        const position = memberRanges.get(key);
+                        if (position === undefined) continue;
+                        if (hidden === null) hidden = new Uint8Array(model.records.length);
+                        const end = position + 1 + rangeIndex[position];
+                        for (let offset = position + 1; offset < end; offset += 2) {
+                            hidden.fill(1, rangeIndex[offset], rangeIndex[offset + 1]);
+                        }
+                    }
+                }
+                if (hidden === null) return null;
+                for (let index = 0; index < hidden.length; index++) if (hidden[index]) {
+                    const record = model.records[index];
+                    if (record.getAttribute('data-fold-type') === 'entry' &&
+                        folds[record.getAttribute('data-fold-id')] === true &&
+                        !ancestors(record).some(ancestor => folds[ancestor] === true)) hidden[index] = 0;
+                }
+                return hidden;
+            },
             visibility(folds, matches) {
                 const hasFolds = Object.keys(folds).some(id => folds[id] === true), ancestryVisible = new Map();
                 return record => {

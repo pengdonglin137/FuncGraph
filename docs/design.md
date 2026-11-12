@@ -1274,6 +1274,8 @@ time/task plan 与方向相同的耗时排序仅保留一份数值排列缓存�
 
 ### Text 重建的原始记录索引与折叠判断（2026-11-13）
 
+以下为 ordinal 阶段；无筛选路径后续使用下一节的范围掩码，有筛选路径仍用 predicate。
+
 task plan 在完整原始行号排列之外保存 `Uint32Array` ordinal；time plan 原序直接使用
 迭代位置，不分配该数组。耗时排序携带 ordinal，并在当前单份排列缓存中保存对应
 typed array；相同耗时仍稳定排序。ordinal 只表示原始记录位置，不截断或转换真实
@@ -1291,6 +1293,25 @@ task plan 和当前耗时排列各增加 `4 × N` 字节；共用任务 plan 的
 增长或即时 GC 保证；现有完整模型、导航/高度和网络暂存仍另计。不改变 160 单元挂载预算、逐块
 完整校验、取消、错误保留或 Full Text fallback，也不改变默认 renderer/sidecar
 阈值。实测与复现见[Text 重建热点优化](performance-text-geometry.md)。
+
+### Text 无筛选折叠的范围掩码（2026-11-13）
+
+`hiddenMask(folds)` 复用 `prepareFolding` 已有的完整成员范围与 typed rangeIndex，
+只合并严格 true 的折叠项；按原始 ordinal 批量置位 `Uint8Array`。成员范围包含自身
+entry，因此仅在已置位的记录中检查 entry：自身折叠但无折叠祖先时清零，来自祖先
+的隐藏仍优先。重复 entry、交错范围、缺失父项及祖先含自身都遵守逐行 reference，
+不假定每个 fold ID 只有一个 entry。字符串 `null` 的标志同时匹配空属性的 JS 键
+语义及字面同名 ID；空串、`__proto__`、`constructor` 等也不混入对象原型语义。
+
+窗口无筛选时通过排列中已有的原始 ordinal 读取掩码，不逐行查找行号或祖先。
+有筛选时使用原 predicate，保留空/稀疏命中只检查匹配记录的成本；完整模型、原始
+行号和显示顺序不变。掩码每次新建，不跨操作缓存；同一个 fold-state 被原地修改
+也不会复用旧结果。没有匹配的启用范围时返回 null，不分配数组或读取折叠属性。
+
+这是每次 `N` 字节的临时成本，无新增持久索引或文件格式。现有 task/duration
+ordinal 成本仍另计；重叠范围可能重复写入，计算量不是只由折叠项数决定。范围
+完成后仍有完整字节/可见序列遍历，不能据此保证帧时长、总内存或立即 GC。默认
+完整 renderer 不使用该掩码。测量及复现见[折叠范围优化](performance-text-fold-visibility.md)。
 
 ### Text 分散窗口的网络资源分组（2026-11-13）
 

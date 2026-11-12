@@ -641,6 +641,29 @@ class TextWindowTest(unittest.TestCase):
                 self.assertLess(result['reads'], 1024)
                 self.assertLessEqual(result['mounted'], 160)
 
+    def test_unfiltered_rebuild_uses_range_masks_and_filtered_rebuild_keeps_selective_predicate(self):
+        self.open_report()
+        facts = self.page.evaluate('''async () => {
+            const model=fgTextWindow.model,folding=fgTextModel.folding(model),original=folding.hiddenMask;
+            const root=[...folding.blocks.values()].find(block=>block.entry?.getAttribute('data-func')==='root').id;
+            let masks=0;
+            folding.hiddenMask=function(...arguments) {masks++;return original.apply(this,arguments)};
+            try {
+                foldedBlocks={[root]:true};fgNotifyFilter('',null);
+                await fgTextWindow.rebuild();
+                const unfiltered=masks;
+                for(const matches of [new Set(),new Set(model.records.filter((_,index)=>index%11===0).map(record=>record.row[0]))]) {
+                    fgNotifyFilter('test',matches);await fgTextWindow.rebuild();
+                    const expected=fgTextNavigation.order.filter(number=>folding.visible(fgTextModel.locate(model,number).record,foldedBlocks,matches));
+                    if(JSON.stringify(expected)!==JSON.stringify(fgTextWindow.visibleNumbers)) throw new Error('Filtered result changed');
+                }
+                return {unfiltered,masks,mounted:document.querySelectorAll('#content .line-container').length};
+            } finally {folding.hiddenMask=original}
+        }''')
+        self.assertEqual(facts['unfiltered'],1)
+        self.assertEqual(facts['masks'],1)
+        self.assertLessEqual(facts['mounted'],160)
+
     def test_rebuild_visibility_matches_full_reference_after_repeated_folds_filters_and_order_changes(self):
         self.open_report()
         facts = self.page.evaluate('''async () => {

@@ -477,6 +477,111 @@ class TextModelTest(unittest.TestCase):
             assert.deepEqual(Array.from(folding.visibleLines({root:true}, null)), [1]);
         ''')
 
+    def test_fold_range_mask_matches_reference_with_nested_missing_and_special_ids(self):
+        self.run_model('''
+            const rows = [[2,'A',{'fold-id':'root','fold-type':'entry'}],
+                [5,'B',{'fold-id':'child','fold-type':'entry','fold-ancestors':'root'}],
+                [8,'leaf',{'fold-id':'child','fold-type':'inner','fold-ancestors':'root child child'}],
+                [11,'B exit',{'fold-id':'child','fold-type':'exit','fold-ancestors':'root'}],
+                [14,'A exit',{'fold-id':'root','fold-type':'exit'}], [17,'outside',{}],
+                [20,'missing',{'fold-ancestors':'lost lost'}],
+                [23,'odd',{'fold-id':'constructor','fold-type':'entry','fold-ancestors':'__proto__'}],
+                [26,'empty',{'fold-id':'','fold-type':'entry'}],
+                [29,'empty exit',{'fold-id':'','fold-type':'exit'}],
+                [32,'null entry',{'fold-type':'entry'}], [35,'literal null',{'fold-id':'null'}]];
+            const original=JSON.stringify(rows), model=drain(fgTextModel.prepare(data(rows))), folding=fgTextModel.folding(model);
+            for(const folds of [{},{root:true},{child:true},{root:true,child:true},{lost:true},
+                {root:false,child:'true',lost:1},{null:true},{'':true},
+                JSON.parse('{"__proto__":true,"constructor":true}')]) {
+                const mask=folding.hiddenMask(folds);
+                if(mask!==null) {assert.ok(mask instanceof Uint8Array);assert.equal(mask.length,rows.length)}
+                assert.deepEqual(model.records.map((record,index)=>!mask||!mask[index]),
+                    model.records.map(record=>folding.visible(record,folds,null)));
+            }
+            assert.equal(JSON.stringify(rows),original);
+        ''')
+
+    def test_fold_range_mask_matches_randomized_reference_with_arbitrary_scope_metadata(self):
+        self.run_model('''
+            let seed=1729;
+            const random=limit=>{seed=(Math.imul(seed,1664525)+1013904223)>>>0;return Math.floor(seed/2**32*limit)};
+            const ids=[null,'','root','child','missing','null','__proto__','constructor','two words'];
+            const types=[null,'entry','inner','exit','other'];
+            const rows=Array.from({length:601},(_,index)=>[2**40+index*13+2,'row'+index,
+                {'fold-id':ids[random(ids.length)],'fold-type':types[random(types.length)],
+                 'fold-ancestors':Array.from({length:random(8)},()=>ids[random(ids.length)]??'null').join('  ')}]);
+            const original=JSON.stringify(rows),model=drain(fgTextModel.prepare(data(rows))),folding=fgTextModel.folding(model);
+            for(let round=0;round<40;round++) {
+                const folds=Object.fromEntries(ids.map(id=>[String(id),[true,false,1,'true'][random(4)]]));
+                const mask=folding.hiddenMask(folds);
+                assert.deepEqual(model.records.map((record,index)=>!mask||!mask[index]),
+                    model.records.map(record=>folding.visible(record,folds,null)));
+            }
+            assert.equal(JSON.stringify(rows),original);
+        ''')
+
+    def test_fold_range_mask_preserves_duplicate_entries_own_ancestors_and_interleaving(self):
+        self.run_model('''
+            const rows=[[1,'A first',{'fold-id':'A','fold-type':'entry'}],
+                [4,'other',{'fold-id':'other','fold-type':'inner'}],
+                [7,'inside A',{'fold-id':'A','fold-type':'inner'}],
+                [9,'A second',{'fold-id':'A','fold-type':'entry'}],
+                [13,'self ancestor',{'fold-id':'A','fold-type':'entry','fold-ancestors':'A A'}],
+                [17,'B',{'fold-id':'B','fold-type':'entry','fold-ancestors':'A missing'}],
+                [22,'outside B',{'fold-id':'B','fold-type':'entry'}],
+                [30,'A exit',{'fold-id':'A','fold-type':'exit'}]];
+            const model=drain(fgTextModel.prepare(data(rows))), folding=fgTextModel.folding(model);
+            for(const folds of [{A:true},{B:true},{A:true,B:true},{missing:true},{other:true}]) {
+                const mask=folding.hiddenMask(folds);
+                assert.deepEqual(model.records.map((record,index)=>!mask||!mask[index]),
+                    model.records.map(record=>folding.visible(record,folds,null)));
+            }
+            assert.deepEqual(Array.from(folding.hiddenMask({A:true})),[0,0,1,0,1,1,0,1]);
+        ''')
+
+    def test_fold_range_mask_reads_no_metadata_without_matching_enabled_ranges(self):
+        self.run_model('''
+            const model=drain(fgTextModel.prepare(data([[2,'entry',{'fold-id':'root','fold-type':'entry'}],
+                [7,'inner',{'fold-id':'root','fold-type':'inner','fold-ancestors':'root'}]])));
+            const folding=fgTextModel.folding(model);
+            for(const record of model.records) record.getAttribute=()=>{throw new Error('Unnecessary metadata access')};
+            for(const folds of [{},{root:false},{root:1,child:'true'},{unrecorded:true}]) assert.equal(folding.hiddenMask(folds),null);
+            assert.equal(fgTextModel.folding(drain(fgTextModel.prepare(data([])))).hiddenMask({root:true}),null);
+        ''')
+
+    def test_fold_range_mask_uses_ordinals_and_is_rebuilt_for_mutated_state(self):
+        self.run_model('''
+            const rows=[[2**40+2,'entry',{'fold-id':'root','fold-type':'entry'}],
+                [2**40+19,'inner',{'fold-id':'root','fold-type':'inner'}],
+                [2**40+91,'outside',{}]];
+            const model=drain(fgTextModel.prepare(data(rows))), folding=fgTextModel.folding(model), folds={root:true};
+            const first=folding.hiddenMask(folds);
+            assert.deepEqual(Array.from(first),[0,1,0]);
+            delete folds.root;
+            assert.equal(folding.hiddenMask(folds),null);
+            folds.root=true;
+            const second=folding.hiddenMask(folds);
+            assert.notEqual(first,second);second[2]=1;
+            assert.deepEqual(Array.from(first),[0,1,0]);
+            assert.deepEqual(Array.from(folding.hiddenMask(folds)),[0,1,0]);
+        ''')
+
+    def test_sparse_fold_mask_only_checks_metadata_inside_prepared_ranges(self):
+        self.run_model('''
+            const rows=Array.from({length:5000},(_,index)=>[index*7+2,'outside',{'fold-id':'outside'+index}]);
+            rows[2000][2]={'fold-id':'target','fold-type':'entry'};
+            rows[2001][2]={'fold-id':'child','fold-type':'entry','fold-ancestors':'target'};
+            rows[2002][2]={'fold-id':'child','fold-type':'inner','fold-ancestors':'target'};
+            rows[2003][2]={'fold-id':'target','fold-type':'exit'};
+            const model=drain(fgTextModel.prepare(data(rows))),folding=fgTextModel.folding(model);
+            for(let index=0;index<model.records.length;index++) if(index<2000||index>2003) {
+                model.records[index].getAttribute=()=>{throw new Error('Off-scope metadata access')};
+            }
+            const mask=folding.hiddenMask({target:true});
+            assert.equal(mask.reduce((total,value)=>total+value,0),3);
+            assert.deepEqual(Array.from(mask.slice(1999,2005)),[0,0,1,1,1,0]);
+        ''')
+
     def test_operation_visibility_matches_reference_for_nested_filtered_and_unusual_fold_ids(self):
         self.run_model('''
             const rows = [[2,'A',{'fold-id':'root','fold-type':'entry'}],
@@ -535,6 +640,10 @@ class TextModelTest(unittest.TestCase):
                 assert.equal(scans,2);
                 delete folds.scope599;
                 assert.equal(model.records.filter(folding.visibility(folds,null)).length,2500);
+                assert.equal(scans,3);
+                folds.scope599=true;
+                const mask=folding.hiddenMask(folds);
+                assert.equal(mask.reduce((total,value)=>total+value,0),2500);
                 assert.equal(scans,3);
             } finally {Array.prototype.some=original}
         ''')

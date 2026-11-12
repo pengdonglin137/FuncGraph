@@ -20,11 +20,14 @@ an in-progress rebuild. Large-model work and scattered HTML parsing still cost
 time; see the [two-size interaction comparison](performance-text-rebuild.md).
 
 Rebuilds also reuse original record ordinals in task/duration orders and compute
-heights alongside visible rows. Unfolded reports skip fold metadata; folded
-reports cache ancestor visibility only within the current operation. Complete
-filter/fold semantics, original IDs and source pairing remain unchanged. The
-ordinal arrays add up to eight bytes per record; full-model work can still block.
-See [unfolded and sparse/dense-fold measurements](performance-text-geometry.md).
+heights alongside visible rows. Unfiltered folds reuse prepared scope ranges
+with a temporary one-byte-per-record mask, fixing entry visibility only inside
+those ranges; filtered reports keep the selective ancestor predicate. Complete
+fold semantics, original IDs and source pairing remain unchanged. Ordinal arrays
+still add up to eight bytes per record, separately from the mask. No mask is
+allocated without a matching enabled scope; full-model work can still block.
+See [fold-range measurements](performance-text-fold-visibility.md) and the
+[earlier ordinal comparison](performance-text-geometry.md).
 
 Scattered window rows now share one verified read per HTML network resource,
 avoiding repeated download, checksum and decoding after small-cache eviction.

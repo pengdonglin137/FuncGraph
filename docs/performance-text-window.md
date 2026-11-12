@@ -59,7 +59,9 @@ The experimental renderer does not claim native selection or find across unmount
 
 ## 数据与边界
 
-- 窗口重建复用原始记录 ordinal，并在每次操作内缓存折叠判断；任务 plan 和当前
+- 窗口重建复用原始记录 ordinal；无筛选时折叠状态使用现有范围生成按次字节掩码，
+  有筛选时保留逐匹配记录的 predicate。掩码每行 1 字节，无匹配范围不分配；
+  实现、实测及剩余阻塞见[折叠范围优化](performance-text-fold-visibility.md)。任务 plan 和当前
   耗时排列各增加 `4 × N` 字节的 typed array，时间原序无需该数组。共享任务 plan
   的默认完整 renderer 也承担前一项内存成本。完整模型仍遍历，不能据此保证逐帧
   响应；稀疏/密集折叠对照及内存边界见[重建热点优化](performance-text-geometry.md)。
