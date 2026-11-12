@@ -14,6 +14,10 @@ In windowed **Order: by task**, the current task stays pinned below the toolbar 
 
 [![FuncGraph Visualization Example (click to open the sample report)](sample.png)](https://pengdonglin137.github.io/FuncGraph/sample.html)
 
+Windowed Text also reuses unchanged complete navigation/duration orders and
+prevents scroll feedback from interrupting rebuilds. See the [72k/372k-row
+interaction measurements and remaining bottlenecks](docs/performance-text-rebuild.md).
+
 ## What is FuncGraph?
 
 FuncGraph converts kernel `function_graph` text, trace-cmd raw containers and uftrace user/mixed recordings into interactive, filterable HTML reports for kernel development and application-to-kernel call analysis. It supports source linking, high-speed address resolution, parameter and duration filtering, and keyboard-friendly call folding. Call structure can be viewed without a matching debug image; source and type enrichment need the corresponding debug information.

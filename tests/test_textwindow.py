@@ -566,6 +566,84 @@ class TextWindowTest(unittest.TestCase):
         self.assertLess(facts['depth'], 20)
         self.assertEqual(facts['total'], facts['restored'])
 
+    def test_duration_order_cache_reuses_complete_plan_and_invalidates_on_direction_or_mode(self):
+        self.open_report()
+        facts = self.page.evaluate('''async () => {
+            const nativeSort=Array.prototype.sort;
+            let sorts=0;
+            Array.prototype.sort=function(...args) {
+                if (this[0] && Object.hasOwn(this[0],'number') && Object.hasOwn(this[0],'duration')) sorts++;
+                return nativeSort.apply(this,args);
+            };
+            try {
+                fgTextSort='desc'; await fgTextWindow.rebuild();
+                const initial=sorts, before=fgTextNavigation.order.slice();
+                await fgTextWindow.rebuild();
+                const warm=sorts;
+                const folding=fgTextModel.folding(fgTextWindow.model);
+                const block=[...folding.blocks.values()].find(item=>item.entry?.getAttribute('data-func')==='inner');
+                _setFolded(block.id,true); await fgTextWindow.rebuild();
+                const folded=fgTextWindow.visibleNumbers.length, foldSorts=sorts;
+                _setFolded(block.id,false); await fgTextWindow.rebuild();
+                const stable=JSON.stringify(before)===JSON.stringify(fgTextNavigation.order);
+                fgTextSort='asc'; await fgTextWindow.rebuild();
+                const direction=sorts;
+                await fgSetTextOrder('task');
+                fgTextSort='asc'; await fgTextWindow.rebuild();
+                const grouped=sorts;
+                await fgTextWindow.rebuild();
+                const groupWarm=sorts;
+                const order=fgTextNavigation.order;
+                const durations=order.map(number=>+(fgTextModel.locate(fgTextWindow.model,number).record.getAttribute('data-sort-duration')||0));
+                return {initial,warm,foldSorts,folded,stable,direction,grouped,groupWarm,
+                    sorted:durations.every((duration,index)=>!index||durations[index-1]<=duration),
+                    rows:document.querySelectorAll('#content .line-container').length};
+            } finally {Array.prototype.sort=nativeSort}
+        }''')
+        self.assertEqual(facts['initial'], 1)
+        self.assertEqual(facts['warm'], 1)
+        self.assertEqual(facts['foldSorts'], 1)
+        self.assertLess(facts['folded'], 20)
+        self.assertTrue(facts['stable'])
+        self.assertEqual(facts['direction'], 2)
+        self.assertEqual(facts['grouped'], 3)
+        self.assertEqual(facts['groupWarm'], 3)
+        self.assertTrue(facts['sorted'])
+        self.assertLessEqual(facts['rows'], 160)
+
+    def test_scroll_feedback_does_not_preempt_an_explicit_window_rebuild(self):
+        self.open_report()
+        facts = self.page.evaluate('''async () => {
+            const original=fgLoadTextBlock;
+            let release, entered, signal;
+            const waiting=new Promise(resolve=>{release=resolve});
+            const started=new Promise(resolve=>{entered=resolve});
+            fgLoadTextBlock=async (...args)=>{
+                signal=args[2].signal; entered();
+                const result=await original(...args);
+                await waiting;
+                return result;
+            };
+            try {
+                scrollTo({top:document.getElementById('content').getBoundingClientRect().top+scrollY+100,behavior:'instant'});
+                const pending=fgTextWindow.rebuild(7000).then(()=>true,error=>error.name);
+                await started;
+                dispatchEvent(new Event('scroll'));
+                await new Promise(requestAnimationFrame); await new Promise(requestAnimationFrame);
+                const preempted=signal.aborted;
+                release();
+                const complete=await pending;
+                return {preempted,complete,target:!!document.getElementById('L7000'),
+                    busy:document.getElementById('content').hasAttribute('aria-busy'),
+                    rows:document.querySelectorAll('#content .line-container').length};
+            } finally {release(); fgLoadTextBlock=original}
+        }''')
+        self.assertFalse(facts['preempted'])
+        self.assertIs(facts['complete'], True)
+        self.assertTrue(facts['target'])
+        self.assertFalse(facts['busy'])
+        self.assertLessEqual(facts['rows'], 160)
+
     def test_leaving_text_cancels_reads_and_reentry_resumes_scrolling(self):
         self.open_report()
         self.page.evaluate('async () => { await fgSwitchView("timeline"); await fgSwitchView("text"); scrollTo({top:150000,behavior:"instant"}); }')

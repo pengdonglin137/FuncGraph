@@ -84,6 +84,24 @@ class TextModelTest(unittest.TestCase):
             }
         ''')
 
+    def test_locate_dense_original_lines_use_constant_probes_at_nonzero_offsets(self):
+        self.run_model('''
+            for (const start of [1,900000,Number.MAX_SAFE_INTEGER-65536]) {
+                const model=drain(fgTextModel.prepare(data(Array.from({length:65536}, (unused,index)=>[start+index,'row']))));
+                let reads=0;
+                model.records=new Proxy(model.records,{get(target,property) {
+                    if (/^[0-9]+$/.test(String(property))) reads++;
+                    return Reflect.get(target,property);
+                }});
+                for (const ordinal of [0,1,511,4096,32768,65535]) {
+                    reads=0;
+                    assert.equal(fgTextModel.locate(model,start+ordinal).ordinal,ordinal);
+                    assert.ok(reads<=2,String(reads));
+                }
+                assert.equal(fgTextModel.locate(model,start+65536),null);
+            }
+        ''')
+
     def test_order_plan_preserves_sparse_rows_task_headers_switches_and_exact_gaps(self):
         self.run_model('''
             const input = data([
@@ -593,6 +611,32 @@ class TextModelTest(unittest.TestCase):
             assert.equal(navigation.next(1, 1), -1);
             assert.equal(navigation.boundary(false), 2);
             assert.equal(navigation.boundary(true), 2);
+        ''')
+
+    def test_navigation_unchanged_order_reuses_positions_trees_and_valid_snapshots(self):
+        self.run_model('''
+            const order=Array.from({length:32768},(unused,index)=>index*3+1);
+            const navigation=fgTextModel.navigation(order,order);
+            const snapshot=navigation.visible, presented=navigation.order;
+            const nativeMap=Map, nativeTree=Uint32Array;
+            let maps=0, trees=0;
+            globalThis.Map=class extends nativeMap {constructor(...args) {super(...args); maps++}};
+            globalThis.Uint32Array=class extends nativeTree {constructor(...args) {super(...args); trees++}};
+            navigation.reorder(order.slice());
+            assert.equal(maps,0); assert.equal(trees,0);
+            assert.equal(navigation.order,presented); assert.equal(navigation.visible,snapshot);
+            for (const line of order) navigation.setVisible(line,false);
+            navigation.reorder(order.slice());
+            assert.equal(maps,0); assert.equal(trees,2);
+            assert.equal(navigation.visibleCount,0); assert.equal(navigation.boundary(false),-1);
+            navigation.reorder(order.slice());
+            assert.equal(maps,0); assert.equal(trees,2);
+            navigation.reorder(order.slice().reverse());
+            assert.equal(maps,1); assert.equal(trees,4);
+            navigation.setVisible(order[0],true);
+            assert.equal(navigation.boundary(false),order.length-1);
+            assert.throws(()=>navigation.reorder(order.slice(1).concat(order[1])),/Invalid Text navigation/);
+            assert.throws(()=>navigation.reorder(new Array(order.length)));
         ''')
 
     def test_navigation_searches_large_candidate_lists_with_logarithmic_probes(self):

@@ -68,7 +68,12 @@
     }
     function locate(model, number) {
         if (!Number.isSafeInteger(number) || number <= 0) throw new Error('Invalid Text line identity');
-        let first = 0, end = model.records.length;
+        const initial = model.records[0];
+        if (!initial || number < initial.row[0]) return null;
+        if (number === initial.row[0]) return { ordinal: 0, record: initial };
+        const ordinal = number - initial.row[0], candidate = model.records[ordinal];
+        if (candidate?.row[0] === number) return { ordinal, record: candidate };
+        let first = 1, end = model.records.length;
         while (first < end) {
             const middle = first + Math.floor((end - first) / 2);
             if (model.records[middle].row[0] < number) first = middle + 1;
@@ -359,6 +364,13 @@
                 }
             },
             reorder(next) {
+                if (Array.isArray(next) && next.length === original.size && result.order.length === original.size) {
+                    let unchanged = true;
+                    for (let index = 0; index < next.length; index++) {
+                        if (positions.get(next[index]) !== index || result.order[index] !== next[index]) { unchanged = false; break; }
+                    }
+                    if (unchanged) { result.refresh(); return; }
+                }
                 const updated = new Map(next.map((line, index) => [line, index]));
                 if (next.length !== original.size || updated.size !== original.size ||
                     next.some(line => !original.has(line))) throw new Error('Invalid Text navigation order');

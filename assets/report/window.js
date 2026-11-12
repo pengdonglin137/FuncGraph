@@ -91,9 +91,9 @@ function fgCreateTextWindow(model, navigation, root) {
     let heights = new Float64Array(model.records.length);
     const positions = new Map();
     const suppressedSources = new Set();
-    let sequence = [], tree = new Float64Array(1), sizes = [], plan = null, taskGroups = [];
+    let sequence = [], tree = new Float64Array(1), sizes = [], plan = null, taskGroups = [], rankedOrder = null;
     let first = 0, end = 0, generation = 0, controller = null, frame = null, pendingStart = null;
-    let destroyed = false, suspended = false, fullJob = null, fullController = null, currentJob = null, navigating = 0;
+    let destroyed = false, suspended = false, fullJob = null, fullController = null, currentJob = null, navigating = 0, rebuilding = 0;
     let measuredWidth = innerWidth, widest = 0, filterError = '';
     const top = document.createElement('div'), body = document.createElement('div'), bottom = document.createElement('div');
     top.className = bottom.className = 'fg-window-spacer';
@@ -294,7 +294,7 @@ function fgCreateTextWindow(model, navigation, root) {
         frame = requestAnimationFrame(() => {
             frame = null;
             updateTaskContext();
-            if (navigating || fullJob) return;
+            if (navigating || rebuilding || fullJob) return;
             if (selected()) { showStatus('Selection pinned · clear selection to scroll, or choose Full Text'); return; }
             const at = indexAt(Math.max(0, scrollY - offset()));
             const last = indexAt(Math.max(0, scrollY + innerHeight - offset()));
@@ -311,15 +311,18 @@ function fgCreateTextWindow(model, navigation, root) {
         controller?.abort(); generation++;
         const folding = fgTextModel.folding(model);
         plan = fgTextModel.order(model, fgTextOrder);
-        let order = Array.from(plan.order);
+        let order = plan.order;
         if (fgTextSort) {
-            const ranked = order.map(number => {
-                const record = fgTextModel.locate(model, number).record;
-                return { number, duration: parseFloat(record.getAttribute('data-sort-duration') || record.getAttribute('data-duration') || '0') };
-            });
-            ranked.sort((left, right) => fgTextSort === 'desc' ? right.duration - left.duration : left.duration - right.duration);
-            order = ranked.map(item => item.number);
-        }
+            if (!rankedOrder || rankedOrder.plan !== plan || rankedOrder.direction !== fgTextSort) {
+                const ranked = order.map(number => {
+                    const record = fgTextModel.locate(model, number).record;
+                    return { number, duration: parseFloat(record.getAttribute('data-sort-duration') || record.getAttribute('data-duration') || '0') };
+                });
+                ranked.sort((left, right) => fgTextSort === 'desc' ? right.duration - left.duration : left.duration - right.duration);
+                rankedOrder = { plan, direction: fgTextSort, order: ranked.map(item => item.number) };
+            }
+            order = rankedOrder.order;
+        } else rankedOrder = null;
         navigation.reorder(order);
         positions.clear(); sequence = []; taskGroups = [];
         const boundaries = new Map();
@@ -361,9 +364,10 @@ function fgCreateTextWindow(model, navigation, root) {
         if (button) button.textContent = 'Order: ' + (fgTextSort ? 'duration ' + (fgTextSort === 'desc' ? '↓' : '↑') : fgTextOrder === 'task' ? 'by task' : 'time');
         const anchorIndex = positions.get(previous) || 0;
         first = end = 0;
+        rebuilding++;
         return paint(Math.max(0, Math.min(sequence.length - limit, anchorIndex - overscan))).then(() => {
             if (scrollY > offset()) scrollTo({ top: offset() + prefix(anchorIndex), behavior: 'instant' });
-        });
+        }).finally(() => { rebuilding--; schedule(); });
     }
     async function ensureLine(number, options = {}) {
         if (destroyed) return document.getElementById('L' + number);
@@ -385,7 +389,7 @@ function fgCreateTextWindow(model, navigation, root) {
         destroyed = true; generation++; controller?.abort();
         observer.disconnect(); controlsObserver.disconnect(); cancelAnimationFrame(frame);
         fgCancelSources(body); body.replaceChildren();
-        positions.clear(); sequence = []; sizes = []; plan = null; taskGroups = [];
+        positions.clear(); sequence = []; sizes = []; plan = null; taskGroups = []; rankedOrder = null;
         heights = new Float64Array(0); tree = new Float64Array(1);
         removeEventListener('scroll', schedule); removeEventListener('resize', resize);
         document.removeEventListener('selectionchange', schedule);
