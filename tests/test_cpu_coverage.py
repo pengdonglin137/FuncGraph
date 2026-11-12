@@ -8,7 +8,7 @@ import unittest
 
 import helpers
 from fglib.viewer import create_server
-from test_uftrace_import import build, call, capture, stream
+from test_uftrace_import import HEADER, ORIGIN, build, call, capture, stream
 
 try:
     from playwright.sync_api import sync_playwright
@@ -49,6 +49,60 @@ class CpuCoverageDataTest(unittest.TestCase):
         self.assertEqual(data['cols']['dur'][index], 800)
         self.assertEqual(task['runs'][0][0], 0)
         self.assertEqual(task['runs'][-1][1], 900)
+
+    def test_kernel_switches_work_without_kernel_function_calls(self):
+        records = [record for record in scheduling_capture()
+                   if record['space'] == 'user' or record['type'] == 'event']
+        data = build(records).to_data()
+        self.assertTrue(data['caps']['sched_events'])
+        self.assertEqual(data['n'], 2)
+        self.assertEqual(data['uftrace']['spaces'], ['kernel', 'user'])
+        self.assertTrue(data['uftrace']['aligned'])
+        task = next(task for task in data['tasks'] if task['pid'] == 42)
+        self.assertEqual(task['runs'], [[0, 900, 0]])
+        self.assertIsNone(data['cols']['cpu'])
+        self.assertEqual(data['cols']['start'][0], 20)
+        self.assertEqual(data['cols']['dur'][0], 800)
+
+    def test_enabled_readbacks_without_events_do_not_establish_scheduling(self):
+        metadata = {**HEADER, 'kernel_settings': {**HEADER['kernel_settings'],
+                    'events/sched/sched_switch/enable': '1',
+                    'events/sched/sched_waking/enable': '1',
+                    'events/sched/sched_wakeup/enable': '1'}}
+        data = build(capture(), metadata).to_data()
+        self.assertFalse(data['caps']['switch_markers'])
+        self.assertFalse(data['caps']['sched_events'])
+        self.assertFalse(data['caps']['sched_waking'])
+        self.assertEqual(data['offcpu'], [])
+        self.assertEqual(data['tasks'][0]['runs'], [[140, 850, 0]])
+
+    def test_perf_scheduling_does_not_invent_cpu_runs(self):
+        records = [record for record in capture() if record['space'] == 'user']
+        records.extend([
+            dict(type='event', origin='perf', space=None, time_ns=ORIGIN + timestamp,
+                 tid=42, cpu=None, stream=7, name=name, out=out, preempt=False)
+            for timestamp, name, out in [(80, 'linux:sched-in', False), (980, 'linux:sched-out', True)]])
+        builder = build(records)
+        data = builder.to_data()
+        self.assertFalse(data['caps']['sched_events'])
+        self.assertEqual(data['offcpu'], [])
+        self.assertTrue(all(not task['runs'] for task in data['tasks']))
+        self.assertIsNone(data['cols']['cpu'])
+        for name in ('linux:sched-in', 'linux:sched-out'):
+            self.assertTrue(any(name in row.raw_line for row in builder.parsed))
+
+    def test_perf_and_kernel_scheduling_are_not_counted_twice(self):
+        records = scheduling_capture()
+        expected = build(records).to_data()
+        records.extend([
+            dict(type='event', origin='perf', space=None, time_ns=ORIGIN + timestamp,
+                 tid=42, cpu=None, stream=7, name=name, out=out, preempt=False)
+            for timestamp, name, out in [(80, 'linux:sched-in', False), (980, 'linux:sched-out', True)]])
+        data = build(records).to_data()
+        self.assertTrue(data['caps']['sched_events'])
+        for key in ('tasks', 'offcpu'):
+            self.assertEqual(data[key], expected[key])
+        self.assertEqual(data['stats']['offcpu'], expected['stats']['offcpu'])
 
 
 @unittest.skipIf(sync_playwright is None, 'playwright not installed')

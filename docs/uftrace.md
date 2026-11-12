@@ -145,6 +145,45 @@ the same instrumentation and add `-P '.@libexample.so'` for each selected librar
 select kernel functions for the actual architecture. The QEMU examples below
 target x86_64: do not copy their `__x64_sys_*` filters to ARM64.
 
+## Record task switches
+
+There are two independent sources of scheduling observations:
+
+- Upstream uftrace records perf scheduling events by default, subject to kernel
+  support and permissions. `--no-sched` disables this source. FuncGraph preserves
+  these events in Text, but does not infer CPU runs from their opaque perf stream
+  numbers: the native export has `cpu=null` for this source.
+- The **bundled, patched** recorder's `--kernel-full-info`, used with kernel
+  recording (`-K`), also enables the available `sched:sched_switch`,
+  `sched:sched_waking` and `sched:sched_wakeup` tracepoints. FuncGraph uses these
+  CPU-tagged records for scheduling and wakeup analysis. **`--no-sched` does not
+  disable these kernel tracepoints.** It avoids retaining a second perf source
+  in the mixed examples; removing it does not turn off kernel scheduling.
+
+For a mixed capture, use the full command in
+[capture safety and current limits](#capture-safety-and-current-limits), keeping
+`-K 30 --clock=mono --kernel-full-info`. Keep its architecture-specific kernel
+filters and argument/return specifications. There is no need to add a uftrace
+`--sched` flag: `fgcapture.sh --sched` is a separate kernel-only capture command,
+not the uftrace user/mixed recorder. Kernel recording requires appropriate
+tracefs access and an idle, state-protected experimental environment.
+
+Verify actual saved events, not only an `enable=1` readback:
+
+```bash
+fguftrace dump --fgraph --srcline -d CAPTURE > capture.jsonl
+rg -c '"name"\s*:\s*"sched:sched_(switch|waking|wakeup)"' capture.jsonl
+```
+
+No match means the export contains none of these records; it does not prove
+that the task never switched. Retain the scheduling records when extracting
+or filtering a capture. The published mixed sample deliberately excludes them:
+re-exporting its original saved capture confirms 14 switches, 28 waking events
+and seven wakeups, but these are absent from `samples/sample_mixed.jsonl`.
+See [CPU coverage](cpu-coverage.md) for why its CPU observation span must not be
+extended to `main` without the missing events. A recorded switch-in can precede
+`main`; its timestamp is not a replacement for the function's entry timestamp.
+
 ## Generate a report
 
 ```bash

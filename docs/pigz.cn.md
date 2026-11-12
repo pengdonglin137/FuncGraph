@@ -67,6 +67,11 @@ recorder=fguftrace
 
 开发构建请把 `recorder` 改成对应可执行文件的绝对路径。
 
+这里 `--kernel-full-info` 会启用可用的内核 switch / waking / wakeup 事件；
+`--no-sched` 仅关闭独立的 perf 调度来源，不会关闭这些内核 tracepoint。
+提取样例时仍需保留实际事件；检查方法和限制见
+[记录任务切换](uftrace.cn.md#记录任务切换)。
+
 生成报告时，**用户态和内核态源码需要分别配置**。以下是本案例已验证的 QEMU
 Linux `7.4.0-rc2` 构建；如果换了内核，镜像、源码提交和网页版本必须一起替换为
 **采集时运行的内核**，不能直接用当前主机的 `uname -r` 或源码仓库的最新提交：

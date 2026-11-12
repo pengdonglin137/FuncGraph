@@ -20,7 +20,7 @@ In `samples/sample_mixed.jsonl` / `sample_mixed.html`:
 | Last kernel record on CPU4 | 6,142,775 ns | 88351489909111 |
 | `main` return | 6,189,320 ns | 88351489955656 |
 
-This capture has 25 user call-site events but **no `sched_switch` records**.
+This scoped sample has 25 user call-site events but **no `sched_switch` records**.
 The saved configuration says scheduler events were enabled; configuration is
 not evidence that corresponding events reached the saved export. User function
 records have `cpu=null`. These timestamps share the saved monotonic clock; the
@@ -30,6 +30,21 @@ records have `cpu=null`. These timestamps share the saved monotonic clock; the
 enable=1 不等于导出文件中存在对应事件。用户态函数的 `cpu=null`，时间统一使用保存的
 monotonic 时钟。因此相差的 5.775459 ms 不是应当平移修正的时钟偏移，也不是 `main`
 实际从 CPU 行左边界才开始执行。
+
+The original saved capture does contain scheduling events: a fresh native
+re-export confirms 14 switches, 28 waking events and seven wakeups. They were
+excluded from the published extract, not disabled by its `--no-sched` option:
+that option controls perf scheduling, while the patched `--kernel-full-info`
+enables the available kernel scheduler tracepoints independently. See
+[record task switches](uftrace.md#record-task-switches) for capture and export
+verification. Do not transplant CPU intervals into the sample without retaining
+their actual event evidence and timestamps.
+
+原始采集目录重新导出后，确有 14 条切换、28 条 waking 和 7 条 wakeup；它们是在
+公开样例提取时被排除，并非被 `--no-sched` 关闭。该参数控制 perf 来源，补丁版
+`--kernel-full-info` 会独立启用可用的内核调度 tracepoint。采集和导出检查方法见
+[记录任务切换](uftrace.cn.md#记录任务切换)。不能在缺少原始事件及其时间戳的情况下，
+直接将另一个导出的 CPU 运行区间移植到样例。
 
 ## Reading the overview
 

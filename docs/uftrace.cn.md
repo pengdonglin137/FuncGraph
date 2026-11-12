@@ -118,6 +118,39 @@ fguftrace record -P . --no-sched --srcline -T '.@callsite' -d user.data \
 混合采集同样保留 `-P .`，并选择本机架构的内核函数。后文的 QEMU 采集命令是
 x86_64 示例，不应把 `__x64_sys_*` 原样用于 ARM64。
 
+## 记录任务切换
+
+需要区分两种相互独立的调度事件来源：
+
+- 上游 uftrace 默认尝试采集 perf 调度事件，受内核能力和权限限制；`--no-sched`
+  关闭的是这一路。FuncGraph 在 Text 中保留这些事件，但原生导出的 `cpu=null`，
+  不能把不透明的 perf stream 编号当成 CPU 编号，也不会据此推算 CPU 运行区间。
+- **内置补丁版**使用 `-K` 进行内核采集时，`--kernel-full-info` 还会尝试启用
+  `sched:sched_switch`、`sched:sched_waking`、`sched:sched_wakeup`。
+  FuncGraph 使用这些带 CPU 编号的记录进行调度和唤醒分析。
+  **`--no-sched` 不会关闭这三类内核 tracepoint。** 混合示例保留这个参数，是为了
+  不再额外保存一份 perf 来源；删除它也不会关闭内核调度采集。
+
+混合采集请使用[采集安全与限制](#采集安全与限制)中的完整示例，保留
+`-K 30 --clock=mono --kernel-full-info`，并保留对应架构的内核过滤和参数 / 返回值规格。
+不需要给 uftrace 增加 `--sched`：`fgcapture.sh --sched` 是另一个只采集内核的命令，
+不是 uftrace 用户态 / 混合采集封装。内核采集需要相应的 tracefs 访问权限，且只能
+在空闲、已保护原有跟踪状态的专用实验环境执行。
+
+应检查实际保存的事件，而不只是 `enable=1`：
+
+```bash
+fguftrace dump --fgraph --srcline -d CAPTURE > capture.jsonl
+rg -c '"name"\s*:\s*"sched:sched_(switch|waking|wakeup)"' capture.jsonl
+```
+
+没有匹配表示导出中不存在这些记录，不能据此证明任务从未切换。提取或过滤记录时，也应
+保留所需的调度事件。当前公开混合样例特意未纳入它们：重新导出原始采集目录，已核实
+有 14 条 switch、28 条 waking 和 7 条 wakeup，但 `samples/sample_mixed.jsonl`
+不含这些事件。因此不能把该样例的 CPU 观测区间直接向前补到 `main`，详见
+[CPU 覆盖说明](cpu-coverage.md)。真实 switch-in 可能早于 `main`，它也不能替代
+函数本身的入口时间。
+
 ## 生成报告
 
 ```bash

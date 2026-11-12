@@ -79,6 +79,11 @@ recorder=fguftrace
 
 For a development build, set `recorder` to its absolute executable path instead.
 
+Here `--kernel-full-info` enables available kernel switch/waking/wakeup events;
+`--no-sched` disables only the separate perf scheduling source, not those kernel
+tracepoints. Keep actual events in any scoped export. See
+[record task switches](uftrace.md#record-task-switches) for verification and limits.
+
 Configure **user and kernel sources separately** when generating the report.
 These values identify the QEMU Linux `7.4.0-rc2` build verified for this case.
 For another capture, replace the image, source commit and browser revision
