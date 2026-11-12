@@ -675,7 +675,8 @@ tlRoot.innerHTML = `
 <div class="tl-toolbar">
   <div class="tl-primary" role="group" aria-label="Timeline navigation and display">
   <span class="tl-group tl-search-group">
-    <input class="tl-search" placeholder="/ search function (regex)" spellcheck="false" aria-label="Search traced function names (regular expression)" aria-describedby="tlSearchStatus" aria-invalid="false">
+    <input class="tl-search" placeholder="/ Find function (regex)" spellcheck="false" aria-label="Search traced function names (regular expression)" aria-describedby="tlSearchStatus tlSearchHelp" aria-invalid="false" title="Highlight and navigate function-name matches. To filter calls, use Tools → Filter calls.">
+    <span id="tlSearchHelp" hidden>Find highlights and navigates function names within the current filter. It does not filter calls. Use Tools → Filter calls for the shared Text and Timeline filter.</span>
     <span class="tl-search-nav">
       <button class="tl-btn" data-act="searchprev" title="Previous search match (Shift+Enter / Shift+N)" aria-label="Previous search match" disabled>◀</button>
       <button class="tl-btn" data-act="searchnext" title="Next search match (Enter / N)" aria-label="Next search match" disabled>▶</button>
@@ -697,6 +698,35 @@ tlRoot.innerHTML = `
   ${MIXED ? '<span class="tl-group tl-space-key" aria-label="Address space legend"><span class="tl-space-user">User</span><span>Kernel</span>' +
     (D.stats.user_kernel_boundaries ? '<span class="tl-space-edge" title="Boundary spans the recorded kernel call">User → kernel</span>' : '') + '</span>' : ''}
   <div class="tl-options" id="tlOptions" role="dialog" aria-label="Timeline tools">
+  <div class="tl-group tl-filterbar" role="group" aria-label="Filter calls">
+    <div class="tl-filter-heading"><label class="tl-label" for="tlFilterInput">Filter calls</label><span class="tl-fdraft" role="status" aria-live="polite" hidden>Unapplied changes</span></div>
+    <div class="tl-filter-entry">
+      <input id="tlFilterInput" class="tl-ftext" placeholder="e.g. func:read AND pid:1234" aria-label="Filter trace lines" aria-describedby="tlFilterScope tlFilterCount tlFilterDraft" spellcheck="false">
+      <button class="tl-btn" data-act="fapply" disabled>Apply</button>
+    </div>
+    <span id="tlFilterDraft" class="tl-filter-draft-help" hidden>Edits are not applied until Apply or Enter. Escape restores the active filter and cancels pending filtering.</span>
+    <div class="tl-filter-result"><span class="tl-fcount" id="tlFilterCount"></span>
+      <button class="tl-btn" data-act="fhide" aria-pressed="false" title="${N ? 'Hide tracks without matching calls; event tracks remain visible' : 'No recorded calls to match; event tracks stay visible'}"${N ? '' : ' disabled'}>Hide unmatched tracks</button>
+      <button class="tl-btn" data-act="fclear">Clear</button>
+    </div>
+    <div class="tl-fcurrent" hidden><span class="tl-label">Applied</span><code></code></div>
+    <details class="tl-filter-help"><summary>Syntax and examples</summary>
+      <p id="tlFilterScope">Shared with Text and analysis. Unmatched calls are dimmed; Hide unmatched tracks hides only tracks without matches. Event tracks and call-stack context stay available. Find function only highlights and navigates within this filter.</p>
+      <p>Combine conditions with <code>AND</code>, <code>OR</code>, <code>NOT</code> and parentheses. Names use regular expressions. Apply with Enter; Escape cancels pending work and restores the active filter.</p>
+      <label for="tlFilterExample">Start with an example</label>
+      <select id="tlFilterExample" aria-label="Filter example">
+        <option value="">Choose an example…</option>
+        <option value="func:read|write">Function names: read or write</option>
+        <option value="pid:1234">One task: PID 1234</option>
+        ${HAS_KERNEL ? '<option value="graph:vfs_read">A complete call tree: vfs_read</option>' : '<option value="graph:main">A complete call tree: main</option>'}
+        <option value="ret:all">Known error return codes</option>
+        ${TIMED ? '<option value="duration:>10">Duration greater than 10 µs</option>' : ''}
+        ${HAS_USER ? '<option value="space:user">User-space calls</option>' : ''}
+        ${HAS_KERNEL ? '<option value="space:kernel">Kernel-space calls</option>' : ''}
+      </select>
+      <p>Examples replace the draft only; edit the value and choose Apply.</p>
+    </details>
+  </div>
   <span class="tl-group"><span class="tl-label">Color</span>
     <span class="tl-seg" data-role="color">
       <button data-v="ctx" class="on" title="Execution context (task / softirq / hardirq / NMI)">Context</button>
@@ -737,11 +767,6 @@ tlRoot.innerHTML = `
     <button class="tl-btn" data-act="an-lat" title="Scheduling latency: need-resched windows and what delayed them">Scheduling latency</button>
     ${PROCESS_EVENTS.length ? '<button class="tl-btn" data-act="process-events" title="Recorded kernel exec and exit events">Exec / exit</button>' : ''}
   </span>
-  <span class="tl-group tl-filterbar"><span class="tl-label">Filter</span>
-  <input class="tl-ftext" placeholder="e.g. pid:1234" aria-label="Filter trace lines" title="Uses the same filter syntax as Text" spellcheck="false">
-  <span class="tl-fcount"></span>
-  <button class="tl-btn" data-act="fhide" title="${N ? 'Hide tracks without matches' : 'No recorded calls to match; event tracks stay visible'}"${N ? '' : ' disabled'}>Hide unmatched</button>
-  <button class="tl-btn" data-act="fclear">Clear</button></span>
   </div>
 </div>
 ${N ? '' : '<div class="tl-event-only" role="note">No recorded function calls. Showing recorded scheduling / lifecycle observations only.</div>'}
@@ -790,6 +815,10 @@ const elFbar = tlRoot.querySelector('.tl-filterbar');
 const elResizer = tlRoot.querySelector('.tl-resizer');
 const elFtext = tlRoot.querySelector('.tl-ftext');
 const elFcount = tlRoot.querySelector('.tl-fcount');
+const elFapply = tlRoot.querySelector('[data-act=fapply]');
+const elFdraft = tlRoot.querySelector('.tl-fdraft');
+const elFcurrent = tlRoot.querySelector('.tl-fcurrent');
+const elFexample = tlRoot.querySelector('#tlFilterExample');
 const elPosition = tlRoot.querySelector('.tl-position');
 const elPositionStart = elPosition.querySelector('#tlPositionStart');
 const elPositionEnd = elPosition.querySelector('#tlPositionEnd');

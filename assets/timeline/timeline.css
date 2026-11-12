@@ -411,15 +411,31 @@ table.tl-sum td.err { color: #c62828; }
 @keyframes tlFlash { 0% { background: rgba(59, 111, 216, .45); } 100% { background: transparent; } }
 
 /* text-view filter bar */
-.tl-filterbar { gap: 8px; }
+.tl-filterbar { gap: 8px; padding-bottom: 12px; border-bottom: 1px solid var(--border-color); min-width: 0; }
+.tl-filter-heading, .tl-filter-entry, .tl-filter-result { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; width: 100%; min-width: 0; }
+.tl-filter-heading { justify-content: space-between; }
+.tl-fdraft { color: var(--text-muted); font-size: 11px; }
+.tl-fdraft[hidden], .tl-fcurrent[hidden] { display: none; }
+.tl-filter-entry { flex-wrap: nowrap; }
 .tl-ftext {
-    width: 380px; max-width: 40vw; border: 1px solid var(--border-color); border-radius: 6px;
+    flex: 1 1 0; min-width: 0; width: 100%; box-sizing: border-box; border: 1px solid var(--border-color); border-radius: 6px;
     background: var(--container-bg); color: var(--text-color); padding: 4px 8px;
     font: 12px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
 .tl-filterbar.on .tl-ftext { border-color: #3b6fd8; box-shadow: 0 0 0 2px rgba(59, 111, 216, .15); }
 .tl-fcount { color: var(--text-muted); font-size: 11px; }
-.tl-fcount[aria-busy="true"], .tl-fcount[role="alert"] { max-width: 380px; white-space: normal; overflow-wrap: anywhere; }
+.tl-filter-result .tl-fcount { flex: 1 1 180px; white-space: normal; overflow-wrap: anywhere; }
+.tl-fcurrent { display: flex; align-items: baseline; gap: 8px; width: 100%; min-width: 0; font-size: 11px; color: var(--text-muted); }
+.tl-fcurrent code { white-space: pre-wrap; overflow-wrap: anywhere; min-width: 0; }
+.tl-filter-help { width: 100%; min-width: 0; font-size: 12px; color: var(--text-muted); }
+.tl-filter-help summary { cursor: pointer; width: fit-content; }
+.tl-filter-help p { margin: 8px 0; line-height: 1.5; }
+.tl-filter-help label { display: block; margin: 8px 0 4px; }
+.tl-filter-help select { box-sizing: border-box; max-width: 100%; padding: 4px 8px; border: 1px solid var(--border-color); border-radius: 6px; color: var(--text-color); background: var(--container-bg); font: inherit; }
+.tl-filterbar :is(input, select, summary, button):focus-visible { outline: 2px solid var(--link-color); outline-offset: 2px; }
+.tl-compact .tl-options .tl-filterbar :is(input, select, summary, button) { min-height: 44px; }
+.tl-compact .tl-filterbar input, .tl-compact .tl-filterbar select { font-size: 16px; }
+.tl-compact .tl-filter-help summary { display: flex; align-items: center; }
 .tl-btn.on { background: #3b6fd8; color: #fff; border-color: #3b6fd8; }
 
 /* analysis panels */

@@ -1223,6 +1223,86 @@ class SidecarBrowserTest(unittest.TestCase):
             return fgFilterState.lines === null ? null : Array.from(fgFilterState.lines).sort((left, right) => left - right);
         }''', query)
 
+    def test_apply_button_indexes_calls_without_loading_text(self):
+        helpers.open_timeline_tools(self.page)
+        self.page.locator('.tl-ftext').fill('duration:>1')
+        self.page.locator('[data-act=fapply]').click()
+        self.page.wait_for_function('() => fgFilterState.text === "duration:>1" && !fgFilterProgress')
+        self.assertIn(' of ', self.page.locator('.tl-fcount').inner_text())
+        self.assertEqual(self.page.locator('.tl-fcurrent code').inner_text(), 'duration:>1')
+        self.assertFalse(self.page.locator('.tl-fdraft').is_visible())
+        self.assertTrue(self.page.locator('[data-act=fapply]').is_disabled())
+        self.assertEqual(self.page.locator('#content .line-container').count(), 0)
+        self.assertEqual(sum(url.endswith('text-index.json') for url in self.requests), 1)
+        self.assertFalse(any(url.endswith('text.html') for url in self.requests))
+
+    def test_new_draft_survives_pending_filter_completion_and_blur(self):
+        self.apply_query('comm:sh')
+        self.page.evaluate('fgData.release("fgTextIndex")')
+        routes = []
+        self.page.route('**/text-index.json', lambda route: routes.append(route))
+        helpers.open_timeline_tools(self.page)
+        self.page.locator('.tl-ftext').fill('graph:do_sys_openat2')
+        with self.page.expect_request('**/text-index.json'):
+            self.page.locator('[data-act=fapply]').click()
+        self.assertEqual(self.page.locator('.tl-fcount').get_attribute('aria-busy'), 'true')
+        self.assertEqual(self.page.locator('.tl-fcurrent code').inner_text(), 'comm:sh')
+        self.assertTrue(self.page.locator('[data-act=fapply]').is_disabled())
+        self.page.locator('.tl-ftext').fill('func:mutex')
+        self.page.locator('[data-act=fhide]').click()
+        payload = (self.manifest.parent / self.resources['fgTextIndex']['file']).read_bytes()
+        routes[0].fulfill(status=200, body=payload)
+        self.page.wait_for_function('() => fgFilterState.text === "graph:do_sys_openat2" && !fgFilterProgress')
+        self.assertEqual(self.page.locator('.tl-ftext').input_value(), 'func:mutex')
+        self.assertEqual(self.page.locator('.tl-fcurrent code').inner_text(), 'graph:do_sys_openat2')
+        self.assertTrue(self.page.locator('.tl-fdraft').is_visible())
+        self.assertTrue(self.page.locator('[data-act=fapply]').is_enabled())
+        self.page.locator('[data-act=fapply]').click()
+        self.page.wait_for_function('() => fgFilterState.text === "func:mutex" && !fgFilterProgress')
+        self.assertFalse(self.page.locator('.tl-fdraft').is_visible())
+        self.assertEqual(self.page.locator('#content .line-container').count(), 0)
+
+    def test_failed_query_retry_cannot_overwrite_newer_edits(self):
+        self.apply_query('comm:sh')
+        self.page.evaluate('fgData.release("fgTextIndex")')
+        self.page.route('**/text-index.json', lambda route: route.fulfill(status=404, body='missing'))
+        helpers.open_timeline_tools(self.page)
+        self.page.locator('.tl-ftext').fill('graph:do_sys_openat2')
+        self.page.locator('[data-act=fapply]').click()
+        self.page.locator('.tl-fcount[role=alert]').wait_for()
+        self.assertEqual(self.page.locator('.tl-fcurrent code').inner_text(), 'comm:sh')
+        self.assertTrue(self.page.locator('[data-act=fretry]').is_enabled())
+        self.page.locator('.tl-ftext').fill('func:mutex')
+        self.assertTrue(self.page.locator('[data-act=fretry]').is_disabled())
+        self.assertTrue(self.page.locator('[data-act=fapply]').is_enabled())
+        self.page.unroute('**/text-index.json')
+        self.page.locator('[data-act=fapply]').click()
+        self.page.wait_for_function('() => fgFilterState.text === "func:mutex" && !fgFilterProgress')
+        self.assertEqual(self.page.locator('[data-act=fretry]').count(), 0)
+        self.assertFalse(self.page.locator('.tl-fdraft').is_visible())
+
+    def test_applying_empty_draft_cancels_pending_filter_and_clears_active_result(self):
+        self.apply_query('comm:sh')
+        self.page.evaluate('fgData.release("fgTextIndex")')
+        routes = []
+        self.page.route('**/text-index.json', lambda route: routes.append(route))
+        helpers.open_timeline_tools(self.page)
+        self.page.locator('.tl-ftext').fill('graph:do_sys_openat2')
+        with self.page.expect_request('**/text-index.json'):
+            self.page.locator('[data-act=fapply]').click()
+        self.page.locator('.tl-ftext').fill('')
+        self.assertTrue(self.page.locator('[data-act=fapply]').is_enabled())
+        self.page.locator('[data-act=fapply]').click()
+        payload = (self.manifest.parent / self.resources['fgTextIndex']['file']).read_bytes()
+        routes[0].fulfill(status=200, body=payload)
+        self.page.evaluate('async () => { await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))); }')
+        self.assertEqual(self.page.evaluate('fgFilterState.text'), '')
+        self.assertIsNone(self.page.evaluate('fgFilterProgress'))
+        self.assertIsNone(self.page.evaluate('fgFilterState.lines'))
+        self.assertFalse(self.page.locator('.tl-fdraft').is_visible())
+        self.assertFalse(self.page.locator('.tl-fcurrent').is_visible())
+        self.assertTrue(self.page.locator('[data-act=fapply]').is_disabled())
+
     def test_index_matches_native_text_attributes_content_and_all_filter_fields(self):
         index = self.page.evaluate('async () => await fgData.load("fgTextIndex")')
         queries = ['', 'cpu:0', 'pid:131108', 'comm:sh', 'func:mutex', 'duration:>1',

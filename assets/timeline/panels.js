@@ -990,13 +990,32 @@ function revealLine(n) {
 // ---- text-view filter integration ----
 let filteredCallCount = null;
 let filterRetryButton = null;
+let filterAppliedText = '';
+function renderFilterControls() {
+    const status = window.fgFilterProgress;
+    const pending = status && !status.error;
+    const draft = elFtext.value.trim();
+    const changed = draft !== filterAppliedText.trim();
+    const requested = pending && draft === status.text.trim();
+    elFdraft.hidden = pending ? requested : !changed;
+    elFapply.disabled = pending ? requested : !changed && !status?.error;
+    elFcurrent.hidden = !filterAppliedText;
+    elFcurrent.querySelector('code').textContent = filterAppliedText;
+    elMoreFilter.title = filterAppliedText;
+    if (filterRetryButton && status?.error) {
+        filterRetryButton.disabled = draft !== status.text.trim();
+        filterRetryButton.title = filterRetryButton.disabled ? 'Choose Apply to use the edited query' : 'Retry the failed query';
+    }
+}
 function renderFilterProgress() {
     const status = window.fgFilterProgress;
     elFcount.setAttribute('role', status?.error ? 'alert' : 'status');
     elFcount.setAttribute('aria-live', status?.error ? 'assertive' : 'polite');
     elFcount.setAttribute('aria-busy', String(!!status && !status.error));
-    elFcount.textContent = status ? status.message : filteredCallCount === null ? '' :
-        !N ? 'Text filter only · event tracks unfiltered' : filteredCallCount + ' of ' + N + ' calls';
+    elFcount.textContent = status ? status.message : !N ?
+        (filteredCallCount === null ? 'No recorded calls · event tracks unfiltered' : 'Text filter only · event tracks unfiltered') :
+        filteredCallCount === null ? 'All ' + N + ' calls' : filteredCallCount + ' of ' + N + ' calls' +
+        (filteredCallCount === 0 ? ' · No matches. Adjust the filter or Clear.' : '');
     elFcount.title = status ? status.message : '';
     if (filterRetryButton) { filterRetryButton.remove(); filterRetryButton = null; }
     if (status?.error) {
@@ -1005,13 +1024,16 @@ function renderFilterProgress() {
         filterRetryButton.className = 'tl-btn';
         filterRetryButton.dataset.act = 'fretry';
         filterRetryButton.textContent = 'Retry filter';
-        elFbar.appendChild(filterRetryButton);
+        elFbar.querySelector('.tl-filter-result').appendChild(filterRetryButton);
     }
+    renderFilterControls();
 }
 window.fgOnFilterProgress = renderFilterProgress;
 function applyTextFilter() {
     const st = window.fgFilterState || { text: '', lines: null };
-    if (document.activeElement !== elFtext) elFtext.value = st.text || '';
+    const edited = elFtext.value.trim() !== filterAppliedText.trim();
+    filterAppliedText = st.text || '';
+    if (!edited) elFtext.value = filterAppliedText;
     elMoreFilter.hidden = !st.lines;
     if (!st.lines) {
         textHits = null;
@@ -1038,7 +1060,9 @@ function applyTextFilter() {
         elFcount.textContent = cnt + ' of ' + N + ' calls';
         elFbar.classList.add('on');
     }
-    tlRoot.querySelector('[data-act=fhide]').classList.toggle('on', hideUnmatched);
+    const hideButton = tlRoot.querySelector('[data-act=fhide]');
+    hideButton.classList.toggle('on', hideUnmatched);
+    hideButton.setAttribute('aria-pressed', String(hideUnmatched));
     if (sel >= 0 && textHits && !(sel < N ? textHits[sel] : SYN[sel - N].kids.some(index => textHits[index]))) {
         if (AN.kind) setSelection(-1);
         else select(-1);
@@ -1051,41 +1075,65 @@ function applyTextFilter() {
     renderFilterProgress();
 }
 window.fgOnFilter = applyTextFilter;
+function submitTimelineFilter() {
+    const fi = document.getElementById('filterInput');
+    if (!fi) return;
+    fi.value = elFtext.value;
+    if (elFtext.value.trim()) {
+        const indexed = fgTextDeferred() && document.getElementById('content').hasAttribute('data-fg-text-index');
+        const pending = applyFilter();
+        if (!indexed && pending && typeof pending.then === 'function') {
+            elFcount.textContent = 'Loading Text for full-trace filtering…';
+            pending.then(applied => { if (applied === false) toast('Text filter not applied. Open Text to retry loading its data.'); });
+        }
+    } else clearFilter();
+    renderFilterControls();
+}
+elFtext.addEventListener('input', renderFilterControls);
+elFexample.addEventListener('change', () => {
+    if (!elFexample.value) return;
+    elFtext.value = elFexample.value;
+    elFexample.value = '';
+    renderFilterControls();
+    elFtext.focus({ preventScroll: true });
+});
+function restoreTimelineFilterDraft() {
+    if (window.fgFilterProgress) fgCancelPendingFilter();
+    elFtext.value = (window.fgFilterState || {}).text || '';
+    renderFilterControls();
+}
 elFtext.addEventListener('keydown', ev => {
     ev.stopPropagation();
     if (ev.key === 'Enter') {
-        const fi = document.getElementById('filterInput');
-        fi.value = elFtext.value;
+        ev.preventDefault();
         elFtext.blur();
-        if (elFtext.value.trim()) {
-            const indexed = fgTextDeferred() && document.getElementById('content').hasAttribute('data-fg-text-index');
-            const pending = applyFilter();
-            if (!indexed && pending && typeof pending.then === 'function') {
-                elFcount.textContent = 'Loading Text for full-trace filtering…';
-                pending.then(applied => { if (applied === false) toast('Text filter not applied. Open Text to retry loading its data.'); });
-            }
-        } else clearFilter();
+        submitTimelineFilter();
     } else if (ev.key === 'Escape') {
-        if (window.fgFilterProgress) fgCancelPendingFilter();
-        elFtext.value = (window.fgFilterState || {}).text || '';
+        ev.preventDefault();
+        restoreTimelineFilterDraft();
         elFtext.blur();
     }
 });
 elFbar.addEventListener('click', ev => {
     const b = ev.target.closest('[data-act]');
     if (!b) return;
-    if (b.dataset.act === 'fclear') { elFtext.value = ''; clearFilter(); }
+    if (b.dataset.act === 'fapply') submitTimelineFilter();
+    else if (b.dataset.act === 'fclear') { elFtext.value = ''; clearFilter(); }
     else if (b.dataset.act === 'fretry') {
         const status = window.fgFilterProgress;
         if (status) {
             document.getElementById('filterInput').value = elFtext.value = status.text;
             elFtext.focus({ preventScroll: true });
-            applyFilter();
+            submitTimelineFilter();
         }
     }
     else if (b.dataset.act === 'fhide') { hideUnmatched = !hideUnmatched; applyTextFilter(); }
 });
-if (!document.getElementById('filterInput')) elFbar.style.display = 'none';
+if (!document.getElementById('filterInput')) {
+    elFbar.style.display = 'none';
+    elSearch.title = 'Highlight and navigate function-name matches; shared filtering is not enabled for this report';
+    tlRoot.querySelector('#tlSearchHelp').textContent = 'Find highlights and navigates function names. Shared filtering is not enabled for this report.';
+}
 
 // ---- toolbar ----
 tlRoot.querySelector('[data-role=color]').addEventListener('click', ev => {

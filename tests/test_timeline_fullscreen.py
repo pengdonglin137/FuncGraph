@@ -151,10 +151,12 @@ class TimelineFullscreenTest(unittest.TestCase):
     def test_fullscreen_and_help_shortcuts_dismiss_the_tools_dropdown(self):
         self.open_report('Element.prototype.requestFullscreen = undefined;')
         helpers.open_timeline_tools(self.page)
+        self.page.locator('[data-act=fhide]').focus()
         self.page.keyboard.press('m')
         self.wait_mode(True)
         self.assertFalse(self.page.locator('.tl-options').is_visible())
         helpers.open_timeline_tools(self.page)
+        self.page.locator('[data-act=fhide]').focus()
         self.page.keyboard.press('?')
         self.assertFalse(self.page.locator('.tl-options').is_visible())
         self.assertTrue(self.page.locator('.tl-help').is_visible())

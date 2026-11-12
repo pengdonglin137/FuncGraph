@@ -707,8 +707,7 @@ window.addEventListener('keydown', ev => {
     if (ev.key === 'Escape' && elOptions.classList.contains('open')) {
         ev.stopPropagation(); ev.preventDefault();
         if (ev.target === elFtext) {
-            if (window.fgFilterProgress) fgCancelPendingFilter();
-            elFtext.value = (window.fgFilterState || {}).text || '';
+            restoreTimelineFilterDraft();
         }
         setToolbarOptions(false, true);
         return;

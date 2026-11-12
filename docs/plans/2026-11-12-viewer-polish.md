@@ -1,7 +1,8 @@
 # 页面美观性与易用性：下一轮设计
 
 状态（2026-11-12）：已落地详情语义配色、参数整项换行，以及主信息优先 / Trace metadata
-按需展开。阅读方式见 [detail-layout.md](../detail-layout.md)。P1 仍为待实施的设计建议。
+按需展开，以及筛选草稿 / 应用反馈。阅读方式见 [detail-layout.md](../detail-layout.md)
+和 [filtering.md](../filtering.md)。其余 P1 仍为待实施的设计建议。
 
 ## 目标与边界
 
