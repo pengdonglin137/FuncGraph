@@ -131,6 +131,257 @@ class DataProviderTest(unittest.TestCase):
         with self.server.lock:
             return self.server.counts['/report/data/' + filename]
 
+    def observe_checksum_workers(self, hold=False):
+        self.page.evaluate('''hold => {
+            const NativeWorker = Worker;
+            window.checksumFacts = {created:0, terminated:0, transfers:[]};
+            window.checksumReplies = [];
+            window.holdChecksumReplies = hold;
+            window.Worker = class extends NativeWorker {
+                constructor(...parameters) {
+                    super(...parameters);
+                    checksumFacts.created++;
+                    window.latestChecksumWorker = this;
+                    Object.defineProperty(this, 'onmessage', {set:handler => {
+                        this.addEventListener('message', event => {
+                            if (event.data.buffer && holdChecksumReplies)
+                                checksumReplies.push({resume:() => handler(event), data:event.data});
+                            else handler(event);
+                        });
+                    }});
+                }
+                postMessage(data, transfers) {
+                    const bytes = data.buffer.byteLength;
+                    super.postMessage(data, transfers);
+                    checksumFacts.transfers.push({bytes, detached:data.buffer.byteLength === 0, buffers:transfers.length});
+                }
+                terminate() { checksumFacts.terminated++; super.terminate(); }
+            };
+        }''', hold)
+
+    def test_large_text_and_json_share_one_worker_and_transfer_original_buffers(self):
+        text = 'call 中文🙂 x=0xff\n' * 70000
+        self.payloads.update(raw=text.encode(), notes=encode(dict(text=text)))
+        self.publish()
+        self.observe_checksum_workers()
+        self.page.evaluate('''() => {
+            const digest = crypto.subtle.digest.bind(crypto.subtle);
+            crypto.subtle.digest = (algorithm, bytes) => {
+                if (bytes.byteLength >= 1024 * 1024) throw new Error('Large checksum ran on the main thread');
+                return digest(algorithm, bytes);
+            };
+        }''')
+        result = self.page.evaluate('''async () => {
+            const [text, json] = await Promise.all([fgData.load('raw'), fgData.load('notes')]);
+            await fgData.load('raw');
+            return {equal:text === json.text, length:text.length, facts:checksumFacts};
+        }''')
+        self.assertTrue(result['equal'])
+        self.assertEqual(result['length'], len(text.encode('utf-16-le')) // 2)
+        self.assertEqual(result['facts']['created'], 1)
+        self.assertEqual(result['facts']['terminated'], 0)
+        self.assertEqual(len(result['facts']['transfers']), 2)
+        self.assertTrue(all(item['detached'] and item['buffers'] == 1 for item in result['facts']['transfers']))
+        self.assertEqual(self.count('raw.txt'), 1)
+        self.assertEqual(self.count('notes.json'), 1)
+        self.assertEqual(self.console_errors, [])
+
+    def test_checksum_worker_threshold_preserves_small_resource_verification(self):
+        for size in [1024 * 1024 - 1, 1024 * 1024, 1024 * 1024 + 1]:
+            with self.subTest(size=size):
+                self.payloads['raw'] = b'x' * size
+                self.publish()
+                self.observe_checksum_workers()
+                result = self.page.evaluate('''async () => {
+                    const text = await fgData.load('raw');
+                    return {length:text.length, workers:checksumFacts.created};
+                }''')
+                self.assertEqual(result, dict(length=size, workers=int(size >= 1024 * 1024)))
+
+    def test_large_embedded_data_keeps_its_offline_worker_free_path(self):
+        self.publish(embedded=True)
+        self.page.evaluate('''() => {
+            Object.defineProperty(window, 'Worker', {get() { throw new Error('Embedded data tried to start a Worker'); }});
+            const embedded = document.createElement('script');
+            embedded.type = 'application/json';
+            embedded.id = 'notes';
+            embedded.textContent = JSON.stringify({text:'x'.repeat(1024 * 1024)});
+            document.body.appendChild(embedded);
+        }''')
+        self.assertEqual(self.page.evaluate("async () => (await fgData.load('notes')).text.length"), 1024 * 1024)
+        self.assertTrue(self.page.evaluate("async () => !!(await fgSwitchView('timeline'))"))
+        self.assertTrue(self.page.evaluate("async () => !!(await fgSwitchView('compare'))"))
+        self.assertEqual(self.count('manifest.json'), 0)
+        self.assertEqual(self.count('notes.json'), 0)
+
+    def test_checksum_worker_accepts_array_buffer_responses_without_streaming(self):
+        self.payloads['raw'] = b'x' * (1024 * 1024)
+        self.publish()
+        self.observe_checksum_workers()
+        self.page.evaluate('''() => {
+            const fetchResource = fetch;
+            window.fetch = async (...parameters) => {
+                const response = await fetchResource(...parameters);
+                return {ok:response.ok, status:response.status, body:null, arrayBuffer:() => response.arrayBuffer()};
+            };
+        }''')
+        self.assertEqual(self.page.evaluate("async () => (await fgData.load('raw')).length"), len(self.payloads['raw']))
+        self.assertEqual(self.page.evaluate('checksumFacts.transfers'), [dict(bytes=len(self.payloads['raw']), detached=True, buffers=1)])
+
+    def test_unavailable_or_unconstructable_worker_falls_back_without_skipping_checksums(self):
+        for mode in ['missing', 'constructor']:
+            with self.subTest(mode=mode):
+                self.payloads['raw'] = b'x' * (1024 * 1024)
+                self.publish()
+                self.page.evaluate('''mode => {
+                    window.Worker = mode === 'missing' ? undefined : class {
+                        constructor() { throw new Error('Unavailable'); }
+                    };
+                }''', mode)
+                self.server.responses['/report/data/raw.txt'] = (200, b'y' * len(self.payloads['raw']), None)
+                result = self.page.evaluate("async () => { try { await fgData.load('raw'); } catch (error) { return error.message; } }")
+                self.assertIn('checksum mismatch', result)
+                self.assertFalse(self.page.evaluate("fgData.ready('raw')"))
+                self.server.responses['/report/data/raw.txt'] = (200, self.payloads['raw'], None)
+                self.assertEqual(self.page.evaluate("async () => (await fgData.load('raw')).length"), len(self.payloads['raw']))
+
+    def test_worker_boot_failure_uses_verified_main_thread_fallback(self):
+        self.payloads['raw'] = b'x' * (1024 * 1024)
+        self.publish()
+        self.page.evaluate('''() => {
+            window.failedWorkers = 0;
+            window.Worker = class {
+                constructor() { queueMicrotask(() => this.onmessage({data:{ready:false}})); }
+                terminate() { failedWorkers++; }
+            };
+        }''')
+        self.assertEqual(self.page.evaluate("async () => (await fgData.load('raw')).length"), len(self.payloads['raw']))
+        self.assertEqual(self.page.evaluate('failedWorkers'), 1)
+        self.assertEqual(self.console_errors, [])
+
+    def test_large_worker_checked_bytes_still_require_valid_utf8_and_json(self):
+        for name, body in [('raw', b'x' * (1024 * 1024) + b'\xff'),
+                           ('notes', b'{' + b' ' * (1024 * 1024) + b'invalid}')]:
+            with self.subTest(name=name):
+                self.payloads[name] = body
+                self.publish()
+                self.observe_checksum_workers()
+                result = self.page.evaluate('''async name => {
+                    try { await fgData.load(name); return {accepted:true}; }
+                    catch (error) { return {accepted:false, cached:fgData.ready(name), workers:checksumFacts.created}; }
+                }''', name)
+                self.assertEqual(result, dict(accepted=False, cached=False, workers=1))
+
+    def test_never_ready_checksum_worker_times_out_and_uses_native_verification(self):
+        self.payloads['raw'] = b'x' * (1024 * 1024)
+        self.publish()
+        self.page.evaluate('''() => {
+            const schedule = setTimeout;
+            window.setTimeout = (callback, delay, ...parameters) => schedule(callback, delay === 5000 ? 0 : delay, ...parameters);
+            window.failedWorkers = 0;
+            window.Worker = class {
+                terminate() { failedWorkers++; }
+            };
+        }''')
+        self.assertEqual(self.page.evaluate("async () => (await fgData.load('raw')).length"), len(self.payloads['raw']))
+        self.assertEqual(self.page.evaluate('failedWorkers'), 1)
+
+    def test_checksum_worker_error_reply_terminates_the_worker_before_native_retry(self):
+        self.payloads['raw'] = b'x' * (1024 * 1024)
+        self.publish()
+        self.observe_checksum_workers(hold=True)
+        self.page.evaluate("() => { window.failedChecksum = fgData.load('raw').catch(error => error.message); }")
+        self.page.wait_for_function('() => checksumReplies.length === 1')
+        self.page.evaluate("() => { checksumReplies[0].data.error = 'Crypto failed'; checksumReplies.shift().resume(); }")
+        self.assertIn('checksum worker failed: Crypto failed', self.page.evaluate('failedChecksum'))
+        self.assertFalse(self.page.evaluate("fgData.ready('raw')"))
+        self.assertEqual(self.page.evaluate('checksumFacts.terminated'), 1)
+        self.assertEqual(self.page.evaluate("async () => (await fgData.load('raw')).length"), len(self.payloads['raw']))
+        self.assertEqual(self.page.evaluate('checksumFacts.created'), 1)
+
+    def test_canceling_one_subscriber_keeps_a_shared_checksum_worker_job_alive(self):
+        self.payloads['raw'] = b'x' * (1024 * 1024)
+        self.publish()
+        self.observe_checksum_workers(hold=True)
+        self.page.evaluate('''() => {
+            window.firstConsumer = new AbortController();
+            window.firstChecksum = fgData.load('raw', {signal:firstConsumer.signal}).catch(error => error.name);
+            window.secondChecksum = fgData.load('raw');
+        }''')
+        self.page.wait_for_function('() => checksumReplies.length === 1')
+        self.page.evaluate('firstConsumer.abort()')
+        self.assertEqual(self.page.evaluate('firstChecksum'), 'AbortError')
+        self.assertEqual(self.page.evaluate('checksumFacts.terminated'), 0)
+        self.page.evaluate('checksumReplies.shift().resume()')
+        self.assertEqual(self.page.evaluate('async () => (await secondChecksum).length'), len(self.payloads['raw']))
+        self.assertTrue(self.page.evaluate("fgData.ready('raw')"))
+        self.assertEqual(self.count('raw.txt'), 1)
+
+    def test_last_checksum_consumer_abort_terminates_worker_and_ignores_late_reply(self):
+        self.payloads['raw'] = b'x' * (1024 * 1024)
+        self.publish()
+        self.observe_checksum_workers(hold=True)
+        self.page.evaluate('''() => {
+            window.checksumConsumer = new AbortController();
+            window.oldChecksum = fgData.load('raw', {signal:checksumConsumer.signal}).catch(error => error.name);
+        }''')
+        self.page.wait_for_function('() => checksumReplies.length === 1')
+        self.page.evaluate('checksumConsumer.abort()')
+        self.assertEqual(self.page.evaluate('oldChecksum'), 'AbortError')
+        self.assertEqual(self.page.evaluate('checksumFacts.terminated'), 1)
+        self.assertFalse(self.page.evaluate("fgData.ready('raw')"))
+        self.page.evaluate('holdChecksumReplies = false')
+        self.assertEqual(self.page.evaluate("async () => (await fgData.load('raw')).length"), len(self.payloads['raw']))
+        self.page.evaluate('checksumReplies.shift().resume()')
+        self.assertEqual(self.page.evaluate('checksumFacts.created'), 2)
+        self.assertTrue(self.page.evaluate("fgData.ready('raw')"))
+
+    def test_canceling_one_resource_preserves_another_checksum_job_on_the_same_worker(self):
+        text = 'x' * (1024 * 1024)
+        self.payloads.update(raw=text.encode(), notes=encode(dict(text=text)))
+        self.publish()
+        self.observe_checksum_workers(hold=True)
+        self.page.evaluate('''() => {
+            window.checksumConsumer = new AbortController();
+            window.firstChecksum = fgData.load('raw', {signal:checksumConsumer.signal}).catch(error => error.name);
+            window.otherChecksum = fgData.load('notes');
+        }''')
+        self.page.wait_for_function('() => checksumReplies.length === 2')
+        self.page.evaluate('checksumConsumer.abort()')
+        self.assertEqual(self.page.evaluate('firstChecksum'), 'AbortError')
+        self.assertEqual(self.page.evaluate('checksumFacts.terminated'), 0)
+        self.page.evaluate('checksumReplies.splice(0).forEach(reply => reply.resume())')
+        self.assertEqual(self.page.evaluate('async () => (await otherChecksum).text.length'), len(text))
+        self.assertTrue(self.page.evaluate("fgData.ready('notes') && !fgData.ready('raw')"))
+
+    def test_failed_running_worker_cannot_cache_data_and_retry_uses_native_verification(self):
+        self.payloads['raw'] = b'x' * (1024 * 1024)
+        self.publish()
+        self.observe_checksum_workers(hold=True)
+        self.page.evaluate("() => { window.failedChecksum = fgData.load('raw').catch(error => error.message); }")
+        self.page.wait_for_function('() => checksumReplies.length === 1')
+        self.page.evaluate('latestChecksumWorker.onerror(new ErrorEvent("error", {cancelable:true}))')
+        self.assertIn('checksum worker failed', self.page.evaluate('failedChecksum'))
+        self.assertFalse(self.page.evaluate("fgData.ready('raw')"))
+        self.assertEqual(self.page.evaluate("async () => (await fgData.load('raw')).length"), len(self.payloads['raw']))
+        self.assertEqual(self.page.evaluate('checksumFacts.created'), 1)
+        self.assertEqual(self.page.evaluate('checksumFacts.terminated'), 1)
+        self.page.evaluate('checksumReplies.shift().resume()')
+
+    def test_malformed_and_incorrect_worker_digests_never_cache_unverified_bytes(self):
+        for size, message in [(31, 'Invalid report checksum result'), (32, 'checksum mismatch')]:
+            with self.subTest(size=size):
+                self.payloads['raw'] = b'x' * (1024 * 1024)
+                self.publish()
+                self.observe_checksum_workers(hold=True)
+                self.page.evaluate("() => { window.invalidChecksum = fgData.load('raw').catch(error => error.message); }")
+                self.page.wait_for_function('() => checksumReplies.length === 1')
+                self.page.evaluate('size => { checksumReplies[0].data.digest = new ArrayBuffer(size); checksumReplies.shift().resume(); }', size)
+                self.assertIn(message, self.page.evaluate('invalidChecksum'))
+                self.assertFalse(self.page.evaluate("fgData.ready('raw')"))
+                self.page.evaluate('holdChecksumReplies = false')
+                self.assertEqual(self.page.evaluate("async () => (await fgData.load('raw')).length"), len(self.payloads['raw']))
+
     def test_text_chunks_load_by_original_row_ordinal_without_mounting_or_fetching_other_chunks(self):
         self.payloads.update(fgText0='first 中文'.encode(), fgText4096='second 🙂'.encode())
         self.publish(text_catalog=dict(version=1, count=4203, chunk_size=4096, paint_rows=512))

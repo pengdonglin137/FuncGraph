@@ -118,7 +118,7 @@ class ReportHandler(BaseHTTPRequestHandler):
         self.send_header('Content-Security-Policy',
                          "default-src 'none'; script-src 'self' 'unsafe-inline'; "
                          "style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; "
-                         "font-src 'self' data:; connect-src 'self'; "
+                         "font-src 'self' data:; connect-src 'self'; worker-src blob:; "
                          "base-uri 'none'; form-action 'none'; frame-ancestors 'none'")
         self.end_headers()
 

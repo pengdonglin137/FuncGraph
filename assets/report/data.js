@@ -8,7 +8,109 @@
     const sourceCache = { entries: new Map(), bytes: 0, chunks: 8, limit: 16 * 1024 * 1024 };
     const textCache = { entries: new Map(), bytes: 0, chunks: 4, limit: 16 * 1024 * 1024 };
     const requests = new Map();
+    let checksumWorker = null;
+    let checksumWorkerUnavailable = false;
+    let checksumSequence = 0;
     let descriptor = null;
+    function checksumWorkerMain() {
+        self.onmessage = async event => {
+            const { id, buffer } = event.data;
+            try {
+                const digest = await self.crypto.subtle.digest('SHA-256', buffer);
+                self.postMessage({ id, buffer, digest }, [buffer, digest]);
+            } catch (error) {
+                self.postMessage({ id, buffer, error: error.message }, [buffer]);
+            }
+        };
+        self.postMessage({ ready: !!self.crypto?.subtle });
+    }
+    function stopChecksumWorker(state, error) {
+        if (checksumWorker === state) checksumWorker = null;
+        clearTimeout(state.timer);
+        state.worker?.terminate();
+        if (state.url) URL.revokeObjectURL(state.url);
+        state.url = null;
+        state.resolve(null);
+        for (const job of state.jobs.values()) {
+            job.cleanup();
+            job.reject(error);
+        }
+        state.jobs.clear();
+    }
+    function prepareChecksumWorker() {
+        if (checksumWorkerUnavailable || !window.Worker || !window.Blob || !window.URL?.createObjectURL) return Promise.resolve(null);
+        if (checksumWorker) return checksumWorker.ready;
+        const state = { worker: null, jobs: new Map(), ready: null, resolve: null, url: null, timer: 0 };
+        state.ready = new Promise(resolve => { state.resolve = resolve; });
+        checksumWorker = state;
+        const failed = message => {
+            if (checksumWorker !== state) return;
+            checksumWorkerUnavailable = true;
+            stopChecksumWorker(state, new Error(typeof message === 'string' ? message :
+                'Report checksum worker failed; retry to use the main-thread verifier'));
+        };
+        try {
+            state.url = URL.createObjectURL(new Blob(['(' + checksumWorkerMain.toString() + ')()'], { type: 'text/javascript' }));
+            state.worker = new Worker(state.url, { name: 'FuncGraph checksums' });
+            state.worker.onmessage = event => {
+                if (checksumWorker !== state) return;
+                const data = event.data;
+                if (data?.ready !== undefined) {
+                    if (!data.ready) { failed(); return; }
+                    clearTimeout(state.timer);
+                    URL.revokeObjectURL(state.url);
+                    state.url = null;
+                    state.resolve(state);
+                    return;
+                }
+                const job = state.jobs.get(data?.id);
+                if (!job) return;
+                if (data.error) {
+                    failed('Report checksum worker failed: ' + data.error + '; retry to use the main-thread verifier');
+                    return;
+                }
+                if (!(data.buffer instanceof ArrayBuffer) || data.buffer.byteLength !== job.bytes ||
+                    !(data.digest instanceof ArrayBuffer) || data.digest.byteLength !== 32) {
+                    failed('Invalid report checksum result; retry to use the main-thread verifier');
+                    return;
+                }
+                state.jobs.delete(data.id);
+                job.cleanup();
+                job.resolve({ bytes: data.buffer, digest: data.digest });
+            };
+            state.worker.onerror = event => { event.preventDefault(); failed(); };
+            state.worker.onmessageerror = failed;
+            state.timer = setTimeout(failed, 5000);
+        } catch (error) { failed(); }
+        return state.ready;
+    }
+    async function checksum(bytes, signal) {
+        const state = bytes.byteLength >= 1024 * 1024 ? await prepareChecksumWorker() : null;
+        aborted(signal);
+        if (!state || checksumWorker !== state) {
+            return { bytes, digest: await window.crypto.subtle.digest('SHA-256', bytes) };
+        }
+        return new Promise((resolve, reject) => {
+            const id = ++checksumSequence;
+            const cleanup = () => signal?.removeEventListener('abort', cancel);
+            const cancel = () => {
+                state.jobs.delete(id);
+                cleanup();
+                const error = new DOMException('Data request canceled', 'AbortError');
+                reject(error);
+                if (!state.jobs.size) stopChecksumWorker(state, error);
+            };
+            state.jobs.set(id, { resolve, reject, cleanup, bytes: bytes.byteLength });
+            signal?.addEventListener('abort', cancel, { once: true });
+            const buffer = bytes instanceof ArrayBuffer ? bytes : bytes.buffer;
+            try { state.worker.postMessage({ id, buffer }, [buffer]); }
+            catch (error) {
+                state.jobs.delete(id);
+                cleanup();
+                reject(error);
+            }
+        });
+    }
     function cacheRelease(key) {
         for (const policy of [sourceCache, textCache]) {
             if (!policy.entries.has(key)) continue;
@@ -123,11 +225,11 @@
         const bytes = await resourceBytes(response, resource, signal);
         aborted(signal);
         if (bytes.byteLength !== resource.bytes) throw new Error('Report resource size mismatch: ' + resource.file);
-        const digest = await window.crypto.subtle.digest('SHA-256', bytes);
-        const hash = Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('');
+        const checked = await checksum(bytes, signal);
+        const hash = Array.from(new Uint8Array(checked.digest), byte => byte.toString(16).padStart(2, '0')).join('');
         aborted(signal);
         if (hash !== resource.sha256) throw new Error('Report resource checksum mismatch: ' + resource.file);
-        const text = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+        const text = new TextDecoder('utf-8', { fatal: true }).decode(checked.bytes);
         return resource.format === 'json' ? JSON.parse(text) : text;
     }
     function request(key, signal, loader, store = cacheStore) {

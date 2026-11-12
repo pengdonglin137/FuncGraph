@@ -28,10 +28,11 @@ def measure(browser, report, timeout, mount_text, filter_query=None, text_querie
     try:
         page = context.new_page()
         page.set_default_timeout(timeout)
-        errors, requests, transferred = [], [], []
+        errors, requests, transferred, workers = [], [], [], []
         page.on('pageerror', lambda error: errors.append(str(error)))
         page.on('request', lambda request: requests.append(request.url))
         page.on('response', lambda response: transferred.append(int(response.headers.get('content-length', 0))))
+        page.on('worker', lambda worker: workers.append(worker.url))
         page.add_init_script('''(() => {
             let hash = 0;
             const title = TITLE;
@@ -103,6 +104,13 @@ def measure(browser, report, timeout, mount_text, filter_query=None, text_querie
                           for metric in session.send('Performance.getMetrics')['metrics']}
                 mounted = page.evaluate('''async () => {
                     const start = performance.now();
+                    let chunksLoading = 0, concurrentChunks = 0;
+                    const loadTextChunk = fgData.loadTextChunk;
+                    fgData.loadTextChunk = (...parameters) => {
+                        chunksLoading++;
+                        concurrentChunks = Math.max(concurrentChunks, chunksLoading);
+                        return loadTextChunk(...parameters).finally(() => chunksLoading--);
+                    };
                     const labels = new Set();
                     let preparationFeedback = null, preparationFrames = 0, finishingFeedback = null, parsedFeedback = null;
                     const ready = fgSwitchView('text');
@@ -132,6 +140,7 @@ def measure(browser, report, timeout, mount_text, filter_query=None, text_querie
                     const cached = catalog ? Array.from({length:chunks}, (unused, index) =>
                         fgData.ready('fgText' + index * catalog.chunk_size)).some(Boolean) : fgData.ready('fgText');
                     return {duration_ms:performance.now() - start, expected_text_requests:chunks,
+                        max_concurrent_text_chunks:concurrentChunks,
                         preparation_feedback_ms:preparationFeedback, preparation_frames:preparationFrames,
                         parsed_feedback_ms:parsedFeedback,
                         finishing_feedback_ms:finishingFeedback,
@@ -146,6 +155,9 @@ def measure(browser, report, timeout, mount_text, filter_query=None, text_querie
                 after = {metric['name']: metric['value']
                          for metric in session.send('Performance.getMetrics')['metrics']}
                 mounted['dom_counters'] = session.send('Memory.getDOMCounters')
+                mounted['workers_started'] = len(workers)
+                if mounted['max_concurrent_text_chunks'] > 2:
+                    raise RuntimeError('Text prefetch exceeded current plus one lookahead chunk')
                 session.detach()
                 mounted['browser_work'] = {
                     name: (after[metric] - before[metric]) * scale

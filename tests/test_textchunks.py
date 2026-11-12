@@ -310,6 +310,26 @@ class TextChunkBrowserTest(unittest.TestCase):
         self.assertEqual(self.page.locator('#content .line-container').count(), 4203)
         self.assertEqual(sum(url.endswith('text-0.html') for url in self.requests), 1)
 
+    def test_next_network_chunk_starts_before_current_paint_block_parsing(self):
+        self.page.evaluate('''() => {
+            const markup = Object.getOwnPropertyDescriptor(Element.prototype, 'innerHTML');
+            window.parsedTextBlocks = 0;
+            Object.defineProperty(Element.prototype, 'innerHTML', {...markup, set(value) {
+                if (value.startsWith('<div class="text-chunk"')) parsedTextBlocks++;
+                markup.set.call(this, value);
+            }});
+            const load = fgData.loadTextChunk;
+            window.textChunkRequests = [];
+            fgData.loadTextChunk = (first, options) => {
+                textChunkRequests.push({first, parsed:parsedTextBlocks});
+                return load(first, options);
+            };
+        }''')
+        self.page.evaluate('async () => { await fgSwitchView("text"); }')
+        self.assertEqual(self.page.evaluate('textChunkRequests'), [dict(first=0, parsed=0), dict(first=4096, parsed=0)])
+        self.assertEqual(self.page.evaluate('parsedTextBlocks'), 9)
+        self.assertEqual(self.page.locator('#content .line-container').count(), 4203)
+
     def test_invalid_prepared_chunk_retries_before_any_rows_or_listeners_are_published(self):
         self.page.evaluate('''() => {
             const load = fgData.loadTextChunk;

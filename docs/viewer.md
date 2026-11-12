@@ -55,6 +55,18 @@ Generation still renders the full report once and stages the filter index even f
 
 ### Sidecar loading
 
+External resources of at least 1 MiB use one lazily started SHA-256 Worker,
+transferring original buffers rather than copying them. Size/checksum validation
+still precedes decoding and caching. `fgview` adds only `worker-src blob:` to its
+CSP; network access stays same-origin, and remote Workers remain blocked.
+Missing Worker support, startup failure or a five-second startup timeout falls
+back to complete main-thread verification. A running Worker failure rejects the
+request; Retry uses the main thread. Canceling the last active checksum job
+terminates its Worker without canceling another subscriber or resource's job.
+Text prefetches only the next network chunk and still mounts after complete
+preparation. This is not viewport windowing; see [delivery measurements and
+limits](performance-text-delivery.md).
+
 - First Timeline loads its complete model but does not fetch Text, Compare or source bodies and creates no per-record Text DOM. The compact trace-line → source-ID index remains embedded. Source HTML is stored in `source-<first-id>.json` chunks of up to 64 source records; expanding a Text source or an open Timeline call-site panel fetches only its chunk. A closed call-site panel waits until opened. Resolved hover locations use the compact Timeline positions without fetching source HTML; older/unknown positions can load the relevant source chunk.
 - Source chunks use the same byte-count/SHA-256 verification and shared requests as other resources. Pending panels show **Loading source…**, failures show **Retry** without partial code, and collapsing, replacing/closing a detail or leaving a view cancels its consumer and ignores stale results. Leaving a view with an open pending panel restarts it on reentry. Other consumers sharing that chunk can finish. Newly generated sidecar reports retain source resources in an LRU cache of **at most 8 chunks and 16 MiB of verified UTF-8 JSON bytes in total**. Actual reads and load hits refresh recency; readiness probes do not. The least recently read chunks are evicted as needed without removing displayed code, and subsequent use downloads and verifies them again. A chunk larger than 16 MiB can still be viewed in full but is not retained in the resource cache and does not displace other chunks. Chain/flat controls remain synchronized. This budget is not a bound on JS heap, concurrent requests or complete-report memory: a large source record is not split, and populated DOM and complete models can still accumulate. Single-file output and auto decisions at/below the threshold retain the full embedded source pool and offline behavior. Regenerate older reports to use this policy.
 - Timeline unified filtering fetches `text-index.json` on first use, evaluates all trace rows without creating Text DOM, and shares the Text expression/graph semantics. Progress is cancellable with Escape or Clear; a newer query supersedes the previous one. Errors retain the previous result and offer **Retry filter**. The complete index is cached until Text mounts; downloading/parsing it and graph preparation still use main-thread memory and time.

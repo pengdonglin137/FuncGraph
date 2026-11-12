@@ -4,6 +4,8 @@
 
 新生成的大型 sidecar Text（超过 4,096 条原始记录，包括表头）采用每块最多 4,096 条的网络资源，不再先下载一个完整 `text.html` 再开始准备。每块保留完整行/源码占位及原始顺序，逐块校验、显示加载进度并支持取消/重试；HTML 资源缓存独立限制为最多 4 块、合计 16 MiB 已校验 UTF-8 字节，超大单块可加载但不缓存。取消会丢弃未挂载节点，重入可复用仍在缓存的块，被淘汰的块需要重读。**当前仍准备全部记录后完整挂载，不是视口窗口化，完整 DOM/模型内存没有上限。** 小型/旧 sidecar 保留完整 `text.html` 路径；single 和 auto 未超字节阈值时不使用这些外部块。旧报告需重新生成。
 
+sidecar 中至少 1 MiB 的资源由一个按需启动的 Worker 执行 SHA-256 校验，原始字节通过转移交还主线程后才解码。浏览器不支持时仍进行完整的主线程校验；Worker 运行失败不会缓存未校验数据，重试改用主线程。Text 最多预取下一块，让下载/校验与当前块解析重叠，不提前加载整个报告。默认单文件、auto 阈值和完整分析范围不变；性能实测与尚未完成的 DOM 窗口化见 [Text 交付优化](performance-text-delivery.md)。旧报告需重新生成。
+
 **raw 采集文件**：自动识别 trace-cmd 二进制容器：`funcgraph trace.dat --timeline --output trace.html`。原生依赖、固定子模块、buffer 选择及边界见 [raw 输入文档](raw-input.cn.md)；不支持独立 trace_pipe_raw 裸页。
 
 报告加载：普通报告仍为离线单文件。大报告可显式运行 `funcgraph TRACE --timeline --report-mode sidecar --output REPORT_DIRECTORY`，再用 `fgview REPORT_DIRECTORY` 打开。默认 Timeline 不加载 Text 行，Compare 按需读取；统一过滤按需加载完整 Text 过滤索引，不挂载 Text DOM，提供进度、取消及失败保留旧结果后的重试。首次进入 Text 或跳转 trace 行号/锚点时才**完整加载 Text**，在文档外分批准备、显示进度并支持取消，随后重新应用当前过滤。最终布局仍可能阻塞，完整 DOM 仍常驻；不是虚拟列表，也不保证打开总时间更短。保存的 Text 偏好和行号锚点优先于初始 Timeline。sidecar 源码正文按最多 64 条记录分块按需读取，支持校验、共享请求、加载/Retry 反馈和取消；资源缓存采用最多 8 块、合计 16 MiB 已校验 UTF-8 JSON 字节数的 LRU。被淘汰的块可重新读取，已展示源码不消失；超大单块可查看但不缓存，这不是整个报告的内存上限。已解析悬停位置不请求源码正文，单文件源码仍内嵌。旧报告需重新生成才能使用新缓存策略。可选 `--report-mode auto --sidecar-threshold BYTES` 仅在完整 HTML 严格超过显式字节阈值时选择 sidecar，没有默认阈值。共享、更新和错误恢复见[查看器指南](viewer.cn.md)。

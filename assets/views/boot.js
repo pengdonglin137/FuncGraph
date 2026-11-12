@@ -51,11 +51,20 @@
                 }
                 if (chunked) {
                     const catalog = window.fgData.textChunks();
+                    const loadChunk = (first, signal) => window.fgData.loadTextChunk(first, { signal }).then(
+                        html => ({ html }), error => ({ error }));
+                    let prefetched = null;
                     for (let first = 0; first < catalog.count; first += catalog.chunk_size) {
                         const count = Math.min(catalog.chunk_size, catalog.count - first);
-                        const html = yield { label: 'Loading Text rows: ' + (first + 1) + '–' + (first + count) + ' / ' + catalog.count + '…',
-                            load: signal => window.fgData.loadTextChunk(first, { signal }) };
-                        yield* append(html, count, catalog.paint_rows, first, catalog.count);
+                        const result = yield { label: 'Loading Text rows: ' + (first + 1) + '–' + (first + count) + ' / ' + catalog.count + '…',
+                            load: signal => {
+                                const current = prefetched || loadChunk(first, signal);
+                                const next = first + catalog.chunk_size;
+                                prefetched = next < catalog.count ? loadChunk(next, signal) : null;
+                                return current;
+                            } };
+                        if (result.error) throw result.error;
+                        yield* append(result.html, count, catalog.paint_rows, first, catalog.count);
                     }
                 } else {
                     yield* append(window.fgData.read('fgText'), null, null, 0, 0);

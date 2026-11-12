@@ -129,6 +129,7 @@ class ViewerTest(unittest.TestCase):
         self.assertEqual(headers['Referrer-Policy'], 'no-referrer')
         self.assertEqual(headers['Cross-Origin-Resource-Policy'], 'same-origin')
         self.assertIn("connect-src 'self'", headers['Content-Security-Policy'])
+        self.assertIn('worker-src blob:', headers['Content-Security-Policy'])
         self.assertIn("frame-ancestors 'none'", headers['Content-Security-Policy'])
         self.assertNotIn("'unsafe-eval'", headers['Content-Security-Policy'])
         self.assertNotIn('Python', headers['Server'])

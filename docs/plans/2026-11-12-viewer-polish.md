@@ -14,6 +14,10 @@ Text 行号复制、源码单击/双击已共享正文级事件委托，避免�
 阅读方式见 [detail-layout.md](../detail-layout.md)
 和 [filtering.md](../filtering.md)。其余 P1 仍为待实施的设计建议。
 
+大 trace 首开进一步将 SHA-256 校验移出主线程，并只预取下一 Text 网络块；
+单文件、auto 阈值、完整分析和可视外观不变。完整 DOM/模型仍保留，窗口化尚未完成，
+实测与取消/故障边界见 [performance-text-delivery.md](../performance-text-delivery.md)。
+
 ## 目标与边界
 
 优先减少寻找信息、理解状态和执行操作的成本，而不是增加装饰。
