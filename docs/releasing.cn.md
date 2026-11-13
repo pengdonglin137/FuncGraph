@@ -5,13 +5,13 @@
 本文记录可重复使用的发布流程，以及 2026 年 11 月 9 日完成的 `v0.9.1` 发布。
 当前自动化发布到 **GitHub Releases，不是 PyPI**，无需配置 PyPI token。
 
-## 本次发布目标：v0.9.2
+## 本次发布目标：v0.9.3
 
-2026 年 11 月 10 日源码版本升级为 `0.9.2`；11 月 12 日的发布目标包含 native CI 修复、
-内置 uftrace、混合报告与可视化改进，详见 [版本说明](releases/v0.9.2.md)。
+2026 年 11 月 13 日的发布目标为 `0.9.3`，包含统一采集入口、大型 Text 渲染与导航优化、
+Timeline 修复和中英文文档重设计，详见 [版本说明](releases/v0.9.3.md)。
 发布 job 会将匹配的 `docs/releases/vTAG.md` 写入 Release 正文，再附 GitHub 生成的说明。
 升版本身不会发布；仍须按下方清单核对实际标签、工作流与附件，不把源码版本当成发布成功。
-下方 `v0.9.1` 的已验证发布记录保留为历史。
+已发布的 `v0.9.2` 标签与下方更早版本的已验证发布记录保留为历史。
 
 ## 1. 先区分 push、标签和 Release
 
@@ -59,11 +59,11 @@ git log -5 --oneline
 
 ### 选择版本并更新版本号
 
-以下以 **`0.9.2` 为下一次发布的示例**，不是要求每次照抄同一个版本。
-`v0.9.1` 已经发布，不能重新创建或移动到新提交。
+以下以 **`0.9.3` 为本次发布的示例**，不是要求每次照抄同一个版本。
+`v0.9.2` 已经发布，不能重新创建或移动到新提交。
 
 ```bash
-next_version=0.9.2
+next_version=0.9.3
 release_tag="v${next_version}"
 git tag --list "$release_tag"
 git ls-remote --tags origin "refs/tags/$release_tag" "refs/tags/$release_tag^{}"

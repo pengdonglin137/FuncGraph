@@ -8,7 +8,7 @@ Optional uftrace support: `third_party/uftrace` is pristine v0.20; five generate
 
 Raw input: `fglib/raw.py` lazily compiles packaged `fglib/native/raw.c` into a private temporary directory using host `CC` + pkg-config (libtracecmd >= 1.5.0). Text-only use needs no native dependencies. Official fixed submodules live in `third_party/`; `build.sh` installs into a user prefix, without system ldconfig edits. See bilingual `docs/raw-input*.md`. Container magic detection covers compressed/stdin input and Compare; bare trace_pipe_raw is unsupported. Native tests use synthetic v6 containers (both byte orders/word sizes); set `FG_RAW_REQUIRED=1` to forbid dependency skips. The raw CI job builds pinned libraries and tests installed wheel/sdist.
 
-FuncGraph (v0.9.2) converts Linux kernel ftrace `function_graph` output into interactive, self-contained HTML visualizations. It resolves kernel function addresses to source file:line locations and embeds clickable source code panels in the output.
+FuncGraph (v0.9.3) converts Linux kernel ftrace `function_graph` output into interactive, self-contained HTML visualizations. It resolves kernel function addresses to source file:line locations and embeds clickable source code panels in the output.
 
 ## Running the Tool
 
@@ -58,7 +58,7 @@ tests/run.sh --golden                # afterwards: byte-for-byte comparison on r
 - Browser tests and debugging: `fgView('timeline').probe()` exposes the model read-only (`N`, `NA`, `SYN`, `sStart`, `nameOf`, `isGhost`, `select`, `zoomTo`, ...). Headless Chromium hides scrollbars by default; layout tests need `ignore_default_args=['--hide-scrollbars']`.
 - Timeline JSON >= 1 MiB uses cancellable main-thread preparation (`__tlSteps`). `await fgSwitchView('timeline')` waits for the complete API (null on cancellation/failure); small/cached views return an API directly. `fgView('timeline')` deliberately drains any pending iterator synchronously for existing probes, so do not use it to wait in responsiveness benchmarks. `tests/benchmark_startup.py` measures feedback separately from full-ready double-rAF and long tasks; 8 ms is a cooperative budget, not a bound on parsing/layout/GC.
 - Guide screenshots (`docs/img/*.png`) come from `python3 docs/img/make_shots.py [names]` (uses sample.html and repo fixtures); rerun after UI changes.
-- After output-affecting changes regenerate `sample.html` from `samples/sample_io.txt` (command in README "Sample") and `sample_mixed.html` from `samples/sample_mixed.jsonl` (command in `docs/uftrace.md`); use `python3 samples/make_shots.py` to refresh their screenshots. `test_mixed_sample` verifies reproducibility, file/HTTP viewing, and Pages staging.
+- After output-affecting changes regenerate `sample.html` from `samples/sample_io.txt` (offline replay in `docs/examples.md`; add the matching kernel image and source tree for source/BTF enrichment) and `sample_mixed.html` from `samples/sample_mixed.jsonl` (command in `docs/uftrace.md`); use `python3 samples/make_shots.py` to refresh their screenshots. `test_mixed_sample` verifies reproducibility, file/HTTP viewing, and Pages staging.
 - The current sample is QEMU x86_64 `7.4.0-rc2 #3`, captured November 10, 2026, using `/vol_1t/Qemu/linux/x86_64/vmlinux` and source commit `7475ea8b58616b33c04afb976cf0fbaad9dd63fb` (upstream `v7.4-rc2`). Pin both source and web revisions. `python3 samples/make_shots.py` regenerates the overview/Text images; keep the older `sample_io_slow.txt` explicitly labeled as a historical 7.2.0+ Compare input.
 
 ## Releasing

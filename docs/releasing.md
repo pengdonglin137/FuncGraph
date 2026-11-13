@@ -22,21 +22,21 @@ workflow must finish successfully.
 Push the tag with your normal authenticated Git connection, not another
 workflow's default `GITHUB_TOKEN`, which does not trigger new workflow runs.
 
-## Release target: v0.9.2
+## Release target: v0.9.3
 
-The source version was updated to `0.9.2` on November 10, 2026. The November 12
-release target includes the native CI fix, bundled uftrace, mixed reports and
-viewer improvements listed in [the release notes](releases/v0.9.2.md). The
+The November 13, 2026 release target is `0.9.3`: unified capture, large-Text
+rendering and navigation improvements, Timeline fixes and redesigned bilingual
+documentation are listed in [the release notes](releases/v0.9.3.md). The
 publish job includes a matching `docs/releases/vTAG.md` file in the Release body
 when present, followed by generated GitHub notes. A version change alone does
 not publish anything: verify the actual tag, workflow and attachments below.
-Keep the verified `v0.9.1` record as history.
+Keep the published `v0.9.2` tag and earlier verified release records as history.
 
 ## Release checklist
 
 Run commands from the repository root in the same Bash session. **Stop if any
-command fails.** `0.9.2` is the current release example, not a version to reuse
-unconditionally. Published tags such as `v0.9.1` must not be moved or overwritten.
+command fails.** `0.9.3` is the current release example, not a version to reuse
+unconditionally. Published tags such as `v0.9.2` must not be moved or overwritten.
 
 ### 1. Prepare the release commit
 
@@ -57,7 +57,7 @@ git fetch origin --tags
 git switch master
 git merge --ff-only origin/master
 git log -5 --oneline
-next_version=0.9.2
+next_version=0.9.3
 release_tag="v${next_version}"
 git tag --list "$release_tag"
 git ls-remote --tags origin "refs/tags/$release_tag" "refs/tags/$release_tag^{}"
