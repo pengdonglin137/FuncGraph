@@ -277,7 +277,7 @@ function loadCallSitePosition(index, source) {
         tipHtml = null;
     });
 }
-let tipHtml = null;
+let tipHtml = null, pendingHover = null;
 function showTip(html, ev) {
     if (tipHtml !== html) {
         elTip.innerHTML = html;
@@ -291,6 +291,7 @@ function showTip(html, ev) {
     elTip.style.transform = 'translate(' + Math.max(4, x) + 'px, ' + Math.max(4, y) + 'px)';
 }
 function hideTip() {
+    pendingHover = null;
     elTip.style.display = 'none';
     tipHtml = null;
     hoverSourceRequest?.controller.abort();
@@ -312,6 +313,7 @@ function activateCanvas(mx, my) {
 }
 elCv.addEventListener('mousedown', ev => {
     if (ev.button !== 0) return;
+    pendingHover = null;
     const [mx, my] = localXY(ev, elCv);
     const h = hitTest(mx, my);
     drag = { mode: ev.shiftKey ? 'range' : 'pan', x0: mx, s0: view.s, e0: view.e, moved: false,
@@ -339,26 +341,32 @@ window.addEventListener('mousemove', ev => {
         return;
     }
     if (ev.target !== elCv) return;
-    const [mx, my] = localXY(ev, elCv);
-    cursorX = mx;
-    const h = hitTest(mx, my);
-    const nh = h.slice;
-    hoverSourcePointer = { event: ev, dense: h.dense };
-    if (hoverSourceRequest && hoverSourceRequest.index !== nh) {
+    pendingHover = ev;
+    drawCursor();
+});
+function flushHover() {
+    const event = pendingHover;
+    pendingHover = null;
+    if (!event || drag || window.fgCurrentView() !== 'timeline') return false;
+    const [horizontal, vertical] = localXY(event, elCv);
+    cursorX = horizontal;
+    const hit = hitTest(horizontal, vertical);
+    const slice = hit.slice;
+    hoverSourcePointer = { event, dense: hit.dense };
+    if (hoverSourceRequest && hoverSourceRequest.index !== slice) {
         hoverSourceRequest.controller.abort(); hoverSourceRequest = null;
     }
-    const nextCpu = h.cpuSeg || null;
-    const changed = nh !== hov || h.off !== hovOff || nextCpu?.cpu !== hovCpu?.cpu || nextCpu?.j !== hovCpu?.j;
-    hov = nh; hovOff = h.off;
+    const nextCpu = hit.cpuSeg || null;
+    const changed = slice !== hov || hit.off !== hovOff || nextCpu?.cpu !== hovCpu?.cpu || nextCpu?.j !== hovCpu?.j;
+    hov = slice; hovOff = hit.off;
     hovCpu = nextCpu;
-    elCv.classList.toggle('ptr', nh >= 0 || h.header || !!hovCpu);
-    if (hovCpu) showTip(tipCpu(hovCpu), ev);
-    else if (nh >= 0) showTip(tipSlice(nh) + (h.dense ? tipDense(h.dense) : ''), ev);
-    else if (h.off) showTip(tipOff(h.off), ev);
+    elCv.classList.toggle('ptr', slice >= 0 || hit.header || !!hovCpu);
+    if (hovCpu) showTip(tipCpu(hovCpu), event);
+    else if (slice >= 0) showTip(tipSlice(slice) + (hit.dense ? tipDense(hit.dense) : ''), event);
+    else if (hit.off) showTip(tipOff(hit.off), event);
     else hideTip();
-    if (changed) draw();
-    else drawCursor();
-});
+    return changed;
+}
 window.addEventListener('mouseup', ev => {
     if (!drag) return;
     const d = drag;

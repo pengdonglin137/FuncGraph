@@ -169,17 +169,19 @@ class TextViewportTest(unittest.TestCase):
                             }
                             return bounds.apply(this, args);
                         };
-                        window.hoverRoundtrip = () => {
+                        window.hoverRoundtrip = async () => {
                             const canvas = document.querySelector('.tl-canvas');
                             const [center, vertical] = model.xyOf(0);
                             const move = offset => canvas.dispatchEvent(new MouseEvent('mousemove',
                                 {bubbles:true, clientX:center + offset, clientY:vertical}));
                             move(0);
+                            await new Promise(resolve => requestAnimationFrame(resolve));
                             const tip = document.querySelector('.tl-tip');
                             const node = tip.firstElementChild;
                             const text = tip.textContent;
                             const first = tip.getBoundingClientRect().toJSON();
                             for (let offset = 1; offset <= 12; offset++) move(offset);
+                            await new Promise(resolve => requestAnimationFrame(resolve));
                             return {sameNode:node === tip.firstElementChild, sameText:text === tip.textContent,
                                 first, last:tip.getBoundingClientRect().toJSON(),
                                 hiddenMeasurements:hiddenTextMeasurements};
@@ -223,13 +225,14 @@ class TextViewportTest(unittest.TestCase):
                         model.select(0); model.zoomTo(model.sStart[0], model.sEnd[0], 0);
                     }''')
                     for index in (0, 1):
-                        result = page.evaluate('''index => {
+                        result = page.evaluate('''async index => {
                             const model = fgView('timeline').probe();
                             model.select(index); model.zoomTo(model.sStart[index], model.sEnd[index], index);
                             const canvas = document.querySelector('.tl-canvas');
                             const [center, vertical] = model.xyOf(index);
                             canvas.dispatchEvent(new MouseEvent('mousemove',
                                 {bubbles:true, clientX:center, clientY:vertical}));
+                            await new Promise(resolve => requestAnimationFrame(resolve));
                             return {expected:model.nameOf(index), bounds:document.querySelector('.tl-tip').getBoundingClientRect().toJSON()};
                         }''', index)
                         self.assertEqual(page.locator('.tl-tip .t-name').inner_text(), result['expected'])

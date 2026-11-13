@@ -316,6 +316,7 @@ function drawCursor() {
     rafPending = true;
     requestAnimationFrame(() => {
         rafPending = false;
+        if (flushHover()) sceneDirty = true;
         if (sceneDirty || !sceneCache) {
             sceneDirty = false;
             syncCanvasSizes();
