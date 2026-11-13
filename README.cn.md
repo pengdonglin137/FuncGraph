@@ -233,7 +233,7 @@ fgview trace.report --open
 | 安装／构建 uftrace，了解采集边界 | [uftrace 集成](docs/uftrace.cn.md) |
 | 读取 trace-cmd 二进制输入 | [raw 输入](docs/raw-input.cn.md) |
 | 打开大报告，选择交付方式 | [本地查看器](docs/viewer.cn.md) |
-| 理解实现或维护发布流程 | [设计文档](docs/design.md) · [发布流程](docs/releasing.cn.md) |
+| 理解实现或维护发布流程 | [设计文档](docs/design.md) · [发布操作清单与验收记录](docs/releasing.cn.md) |
 
 ## 开发与验证
 

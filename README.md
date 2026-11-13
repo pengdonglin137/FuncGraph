@@ -250,7 +250,7 @@ directory, not an entire source/work tree.
 | Install/build uftrace; inspect recording limits | [uftrace integration](docs/uftrace.md) |
 | Read trace-cmd binary inputs | [Raw input](docs/raw-input.md) |
 | Serve large reports and choose delivery modes | [Local viewer](docs/viewer.md) |
-| Understand implementation or publish a release | [Design](docs/design.md) · [Release workflow](docs/releasing.md) |
+| Understand implementation or publish a release | [Design](docs/design.md) · [Release checklist and verified records](docs/releasing.md) |
 
 ## Development and validation
 
