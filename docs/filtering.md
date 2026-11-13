@@ -70,6 +70,25 @@ parameter names still use `slotN`, and missing symbol offsets are not invented.
 
 ## Syntax and examples
 
+**Selected call → Actions → Focus this task / Focus this function** adds a condition
+to the current draft using parenthesized `AND`, then opens the existing Filter.
+Apply or Enter is still required. Task focus uses an anchored PID/TID and, for idle,
+CPU; missing task identity disables it. Function focus uses `func:="raw symbol"`
+and `space:user` / `space:kernel`. The quoted JSON string is a case-sensitive
+literal, not a regex: punctuation, whitespace and compiler suffixes stay exact.
+Existing unquoted `func:pattern` remains a case-insensitive regex.
+After successful focus, **Undo focus** temporarily appears inside Filter to restore
+the previously applied expression; it is not a general history. Draft edits disable
+it until applied/discarded, and a different applied filter removes it. Failed or
+cancelled sidecar filtering never installs a successful focus/undo state.
+
+选中真实调用后，通过 **Actions → Focus this task / Focus this function**，可以将新条件与当前
+草稿用带括号的 `AND` 合并，再在原 Filter 中确认。任务按完整 PID/TID，空闲任务另加 CPU；
+无身份时禁用。函数使用 `func:="原始符号"` 与 `space:user` / `space:kernel`，双引号里是 JSON
+字符串、区分大小写的完整字面匹配，不是正则。原来的无引号 `func:pattern` 正则语义不变。
+成功后临时出现 **Undo focus**，恢复这次操作前已生效的条件；有草稿或进行中任务时禁用，
+其他筛选生效后移除。sidecar 过滤失败或取消不会误报已成功应用。
+
 Expand **Syntax and examples** for scope notes and a small example selector.
 Selecting an example only replaces the draft; review/edit it before applying.
 Examples are starting points, not a claim that the selected task or function

@@ -276,7 +276,7 @@ class TextWindowTest(unittest.TestCase):
         self.assertGreater(facts['records'], 9000)
         self.assertEqual(facts['records'], facts['navigation'])
         self.assertEqual(facts['records'], facts['count'])
-        self.assertEqual(facts['version'], 4)
+        self.assertEqual(facts['version'], 5)
         self.assertLessEqual(self.mounted(), 160)
         self.assertLessEqual(facts['sources'], 160)
         self.assertEqual(facts['sourceJobs'], 0)

@@ -632,6 +632,13 @@ function openCallActions(trigger, last = false) {
     setToolbarOptions(false);
     callActionsTrigger = trigger;
     callActionsSelection = sel;
+    const pendingFilter = window.fgFilterProgress && !window.fgFilterProgress.error;
+    for (const button of elCallActions.querySelectorAll('[data-call-action^="focus-"]')) {
+        const available = button.dataset.callAction !== 'focus-task' || callTaskFilter(sel) !== null;
+        button.disabled = !!pendingFilter || !available;
+        button.title = pendingFilter ? 'Wait for filtering to finish, or cancel it first' : !available ?
+            'No task identity available to the shared filter' : 'Add an exact condition to the filter draft; Apply to confirm';
+    }
     trigger.setAttribute('aria-expanded', 'true');
     elCallActions.hidden = false;
     const viewport = window.visualViewport;
@@ -717,6 +724,8 @@ elCallActions.addEventListener('click', event => {
     } else if (action.dataset.callAction === 'text') {
         gotoText(sLine[index]);
         if (window.fgCurrentView() !== 'text') focusTimelineControl();
+    } else if (action.dataset.callAction.startsWith('focus-')) {
+        stageCallFilter(index, action.dataset.callAction);
     }
 });
 function openDetail(html) {
@@ -1132,6 +1141,39 @@ function revealLine(n) {
 let filteredCallCount = null;
 let filterRetryButton = null;
 let filterAppliedText = '';
+let focusFilterDraft = null, focusFilterUndo = null, focusFilterRequest = null;
+const elFundo = elFbar.querySelector('[data-act=fundo]');
+function callTaskFilter(index) {
+    if (!D.caps.proc && !D.uftrace) return null;
+    const task = TRACKS[sTask[index]];
+    if (!task || !Number.isSafeInteger(task.pid) || task.pid < 0 || ![0, 1].includes(task.kind)) return null;
+    if (task.kind === 1 && (!Number.isSafeInteger(task.cpu) || task.cpu < 0)) return null;
+    return 'pid:^' + task.pid + '$' + (task.kind === 1 ? ' AND cpu:^' + task.cpu + '$' : '');
+}
+function stageCallFilter(index, action) {
+    if (!document.getElementById('filterInput') || window.fgFilterProgress && !window.fgFilterProgress.error) return;
+    const clause = action === 'focus-task' ? callTaskFilter(index) :
+        'func:=' + JSON.stringify(nameOf(index)) + ' AND space:' + (sFlags[index] & FL.USER ? 'user' : 'kernel');
+    if (!clause) return;
+    const base = elFtext.value.trim();
+    const query = base === clause || focusFilterDraft?.query === base && focusFilterDraft.clause === clause ? base :
+        base ? '(' + base + ') AND (' + clause + ')' : clause;
+    focusFilterDraft = { before: filterAppliedText, query, clause };
+    elFtext.value = query;
+    renderFilterControls();
+    setToolbarOptions(true);
+    elFtext.focus({ preventScroll: true });
+}
+function updateFocusFilter(state) {
+    if (focusFilterRequest && state !== focusFilterRequest.state) {
+        const request = focusFilterRequest;
+        focusFilterRequest = null;
+        focusFilterUndo = state.text === request.query && !request.undo ? { before: request.before, query: request.query } : null;
+        focusFilterDraft = null;
+    }
+    if (focusFilterUndo && state.text !== focusFilterUndo.query) focusFilterUndo = null;
+    if (focusFilterDraft && state.text !== focusFilterDraft.before) focusFilterDraft = null;
+}
 function renderFilterControls() {
     const status = window.fgFilterProgress;
     const pending = status && !status.error;
@@ -1143,6 +1185,9 @@ function renderFilterControls() {
     elFcurrent.hidden = !filterAppliedText;
     elFcurrent.querySelector('code').textContent = filterAppliedText;
     elMoreFilter.title = filterAppliedText;
+    elFundo.hidden = !focusFilterUndo;
+    elFundo.disabled = !!pending || changed;
+    elFundo.title = changed ? 'Apply or discard the current draft first' : 'Restore the previous filter: ' + (focusFilterUndo?.before || 'All calls');
     if (filterRetryButton && status?.error) {
         filterRetryButton.disabled = draft !== status.text.trim();
         filterRetryButton.title = filterRetryButton.disabled ? 'Choose Apply to use the edited query' : 'Retry the failed query';
@@ -1172,6 +1217,7 @@ function renderFilterProgress() {
 window.fgOnFilterProgress = renderFilterProgress;
 function applyTextFilter() {
     const st = window.fgFilterState || { text: '', lines: null };
+    updateFocusFilter(st);
     const edited = elFtext.value.trim() !== filterAppliedText.trim();
     filterAppliedText = st.text || '';
     if (!edited) elFtext.value = filterAppliedText;
@@ -1216,9 +1262,13 @@ function applyTextFilter() {
     renderFilterProgress();
 }
 window.fgOnFilter = applyTextFilter;
-function submitTimelineFilter() {
+function submitTimelineFilter(undo = false) {
     const fi = document.getElementById('filterInput');
     if (!fi) return;
+    const query = elFtext.value.trim();
+    focusFilterRequest = undo ? { state: window.fgFilterState, query, undo: true } :
+        focusFilterDraft?.query === query && focusFilterDraft.before === filterAppliedText && query !== filterAppliedText ?
+            { state: window.fgFilterState, query, before: filterAppliedText, undo: false } : null;
     fi.value = elFtext.value;
     if (elFtext.value.trim()) {
         const indexed = fgTextDeferred() && document.getElementById('content').hasAttribute('data-fg-text-index');
@@ -1230,9 +1280,10 @@ function submitTimelineFilter() {
     } else clearFilter();
     renderFilterControls();
 }
-elFtext.addEventListener('input', renderFilterControls);
+elFtext.addEventListener('input', () => { focusFilterDraft = null; renderFilterControls(); });
 elFexample.addEventListener('change', () => {
     if (!elFexample.value) return;
+    focusFilterDraft = null;
     elFtext.value = elFexample.value;
     elFexample.value = '';
     renderFilterControls();
@@ -1240,6 +1291,7 @@ elFexample.addEventListener('change', () => {
 });
 function restoreTimelineFilterDraft() {
     if (window.fgFilterProgress) fgCancelPendingFilter();
+    focusFilterDraft = null; focusFilterRequest = null;
     elFtext.value = (window.fgFilterState || {}).text || '';
     renderFilterControls();
 }
@@ -1260,6 +1312,10 @@ elFbar.addEventListener('click', ev => {
     if (!b) return;
     if (b.dataset.act === 'fapply') submitTimelineFilter();
     else if (b.dataset.act === 'fclear') { elFtext.value = ''; clearFilter(); }
+    else if (b.dataset.act === 'fundo' && focusFilterUndo && !b.disabled) {
+        elFtext.value = focusFilterUndo.before;
+        submitTimelineFilter(true);
+    }
     else if (b.dataset.act === 'fretry') {
         const status = window.fgFilterProgress;
         if (status) {
@@ -1431,6 +1487,7 @@ ${N ? '' : '<p>No function calls were recorded. Search has no call matches; shar
 <p><b>Tools → Color → Total time</b> includes child calls and recorded waits; <b>Self time</b> excludes child calls. Both use a blue-to-red log scale from zero to the maximum across all recorded calls, independent of zoom and filters. Neither measures CPU time. The legend inside Tools follows the theme and Overhead setting; slice positions and widths stay as recorded. Error overlays take priority; turn off <b>Errors</b> to compare duration colors. Duration colors are unavailable without durations or recorded calls. <b>Context</b> remains the default.</p>
 <h4>Select</h4><ul>
 <li>Call details group <b>Duration distribution</b> and <b>Open in Text</b> under <b>Actions</b>. Use arrow keys / Home / End inside the menu; Escape closes it before leaving full screen. Text is disabled when it is not included in the report.</li>
+<li><b>Actions → Focus this task / Focus this function</b> adds an exact task or space-qualified raw symbol to the current filter draft. Choose <b>Apply</b> to confirm; <b>Undo focus</b> restores the previously applied filter. Missing task identity disables task focus. Reports without filtering omit these actions.</li>
 <li><b>Tools → Saved views…</b>: name a position, selected call or range and applied filter, with optional notes. Click a saved name to restore it. Import / export transfers views for matching report data only; share the report separately. Browser storage failures are shown in the dialog.</li>
 <li>Call details have native navigation buttons: <kbd>↑</kbd> recorded parent · <kbd>↓</kbd> first recorded child · <kbd>[</kbd>/<kbd>]</kbd> recorded siblings (task roots stay within the task); synthetic frames are skipped</li>
 <li><kbd>E</kbd>/<kbd>Shift+E</kbd> next/prev error · <kbd>/</kbd> search, <kbd>N</kbd>/<kbd>Shift+N</kbd> next/prev match</li>

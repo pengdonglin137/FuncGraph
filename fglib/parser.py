@@ -330,8 +330,13 @@ class FtraceParser:
                             parsed_lines.append(line_data)
                             continue
 
+                        function_match = re.search(r'\|\s*([A-Za-z_$][\w.$]*)(?:\s+\[([\w-]+)\])?\(.*\)\s*[;{]', line)
+                        raw_func_name = function_match.group(1) if function_match else None
                         line_data = FtraceLine(
                             raw_line=line,
+                            raw_func_name=raw_func_name,
+                            display_func_name=remove_compiler_suffix(raw_func_name) if raw_func_name else None,
+                            module_name=function_match.group(2) if function_match else None,
                             cpu=cpu, pid=pid, comm=comm,
                             duration=duration,
                             sort_duration=sort_duration if sort_duration is not None else duration,

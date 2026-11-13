@@ -84,7 +84,7 @@ function* fgWindowedTextSteps() {
 }
 
 function fgCreateTextWindow(model, navigation, root) {
-    if (model.version !== 4 || fgData.textChunks()?.count !== model.records.length) {
+    if (![4, 5].includes(model.version) || fgData.textChunks()?.count !== model.records.length) {
         throw new Error('Windowed Text requires a complete presentation index');
     }
     const limit = 160, overscan = 32;

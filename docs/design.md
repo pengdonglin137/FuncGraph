@@ -1263,6 +1263,8 @@ trace 数据或自动阈值。回归、对照与退化见[并行校验实测](pe
 完整 presentation index v4 在既有 14 属性之后保留 space、sort-duration、fold-ret、
 call-depth，再追加原 source ID；旧索引 v1/v2/v3 仍可读取。按需解析时同时核对 Text
 内容与完整属性，不能把全量初始化的 DOM 覆盖校验直接删掉来接受稀疏结果。
+后续精确函数筛选使用 v5，在 call-depth 与 source ID 之间追加 raw-func，保留展示名
+之外的原始编译器符号；完整 DOM 快照、sidecar 和实验窗口共享它，且兼容 v1–v4。
 
 renderer 使用完整可见行排列、数值高度树、上下占位与最多 160 个展示单元；按原始
 ordinal 读取 512 行 paint block，最多四个读取任务并行，只挂载所需行及其源码占位，

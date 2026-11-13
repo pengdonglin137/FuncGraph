@@ -9,6 +9,19 @@ from fglib.textindex import FIELDS, PRESENTATION_FIELDS, TextIndexWriter
 
 
 class TextIndexTest(unittest.TestCase):
+    def test_raw_symbol_index_keeps_display_name_and_exact_compiler_identity_separate(self):
+        stream = io.BytesIO()
+        writer = TextIndexWriter(stream, include_raw_functions=True)
+        writer.append(7, {'func': 'work', 'raw-func': 'work.isra.0'}, 'work();', source=0)
+        writer.finish('text-index.json')
+        data = json.loads(stream.getvalue())
+        self.assertEqual(data['version'], 5)
+        self.assertEqual(data['fields'], list(FIELDS + ('space',) + PRESENTATION_FIELDS + ('raw-func',)))
+        attributes = dict(zip(data['fields'], data['rows'][0][2:-1]))
+        self.assertEqual(attributes['func'], 'work')
+        self.assertEqual(attributes['raw-func'], 'work.isra.0')
+        self.assertEqual(data['rows'][0][-1], 0)
+
     def test_presentation_index_retains_exact_duration_zero_return_depth_and_space(self):
         stream = io.BytesIO()
         writer = TextIndexWriter(stream, include_presentation=True)
@@ -102,7 +115,8 @@ class TextIndexTest(unittest.TestCase):
         generator = HtmlGenerator.__new__(HtmlGenerator)
         generator.enable_fold = True
         record = dict(cpu=0, pid=42, comm='任务 "&<>', fold_id='fold1', fold_type='exit',
-                      call_depth=2, fold_ancestors='outer inner', display_func_name='finish', params='arg="&<>',
+                      call_depth=2, fold_ancestors='outer inner', display_func_name='finish',
+                      raw_func_name='finish.isra.0', params='arg="&<>',
                       duration=0, sort_duration=3, duration_raw='+ 0', ret_value='0xfffffffffffffffe',
                       irqs_off='d', need_resched='N', hardirq_softirq='h', preempt_depth=0)
         attributes = generator._text_attributes(record, 'ret=0xfffffffffffffffe', {}, {'fold1': 10})
@@ -111,6 +125,8 @@ class TextIndexTest(unittest.TestCase):
         self.assertEqual(attributes['ret'], '-2')
         self.assertEqual(attributes['comm'], record['comm'])
         self.assertEqual(attributes['params'], record['params'])
+        self.assertEqual(attributes['func'], 'finish')
+        self.assertEqual(attributes['raw-func'], 'finish.isra.0')
         self.assertEqual(attributes['duration'], '0')
         self.assertEqual(attributes['sort-duration'], '3')
         self.assertEqual(attributes['preempt'], '0')

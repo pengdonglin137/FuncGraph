@@ -54,6 +54,17 @@ class ParserTest(unittest.TestCase):
         self.assertAlmostEqual(l.duration, 0.296)
         self.assertEqual(l.duration_raw, '0.296 us')
 
+    def test_plain_calls_keep_raw_and_display_names_without_fabricated_call_sites(self):
+        lines = parse(' 0)               |  worker.isra.0() {\n'
+                      ' 0)   1.000 us    |    module_worker.constprop.1 [test-module](value=7);\n'
+                      ' 0)   2.000 us    |  }\n'
+                      ' 0)               |  /* worker.isra.0() */\n')
+        self.assertEqual([line.raw_func_name for line in lines],
+                         ['worker.isra.0', 'module_worker.constprop.1', None, None])
+        self.assertEqual([line.display_func_name for line in lines[:2]], ['worker', 'module_worker'])
+        self.assertEqual(lines[1].module_name, 'test-module')
+        self.assertTrue(all(line.func_info is None and not line.expandable for line in lines))
+
     def test_abstime_with_flags_and_retval(self):
         l = self.lines[4]
         self.assertEqual((l.pid, l.comm, l.ret_value), (130265, 'true', '-2'))

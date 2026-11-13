@@ -157,7 +157,7 @@ class DetailActionsBrowserTest(unittest.TestCase):
                 self.assertEqual(self.page.locator('.tl-detail-head [data-call-actions]').count(), 1)
                 self.assertLessEqual(self.page.locator('.tl-detail-head').bounding_box()['height'], 80)
                 self.open_menu()
-                self.assertEqual(self.menu.locator('[role=menuitem]').count(), 2)
+                self.assertEqual(self.menu.locator('[role=menuitem]').count(), 2 if kind == 'timeline-only' else 4)
                 self.assertEqual(self.menu.evaluate('element => element.parentElement.id'), 'timelineView')
                 self.assertEqual(self.focused_action(), 'distribution')
                 if width < 600:
@@ -198,9 +198,9 @@ class DetailActionsBrowserTest(unittest.TestCase):
         self.open()
         self.trigger.focus()
         self.trigger.press('ArrowUp')
-        self.assertEqual(self.focused_action(), 'text')
-        for key, action in [('ArrowDown', 'distribution'), ('ArrowUp', 'text'), ('Home', 'distribution'),
-                            ('End', 'text'), ('ArrowDown', 'distribution')]:
+        self.assertEqual(self.focused_action(), 'focus-function')
+        for key, action in [('ArrowDown', 'distribution'), ('ArrowUp', 'focus-function'), ('Home', 'distribution'),
+                            ('End', 'focus-function'), ('ArrowDown', 'distribution')]:
             self.page.keyboard.press(key)
             self.assertEqual(self.focused_action(), action)
         self.page.keyboard.press('Shift')

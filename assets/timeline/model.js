@@ -727,11 +727,12 @@ tlRoot.innerHTML = `
     <div class="tl-filter-result"><span class="tl-fcount" id="tlFilterCount"></span>
       <button class="tl-btn" data-act="fhide" aria-pressed="false" title="${N ? 'Hide tracks without matching calls; event tracks remain visible' : 'No recorded calls to match; event tracks stay visible'}"${N ? '' : ' disabled'}>Hide unmatched tracks</button>
       <button class="tl-btn" data-act="fclear">Clear</button>
+      <button class="tl-btn" data-act="fundo" hidden>Undo focus</button>
     </div>
     <div class="tl-fcurrent" hidden><span class="tl-label">Applied</span><code></code></div>
     <details class="tl-filter-help"><summary>Syntax and examples</summary>
       <p id="tlFilterScope">Shared with Text and analysis. Unmatched calls are dimmed; Hide unmatched tracks hides only tracks without matches. Event tracks and call-stack context stay available. Find function only highlights and navigates within this filter.</p>
-      <p>Combine conditions with <code>AND</code>, <code>OR</code>, <code>NOT</code> and parentheses. Names use regular expressions. Apply with Enter; Escape cancels pending work and restores the active filter.</p>
+      <p>Combine conditions with <code>AND</code>, <code>OR</code>, <code>NOT</code> and parentheses. Names use regular expressions; <code>func:="exact symbol"</code> matches a complete, case-sensitive symbol. Apply with Enter; Escape cancels pending work and restores the active filter.</p>
       <label for="tlFilterExample">Start with an example</label>
       <select id="tlFilterExample" aria-label="Filter example">
         <option value="">Choose an example…</option>
@@ -808,6 +809,7 @@ ${N ? '' : '<div class="tl-event-only" role="note">No recorded function calls. S
 <div class="tl-call-actions-panel" id="tlCallActions" role="menu" aria-label="Selected call actions"${D.no_text ? ' aria-describedby="tlCallActionsNote"' : ''} hidden>
   <button type="button" role="menuitem" tabindex="-1" data-call-action="distribution"><span>Duration distribution</span><kbd>H</kbd></button>
   <button type="button" role="menuitem" tabindex="-1" data-call-action="text"${D.no_text ? ' disabled' : ''}><span>Open in Text</span><kbd>Enter</kbd></button>
+  ${document.getElementById('filterInput') ? '<button type="button" role="menuitem" tabindex="-1" data-call-action="focus-task">Focus this task</button><button type="button" role="menuitem" tabindex="-1" data-call-action="focus-function">Focus this function</button>' : ''}
   ${D.no_text ? '<p id="tlCallActionsNote" class="tl-context-note">Text view is not included in this report.</p>' : ''}
 </div>
 <div class="tl-tip"></div>

@@ -32,6 +32,26 @@ class TextModelTest(unittest.TestCase):
         result = subprocess.run(['node', '-e', setup + source], capture_output=True, text=True, timeout=20)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
+    def test_raw_symbol_index_preserves_separate_names_sources_and_presentation_metadata(self):
+        self.run_model('''
+            const fields=fgTextModel.symbolFields;
+            const attributes={func:'work','raw-func':'work.isra.0',space:'kernel','call-depth':'2','fold-ret':'0'};
+            const input={version:5,fields,rows:[[7,'work();',...fields.map(field=>attributes[field]??null),0]]};
+            const model=drain(fgTextModel.prepare(input)), record=model.records[0];
+            assert.equal(model.version,5);
+            assert.equal(record.source,0);
+            for(const [field,value] of Object.entries(attributes)) assert.equal(record.getAttribute('data-'+field),value);
+            assert.equal(record.getAttribute('data-missing'),null);
+            for(const version of [1,2,3,4]) {
+                const legacyFields=version===4?fgTextModel.presentationFields:version===3?[...fgTextModel.fields,'space']:fgTextModel.fields;
+                const legacy=drain(fgTextModel.prepare({version,fields:legacyFields,
+                    rows:[[7,'work();',...legacyFields.map(field=>attributes[field]??null),...(version>=2?[0]:[])]]}));
+                assert.equal(legacy.records[0].getAttribute('data-func'),'work');
+                assert.equal(legacy.records[0].getAttribute('data-raw-func'),null);
+            }
+            assert.throws(()=>drain(fgTextModel.prepare({...input,version:4})),/Unsupported/);
+        ''')
+
     def test_records_keep_stable_identity_and_exact_attribute_semantics_without_dom(self):
         self.run_model('''
             const input = data([[2, '任务 & < raw', {cpu:'0', params:'', preempt:'0'}], [4, 'next', {cpu:'1'}]]);

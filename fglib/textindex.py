@@ -33,16 +33,18 @@ class _LineText(HTMLParser):
 
 
 class TextIndexWriter:
-    def __init__(self, stream, include_space=False, include_presentation=False):
+    def __init__(self, stream, include_space=False, include_presentation=False, include_raw_functions=False):
         self.stream = stream
         self.digest = hashlib.sha256()
         self.byte_count = 0
         self.rows = 0
         self.parser = _LineText()
-        self.fields = FIELDS + ('space',) if include_space or include_presentation else FIELDS
-        if include_presentation:
+        self.fields = FIELDS + ('space',) if include_space or include_presentation or include_raw_functions else FIELDS
+        if include_presentation or include_raw_functions:
             self.fields += PRESENTATION_FIELDS
-        version = 4 if include_presentation else 3 if include_space else 2
+        if include_raw_functions:
+            self.fields += ('raw-func',)
+        version = 5 if include_raw_functions else 4 if include_presentation else 3 if include_space else 2
         self._write(f'{{"version":{version},"fields":' + json.dumps(self.fields, separators=(',', ':')) + ',"rows":[')
 
     def _write(self, value):

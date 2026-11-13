@@ -614,6 +614,7 @@ Type `field:value` in the filter box, combine with `AND`, `OR`, `NOT` and parent
 | `pid` | pid (regex) | `pid:1234` |
 | `comm` | task name (regex) | `comm:bash` |
 | `func` | function name of the line (regex), this line only | `func:mutex` |
+| `func:="…"` | case-sensitive literal match of the complete raw symbol; JSON string escaping inside quotes | `func:="inode_has_perm.isra.0"` |
 | `graph` | the **whole call tree** of matching functions (like `set_graph_function`) | `graph:vfs_read` |
 | `notrace` | hides the whole call tree of matching functions (like `set_graph_notrace`) | `notrace:__schedule` |
 | `ret` | return value number (regex); `ret:all` matches every known error code | `ret:-22`, `ret:-2$`, `ret:all` |
@@ -921,6 +922,23 @@ event rather than the first frame where `fullscreenElement` is null. See
 [Text handoff details](detail-layout.md#text-handoff-and-full-screen-focus--文本跳转与全屏焦点).
 
 ### 6.6 Search and filter
+
+Select a real call, then choose **Actions → Focus this task / Focus this function**
+to prepare a filter without typing an identity or escaping a symbol. The action
+combines the current draft, if any, with the new condition using parenthesized
+`AND`, opens the existing Filter and focuses its input. Results change only after
+**Apply** / Enter. Task focus uses the complete PID/TID, plus CPU for an idle task;
+it is disabled when the recorded task identity is unavailable. Function focus
+matches the complete, case-sensitive raw symbol and address space, retaining
+compiler suffixes such as `.isra.0`. It neither matches the other address space
+nor expands a call tree. Spaces, parentheses, quotes and backslashes are escaped.
+After successful application, a temporary **Undo focus** restores the previously
+applied filter. This is one-step undo, not a history; it is disabled while editing
+a draft or filtering, and removed when another filter takes effect. Reports
+without shared Filter controls do not add these two menu items. Focus does not automatically
+hide tracks, zoom or change Find, and retains context and raw data as before.
+
+![An exact filter draft from the selected call](img/timeline_focus.png)
 
 - **Search box** (`/`): a case-insensitive function-name regex over real traced calls, not arguments, call sites or synthetic inline frames. Non-matching slices are dimmed.
 - **Match navigation**: click ◀ / ▶ beside the search box, or press Shift+Enter / Enter inside it; outside the input, Shift+`N` / `N` also works. The status shows `position / total calls`, such as `2 / 17 calls`, or just the total when the current selection is not a match. Navigation wraps in task order, then time order within each task; without a selection, next starts at the first result and previous at the last.

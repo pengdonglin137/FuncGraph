@@ -866,6 +866,16 @@
                     i += sortMatch[0].length;
                     continue;
                 }
+                if (/^func:="/i.test(text.slice(i))) {
+                    const literal = text.slice(i).match(/^func:=("(?:[^"\\]|\\.)*")(?=$|[\s()])/i);
+                    let value = null;
+                    if (literal) {
+                        try { value = JSON.parse(literal[1]); } catch (error) { }
+                    }
+                    tokens.push({ type: 'COND', field: 'func', op: '=', value: value || '', literal: true, invalid: value === null });
+                    i += literal ? literal[0].length : text.length - i;
+                    continue;
+                }
                 // field:value condition (field may contain letters/digits/underscore, value may contain anything except spaces and parens)
                 const condMatch = text.slice(i).match(/^([a-zA-Z_][a-zA-Z0-9_]*):(>=|<=|>|<|=)?([^\s()]*)/);
                 if (condMatch) {
@@ -979,6 +989,7 @@
             if (field === 'func') {
                 const funcAttr = line.getAttribute('data-func');
                 if (!funcAttr) return false;
+                if (cond.literal) return !cond.invalid && (line.getAttribute('data-raw-func') || funcAttr) === value;
                 try { return new RegExp(value, 'i').test(funcAttr); }
                 catch(e) { return funcAttr.includes(value); }
             }
@@ -1119,22 +1130,20 @@
         }
 
         // Serialize AST back to text
-        function astToText(ast) {
+        function astToText(ast, parentPriority = 0) {
             if (!ast) return '';
             switch (ast.type) {
-                case 'AND': {
-                    const l = astToText(ast.left);
-                    const r = astToText(ast.right);
-                    return l && r ? l + ' AND ' + r : l || r;
-                }
+                case 'AND':
                 case 'OR': {
-                    const l = astToText(ast.left);
-                    const r = astToText(ast.right);
-                    return l && r ? l + ' OR ' + r : l || r;
+                    const priority = ast.type === 'AND' ? 2 : 1;
+                    const left = astToText(ast.left, priority), right = astToText(ast.right, priority);
+                    const text = left && right ? left + ' ' + ast.type + ' ' + right : left || right;
+                    return priority < parentPriority ? '(' + text + ')' : text;
                 }
                 case 'NOT':
-                    return 'NOT ' + astToText(ast.operand);
+                    return 'NOT ' + astToText(ast.operand, 3);
                 case 'COND':
+                    if (ast.literal) return 'func:=' + JSON.stringify(ast.value);
                     return ast.field + ':' + (ast.op !== '=' ? ast.op : '') + ast.value;
                 default:
                     return '';
@@ -1147,7 +1156,7 @@
             if (!tagsDiv) return;
             tagsDiv.innerHTML = '';
 
-            const { ast } = parseFilterExpr(text);
+            const { ast, sortDir } = parseFilterExpr(text);
             if (!ast) return;
 
             // Flatten top-level AND/OR into tag list
@@ -1171,6 +1180,14 @@
                 parts = [ast];
             }
 
+            function applyParts(items, logic) {
+                const input = document.getElementById('filterInput');
+                if (!input) return;
+                const expression = items.reduce((left, right) => left ? { type: logic, left, right } : right, null);
+                input.value = [astToText(expression), sortDir ? 'sort:' + sortDir : ''].filter(Boolean).join(' ');
+                applyFilter();
+            }
+
             parts.forEach((part, idx) => {
                 if (idx > 0) {
                     const logicTag = document.createElement('span');
@@ -1178,14 +1195,7 @@
                     logicTag.textContent = topLogic;
                     logicTag.title = 'Click to toggle AND/OR';
                     logicTag.addEventListener('click', () => {
-                        // Toggle logic in text
-                        const input = document.getElementById('filterInput');
-                        if (input) {
-                            const newLogic = topLogic === 'AND' ? 'OR' : 'AND';
-                            input.value = input.value.replace(new RegExp('\\b' + topLogic + '\\b', 'gi'), newLogic);
-                            updateFilterTags(input.value);
-                            applyFilter();
-                        }
+                        applyParts(parts, topLogic === 'AND' ? 'OR' : 'AND');
                     });
                     tagsDiv.appendChild(logicTag);
                 }
@@ -1193,24 +1203,11 @@
                 const tag = document.createElement('span');
                 tag.className = 'filter-tag';
                 const tagText = astToText(part);
-                tag.innerHTML = tagText + ' <span class="tag-remove" title="Remove">&times;</span>';
-                tag.querySelector('.tag-remove').addEventListener('click', () => {
-                    // Remove this condition from the input
-                    const input = document.getElementById('filterInput');
-                    if (input) {
-                        // Remove the condition text and surrounding logic operator
-                        let newText = input.value;
-                        // Try to remove "COND AND " or " AND COND" or " OR COND" or "COND OR "
-                        const escaped = tagText.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-                        newText = newText.replace(new RegExp('\\s*' + topLogic + '\\s+' + escaped, 'i'), '');
-                        newText = newText.replace(new RegExp(escaped + '\\s+' + topLogic + '\\s*', 'i'), '');
-                        newText = newText.replace(new RegExp(escaped, 'i'), '');
-                        newText = newText.replace(/^\s*(AND|OR)\s+/i, '').replace(/\s+(AND|OR)\s*$/i, '').trim();
-                        input.value = newText;
-                        updateFilterTags(newText);
-                        applyFilter();
-                    }
-                });
+                tag.textContent = tagText + ' ';
+                const remove = document.createElement('span');
+                remove.className = 'tag-remove'; remove.title = 'Remove'; remove.textContent = '×';
+                remove.addEventListener('click', () => applyParts(parts.filter((part, index) => index !== idx), topLogic));
+                tag.appendChild(remove);
                 tagsDiv.appendChild(tag);
             });
         }
@@ -1341,8 +1338,7 @@
             if (fgData.ready('fgTextIndex')) data = fgData.read('fgTextIndex');
             else {
                 const rows = [];
-                const typed = root.hasAttribute('data-address-spaces');
-                const fields = typed ? [...fgTextModel.fields, 'space'] : fgTextModel.fields;
+                const fields = fgTextModel.symbolFields;
                 for (const line of lines) {
                     let source = null;
                     if (line.classList.contains('expandable')) {
@@ -1367,7 +1363,7 @@
                     if (rows.length % 512 === 0) yield 'Reading complete Text rows: ' + rows.length + ' / ' + lines.length + '…';
                 }
                 rows.sort((left, right) => left[0] - right[0]);
-                data = { version: typed ? 3 : 2, fields, rows };
+                data = { version: 5, fields, rows };
             }
             const model = yield* fgTextModel.prepare(data);
             if (model.records.length !== lines.length) throw new Error('Text model does not cover mounted rows');
@@ -1411,8 +1407,9 @@
                     record.source !== null && row.nextElementSibling?.getAttribute('data-src') !== String(record.source))) {
                     throw new Error('Text paint block source identity mismatch');
                 }
-                if (model.version === 4 && (row.querySelector('.line-content')?.textContent !== record.textContent ||
-                    fgTextModel.presentationFields.some(field => row.getAttribute('data-' + field) !== record.getAttribute('data-' + field)))) {
+                const fields = model.version === 5 ? fgTextModel.symbolFields : fgTextModel.presentationFields;
+                if (model.version >= 4 && (row.querySelector('.line-content')?.textContent !== record.textContent ||
+                    fields.some(field => row.getAttribute('data-' + field) !== record.getAttribute('data-' + field)))) {
                     throw new Error('Text paint block presentation metadata mismatch');
                 }
             }
@@ -3224,7 +3221,7 @@
                 CSS.supports('selector(:has(*))')) root.classList.add('text-layout-auto', 'text-layout-measured');
             fgRefreshTextLayout();
             if (renderer && (renderer.model !== model || renderer.navigation !== navigation || renderer.root !== root ||
-                model.version !== 4 || fgData.textChunks()?.count !== total_lines)) throw new Error('Incomplete Text window model');
+                ![4, 5].includes(model.version) || fgData.textChunks()?.count !== total_lines)) throw new Error('Incomplete Text window model');
             if (model) {
                 if (model.records.length !== total_lines) throw new Error('Text model does not cover mounted rows');
                 fgDomTextModels.set(root, model);

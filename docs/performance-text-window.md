@@ -26,7 +26,8 @@ Only newly generated **chunked** sidecar reports support the opt-in. Append
 `?text=windowed` to the HTTP report URL before opening Text, or use **Windowed Text**
 in the Text tools. This reloads the report; it does not change the CLI default or
 add an automatic threshold. Small sidecars and offline single-file reports keep
-their complete renderer. Older reports need regeneration for the v4 presentation index.
+their complete renderer. Older reports need regeneration for a complete presentation
+index (v4 or later). Current reports use v5 to retain exact raw function symbols.
 
 - 最多挂载 **160 个展示单元**，其中包含 trace 行或任务分组标题；trace 行数不会超限。
   每条所需行的源码占位一并挂载，离屏行不保留 DOM 缓存。
@@ -83,6 +84,10 @@ The experimental renderer does not claim native selection or find across unmount
   源码 0、零返回值、原始返回表示、精确排序耗时及空值语义均保留；旧 v1/v2/v3 可读。
   本次真实 trace 的索引从 34,646,118 增至 36,233,756 字节（增加 1,587,638 字节），
   这是保留展示语义的交付成本；18 个 Text HTML 资源逐字节不变。
+- 当前 **v5** 在 v4 的 `call-depth` 与 source ID 之间追加 `raw-func`，仅在原始符号与
+  展示名不同时记录原始名称；完整 DOM、sidecar 筛选和实验窗口均保留它。精确函数筛选
+  不会合并 `.isra.0` 等不同符号，旧正则仍使用展示名，v1–v4 读取保持兼容。
+  上述索引字节数是 v4 阶段测量值，不是 v5 的体积测量。
 - HTML 仍按最多 **4,096 条记录**校验下载，每次解析目标 **512 条** paint block；
   不宣称 HTTP Range 按 160 行交付。四个任务以内并发读取所需 paint block，排序后一个
   窗口可能涉及多个资源。暂时的解析 DOM 与已挂载 DOM 是不同预算。

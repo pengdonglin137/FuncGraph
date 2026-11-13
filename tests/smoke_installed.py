@@ -309,7 +309,7 @@ class InstalledPackageTest(unittest.TestCase):
             self.assertEqual(len(payload), resource['bytes'])
             self.assertEqual(hashlib.sha256(payload).hexdigest(), resource['sha256'])
         index = json.loads((manifest_path.parent / manifest['resources']['fgTextIndex']['file']).read_text())
-        self.assertEqual(index['version'], 4)
+        self.assertEqual(index['version'], 5)
         self.assertTrue(all(len(row) == len(index['fields']) + 3 for row in index['rows']))
         sources = {str(row[0]): row[-1] for row in index['rows'] if row[-1] is not None}
         source_lines = json.loads(re.search(r'<script[^>]+id="fgSrcLines"[^>]*>(.*?)</script>', report, re.S).group(1))
@@ -383,7 +383,7 @@ class InstalledPackageTest(unittest.TestCase):
         manifest_path = sidecar / descriptor['manifest']['file']
         manifest = json.loads(manifest_path.read_text())
         index = json.loads((manifest_path.parent / manifest['resources']['fgTextIndex']['file']).read_text())
-        self.assertEqual(index['version'], 4)
+        self.assertEqual(index['version'], 5)
         self.assertEqual([row[-1] for row in index['rows']], [None, 0])
         resource = manifest['resources']['fgSrc0']
         payload = (manifest_path.parent / resource['file']).read_bytes()

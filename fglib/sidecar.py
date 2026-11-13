@@ -143,7 +143,7 @@ def write_sidecar(path, generator, byte_limit=None):
             index_path = resources_directory / 'text-index.json'
             with index_path.open('xb') if deferred else nullcontext() as index_stream:
                 index = TextIndexWriter(index_stream, include_space='uftrace' in generator.timeline_json,
-                                        include_presentation=True) if deferred else None
+                                        include_presentation=True, include_raw_functions=True) if deferred else None
                 paint_rows = getattr(generator, 'text_chunk_rows', None)
                 chunks = TextChunkRanges(paint_rows) if deferred and paint_rows is not None else None
                 generator.text_index = index

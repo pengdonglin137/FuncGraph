@@ -1450,6 +1450,8 @@ class HtmlGenerator:
         for field, attribute in [('display_func_name', 'func'), ('params', 'params')]:
             if line.get(field):
                 attributes[attribute] = line.get(field)
+        if line.get('raw_func_name') != line.get('display_func_name') and line.get('raw_func_name'):
+            attributes['raw-func'] = line.get('raw_func_name')
         duration = line.get('duration')
         duration_raw = line.get('duration_raw')
         if duration is not None:

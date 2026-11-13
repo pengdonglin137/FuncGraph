@@ -1049,7 +1049,7 @@ class SidecarBrowserTest(unittest.TestCase):
                     let calls = 0;
                     fgPrepareTextNavigation = function* (rows, model) {
                         calls++;
-                        if (model.version !== (preload ? 4 : 2)) throw new Error('Missing structured source metadata');
+                        if (model.version !== 5) throw new Error('Missing structured source metadata');
                         const noDOM = new Proxy({}, {get() {throw new Error('Navigation inspected DOM rows');}});
                         return yield* prepare(noDOM, model);
                     };
