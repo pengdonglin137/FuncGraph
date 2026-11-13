@@ -12159,7 +12159,7 @@ function showDetail(i) {
     }
     if (ATOMIC.has(i)) h += kv('context', 'called with ' + esc(atomicText(ATOMIC.get(i))) + ' (sleeping function in atomic context)', 'err');
     metadata += kv('trace lines', lineLink(sLine[i]) + (sEline && sEline[i] && sEline[i] !== sLine[i] ? ' → ' + lineLink(sEline[i]) : ''));
-    h += '</div><details class="tl-metadata" data-trace-metadata><summary>Trace metadata</summary><div class="tl-kv tl-call-facts">' + metadata + '</div></details>' +
+    h += '</div><details class="tl-metadata" data-trace-metadata open><summary>Trace metadata</summary><div class="tl-kv tl-call-facts">' + metadata + '</div></details>' +
         '<details class="tl-cs" open><summary class="tl-sec">' + (f & FL.USER ? userCallSite(i) ? 'User call site source' : 'User function source (entry)' : D.uftrace && !D.sources?.callers?.[sCaller?.[i]]?.length ? 'Kernel function source' : 'Call site source') + '</summary><div class="tl-cs-src"></div></details></div><div>';
     h += breakdownHtml(i);
     if (context.lists.has('error')) h += detailListHtml('error');
@@ -12421,14 +12421,14 @@ function openDetail(html) {
     closeCallActions();
     const was = elDetail.classList.contains('show');
     const previousMetadata = elDetail.querySelector('[data-trace-metadata]');
-    if (previousMetadata) prefSet('metadataOpen', previousMetadata.open ? '1' : '0');
+    if (previousMetadata) prefSet('metadataCollapsed', previousMetadata.open ? '0' : '1');
     fgCancelSources(elDetail);
     elDetail.innerHTML = html;
     const metadata = elDetail.querySelector('[data-trace-metadata]');
     if (metadata) {
-        metadata.open = prefGet('metadataOpen') === '1';
+        metadata.open = prefGet('metadataCollapsed') !== '1';
         metadata.addEventListener('toggle', () => {
-            if (metadata.isConnected) prefSet('metadataOpen', metadata.open ? '1' : '0');
+            if (metadata.isConnected) prefSet('metadataCollapsed', metadata.open ? '0' : '1');
         });
     }
     const head = elDetail.querySelector('.tl-detail-head');

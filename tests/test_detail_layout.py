@@ -155,6 +155,9 @@ class DetailLayoutBrowserTest(unittest.TestCase):
                         self.assertEqual(unit['numberLines'], 1)
                     summary = self.page.locator('[data-trace-metadata] > summary')
                     self.assertGreaterEqual(summary.bounding_box()['height'], 44)
+                    self.assertTrue(self.value('recorded address').is_visible())
+                    summary.click()
+                    self.assertFalse(self.value('recorded address').is_visible())
                     summary.click()
                     self.assertTrue(self.value('recorded address').is_visible())
                     self.assertTrue(self.page.evaluate('''() => {
@@ -169,10 +172,10 @@ class DetailLayoutBrowserTest(unittest.TestCase):
                 main = self.page.locator('.tl-left > .tl-call-facts')
                 self.assertEqual(main.locator('.k').all_text_contents(),
                                  ['duration', 'self', 'start', 'caller site', 'user args', 'user return'])
-                self.assertFalse(self.value('task').is_visible())
-                self.assertFalse(self.value('depth').is_visible())
+                self.assertTrue(self.value('task').is_visible())
+                self.assertTrue(self.value('depth').is_visible())
                 address = self.value('recorded address')
-                self.assertFalse(address.is_visible())
+                self.assertTrue(address.is_visible())
                 self.assertIn('Function entry address, not the call site.', address.text_content())
                 self.assertEqual(self.value('caller site').locator('.tl-code-offset').inner_text(), '+0x33/0x80')
                 self.assertNotIn('Names from recorded user DWARF', self.value('user args').inner_text())
@@ -182,7 +185,7 @@ class DetailLayoutBrowserTest(unittest.TestCase):
                 self.assertTrue(self.value('return (BTF)').is_visible())
                 self.assertTrue(self.page.locator('.tl-pill.err').is_visible())
                 self.assertTrue(main.locator('.v.err').is_visible())
-                self.assertFalse(self.value('raw return').is_visible())
+                self.assertTrue(self.value('raw return').is_visible())
                 self.assertTrue(self.page.locator('.tl-context-row[data-space-boundary]').is_visible())
 
     def test_metadata_uses_keyboard_disclosure_without_changing_data_or_selection(self):
@@ -197,11 +200,11 @@ class DetailLayoutBrowserTest(unittest.TestCase):
                 summary.focus()
                 self.assertEqual(summary.evaluate('element => getComputedStyle(element).outlineStyle'), 'solid')
                 self.page.keyboard.press('Enter')
+                self.assertFalse(self.value('recorded address').is_visible())
+                self.page.keyboard.press('Space')
                 self.assertTrue(self.value('recorded address').is_visible())
                 self.assertEqual(self.value('recorded address').locator('.tl-code-raw').inner_text(), '0x2')
                 self.assertTrue(self.value('trace lines').locator('a[data-line]').count())
-                self.page.keyboard.press('Space')
-                self.assertFalse(self.value('recorded address').is_visible())
                 after = self.page.evaluate('''() => {
                     const model = fgView('timeline').probe();
                     return [JSON.stringify(fgData.read('tlData')), model.sel(), model.view()];
@@ -212,6 +215,7 @@ class DetailLayoutBrowserTest(unittest.TestCase):
         for mode in ('single', 'sidecar'):
             with self.subTest(mode=mode):
                 self.open(mode=mode)
+                self.assertTrue(self.page.locator('[data-trace-metadata]').evaluate('element => element.open'))
                 self.page.evaluate('''() => {
                     document.querySelector('[data-trace-metadata]').open = true;
                     const model = fgView('timeline').probe();
@@ -240,6 +244,28 @@ class DetailLayoutBrowserTest(unittest.TestCase):
                 }''')
                 self.assertFalse(metadata.evaluate('element => element.open'))
                 self.assertEqual(self.value('raw argument bytes').inner_text(), 'deadbeef12345678')
+                self.page.reload()
+                self.page.evaluate("async () => { await fgSwitchView('timeline'); }")
+                self.select('legacy')
+                self.assertFalse(metadata.evaluate('element => element.open'))
+                self.assertEqual(self.value('raw argument bytes').inner_text(), 'deadbeef12345678')
+                self.page.evaluate('''() => {
+                    document.querySelector('[data-trace-metadata]').open = true;
+                    const model = fgView('timeline').probe();
+                    model.select(Array.from({length:model.N}, (_, index) => index)
+                        .find(index => model.nameOf(index) === 'inner'));
+                }''')
+                self.assertTrue(metadata.evaluate('element => element.open'))
+
+    def test_metadata_defaults_to_open_despite_the_legacy_saved_closed_default(self):
+        self.page.add_init_script("localStorage.setItem('fgTl.metadataOpen', '0')")
+        for mode in ('single', 'sidecar'):
+            with self.subTest(mode=mode):
+                self.open(mode=mode)
+                metadata = self.page.locator('[data-trace-metadata]')
+                self.assertTrue(metadata.evaluate('element => element.open'))
+                for label in ['task', 'depth', 'recorded address', 'trace lines']:
+                    self.assertTrue(self.value(label).is_visible(), label)
 
     def test_kernel_flags_are_visible_outside_metadata_and_raw_only_calls_stay_readable(self):
         for mode in ('single', 'sidecar'):
@@ -248,9 +274,7 @@ class DetailLayoutBrowserTest(unittest.TestCase):
                 original = self.page.evaluate('JSON.stringify(fgData.read("tlData"))')
                 flags_text = self.value('flags').inner_text()
                 self.assertTrue(self.value('flags').is_visible())
-                self.assertFalse(self.page.locator('[data-trace-metadata]').evaluate('element => element.open'))
-                self.page.locator('[data-trace-metadata] > summary').click()
-                self.assertTrue(self.value('flags').is_visible())
+                self.assertTrue(self.page.locator('[data-trace-metadata]').evaluate('element => element.open'))
                 self.assertTrue(self.value('task').is_visible())
                 self.assertTrue(self.value('trace lines').is_visible())
                 self.assertTrue(self.value('args').is_visible())
@@ -259,6 +283,9 @@ class DetailLayoutBrowserTest(unittest.TestCase):
                 self.assertTrue(self.value('flags').is_visible())
                 self.assertEqual(self.value('flags').inner_text(), flags_text)
                 self.assertFalse(self.value('task').is_visible())
+                self.page.locator('[data-trace-metadata] > summary').click()
+                self.assertTrue(self.value('task').is_visible())
+                self.assertTrue(self.value('flags').is_visible())
                 self.assertEqual(self.page.evaluate('JSON.stringify(fgData.read("tlData"))'), original)
                 self.open(mode=mode)
                 self.select('legacy')

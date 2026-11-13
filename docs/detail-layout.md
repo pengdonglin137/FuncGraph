@@ -77,14 +77,17 @@ only for `fullscreenElement` to become null.
 
 ## Trace metadata
 
-- Open **Trace metadata** below the primary facts to inspect the task/CPU,
+- **Trace metadata** below the primary facts shows the task/CPU,
   depth, trace-line links and, when present, the recorded
   user function-entry address and raw return bits retained alongside BTF type
   information.
-- This section starts collapsed. Its open/closed state is remembered in the
+- This section starts expanded, so recorded metadata is visible without an
+  extra click. You can collapse it manually; that choice is remembered in the
   browser's local storage context, including when navigating between calls or
   opening an analysis panel. Focus its summary and use Enter or Space to toggle
   it with the keyboard.
+- The earlier automatically saved collapsed default is not carried over.
+  Explicit open/closed choices in updated reports still persist normally.
 - Context/error badges, incomplete-record warnings, caller mismatches and
   tail-jump evidence remain visible outside metadata. Recorded **flags** also
   appear in the primary facts, including kernel-only calls, with the raw preempt
@@ -96,9 +99,10 @@ only for `fullscreenElement` to become null.
   not a return value. If a value is untyped or only raw bytes were captured, it
   remains visible as raw data rather than disappearing into metadata.
 
-点击主信息下方的 **Trace metadata** 可核对任务/CPU、深度、trace 行号，
-以及适用时的用户态函数入口地址、BTF 修正前返回位。默认折叠，浏览器会在同一存储上下文中
-记住展开状态；切换函数、分析视图后仍保留。键盘聚焦标题后可用 Enter 或空格切换。
+主信息下方的 **Trace metadata** 默认展开，直接显示任务/CPU、深度、trace 行号，
+以及适用时的用户态函数入口地址、BTF 修正前返回位。仍可手动折叠，浏览器会在同一存储上下文中
+记住选择；切换函数、分析视图后仍保留。键盘聚焦标题后可用 Enter 或空格切换。
+旧版本自动保存的默认折叠状态不沿用；新版中手动选择的展开/折叠状态仍正常保留。
 
 错误、未完整采集、IRQ/抢占/atomic 告警、caller 不匹配和尾跳转证据仍直接可见。入口地址
 不会被改称调用地址，`void` 的原始返回位不会被伪装成有效返回值。仅有原始参数/返回数据时，
@@ -150,18 +154,20 @@ caller return；函数本身的 **user return** 仍保留。旧记录缺少调�
 收进原始字节展开区；没有原始字节时仅提供 **Argument provenance**，不会虚构字节数据。
 排版只处理当前详情，不新增全 trace 扫描、符号查找、源码请求或每条调用的重复数据。
 
-Regenerate a report to use the new layout. Previously generated HTML files,
-published samples and recorded trace files are not rewritten by this change.
+Regenerate an older report to use the new layout: existing standalone HTML is
+not rewritten automatically. The repository samples are refreshed with the new
+runtime; their trace/source payloads and the original trace files are unchanged.
 Semantic colors are documented in [detail-colors.md](detail-colors.md).
 
-重新生成报告后生效；已有 HTML、公开 sample 和原始 trace 不会被自动改写。
+旧报告需重新生成，已有独立 HTML 不会自动更新。仓库 sample 已同步新运行时，
+内嵌 trace/源码数据和原始 trace 文件均不变。
 配色规则见 [detail-colors.md](detail-colors.md)。
 
 ## Validation / 回归检查
 
 ```bash
-PYTHONPATH=tests python3 -m unittest \
-    test_detail_actions test_detail_expand test_timeline_fullscreen -v
+PYTHONPATH=.:tests python3 -m unittest \
+    test_detail_layout test_detail_actions test_detail_expand test_timeline_fullscreen -v
 ```
 
 These browser checks require Playwright and Chromium. The Actions suite covers
@@ -171,8 +177,13 @@ full screen; keyboard focus and dismissal; disabled Text; stale selection and
 synthetic frames. Menu-only operations must retain the model, call timestamps,
 track identity, selection and time range, and must not fetch deferred Text or
 Compare resources. Scroll checks require actual movement, not a synthetic event.
+The layout suite verifies expanded metadata on first use even with the legacy
+closed-default preference, mouse/keyboard disclosure, remembered choices through
+navigation/reload, readable raw evidence and exact model/selection/range equality.
 
 浏览器检查需要 Playwright 和 Chromium。Actions 用例覆盖两种交付方式、三种地址空间、
 明暗主题、窄屏 / 短横屏 / 宽触屏平板、原生 / 页面全屏、键盘与触屏操作、禁用 Text、
 切换选择和合成帧。只打开或关闭菜单不能改写调用时间、轨道、选择或视野，也不能提前
 请求延迟加载的 Text / Compare。滚动用例验证实际位置变化，不靠伪造滚动事件通过。
+布局用例还核对旧默认折叠偏好存在时首次仍展开、鼠标/键盘切换、跨导航/重载的状态记忆、
+原始证据可读性，以及模型、选择和时间范围不变。

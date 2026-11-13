@@ -4064,7 +4064,10 @@ class BrowserSmokeTest(unittest.TestCase):
         for expected in ['irqs off', 'BH off', 'need-resched + preempt (N)', 'preempt 3',
                          'migrate-off 2', 'baseline 1', 'preemption disabled 2 levels']:
             self.assertIn(expected, value)
+        self.assertTrue(self.page.locator('[data-trace-metadata]').evaluate('element => element.open'))
+        self.page.locator('[data-trace-metadata] > summary').click()
         self.assertFalse(self.page.locator('[data-trace-metadata]').evaluate('element => element.open'))
+        self.assertTrue(label.is_visible())
         self.assertEqual(self.ev('JSON.stringify(fgData.read("tlData"))'), original)
 
     def test_timeline_zero_latency_flags_are_explicit_not_missing(self):

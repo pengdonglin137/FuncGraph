@@ -141,7 +141,7 @@ class DetailActionsBrowserTest(unittest.TestCase):
             self.page.locator('.tl-canvas').focus()
             self.page.keyboard.press('Enter')
         else:
-            self.page.locator('[data-trace-metadata] > summary').click()
+            self.page.locator('[data-trace-metadata]').evaluate('element => { element.open = true; }')
             self.page.locator('.tl-detail a[data-line]').first.click()
         self.page.wait_for_function("() => fgCurrentView()==='text' && !fgTextDeferred()")
 
@@ -389,7 +389,7 @@ class DetailActionsBrowserTest(unittest.TestCase):
                     self.page.locator('.tl-canvas').focus()
                     self.page.keyboard.press('Enter')
                 else:
-                    self.page.locator('[data-trace-metadata] > summary').click()
+                    self.page.locator('[data-trace-metadata]').evaluate('element => { element.open = true; }')
                     self.page.locator('.tl-detail a[data-line]').first.click()
                 self.page.wait_for_function("() => fgCurrentView()==='text' && !fgTextDeferred()")
                 self.assertTrue(self.page.locator('.view-tab[data-view=text]').evaluate(
