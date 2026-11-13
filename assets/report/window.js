@@ -325,13 +325,7 @@ function fgCreateTextWindow(model, navigation, root) {
         let order = plan.order, ordinals = plan.ordinals;
         if (fgTextSort) {
             if (!rankedOrder || rankedOrder.plan !== plan || rankedOrder.direction !== fgTextSort) {
-                const ranked = order.map((number, index) => {
-                    const ordinal = ordinals ? ordinals[index] : index, record = model.records[ordinal];
-                    return { number, ordinal, duration: parseFloat(record.getAttribute('data-sort-duration') || record.getAttribute('data-duration') || '0') };
-                });
-                ranked.sort((left, right) => fgTextSort === 'desc' ? right.duration - left.duration : left.duration - right.duration);
-                rankedOrder = { plan, direction: fgTextSort, order: ranked.map(item => item.number),
-                    ordinals: Uint32Array.from(ranked, item => item.ordinal) };
+                rankedOrder = { plan, direction: fgTextSort, ...fgTextModel.rankDuration(model, plan, fgTextSort) };
             }
             order = rankedOrder.order;
             ordinals = rankedOrder.ordinals;

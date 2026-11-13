@@ -59,6 +59,11 @@ The experimental renderer does not claim native selection or find across unmount
 
 ## 数据与边界
 
+- 耗时排列缓存未命中时，有限值使用数字位置排序；相同值按 time/task 原排列
+  稳定排序，NaN/Infinity 等保留旧对象路径。临时 `Float64Array` 为 `8 × N` 字节，
+  另有 JS 数字位置数组；不新增跨操作缓存或跳过完整导航校验。
+  [排序测量、异常值兼容及内存边界](performance-text-duration-ranking.md)。
+
 - 导航可见性按完整显示排列一次提交二进制掩码，先验证再更新，仅应用实际变化项。
   私有缓存和每次临时输入各为 `N` 字节，和下述折叠掩码、ordinal 数组分别计费；
   普通逐行更新同步缓存，实际重排清除缓存并重新对齐。新建的默认完整 renderer

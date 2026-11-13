@@ -151,6 +151,112 @@ class TextModelTest(unittest.TestCase):
                 [7, 'idle0  0   ·  1 lines  ·  CPU 0']]);
         ''')
 
+    def test_duration_ranking_matches_complete_object_reference_across_index_versions_and_plans(self):
+        self.run_model('''
+            for(const version of [1,2,3,4]) {
+                const fields=Array.from(version===4?fgTextModel.presentationFields:fgTextModel.fields);
+                if(version===3) fields.push('space');
+                const input={version,fields,rows:Array.from({length:257},(value,index)=>{
+                    const attributes={cpu:String(index%3),pid:String(17+index%5),comm:'任务',func:'work',
+                        duration:String((index*19%13)/1000),'sort-duration':String((index*37%17)/1000000),space:index%2?'user':'kernel'};
+                    const row=[2**40+index*13+2,'work '+index,...fields.map(field=>attributes[field]??null)];
+                    if(version>=2) row.push(index%2?0:null);
+                    return row;
+                })};
+                const model=drain(fgTextModel.prepare(input)),original=JSON.stringify(input);
+                for(const mode of ['time','task']) for(const direction of ['asc','desc']) {
+                    const plan=fgTextModel.order(model,mode),before=JSON.stringify(plan.order);
+                    const expected=plan.order.map((number,index)=>{
+                        const ordinal=plan.ordinals?plan.ordinals[index]:index,record=model.records[ordinal];
+                        return {number,ordinal,duration:parseFloat(record.getAttribute('data-sort-duration')||record.getAttribute('data-duration')||'0')};
+                    }).sort((left,right)=>direction==='desc'?right.duration-left.duration:left.duration-right.duration);
+                    const actual=fgTextModel.rankDuration(model,plan,direction);
+                    assert.deepEqual(actual.order,expected.map(item=>item.number));
+                    assert.deepEqual(Array.from(actual.ordinals),expected.map(item=>item.ordinal));
+                    assert.equal(JSON.stringify(plan.order),before);assert.equal(JSON.stringify(input),original);
+                    for(let index=0;index<actual.order.length;index++) assert.equal(model.records[actual.ordinals[index]].row[0],actual.order[index]);
+                }
+            }
+        ''')
+
+    def test_duration_ranking_uses_numeric_positions_and_preserves_parse_fallbacks_without_repeated_reads(self):
+        self.run_model('''
+            const fields=Array.from(fgTextModel.presentationFields),tokens=['0','-0','0.0000001','12.5suffix','2e3','',null,'-4'];
+            const input={version:4,fields,rows:tokens.map((token,index)=>[index*11+3,'row '+index,
+                ...fields.map(field=>field==='sort-duration'?token:field==='duration'?'7.25':null),null])};
+            const model=drain(fgTextModel.prepare(input)),plan=fgTextModel.order(model,'time');
+            const reads=new Map();
+            for(const record of model.records) {
+                const native=record.getAttribute;
+                record.getAttribute=function(name) {reads.set(this.row[0],(reads.get(this.row[0])||0)+1);return native.call(this,name)};
+            }
+            const nativeSort=Array.prototype.sort;let numericSorts=0;
+            Array.prototype.sort=function(...arguments) {
+                assert.ok(this.every(value=>typeof value==='number'));numericSorts++;
+                return nativeSort.apply(this,arguments);
+            };
+            let result;
+            try {result=fgTextModel.rankDuration(model,plan,'asc')}
+            finally {Array.prototype.sort=nativeSort}
+            assert.equal(numericSorts,1);
+            assert.deepEqual(result.order,[7,0,1,2,5,6,3,4].map(index=>index*11+3));
+            for(let index=0;index<tokens.length;index++) assert.equal(reads.get(index*11+3),tokens[index]?1:2);
+        ''')
+
+    def test_duration_ranking_nonfinite_values_retain_legacy_object_sort_semantics(self):
+        self.run_model('''
+            let seed=1973;
+            const random=limit=>{seed=(Math.imul(seed,1664525)+1013904223)>>>0;return Math.floor(seed/2**32*limit)};
+            const tokens=['NaN','Infinity','-Infinity','1e309','garbage','0','-0','12.25','-3','',null];
+            const fields=Array.from(fgTextModel.presentationFields);
+            for(let trial=0;trial<80;trial++) {
+                const input={version:4,fields,rows:Array.from({length:31},(value,index)=>{
+                    const attributes={'sort-duration':index===0?'NaN':tokens[random(tokens.length)],duration:'4.25',cpu:String(index%2),pid:String(index%3+1),func:'work'};
+                    return [index*17+2,'row '+index,...fields.map(field=>attributes[field]??null),null];
+                })};
+                const model=drain(fgTextModel.prepare(input));
+                for(const mode of ['time','task']) for(const direction of ['asc','desc']) {
+                    const plan=fgTextModel.order(model,mode);
+                    const reference=plan.order.map((number,index)=>{
+                        const ordinal=plan.ordinals?plan.ordinals[index]:index,record=model.records[ordinal];
+                        return {number,ordinal,duration:parseFloat(record.getAttribute('data-sort-duration')||record.getAttribute('data-duration')||'0')};
+                    }).sort((left,right)=>direction==='desc'?right.duration-left.duration:left.duration-right.duration);
+                    const nativeSort=Array.prototype.sort;let objectSorts=0;
+                    Array.prototype.sort=function(...arguments) {
+                        assert.ok(this.every(value=>typeof value==='object'&&Object.hasOwn(value,'duration')));objectSorts++;
+                        return nativeSort.apply(this,arguments);
+                    };
+                    let result;
+                    try {result=fgTextModel.rankDuration(model,plan,direction)}
+                    finally {Array.prototype.sort=nativeSort}
+                    assert.equal(objectSorts,1);
+                    assert.deepEqual(result.order,reference.map(item=>item.number));
+                    assert.deepEqual(Array.from(result.ordinals),reference.map(item=>item.ordinal));
+                }
+            }
+        ''')
+
+    def test_duration_ranking_keeps_empty_singleton_ties_and_invalid_direction_atomic(self):
+        self.run_model('''
+            for(const length of [0,1,25]) {
+                const model=drain(fgTextModel.prepare(data(Array.from({length},(value,index)=>
+                    [Number.MAX_SAFE_INTEGER-500+index*7,'row '+index,{cpu:String(index%2),pid:String(index%3+1),duration:'0'}]))));
+                for(const mode of ['time','task']) {
+                    const plan=fgTextModel.order(model,mode),original=JSON.stringify(model.records.map(record=>record.row));
+                    for(const direction of ['asc','desc']) {
+                        const result=fgTextModel.rankDuration(model,plan,direction);
+                        assert.deepEqual(result.order,plan.order);
+                        assert.deepEqual(Array.from(result.ordinals),plan.ordinals?Array.from(plan.ordinals):Array.from({length},(value,index)=>index));
+                        if(length) result.order[0]=0;
+                        assert.ok(plan.order.every(number=>number>0));
+                    }
+                    for(const invalid of [null,undefined,'','ASC','name',0])
+                        assert.throws(()=>fgTextModel.rankDuration(model,plan,invalid),/Invalid Text duration order/);
+                    assert.equal(JSON.stringify(model.records.map(record=>record.row)),original);
+                }
+            }
+        ''')
+
     def test_order_plans_handle_empty_header_only_and_invalid_modes(self):
         self.run_model('''
             for (const rows of [[], [[2, '', {}]], [[1, '# header', {}], [3, '---', {}], [11, '任务', {}]]]) {

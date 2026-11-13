@@ -321,6 +321,28 @@
         do { result = steps.next(); } while (!result.done);
         return result.value;
     }
+    function rankDuration(model, plan, direction) {
+        if (direction !== 'asc' && direction !== 'desc') throw new Error('Invalid Text duration order');
+        const durations = new Float64Array(plan.order.length), ranked = new Array(plan.order.length);
+        let finite = true;
+        for (let index = 0; index < ranked.length; index++) {
+            const ordinal = plan.ordinals ? plan.ordinals[index] : index, record = model.records[ordinal];
+            const duration = parseFloat(record.getAttribute('data-sort-duration') || record.getAttribute('data-duration') || '0');
+            durations[index] = duration; ranked[index] = index;
+            if (!Number.isFinite(duration)) finite = false;
+        }
+        if (!finite) {
+            for (let index = 0; index < ranked.length; index++) {
+                ranked[index] = { number: plan.order[index], ordinal: plan.ordinals ? plan.ordinals[index] : index,
+                    duration: durations[index] };
+            }
+            ranked.sort((left, right) => direction === 'desc' ? right.duration - left.duration : left.duration - right.duration);
+            return { order: ranked.map(item => item.number), ordinals: Uint32Array.from(ranked, item => item.ordinal) };
+        }
+        ranked.sort((left, right) => direction === 'desc' ? durations[right] - durations[left] : durations[left] - durations[right]);
+        return { order: ranked.map(index => plan.order[index]),
+            ordinals: Uint32Array.from(ranked, index => plan.ordinals ? plan.ordinals[index] : index) };
+    }
     function navigation(order, expandable, hidden = []) {
         const original = new Set(order);
         const sources = new Set(expandable);
@@ -479,7 +501,7 @@
         }
         return navigation(order, expandable);
     }
-    window.fgTextModel = { fields, presentationFields, prepare, locate, filter, folding, prepareFolding, order, prepareOrder, navigation, prepareNavigation };
+    window.fgTextModel = { fields, presentationFields, prepare, locate, filter, folding, prepareFolding, order, prepareOrder, rankDuration, navigation, prepareNavigation };
     window.fgIndexedFilter = async function (data, text, signal, progress) {
         const iterator = steps(data, text);
         try {

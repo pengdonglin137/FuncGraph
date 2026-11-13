@@ -575,11 +575,11 @@ class TextWindowTest(unittest.TestCase):
     def test_duration_order_cache_reuses_complete_plan_and_invalidates_on_direction_or_mode(self):
         self.open_report()
         facts = self.page.evaluate('''async () => {
-            const nativeSort=Array.prototype.sort;
+            const nativeRank=fgTextModel.rankDuration;
             let sorts=0;
-            Array.prototype.sort=function(...args) {
-                if (this[0] && Object.hasOwn(this[0],'number') && Object.hasOwn(this[0],'duration')) sorts++;
-                return nativeSort.apply(this,args);
+            fgTextModel.rankDuration=function(...args) {
+                sorts++;
+                return nativeRank(...args);
             };
             try {
                 fgTextSort='desc'; await fgTextWindow.rebuild();
@@ -604,7 +604,7 @@ class TextWindowTest(unittest.TestCase):
                 return {initial,warm,foldSorts,folded,stable,direction,grouped,groupWarm,
                     sorted:durations.every((duration,index)=>!index||durations[index-1]<=duration),
                     rows:document.querySelectorAll('#content .line-container').length};
-            } finally {Array.prototype.sort=nativeSort}
+            } finally {fgTextModel.rankDuration=nativeRank}
         }''')
         self.assertEqual(facts['initial'], 1)
         self.assertEqual(facts['warm'], 1)
@@ -616,6 +616,37 @@ class TextWindowTest(unittest.TestCase):
         self.assertEqual(facts['groupWarm'], 3)
         self.assertTrue(facts['sorted'])
         self.assertLessEqual(facts['rows'], 160)
+
+    def test_duration_ranking_matches_finite_and_nonfinite_complete_reference_in_chromium(self):
+        self.open_report()
+        cases = self.page.evaluate('''() => {
+            let cases=0;
+            for(const tokens of [['0','-0','0.00001','12.5','2e3','',null],['NaN','Infinity','-Infinity','garbage','0','12.5']]) {
+                const source=fgData.read('fgTextIndex'),data={...source,rows:source.rows.slice(0,31).map(row=>row.slice())};
+                for(let index=0;index<data.rows.length;index++) {
+                    data.rows[index][data.fields.indexOf('sort-duration')+2]=tokens[index%tokens.length];
+                    data.rows[index][data.fields.indexOf('pid')+2]=String(index%3+1);
+                    data.rows[index][data.fields.indexOf('cpu')+2]=String(index%2);
+                }
+                const iterator=fgTextModel.prepare(data);let prepared;
+                do {prepared=iterator.next()} while(!prepared.done);
+                const model=prepared.value,before=JSON.stringify(data);
+                for(const mode of ['time','task']) for(const direction of ['asc','desc']) {
+                    const plan=fgTextModel.order(model,mode);
+                    const reference=plan.order.map((number,index)=>{
+                        const ordinal=plan.ordinals?plan.ordinals[index]:index,record=model.records[ordinal];
+                        return {number,ordinal,duration:parseFloat(record.getAttribute('data-sort-duration')||record.getAttribute('data-duration')||'0')};
+                    }).sort((left,right)=>direction==='desc'?right.duration-left.duration:left.duration-right.duration);
+                    const result=fgTextModel.rankDuration(model,plan,direction);
+                    if(JSON.stringify([result.order,[...result.ordinals]])!==JSON.stringify([reference.map(item=>item.number),reference.map(item=>item.ordinal)]))
+                        throw new Error('Complete duration ranking changed');
+                    if(JSON.stringify(data)!==before) throw new Error('Ranking changed source records');
+                    cases++;
+                }
+            }
+            return cases;
+        }''')
+        self.assertEqual(cases,8)
 
     def test_rebuild_uses_prepared_ordinals_without_full_model_point_lookups(self):
         self.open_report()

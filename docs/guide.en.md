@@ -36,6 +36,12 @@ and temporary input each add one byte per record, separately from fold masks
 and ordinal arrays. See [navigation measurements and limits](performance-text-navigation-visibility.md).
 This does not eliminate cold reads or synchronous full-model work.
 
+On a duration-order cache miss, windowed Text ranks numeric positions using a
+temporary duration array instead of per-row metadata objects. Ties remain
+stable in both directions, and non-finite values keep legacy sorting semantics.
+The existing single-plan cache and full navigation checks are unchanged; see
+[duration-ranking costs and measurements](performance-text-duration-ranking.md).
+
 Scattered window rows now share one verified read per HTML network resource,
 avoiding repeated download, checksum and decoding after small-cache eviction.
 Display order and full paint-block validation are unchanged; no new option is

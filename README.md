@@ -31,6 +31,11 @@ size. Full order validation and mounted-row projection remain intact. See
 [navigation measurements and memory limits](docs/performance-text-navigation-visibility.md);
 cold reads and full-model work can still pause the page.
 
+Cold windowed duration sorting now ranks numeric positions instead of allocating
+one metadata object per record. Equal durations retain their original plan
+order; non-finite values keep the legacy path. Temporary duration storage and
+remaining costs are documented in the [duration-ranking comparison](docs/performance-text-duration-ranking.md).
+
 ## What is FuncGraph?
 
 FuncGraph converts kernel `function_graph` text, trace-cmd raw containers and uftrace user/mixed recordings into interactive, filterable HTML reports for kernel development and application-to-kernel call analysis. It supports source linking, high-speed address resolution, parameter and duration filtering, and keyboard-friendly call folding. Call structure can be viewed without a matching debug image; source and type enrichment need the corresponding debug information.
