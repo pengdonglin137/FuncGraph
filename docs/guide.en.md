@@ -46,6 +46,11 @@ typed buffers total `16 × N` bytes, excluding outputs; this is not a total-memo
 bound. Other full-model and scattered DOM work can still block. See
 [cooperative sorting and measurements](performance-text-cooperative-ranking.md).
 
+Windowed rebuilds also avoid per-row temporary entry pairs and a redundant task
+boundary index, retaining full identity, permutation and source checks. Hidden
+task/gap semantics remain unchanged. No new option or total-memory bound is
+introduced; see [allocation measurements and limits](performance-text-rebuild-allocation.md).
+
 Scattered window rows now share one verified read per HTML network resource,
 avoiding repeated download, checksum and decoding after small-cache eviction.
 Display order and full paint-block validation are unchanged; no new option is

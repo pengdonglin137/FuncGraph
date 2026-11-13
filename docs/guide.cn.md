@@ -34,6 +34,10 @@ Text、改变宽度或 Full Text 会取消过期排序；回到同宽 Text 也�
 原生排序。额外临时 typed buffers 共 `16 × N` 字节（输出另计），并非总内存上限；
 完整模型和分散 DOM 解析仍可能阻塞。见[协作式排序及测量](performance-text-cooperative-ranking.md)。
 
+窗口重建还会避免逐行临时键值对和冗余任务边界索引；完整行号、排列及源码校验
+保留，隐藏任务和 gap 的显示语义不变。无需新增参数，也不保证总内存上限；
+见[重建分配实测与限制](performance-text-rebuild-allocation.md)。
+
 窗口排序后需要的多行若属于同一个 HTML 网络资源，会合并读取，避免小缓存反复淘汰
 同一资源而重复下载、校验和解码；显示顺序不变，所需绘制块仍逐行完整校验。
 无需新增参数；用法、实测和仍有的解析开销见[分散窗口读取](performance-text-block-locality.md)。

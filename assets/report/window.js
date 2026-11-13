@@ -356,30 +356,29 @@ function fgCreateTextWindow(model, navigation, root) {
             const estimate = Math.max(21, parseFloat(style.getPropertyValue('--fg-text-font-size')) * 1.5 +
                 2 * parseFloat(style.getPropertyValue('--fg-text-pad-y')));
             positions.clear(); sequence = []; taskGroups = []; sizes = [];
-            const boundaries = new Map();
-            if (!direction) for (const boundary of plan.boundaries) {
-                const number = plan.order[boundary.at];
-                if (!boundaries.has(number)) boundaries.set(number, []);
-                boundaries.get(number).push(boundary);
-            }
-            let pendingBoundaries = [];
+            const boundaries = direction ? [] : plan.boundaries;
+            let boundaryIndex = 0;
+            const pendingBoundaries = [];
             for (let index = 0; index < order.length; index++) {
                 const number = order[index], ordinal = ordinals ? ordinals[index] : index;
-                for (const boundary of boundaries.get(number) || []) {
-                    if (boundary.kind === 'task-group-head') pendingBoundaries = [boundary];
-                    else pendingBoundaries.push(boundary);
+                while (boundaryIndex < boundaries.length && boundaries[boundaryIndex].at === index) {
+                    const boundary = boundaries[boundaryIndex++];
+                    if (boundary.kind === 'task-group-head') pendingBoundaries.length = 0;
+                    pendingBoundaries.push(boundary);
                 }
                 const record = model.records[ordinal];
                 const visible = (visibleRecord ? visibleRecord(record) : hidden === null || !hidden[ordinal]) &&
                     (direction || mode !== 'task' || !plan.hidden.has(number));
                 visibility[index] = visible ? 1 : 0;
                 if (!visible) continue;
-                for (const boundary of pendingBoundaries) {
-                    if (boundary.kind === 'task-group-head') taskGroups.push({ index: sequence.length, text: boundary.text });
-                    sequence.push(boundary);
-                    sizes.push(30);
+                if (pendingBoundaries.length) {
+                    for (const boundary of pendingBoundaries) {
+                        if (boundary.kind === 'task-group-head') taskGroups.push({ index: sequence.length, text: boundary.text });
+                        sequence.push(boundary);
+                        sizes.push(30);
+                    }
+                    pendingBoundaries.length = 0;
                 }
-                pendingBoundaries = [];
                 positions.set(number, sequence.length); sequence.push(number);
                 sizes.push(heights[ordinal] || estimate);
             }

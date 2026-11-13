@@ -37,6 +37,10 @@ Changing order or leaving Text cancels outdated work. Small inputs and non-finit
 durations keep native sorting; other full-model and DOM work can still block.
 See [cooperative sorting, memory costs and measurements](docs/performance-text-cooperative-ranking.md).
 
+Navigation reorders also avoid temporary per-row entry pairs; task boundaries
+are consumed in plan order without a redundant Map. Complete identity and
+permutation checks remain. See [rebuild allocation measurements and limits](docs/performance-text-rebuild-allocation.md).
+
 ## What is FuncGraph?
 
 FuncGraph converts kernel `function_graph` text, trace-cmd raw containers and uftrace user/mixed recordings into interactive, filterable HTML reports for kernel development and application-to-kernel call analysis. It supports source linking, high-speed address resolution, parameter and duration filtering, and keyboard-friendly call folding. Call structure can be viewed without a matching debug image; source and type enrichment need the corresponding debug information.

@@ -1149,6 +1149,83 @@ class TextModelTest(unittest.TestCase):
             assert.throws(()=>navigation.reorder(new Array(order.length)));
         ''')
 
+    def test_navigation_rejects_invalid_reorders_without_publishing_partial_state(self):
+        self.run_model('''
+            const order=[Number.MAX_SAFE_INTEGER-4,4294967297,17,3];
+            const navigation=fgTextModel.navigation(order,[order[0],17],[17]);
+            navigation.setVisible(3,false);
+            const presented=navigation.order,visible=navigation.visible,expandable=navigation.expandable;
+            const invalid=[null,undefined,0,'rows',{},new Set(order),new Float64Array(order),
+                {length:4,map:()=>order.map((line,index)=>[line,index])},[],order.slice(1),
+                [order[0],4294967297,17,17],[order[0],4294967297,17,5],new Array(4),
+                [order[0],,17,3],[order[0],4294967297,17,undefined],
+                [order[0],4294967297,17,'3'],[order[0],4294967297,17,3n],
+                [order[0],4294967297,17,NaN],[order[0],4294967297,17,Infinity]];
+            for (const next of invalid) {
+                assert.throws(()=>navigation.reorder(next),/Invalid Text navigation order/);
+                assert.equal(navigation.order,presented);
+                assert.equal(navigation.visible,visible);
+                assert.equal(navigation.expandable,expandable);
+                assert.equal(navigation.visibleCount,2);assert.equal(navigation.expandableCount,1);
+                assert.equal(navigation.indexOf(3),3);
+            }
+            navigation.reorder(order.slice().reverse());
+            assert.deepEqual(navigation.order,[3,17,4294967297,Number.MAX_SAFE_INTEGER-4]);
+            assert.deepEqual(navigation.visible,[2,3]);assert.deepEqual(navigation.expandable,[3]);
+            navigation.setVisible(17,true);
+            assert.equal(navigation.boundary(false),1);assert.equal(navigation.boundary(true),3);
+            assert.equal(navigation.visibleCount,3);assert.equal(navigation.next(-1,1),1);
+            assert.equal(navigation.indexOf(Number.MAX_SAFE_INTEGER-4),3);
+        ''')
+
+    def test_navigation_constructor_validates_holes_and_every_original_identity(self):
+        self.run_model('''
+            for(const order of [new Array(1),[1,,3],[,2,3],[1,2,,],
+                [0],[NaN],[Infinity],[-1],[1.5],[Number.MAX_SAFE_INTEGER+1],['1'],[1n],[undefined]])
+                assert.throws(()=>fgTextModel.navigation(order,[]),/Invalid Text navigation records/);
+            const order=[1,4294967297,Number.MAX_SAFE_INTEGER];
+            const navigation=fgTextModel.navigation(order,order);
+            assert.deepEqual(navigation.order,order);assert.equal(navigation.visibleCount,3);
+        ''')
+
+    def test_navigation_builds_positions_without_entry_pair_arrays(self):
+        self.run_model('''
+            const order=Array.from({length:32768},(unused,index)=>4294967297+index*7);
+            const nativeMap=Map;
+            let maps=0;
+            globalThis.Map=class extends nativeMap {
+                constructor(...arguments_) {
+                    assert.equal(arguments_.length,0,'positions must not materialize entry pairs');
+                    super();maps++;
+                }
+            };
+            const navigation=fgTextModel.navigation(order,order);
+            const next=order.slice().reverse();
+            next.map=()=>{throw new Error('Per-row pair projection')};
+            next.some=()=>{throw new Error('Duplicate validation scan')};
+            navigation.reorder(next);
+            assert.equal(maps,3);
+            assert.deepEqual(navigation.order,order.slice().reverse());
+            for(let index=0;index<order.length;index++) assert.equal(navigation.indexOf(order[index]),order.length-1-index);
+            next[0]=0;
+            assert.equal(navigation.order[0],order[order.length-1]);
+            navigation.reorder(order.slice().reverse());
+            assert.equal(maps,3);
+        ''')
+
+    def test_empty_navigation_reorder_keeps_validation_and_snapshot_identity(self):
+        self.run_model('''
+            const navigation=fgTextModel.navigation([],[]),presented=navigation.order,visible=navigation.visible;
+            for(const next of [[],[]]) {
+                navigation.reorder(next);
+                assert.equal(navigation.order,presented);assert.equal(navigation.visible,visible);
+            }
+            for(const invalid of [null,{},new Uint32Array(),[1],new Array(1)])
+                assert.throws(()=>navigation.reorder(invalid),/Invalid Text navigation order/);
+            assert.equal(navigation.visibleCount,0);assert.equal(navigation.expandableCount,0);
+            assert.equal(navigation.boundary(false),-1);assert.equal(navigation.next(-1,1),-1);
+        ''')
+
     def test_navigation_searches_large_candidate_lists_with_logarithmic_probes(self):
         self.run_model('''
             const order = Array.from({length:131072}, (unused, index) => index + 1);

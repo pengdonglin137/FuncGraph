@@ -414,9 +414,11 @@
         const original = new Set(order);
         const sources = new Set(expandable);
         const concealed = new Set(hidden);
-        if (original.size !== order.length || order.some(line => !Number.isSafeInteger(line) || line <= 0) ||
-            [...sources, ...concealed].some(line => !original.has(line))) {
+        if (original.size !== order.length || [...sources, ...concealed].some(line => !original.has(line))) {
             throw new Error('Invalid Text navigation records');
+        }
+        for (const line of order) {
+            if (!Number.isSafeInteger(line) || line <= 0) throw new Error('Invalid Text navigation records');
         }
         let positions = new Map();
         let visibleTree = new Uint32Array(1), expandableTree = new Uint32Array(1);
@@ -527,9 +529,14 @@
                     }
                     if (unchanged) { result.refresh(); return; }
                 }
-                const updated = new Map(next.map((line, index) => [line, index]));
-                if (next.length !== original.size || updated.size !== original.size ||
-                    next.some(line => !original.has(line))) throw new Error('Invalid Text navigation order');
+                if (!Array.isArray(next) || next.length !== original.size) throw new Error('Invalid Text navigation order');
+                const updated = new Map();
+                for (let index = 0; index < next.length; index++) {
+                    const line = next[index];
+                    if (!original.has(line)) throw new Error('Invalid Text navigation order');
+                    updated.set(line, index);
+                }
+                if (updated.size !== original.size) throw new Error('Invalid Text navigation order');
                 result.order = next.slice();
                 positions = updated;
                 visibilityState = null;

@@ -766,6 +766,70 @@ class TextWindowTest(unittest.TestCase):
         self.assertEqual(facts['cases'], 90)
         self.assertTrue(facts['unchanged'])
 
+    def test_task_boundary_stream_matches_complete_reference_with_hidden_groups_and_shared_positions(self):
+        self.open_task_report()
+        facts = self.page.evaluate('''async () => {
+            const model=fgTextWindow.model,original=JSON.stringify(model.records.map(record=>record.row)),
+                task=fgTextModel.order(model,'task'),nativeOrder=fgTextModel.order;
+            const boundaries=[
+                {at:0,kind:'task-group-head',text:'A'}, {at:0,kind:'task-gap',text:'A gap'},
+                {at:1,kind:'task-gap',text:'hidden gap'},
+                {at:2,kind:'task-group-head',text:'B'}, {at:2,kind:'task-gap',text:'B gap'},
+                {at:4,kind:'task-gap',text:'B later gap'},
+                {at:5,kind:'task-group-head',text:'C'}, {at:5,kind:'task-gap',text:'C gap'},
+                {at:7,kind:'task-group-head',text:'D'}, {at:7,kind:'task-gap',text:'D gap'},
+                {at:task.order.length-1,kind:'task-group-head',text:'trailing hidden group'}];
+            const plan={...task,boundaries,hidden:new Set([task.order[1],task.order[6]])};
+            const preserved=JSON.stringify([plan.order,[...plan.ordinals],plan.boundaries,[...plan.hidden]]);
+            fgTextModel.order=(target,mode)=>target===model && mode==='task'?plan:nativeOrder(target,mode);
+            let cases=0,headings=0,gaps=0;
+            try {
+                for(const mode of ['task','time']) for(const direction of ['','desc','asc'])
+                    for(const indices of [[],[0],[1],[3],[4],[7],[8],[0,3,7],[0,4,8]]) {
+                        const matches=new Set(indices.map(index=>task.order[index]));
+                        fgTextOrder=mode;fgTextSort=direction;fgNotifyFilter('test',matches);
+                        await fgTextWindow.rebuild();
+                        const active=fgTextModel.order(model,mode),order=fgTextNavigation.order;
+                        const expected=[],byNumber=new Map();
+                        if(!direction) for(const boundary of active.boundaries) {
+                            const number=active.order[boundary.at];
+                            if(!byNumber.has(number)) byNumber.set(number,[]);
+                            byNumber.get(number).push(boundary);
+                        }
+                        let pending=[];
+                        for(const number of order) {
+                            for(const boundary of byNumber.get(number)||[]) {
+                                if(boundary.kind==='task-group-head') pending=[boundary];
+                                else pending.push(boundary);
+                            }
+                            if(!matches.has(number) || (!direction && mode==='task' && active.hidden.has(number))) continue;
+                            expected.push(...pending.map(boundary=>[boundary.kind,boundary.text]),number);pending=[];
+                        }
+                        if(mode==='task' && !direction && indices.join(',')==='0,3,7') {
+                            const known=[['task-group-head','A'],['task-gap','A gap'],task.order[0],
+                                ['task-group-head','B'],['task-gap','B gap'],task.order[3],
+                                ['task-group-head','D'],['task-gap','D gap'],task.order[7]];
+                            if(JSON.stringify(expected)!==JSON.stringify(known)) throw new Error('Reference fixture changed');
+                        }
+                        const actual=[...document.querySelector('.fg-window-rows').children].map(element=>
+                            element.dataset.windowLine?+element.dataset.windowLine:[element.firstElementChild.className,element.textContent]);
+                        if(JSON.stringify(actual)!==JSON.stringify(expected)) throw new Error('Boundary projection changed: '+JSON.stringify({mode,direction,indices,expected,actual}));
+                        const numbers=expected.filter(item=>typeof item==='number');
+                        if(JSON.stringify(numbers)!==JSON.stringify(fgTextWindow.visibleNumbers) || fgTextNavigation.visibleCount!==numbers.length)
+                            throw new Error('Complete visible/navigation order changed');
+                        headings+=expected.filter(item=>item[0]==='task-group-head').length;
+                        gaps+=expected.filter(item=>item[0]==='task-gap').length;
+                        cases++;
+                    }
+            } finally { fgTextModel.order=nativeOrder; }
+            return {cases,headings,gaps,unchanged:JSON.stringify(model.records.map(record=>record.row))===original &&
+                JSON.stringify([plan.order,[...plan.ordinals],plan.boundaries,[...plan.hidden]])===preserved};
+        }''')
+        self.assertEqual(facts['cases'], 54)
+        self.assertGreater(facts['headings'], 6)
+        self.assertGreater(facts['gaps'], 6)
+        self.assertTrue(facts['unchanged'])
+
     def test_cooperative_duration_pending_retains_complete_order_dom_and_event_loop(self):
         self.open_gated_duration_report()
         facts = self.page.evaluate('''async () => {

@@ -165,3 +165,6 @@ PYTHONPATH=.:tests python3 tests/benchmark_text_rebuild.py \
 
 本地完整证据目录：`build/benchmarks/20261113-text-cooperative-ranking/`。
 旧归档不覆盖；性能报告不随安装包附带原始 trace 或本地构建产物。
+
+后续完整重建的临时分配与任务边界投影优化见[独立对照](performance-text-rebuild-allocation.md)；
+该对照不改写本页的历史基线或数字。
