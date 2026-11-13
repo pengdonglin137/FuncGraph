@@ -7,6 +7,7 @@ import html
 import threading
 import time
 import json
+import hashlib
 from collections import defaultdict
 from pathlib import Path
 from itertools import islice
@@ -470,6 +471,15 @@ class HtmlGenerator:
         self._attach_tail_sources()
         for x in views:
             data = json.dumps(x[6], separators=(',', ':')).replace('<', '\\u003c')
+            if x[5] == 'tlData':
+                stats = x[6].get('stats', {})
+                stable_stats = dict(stats, build_time=0) if 'build_time' in stats else stats
+                stats_token = '"stats":' + json.dumps(stats, separators=(',', ':')).replace('<', '\\u003c')
+                stable_token = '"stats":' + json.dumps(stable_stats, separators=(',', ':')).replace('<', '\\u003c')
+                identity_data = data.replace(stats_token, stable_token, 1)
+                identity = hashlib.sha256(identity_data.encode('utf-8')).hexdigest()
+                yield 'timeline_identity', ('    <script type="application/json" id="fgTimelineIdentity">'
+                                            + json.dumps(identity) + '</script>\n')
             yield 'view_open:' + x[5], f'    <script type="application/json" id="{x[5]}">'
             yield 'view_data:' + x[5], data
             yield 'view_close:' + x[5], '</script>\n'

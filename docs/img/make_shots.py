@@ -298,6 +298,21 @@ def tl_help(browser, reports):
     shot(page, 'tl_help', {'x': W - 520, 'y': 0, 'width': 520, 'height': H})
 
 
+def tl_saved_views(browser, reports):
+    page = open_page(browser, reports['sample'], 'timeline')
+    index = find(page, '__x64_sys_sendto')
+    zoom(page, index)
+    page.locator('[data-act=options]').click()
+    page.locator('[data-act=saved-views]').click()
+    page.locator('.tl-saved-views input[name=name]').fill('Inspect the send path')
+    page.get_by_text('Add a note (optional)', exact=True).click()
+    page.locator('.tl-saved-views textarea').fill('Follow the recorded call into the kernel; compare the arguments and caller source.')
+    page.get_by_role('button', name='Save current view', exact=True).click()
+    page.get_by_text('Add a note (optional)', exact=True).click()
+    page.mouse.move(20, 20)
+    shot(page, 'timeline_saved_views')
+
+
 def an_range(b, rep):
     pg = open_page(b, rep['sample'], 'timeline')
     i = find(pg, '__x64_sys_write')
@@ -404,6 +419,7 @@ def tl_loading(browser, reports):
 SHOTS = {
     'text_view': text_view, 'text_folding': text_folding, 'tl_loading': tl_loading, 'tl_layout': tl_layout, 'tl_compact': tl_compact, 'tl_search': tl_search, 'tl_errors': tl_errors, 'tl_dense': tl_dense, 'tl_irqoff': tl_irqoff,
     'tl_offcpu': tl_offcpu, 'tl_untraced': tl_untraced, 'tl_detail': tl_detail, 'tl_inline': tl_inline, 'tl_tail': tl_tail, 'tl_help': tl_help,
+    'timeline_saved_views': tl_saved_views,
     'an_range': an_range, 'an_dist': an_dist, 'an_slowfast': an_slowfast, 'an_sections': panel('an_sections', 'sample', 'sections'),
     'an_errors': panel('an_errors', 'sched', 'errors'), 'an_wait': an_wait, 'an_tasks': an_tasks,
     'an_children': an_children, 'an_children_calls': lambda browser, reports: an_children(browser, reports, calls=True),

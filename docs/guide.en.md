@@ -1031,6 +1031,44 @@ moving the viewport. Changing the coordinate basis converts both valid fields ex
 `Enter` submits; `Esc` / **Cancel** closes without moving. Dialog keys do not activate underlying
 Timeline shortcuts, and closing restores focus to an available control.
 
+### 6.11 Saved views
+
+Locate a useful call or interval, open **Tools → Saved views…**, give it a name,
+optionally expand **Add a note (optional)**, and choose **Save current view**.
+Click a saved name to restore it. The entry stays inside Tools: there is no
+permanent sidebar or extra row of toolbar buttons.
+
+![Saved analysis view](img/timeline_saved_views.png)
+
+- Saves the visible interval, selected call or range, applied shared filter,
+  Find input, collapsed tracks, vertical reading position, and Inline / Overhead
+  settings. Unsubmitted filter drafts are excluded; wait for or cancel active filtering.
+- Does not save expanded source or analysis-panel pagination, and does not
+  overwrite theme, full-screen state, detail height, colors or overlays. Restore
+  reuses the Timeline model without changing recorded data. Untimed reports keep
+  their original coordinate basis, not measured time.
+- Views stay in this browser and are restored explicitly, not automatically on
+  report open. Each report can keep 50 views and up to 1 MiB; reaching a limit
+  produces an explanation instead of silently dropping earlier views.
+- Expand **Import / export** to transfer JSON. It contains positions, filters
+  and notes, not trace data, source or screenshots; share the matching report
+  separately. Check notes and filters for private information before sharing.
+- A generation-time fingerprint binds views to Timeline data, ignoring build
+  duration, across matching single-file and sidecar reports. Different traces,
+  parsing results or source annotations can change it. Mismatches are rejected,
+  never guessed from function names or line numbers. Import merges existing
+  views, skips duplicate content, and rejects a corrupt, oversized or incompatible
+  file as a whole rather than partially changing the saved list.
+- If browser storage is unavailable or full, views remain usable and exportable
+  in the current tab; the dialog warns that they may not survive closing it.
+  Corrupt existing storage is not overwritten. **Remove** deletes a saved view,
+  never a call or the trace.
+
+The dialog is created on first use. Saving, restoring and transfer run only on
+explicit actions; hovering, zooming and switching views do not scan saved views
+or recompute fingerprints. Escape closes the dialog before leaving full screen
+and restores the available toolbar control's focus.
+
 ## 7. Analysis panels
 
 Analysis panels open in the detail area below the timeline and follow the filter and the Overhead switch. Column headers sort (the sorted column is underlined); rows jump to the timeline.

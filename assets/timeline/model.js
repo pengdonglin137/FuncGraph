@@ -680,6 +680,7 @@ function ovT(x) { return tMin + x / ovK(); }
 const ov = { err: true, irq: true, rs: true, off: true, wk: true, preempt: false, mk: true };
 let colorMode = 'ctx';
 let sel = -1, hov = -1, hovOff = null, hovCpu = null;
+let savedViewsDialog = null;
 let range = null;            // {s, e, track|null}
 let searchHits = null;       // Uint8Array per name index
 let textHits = null;         // Uint8Array per slice: passes the text-view filter
@@ -778,6 +779,7 @@ tlRoot.innerHTML = `
     <button class="tl-btn" data-act="expand" title="Expand / collapse all tracks">Tracks</button>
     <button class="tl-btn" data-act="an-tasks" title="Find and navigate all recorded tasks, including scheduling-only tasks">Tasks</button>
     <button class="tl-btn" data-act="position" title="Go to a coordinate or interval without changing selection (G)">Go to…</button>
+    <button class="tl-btn" data-act="saved-views" title="Save and restore a named position, selection and filter">Saved views…</button>
     <button class="tl-btn" data-act="fitcalls" aria-label="Fit recorded calls" title="${N ? 'Show all recorded calls, independent of filters' : 'No recorded calls in this report'}"${N ? '' : ' disabled'}>Fit calls</button>
   </span>
   <span class="tl-group" role="group" aria-label="Timeline display">

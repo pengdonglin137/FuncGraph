@@ -804,6 +804,7 @@ elPosition.addEventListener('close', () => {
 // ---- keyboard (capture phase: keeps the text view's shortcuts from firing) ----
 window.addEventListener('keydown', ev => {
     if (window.fgCurrentView() !== 'timeline') return;
+    if (savedViewsDialog?.open) { ev.stopPropagation(); return; }
     if (callActionsKey(ev)) { ev.stopPropagation(); return; }
     if (elPosition.open) {
         ev.stopPropagation();

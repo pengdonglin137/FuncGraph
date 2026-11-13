@@ -1299,7 +1299,7 @@ tlRoot.querySelectorAll('[data-ov]').forEach(b => {
 elToolbar.addEventListener('click', ev => {
     const b = ev.target.closest('[data-act]');
     if (!b) return;
-    if (elOptions.classList.contains('open') && b.matches('[data-act^=an-], [data-act=position], [data-act=fitcalls], [data-act=process-events], [data-act=max], [data-act=help]')) {
+    if (elOptions.classList.contains('open') && b.matches('[data-act^=an-], [data-act=position], [data-act=saved-views], [data-act=fitcalls], [data-act=process-events], [data-act=max], [data-act=help]')) {
         setToolbarOptions(false, true);
     }
     switch (b.dataset.act) {
@@ -1323,6 +1323,7 @@ elToolbar.addEventListener('click', ev => {
         case 'an-sec': showSections(); break;
         case 'an-tasks': showTasks(null); break;
         case 'position': showPosition(); break;
+        case 'saved-views': showSavedViews(); break;
         case 'process-events': showProcessEvents(); break;
         case 'expand': {
             const any = ORDER.some(t => t.collapsed);
@@ -1430,6 +1431,7 @@ ${N ? '' : '<p>No function calls were recorded. Search has no call matches; shar
 <p><b>Tools → Color → Total time</b> includes child calls and recorded waits; <b>Self time</b> excludes child calls. Both use a blue-to-red log scale from zero to the maximum across all recorded calls, independent of zoom and filters. Neither measures CPU time. The legend inside Tools follows the theme and Overhead setting; slice positions and widths stay as recorded. Error overlays take priority; turn off <b>Errors</b> to compare duration colors. Duration colors are unavailable without durations or recorded calls. <b>Context</b> remains the default.</p>
 <h4>Select</h4><ul>
 <li>Call details group <b>Duration distribution</b> and <b>Open in Text</b> under <b>Actions</b>. Use arrow keys / Home / End inside the menu; Escape closes it before leaving full screen. Text is disabled when it is not included in the report.</li>
+<li><b>Tools → Saved views…</b>: name a position, selected call or range and applied filter, with optional notes. Click a saved name to restore it. Import / export transfers views for matching report data only; share the report separately. Browser storage failures are shown in the dialog.</li>
 <li>Call details have native navigation buttons: <kbd>↑</kbd> recorded parent · <kbd>↓</kbd> first recorded child · <kbd>[</kbd>/<kbd>]</kbd> recorded siblings (task roots stay within the task); synthetic frames are skipped</li>
 <li><kbd>E</kbd>/<kbd>Shift+E</kbd> next/prev error · <kbd>/</kbd> search, <kbd>N</kbd>/<kbd>Shift+N</kbd> next/prev match</li>
 <li>Click an off-CPU segment: wait chain (who woke the task, wake latency, and who woke the waker)</li>
@@ -1519,4 +1521,4 @@ const probe = () => ({ N, NA, SYN, S, sName, sStart, sEnd, sDepth, sParent, sTas
     errors: showErrors, latency: showLatency, sections: showSections, dist: showDist, wait: showWaitChain,
     inline: (on) => { if (!!on !== inlineView) toggleInlineView(); } });
 return { resize: () => { resumeSearch(); resize(); }, revealLine: revealLine, draw: draw, probe: probe,
-    suspend: () => { suspendSearch(); closeCallActions(); if (elPosition.open) elPosition.close(); if (tlRoot.classList.contains('tl-fullscreen') || document.fullscreenElement === tlRoot) leaveFullscreen(false); setToolbarOptions(false); hideTip(); discardSceneCache(); }, showHelp: () => { closeCallActions(); elHelp.classList.add('show'); } };
+    suspend: () => { suspendSearch(); closeSavedViews(); closeCallActions(); if (elPosition.open) elPosition.close(); if (tlRoot.classList.contains('tl-fullscreen') || document.fullscreenElement === tlRoot) leaveFullscreen(false); setToolbarOptions(false); hideTip(); discardSceneCache(); }, showHelp: () => { closeCallActions(); elHelp.classList.add('show'); } };

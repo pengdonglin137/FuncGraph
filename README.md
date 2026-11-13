@@ -35,7 +35,9 @@ and its [source/error-path screenshot](sample.png). No installation required.
 
 Timeline offers full-screen viewing, resizable details, compact menus and
 light/dark themes. Text and Timeline share reachable view tabs and trace-line
-navigation. Missing events or debug information are not replaced with invented
+navigation. **Tools → Saved views…** keeps named analysis positions and notes,
+with export/import for someone using the same report data.
+Missing events or debug information are not replaced with invented
 callers, parameters or timing.
 
 **On this page:** [Install](#install) · [Quick start](#quick-start) ·
