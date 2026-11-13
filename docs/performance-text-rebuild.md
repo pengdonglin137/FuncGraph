@@ -12,6 +12,7 @@ runtime; see [windowed usage and limitations](performance-text-window.md).
 后续完整可见性的批量提交见[导航优化](performance-text-navigation-visibility.md)，额外缓存与临时输入
 各为每行 1 字节；不弱化完整重排验证，不将这轮数字归到之前阶段。
 耗时缓存未命中时的临时对象优化另见[耗时排序记录](performance-text-duration-ranking.md)，
+超过 16,384 行后的分批调度、取消和当前实测见[协作式排序](performance-text-cooperative-ranking.md)。
 下文的一份 plan/方向缓存策略保持不变。
 
 ## 实现与准确性

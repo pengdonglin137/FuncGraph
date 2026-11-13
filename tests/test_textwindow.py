@@ -98,6 +98,22 @@ class TextWindowTest(unittest.TestCase):
     def mounted(self):
         return self.page.locator('#content .line-container').count()
 
+    def open_gated_duration_report(self):
+        self.page.goto(urljoin(self.server.url, 'scattered/index.html?text=windowed'))
+        self.assertTrue(self.page.evaluate('async () => !!(await fgSwitchView("text"))'))
+        self.page.evaluate('''() => {
+            window.durationGates=[];
+            const original=fgTextModel.rankDurationAsync;
+            fgTextModel.rankDurationAsync=(model,plan,direction,signal,progress)=>new Promise((resolve,reject)=>{
+                durationGates.push({direction,signal,progress,fail:reject,
+                    release:async()=>{try {resolve(await original(model,plan,direction,undefined,progress))} catch(error) {reject(error)}}});
+            });
+            window.beginDuration=direction=>{
+                fgTextSort=direction;
+                window.durationWork=fgTextWindow.rebuild().then(()=>true,error=>error.name);
+            };
+        }''')
+
     def open_task_report(self):
         self.page.goto(urljoin(self.server.url, 'tasks/index.html?text=windowed'))
         groups = self.page.evaluate('''async () => {
@@ -749,6 +765,183 @@ class TextWindowTest(unittest.TestCase):
         }''')
         self.assertEqual(facts['cases'], 90)
         self.assertTrue(facts['unchanged'])
+
+    def test_cooperative_duration_pending_retains_complete_order_dom_and_event_loop(self):
+        self.open_gated_duration_report()
+        facts = self.page.evaluate('''async () => {
+            const order=fgTextNavigation.order.slice(),visible=fgTextWindow.visibleNumbers,
+                markup=document.querySelector('.fg-window-rows').innerHTML,count=fgTextNavigation.visibleCount;
+            beginDuration('desc');
+            let heartbeats=0;await new Promise(resolve=>setTimeout(()=>{heartbeats++;resolve()},0));
+            dispatchEvent(new Event('scroll'));await new Promise(requestAnimationFrame);await new Promise(requestAnimationFrame);
+            const retained=JSON.stringify(order)===JSON.stringify(fgTextNavigation.order) &&
+                JSON.stringify(visible)===JSON.stringify(fgTextWindow.visibleNumbers) && count===fgTextNavigation.visibleCount &&
+                markup===document.querySelector('.fg-window-rows').innerHTML;
+            const busy=document.getElementById('content').getAttribute('aria-busy');
+            await durationGates[0].release();await durationWork;
+            const expected=fgTextModel.rankDuration(fgTextWindow.model,fgTextModel.order(fgTextWindow.model,'time'),'desc').order;
+            return {retained,busy,heartbeats,sorted:JSON.stringify(expected)===JSON.stringify(fgTextNavigation.order),
+                ready:!document.getElementById('content').hasAttribute('aria-busy')};
+        }''')
+        self.assertEqual(facts, dict(retained=True, busy='true', heartbeats=1, sorted=True, ready=True))
+        self.assertLessEqual(self.mounted(), 160)
+
+    def test_cooperative_duration_latest_direction_wins_and_stale_progress_cannot_publish(self):
+        self.open_gated_duration_report()
+        facts = self.page.evaluate('''async () => {
+            beginDuration('desc');const previous=durationWork;
+            beginDuration('asc');const current=durationWork;
+            const cancelled=durationGates[0].signal.aborted;
+            await durationGates[1].release();await current;
+            const order=fgTextNavigation.order.slice(),notice=document.querySelector('.fg-window-notice [role=status]').textContent;
+            durationGates[0].progress('STALE');await durationGates[0].release();const old=await previous;
+            const stable=JSON.stringify(order)===JSON.stringify(fgTextNavigation.order) &&
+                notice===document.querySelector('.fg-window-notice [role=status]').textContent;
+            await fgTextWindow.rebuild();
+            const expected=fgTextModel.rankDuration(fgTextWindow.model,fgTextModel.order(fgTextWindow.model,'time'),'asc').order;
+            return {cancelled,old,stable,gates:durationGates.length,sorted:JSON.stringify(expected)===JSON.stringify(order)};
+        }''')
+        self.assertEqual(facts, dict(cancelled=True, old='AbortError', stable=True, gates=2, sorted=True))
+
+    def test_cooperative_duration_task_order_supersedes_pending_rank(self):
+        self.open_gated_duration_report()
+        facts = self.page.evaluate('''async () => {
+            beginDuration('desc');const previous=durationWork;
+            await fgSetTextOrder('task');
+            const order=fgTextNavigation.order.slice();
+            await durationGates[0].release();
+            return {old:await previous,cancelled:durationGates[0].signal.aborted,mode:fgTextOrder,sort:fgTextSort,
+                stable:JSON.stringify(order)===JSON.stringify(fgTextNavigation.order),
+                correct:JSON.stringify(order)===JSON.stringify(fgTextModel.order(fgTextWindow.model,'task').order)};
+        }''')
+        self.assertEqual(facts, dict(old='AbortError', cancelled=True, mode='task', sort='', stable=True, correct=True))
+
+    def test_cooperative_duration_view_resume_rebuilds_at_unchanged_width(self):
+        self.open_gated_duration_report()
+        self.page.evaluate("() => {beginDuration('desc');window.previousDuration=durationWork}")
+        self.assertTrue(self.page.evaluate('async () => !!(await fgSwitchView("timeline"))'))
+        self.assertTrue(self.page.evaluate('durationGates[0].signal.aborted'))
+        self.assertEqual(self.page.evaluate('''async () => {
+            dispatchEvent(new Event('resize'));await new Promise(requestAnimationFrame);await new Promise(requestAnimationFrame);
+            return durationGates.length;
+        }'''), 1)
+        self.assertTrue(self.page.evaluate('async () => !!(await fgSwitchView("text"))'))
+        self.page.wait_for_function('durationGates.length===2')
+        facts = self.page.evaluate('''async () => {
+            await durationGates[0].release();const old=await previousDuration;
+            await durationGates[1].release();await fgTextWindow.settled;
+            const expected=fgTextModel.rankDuration(fgTextWindow.model,fgTextModel.order(fgTextWindow.model,'time'),'desc').order;
+            return {old,sort:fgTextSort,sorted:JSON.stringify(expected)===JSON.stringify(fgTextNavigation.order),
+                ready:!document.getElementById('content').hasAttribute('aria-busy')};
+        }''')
+        self.assertEqual(facts, dict(old='AbortError', sort='desc', sorted=True, ready=True))
+
+    def test_cooperative_duration_navigation_waits_for_latest_order_and_can_cancel_independently(self):
+        self.open_gated_duration_report()
+        facts = self.page.evaluate('''async () => {
+            beginDuration('desc');const first=durationWork,controller=new AbortController();
+            const cancelled=fgTextWindow.ensureLine(20000,{signal:controller.signal}).then(()=>false,error=>error.name);
+            let finished=false;
+            const navigation=fgTextWindow.ensureLine(20000).then(row=>{finished=true;return row?.id});
+            controller.abort();const cancelledResult=await cancelled;
+            beginDuration('asc');const latest=durationWork;
+            await durationGates[0].release();await first;
+            const waiting=!finished;
+            await durationGates[1].release();await latest;
+            return {cancelledResult,waiting,row:await navigation,rankCancelled:durationGates[1].signal.aborted};
+        }''')
+        self.assertEqual(facts, dict(cancelledResult='AbortError', waiting=True, row='L20000', rankCancelled=False))
+
+    def test_cooperative_duration_invalid_complete_order_keeps_cache_and_retry_recovers(self):
+        self.open_gated_duration_report()
+        facts = self.page.evaluate('''async () => {
+            const originalOrder=fgTextNavigation.order.slice(),native=fgTextModel.rankDurationAsync;
+            fgTextModel.rankDurationAsync=async()=>({order:[2],ordinals:new Uint32Array([0])});
+            beginDuration('desc');const error=await durationWork;
+            const retained=JSON.stringify(originalOrder)===JSON.stringify(fgTextNavigation.order),
+                retry=document.querySelector('.fg-window-notice button'),notice=document.querySelector('.fg-window-notice [role=status]').textContent;
+            fgTextModel.rankDurationAsync=native;retry.click();
+            await durationGates[0].release();await fgTextWindow.settled;
+            const expected=fgTextModel.rankDuration(fgTextWindow.model,fgTextModel.order(fgTextWindow.model,'time'),'desc').order;
+            return {error,retained,retryOff:retry.hidden,notice,sorted:JSON.stringify(expected)===JSON.stringify(fgTextNavigation.order)};
+        }''')
+        self.assertEqual(facts['error'], 'Error')
+        self.assertTrue(facts['retained'])
+        self.assertTrue(facts['retryOff'])
+        self.assertIn('Previous window retained; Retry', facts['notice'])
+        self.assertTrue(facts['sorted'])
+
+    def test_cooperative_duration_full_text_failure_preserves_notice_and_allows_order_retry(self):
+        self.open_gated_duration_report()
+        facts = self.page.evaluate('''async () => {
+            beginDuration('desc');const previous=durationWork,load=fgData.loadTextBlock,renderer=fgTextWindow;
+            fgData.loadTextBlock=async()=>{throw new Error('full text unavailable')};
+            const error=await renderer.fullText().catch(error=>error.message);
+            const notice=document.querySelector('.fg-window-notice [role=status]').textContent,
+                retained=renderer===fgTextWindow,busy=document.getElementById('content').hasAttribute('aria-busy');
+            fgData.loadTextBlock=load;await durationGates[0].release();const old=await previous;
+            const stableNotice=notice===document.querySelector('.fg-window-notice [role=status]').textContent;
+            document.querySelector('.fg-window-notice button').click();
+            await durationGates[1].release();await renderer.settled;
+            return {error,notice,retained,busy,old,stableNotice,sort:fgTextSort};
+        }''')
+        self.assertEqual(facts['error'], 'full text unavailable')
+        self.assertIn('Complete Text not loaded', facts['notice'])
+        self.assertIn('Retry the order', facts['notice'])
+        self.assertTrue(facts['retained'])
+        self.assertFalse(facts['busy'])
+        self.assertEqual(facts['old'], 'AbortError')
+        self.assertTrue(facts['stableNotice'])
+        self.assertEqual(facts['sort'], 'desc')
+
+    def test_cooperative_duration_full_text_success_cannot_be_overwritten_by_late_rank(self):
+        self.open_gated_duration_report()
+        facts = self.page.evaluate('''async () => {
+            beginDuration('desc');const previous=durationWork,renderer=fgTextWindow;
+            await renderer.fullText();const markup=document.getElementById('content').innerHTML;
+            durationGates[0].progress('STALE');await durationGates[0].release();
+            return {old:await previous,cancelled:durationGates[0].signal.aborted,full:fgTextWindow===null,
+                unchanged:markup===document.getElementById('content').innerHTML,
+                count:document.querySelectorAll('#content .line-container').length,total:total_lines};
+        }''')
+        self.assertEqual(facts['old'], 'AbortError')
+        self.assertTrue(facts['cancelled'])
+        self.assertTrue(facts['full'])
+        self.assertTrue(facts['unchanged'])
+        self.assertEqual(facts['count'], facts['total'])
+
+    def test_cooperative_duration_new_filter_cannot_be_overwritten_by_pending_sorted_filter(self):
+        self.open_gated_duration_report()
+        self.page.evaluate('''() => {
+            document.getElementById('filterInput').value='func:leaf sort:desc';
+            window.previousSortedFilter=applyFilter();
+        }''')
+        self.page.wait_for_function('durationGates.length===1')
+        facts = self.page.evaluate('''async () => {
+            document.getElementById('filterInput').value='func:^absent$';await applyFilter();
+            const order=fgTextNavigation.order.slice();
+            await durationGates[0].release();await previousSortedFilter;
+            const retained={text:fgFilterState.text,visible:fgTextNavigation.visibleCount,sort:fgTextSort,
+                stable:JSON.stringify(order)===JSON.stringify(fgTextNavigation.order)};
+            await clearFilter();return {...retained,restored:fgTextNavigation.visibleCount===fgTextWindow.model.records.length};
+        }''')
+        self.assertEqual(facts, dict(text='func:^absent$', visible=0, sort='', stable=True, restored=True))
+
+    def test_cooperative_duration_filter_failure_rolls_back_previous_complete_result(self):
+        self.open_gated_duration_report()
+        facts = self.page.evaluate('''async () => {
+            const order=fgTextNavigation.order.slice(),visible=fgTextNavigation.visibleCount,text=fgFilterState.text;
+            fgTextModel.rankDurationAsync=async()=>{throw new Error('duration preparation failed')};
+            document.getElementById('filterInput').value='func:leaf sort:desc';await applyFilter();
+            return {stable:JSON.stringify(order)===JSON.stringify(fgTextNavigation.order),
+                visible:fgTextNavigation.visibleCount===visible,text:fgFilterState.text===text,sort:fgTextSort,
+                notice:document.querySelector('.fg-window-notice [role=status]').textContent};
+        }''')
+        self.assertTrue(facts['stable'])
+        self.assertTrue(facts['visible'])
+        self.assertTrue(facts['text'])
+        self.assertEqual(facts['sort'], '')
+        self.assertIn('duration preparation failed', facts['notice'])
 
     def test_scattered_sort_loads_each_network_resource_once_without_changing_display_order(self):
         self.page.goto(urljoin(self.server.url, 'scattered/index.html?text=windowed'))

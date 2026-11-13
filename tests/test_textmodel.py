@@ -257,6 +257,108 @@ class TextModelTest(unittest.TestCase):
             }
         ''')
 
+    def test_cooperative_duration_runs_and_merges_match_complete_stable_reference(self):
+        self.run_model('''
+            let cases=0;
+            for(const version of [1,2,3,4]) for(const length of [0,1,1023,1024,1025,2047,2048,2049,8193]) {
+                const fields=version===4 ? fgTextModel.presentationFields : version===3 ? [...fgTextModel.fields,'space'] : fgTextModel.fields;
+                const input={version,fields,rows:Array.from({length},(_,index)=>{
+                    const attributes={pid:String(index%7),comm:'worker',func:'work',duration:'9',
+                        'sort-duration':String([0,-0,1e-9,1e20,0.125,0.125,-1][index%7])};
+                    const row=[2**40+index*13+2,'work '+index,...fields.map(field=>attributes[field]??null)];
+                    if(version>=2) row.push(index%2?0:null);
+                    return row;
+                })};
+                const original=JSON.stringify(input),model=drain(fgTextModel.prepare(input));
+                for(const mode of ['time','task']) for(const direction of ['asc','desc']) {
+                    const plan=fgTextModel.order(model,mode),before=JSON.stringify(plan.order);
+                    const reference=fgTextModel.rankDuration(model,plan,direction);
+                    const result=drain(fgTextModel.prepareDuration(model,plan,direction));
+                    assert.deepEqual(result,reference);
+                    assert.equal(JSON.stringify(plan.order),before);
+                    for(let index=0;index<length;index++) assert.equal(model.records[result.ordinals[index]].row[0],result.order[index]);
+                    cases++;
+                }
+                assert.equal(JSON.stringify(input),original);
+            }
+            assert.equal(cases,144);
+        ''')
+
+    def test_cooperative_duration_keeps_legacy_nonfinite_order_and_exact_fallbacks(self):
+        self.run_model('''
+            for(const tokens of [['NaN','0','Infinity','-Infinity','4','4'],['invalid','','1e-10','-0','-1']]) {
+                const model=drain(fgTextModel.prepare(data(Array.from({length:4099},(_,index)=>
+                    [index*11+2,'raw '+index,{pid:String(index%5),duration:tokens[index%tokens.length]}]))));
+                for(const mode of ['time','task']) for(const direction of ['asc','desc']) {
+                    const plan=fgTextModel.order(model,mode);
+                    assert.deepEqual(drain(fgTextModel.prepareDuration(model,plan,direction)),fgTextModel.rankDuration(model,plan,direction));
+                }
+            }
+        ''')
+
+    def test_cooperative_duration_reads_each_metadata_value_once_without_object_sort(self):
+        self.run_model('''
+            const length=8193,fields=fgTextModel.presentationFields;
+            const model=drain(fgTextModel.prepare({version:4,fields,rows:Array.from({length},(_,index)=>{
+                const attributes={duration:'2','sort-duration':String(index%19)};
+                return [index+2,'raw',...fields.map(field=>attributes[field]??null),null];
+            })}));
+            const plan=fgTextModel.order(model,'time'),original=Array.prototype.sort;
+            let reads=0;
+            for(const record of model.records) {
+                const get=record.getAttribute.bind(record);
+                record.getAttribute=name=>{reads++;assert.equal(name,'data-sort-duration');return get(name)};
+            }
+            Array.prototype.sort=()=>{throw new Error('Unexpected object or Array sort')};
+            try {assert.equal(drain(fgTextModel.prepareDuration(model,plan,'desc')).order.length,length)}
+            finally {Array.prototype.sort=original}
+            assert.equal(reads,length);
+            for(const direction of [null,undefined,'','ASC','name',0])
+                assert.throws(()=>drain(fgTextModel.prepareDuration(model,plan,direction)),/Invalid Text duration order/);
+            assert.equal(reads,length);
+        ''')
+
+    def test_cooperative_duration_async_cancels_each_phase_and_restarts_without_mutation(self):
+        self.run_model('''
+            (async()=>{
+                const model=drain(fgTextModel.prepare(data(Array.from({length:8193},(_,index)=>
+                    [index*13+2,'raw '+index,{duration:String(index*7919%8193)}]))));
+                const plan=fgTextModel.order(model,'time'),before=JSON.stringify(plan.order),clock=globalThis.performance;
+                let tick=0;
+                globalThis.performance={now:()=>tick+=10};
+                try {
+                    for(const phase of ['Reading','Preparing','Sorting','Merging','Building']) {
+                        const controller=new AbortController();let updates=0;
+                        await assert.rejects(fgTextModel.rankDurationAsync(model,plan,'desc',controller.signal,message=>{
+                            updates++;if(message.startsWith(phase)) controller.abort();
+                        }),{name:'AbortError'});
+                        assert.ok(updates>0);assert.equal(JSON.stringify(plan.order),before);
+                    }
+                    const result=await fgTextModel.rankDurationAsync(model,plan,'desc');
+                    assert.deepEqual(result,fgTextModel.rankDuration(model,plan,'desc'));
+                } finally {globalThis.performance=clock}
+            })().catch(error=>{console.error(error);process.exitCode=1});
+        ''')
+
+    def test_cooperative_duration_async_preabort_and_progress_failure_publish_nothing(self):
+        self.run_model('''
+            (async()=>{
+                const model=drain(fgTextModel.prepare(data(Array.from({length:2049},(_,index)=>
+                    [index+2,'raw',{duration:String(index%3)}]))));
+                const plan=fgTextModel.order(model,'time'),controller=new AbortController();controller.abort();
+                const get=model.records[0].getAttribute;
+                model.records[0].getAttribute=()=>{throw new Error('Aborted metadata read')};
+                await assert.rejects(fgTextModel.rankDurationAsync(model,plan,'desc',controller.signal),{name:'AbortError'});
+                model.records[0].getAttribute=get;
+                const clock=globalThis.performance;let tick=0;
+                globalThis.performance={now:()=>tick+=10};
+                try {
+                    await assert.rejects(fgTextModel.rankDurationAsync(model,plan,'desc',undefined,()=>{throw new Error('progress failed')}),/progress failed/);
+                    assert.deepEqual(await fgTextModel.rankDurationAsync(model,plan,'asc'),fgTextModel.rankDuration(model,plan,'asc'));
+                } finally {globalThis.performance=clock}
+            })().catch(error=>{console.error(error);process.exitCode=1});
+        ''')
+
     def test_order_plans_handle_empty_header_only_and_invalid_modes(self):
         self.run_model('''
             for (const rows of [[], [[2, '', {}]], [[1, '# header', {}], [3, '---', {}], [11, '任务', {}]]]) {

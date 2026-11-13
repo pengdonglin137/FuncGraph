@@ -1,5 +1,8 @@
 # Text 耗时排序 / Numeric duration ranks（2026-11-13）
 
+本文保留 `642dcee1dad5` 的同步数字排序实测；后续大输入的分批调度、取消及
+新增缓冲区成本见[协作式排序](performance-text-cooperative-ranking.md)。历史数字不混作当前版本结果。
+
 优化**显式启用的实验性 Windowed Text** 首次及切换方向/模式时的耗时排序。
 重新生成分块 sidecar 后，选择 **Windowed Text** 或对 HTTP 报告使用
 `?text=windowed`。默认完整 renderer、自动分流阈值、版本和 Timeline 外观不变。

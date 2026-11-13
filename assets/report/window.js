@@ -95,6 +95,7 @@ function fgCreateTextWindow(model, navigation, root) {
     let first = 0, end = 0, generation = 0, controller = null, frame = null, pendingStart = null;
     let destroyed = false, suspended = false, fullJob = null, fullController = null, currentJob = null, navigating = 0, rebuilding = 0;
     let measuredWidth = innerWidth, widest = 0, filterError = '';
+    let rebuildController = null, rankingJob = null, needsRebuild = false;
     const top = document.createElement('div'), body = document.createElement('div'), bottom = document.createElement('div');
     top.className = bottom.className = 'fg-window-spacer';
     top.setAttribute('aria-hidden', 'true'); bottom.setAttribute('aria-hidden', 'true');
@@ -302,7 +303,7 @@ function fgCreateTextWindow(model, navigation, root) {
         frame = requestAnimationFrame(() => {
             frame = null;
             updateTaskContext();
-            if (navigating || rebuilding || fullJob) return;
+            if (navigating || rebuilding || fullJob || needsRebuild) return;
             if (selected()) { showStatus('Selection pinned · clear selection to scroll, or choose Full Text'); return; }
             const at = indexAt(Math.max(0, scrollY - offset()));
             const last = indexAt(Math.max(0, scrollY + innerHeight - offset()));
@@ -316,73 +317,122 @@ function fgCreateTextWindow(model, navigation, root) {
     function anchor() { return sequence[indexAt(Math.max(0, scrollY - offset()))]; }
     function rebuild(preferredNumber) {
         const previous = preferredNumber ?? anchor();
+        rebuildController?.abort();
+        const own = rebuildController = new AbortController();
         controller?.abort(); generation++;
-        const folding = fgTextModel.folding(model);
-        const matches = window.fgFilterState.lines;
-        const hidden = matches === null ? folding.hiddenMask(foldedBlocks) : null;
-        const visibleRecord = matches === null ? null : folding.visibility(foldedBlocks, matches);
-        plan = fgTextModel.order(model, fgTextOrder);
-        let order = plan.order, ordinals = plan.ordinals;
-        if (fgTextSort) {
-            if (!rankedOrder || rankedOrder.plan !== plan || rankedOrder.direction !== fgTextSort) {
-                rankedOrder = { plan, direction: fgTextSort, ...fgTextModel.rankDuration(model, plan, fgTextSort) };
+        rankingJob = null; needsRebuild = true; rebuilding++;
+        const mode = fgTextOrder, direction = fgTextSort, matches = window.fgFilterState.lines;
+        const job = (async () => {
+            check(own.signal);
+            const candidate = fgTextModel.order(model, mode);
+            let ranked = null;
+            if (direction) {
+                ranked = rankedOrder;
+                if (!ranked || ranked.plan !== candidate || ranked.direction !== direction) {
+                    let result;
+                    if (candidate.order.length > 16384) {
+                        root.setAttribute('aria-busy', 'true'); retry.hidden = true;
+                        showStatus('Preparing complete duration order… Previous window retained.');
+                        rankingJob = fgTextModel.rankDurationAsync(model, candidate, direction, own.signal, message => {
+                            if (rebuildController === own && !own.signal.aborted) showStatus(message);
+                        });
+                        result = await rankingJob;
+                        check(own.signal);
+                        rankingJob = null;
+                        showStatus('Loading sorted Text rows…');
+                    } else result = fgTextModel.rankDuration(model, candidate, direction);
+                    ranked = { plan: candidate, direction, ...result };
+                }
             }
-            order = rankedOrder.order;
-            ordinals = rankedOrder.ordinals;
-        } else rankedOrder = null;
-        navigation.reorder(order);
-        const visibility = new Uint8Array(order.length);
-        const style = getComputedStyle(root);
-        const estimate = Math.max(21, parseFloat(style.getPropertyValue('--fg-text-font-size')) * 1.5 +
-            2 * parseFloat(style.getPropertyValue('--fg-text-pad-y')));
-        positions.clear(); sequence = []; taskGroups = []; sizes = [];
-        const boundaries = new Map();
-        if (!fgTextSort) for (const boundary of plan.boundaries) {
-            const number = plan.order[boundary.at];
-            if (!boundaries.has(number)) boundaries.set(number, []);
-            boundaries.get(number).push(boundary);
-        }
-        let pendingBoundaries = [];
-        for (let index = 0; index < order.length; index++) {
-            const number = order[index], ordinal = ordinals ? ordinals[index] : index;
-            for (const boundary of boundaries.get(number) || []) {
-                if (boundary.kind === 'task-group-head') pendingBoundaries = [boundary];
-                else pendingBoundaries.push(boundary);
+            check(own.signal);
+            const order = ranked ? ranked.order : candidate.order, ordinals = ranked ? ranked.ordinals : candidate.ordinals;
+            navigation.reorder(order);
+            plan = candidate; rankedOrder = ranked;
+            const folding = fgTextModel.folding(model);
+            const hidden = matches === null ? folding.hiddenMask(foldedBlocks) : null;
+            const visibleRecord = matches === null ? null : folding.visibility(foldedBlocks, matches);
+            const visibility = new Uint8Array(order.length);
+            const style = getComputedStyle(root);
+            const estimate = Math.max(21, parseFloat(style.getPropertyValue('--fg-text-font-size')) * 1.5 +
+                2 * parseFloat(style.getPropertyValue('--fg-text-pad-y')));
+            positions.clear(); sequence = []; taskGroups = []; sizes = [];
+            const boundaries = new Map();
+            if (!direction) for (const boundary of plan.boundaries) {
+                const number = plan.order[boundary.at];
+                if (!boundaries.has(number)) boundaries.set(number, []);
+                boundaries.get(number).push(boundary);
             }
-            const record = model.records[ordinal];
-            const visible = (visibleRecord ? visibleRecord(record) : hidden === null || !hidden[ordinal]) &&
-                (fgTextSort || fgTextOrder !== 'task' || !plan.hidden.has(number));
-            visibility[index] = visible ? 1 : 0;
-            if (!visible) continue;
-            for (const boundary of pendingBoundaries) {
-                if (boundary.kind === 'task-group-head') taskGroups.push({ index: sequence.length, text: boundary.text });
-                sequence.push(boundary);
-                sizes.push(30);
+            let pendingBoundaries = [];
+            for (let index = 0; index < order.length; index++) {
+                const number = order[index], ordinal = ordinals ? ordinals[index] : index;
+                for (const boundary of boundaries.get(number) || []) {
+                    if (boundary.kind === 'task-group-head') pendingBoundaries = [boundary];
+                    else pendingBoundaries.push(boundary);
+                }
+                const record = model.records[ordinal];
+                const visible = (visibleRecord ? visibleRecord(record) : hidden === null || !hidden[ordinal]) &&
+                    (direction || mode !== 'task' || !plan.hidden.has(number));
+                visibility[index] = visible ? 1 : 0;
+                if (!visible) continue;
+                for (const boundary of pendingBoundaries) {
+                    if (boundary.kind === 'task-group-head') taskGroups.push({ index: sequence.length, text: boundary.text });
+                    sequence.push(boundary);
+                    sizes.push(30);
+                }
+                pendingBoundaries = [];
+                positions.set(number, sequence.length); sequence.push(number);
+                sizes.push(heights[ordinal] || estimate);
             }
-            pendingBoundaries = [];
-            positions.set(number, sequence.length); sequence.push(number);
-            sizes.push(heights[ordinal] || estimate);
-        }
-        navigation.setVisibility(visibility);
-        tree = new Float64Array(sequence.length + 1);
-        for (let index = 1; index < tree.length; index++) {
-            tree[index] += sizes[index - 1];
-            const parent = index + (index & -index);
-            if (parent < tree.length) tree[parent] += tree[index];
-        }
-        root.classList.toggle('grouped', fgTextOrder === 'task' && !fgTextSort);
-        const button = document.getElementById('textOrderBtn');
-        if (button) button.textContent = 'Order: ' + (fgTextSort ? 'duration ' + (fgTextSort === 'desc' ? '↓' : '↑') : fgTextOrder === 'task' ? 'by task' : 'time');
-        const anchorIndex = positions.get(previous) || 0;
-        first = end = 0;
-        rebuilding++;
-        return paint(Math.max(0, Math.min(sequence.length - limit, anchorIndex - overscan))).then(() => {
+            navigation.setVisibility(visibility);
+            tree = new Float64Array(sequence.length + 1);
+            for (let index = 1; index < tree.length; index++) {
+                tree[index] += sizes[index - 1];
+                const parent = index + (index & -index);
+                if (parent < tree.length) tree[parent] += tree[index];
+            }
+            root.classList.toggle('grouped', mode === 'task' && !direction);
+            const button = document.getElementById('textOrderBtn');
+            if (button) button.textContent = 'Order: ' + (direction ? 'duration ' + (direction === 'desc' ? '↓' : '↑') : mode === 'task' ? 'by task' : 'time');
+            const anchorIndex = positions.get(previous) || 0;
+            first = end = 0; needsRebuild = false;
+            await paint(Math.max(0, Math.min(sequence.length - limit, anchorIndex - overscan)), own.signal);
+            check(own.signal);
             if (scrollY > offset()) scrollTo({ top: offset() + prefix(anchorIndex), behavior: 'instant' });
-        }).finally(() => { rebuilding--; schedule(); });
+        })();
+        currentJob = job.catch(error => {
+            if (rebuildController === own && needsRebuild && error.name !== 'AbortError') {
+                showStatus('Text order not prepared: ' + error.message + '. Previous window retained; Retry.');
+                retry.hidden = false;
+            }
+            throw error;
+        }).finally(() => {
+            if (rebuildController === own) {
+                rebuildController = null; rankingJob = null;
+                if (!fullJob) root.removeAttribute('aria-busy');
+            }
+            rebuilding--; schedule();
+        });
+        return currentJob;
     }
     async function ensureLine(number, options = {}) {
         if (destroyed) return document.getElementById('L' + number);
         check(options.signal);
+        while (rankingJob) {
+            const pending = rankingJob;
+            try {
+                await new Promise((resolve, reject) => {
+                    const cleanup = () => options.signal?.removeEventListener('abort', cancel);
+                    const cancel = () => { cleanup(); reject(new DOMException('Text navigation canceled', 'AbortError')); };
+                    options.signal?.addEventListener('abort', cancel, { once: true });
+                    pending.then(value => { cleanup(); resolve(value); }, error => { cleanup(); reject(error); });
+                    if (options.signal?.aborted) cancel();
+                });
+            } catch (error) {
+                check(options.signal);
+                if (error.name !== 'AbortError' || rankingJob === pending) throw error;
+            }
+            check(options.signal);
+        }
         const position = positions.get(number);
         if (position === undefined) return null;
         const mounted = document.getElementById('L' + number);
@@ -397,7 +447,8 @@ function fgCreateTextWindow(model, navigation, root) {
         } finally { navigating--; }
     }
     function dispose() {
-        destroyed = true; generation++; controller?.abort();
+        destroyed = true; generation++; controller?.abort(); rebuildController?.abort();
+        rebuildController = null; rankingJob = null;
         observer.disconnect(); controlsObserver.disconnect(); cancelAnimationFrame(frame);
         fgCancelSources(body); body.replaceChildren();
         positions.clear(); sequence = []; sizes = []; plan = null; taskGroups = []; rankedOrder = null;
@@ -416,7 +467,9 @@ function fgCreateTextWindow(model, navigation, root) {
         const loading = fullController = new AbortController();
         full.disabled = true;
         fullJob = (async () => {
-            controller?.abort(); generation++;
+            controller?.abort(); rebuildController?.abort(); generation++;
+            rebuildController = null; rankingJob = null;
+            root.setAttribute('aria-busy', 'true');
             const selectedNumber = keyboardSelectedLine && +keyboardSelectedLine.dataset.lineNumber;
             const fragment = document.createDocumentFragment();
             const catalog = fgData.textChunks();
@@ -435,15 +488,23 @@ function fgCreateTextWindow(model, navigation, root) {
             if (selectedNumber) fgSelectMountedTextLine(document.getElementById('L' + selectedNumber), true);
         })().catch(error => {
             full.disabled = false;
-            showStatus('Complete Text not loaded: ' + error.message + '. Windowed Text retained; retry Full Text.');
+            if (!rebuildController && !suspended && !destroyed) {
+                showStatus('Complete Text not loaded: ' + error.message + '. Windowed Text retained; ' +
+                    (needsRebuild ? 'Retry the order or retry Full Text.' : 'retry Full Text.'));
+                retry.hidden = !needsRebuild;
+            }
             throw error;
-        }).finally(() => { fullJob = null; fullController = null; schedule(); });
+        }).finally(() => {
+            fullJob = null; fullController = null;
+            if (!rebuildController) root.removeAttribute('aria-busy');
+            schedule();
+        });
         return fullJob;
     }
-    function resize() {
-        if (destroyed) return;
+    function resize(event) {
+        if (destroyed || suspended && event?.type === 'resize') return;
         suspended = false;
-        if (innerWidth !== measuredWidth) {
+        if (innerWidth !== measuredWidth || needsRebuild) {
             heights.fill(0); measuredWidth = innerWidth; widest = 0;
             rebuild().catch(error => { if (error.name !== 'AbortError') console.warn('Text resize:', error); });
             return;
@@ -471,7 +532,10 @@ function fgCreateTextWindow(model, navigation, root) {
             }
         }).catch(error => console.warn('Full Text:', error));
     }
-    retry.addEventListener('click', () => { first = end = 0; schedule(); });
+    retry.addEventListener('click', () => {
+        if (needsRebuild) rebuild().catch(error => { if (error.name !== 'AbortError') console.warn('Text order:', error); });
+        else { first = end = 0; schedule(); }
+    });
     full.addEventListener('click', () => fullText().catch(error => console.warn('Full Text:', error)));
     addEventListener('scroll', schedule, { passive: true });
     addEventListener('resize', resize);
@@ -481,7 +545,7 @@ function fgCreateTextWindow(model, navigation, root) {
     return { model, navigation, root, rebuild, ensureLine, fullText, resize, dispose, anchor, suppressedSources,
         reportFilterError(message) { filterError = message; showStatus(); },
         invalidateHeights() { heights.fill(0); },
-        suspend() { suspended = true; context.hidden = true; controller?.abort(); fullController?.abort(); },
+        suspend() { suspended = true; context.hidden = true; controller?.abort(); rebuildController?.abort(); fullController?.abort(); },
         get visibleNumbers() { return sequence.filter(item => typeof item === 'number'); },
         get mountedLimit() { return limit; },
         get settled() { return currentJob; } };

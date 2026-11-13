@@ -81,10 +81,15 @@ def measure(browser, url, timeout, scattered=False, folded=False, bidirectional=
                 performance.setResourceTimingBufferSize(10000);
                 const timings=[], observer=new PerformanceObserver(list=>timings.push(...list.getEntries().map(entry=>entry.duration)));
                 observer.observe({type:'longtask'});
+                await new Promise(resolve=>setTimeout(resolve,0));
+                let operation_frames=0, measuring=true;
+                const heartbeat=()=>{if(measuring) {operation_frames++;requestAnimationFrame(heartbeat)}};
+                requestAnimationFrame(heartbeat);
                 const start=performance.now(), pending=ACTION();
                 const sync_ms=performance.now()-start;
                 const outcome=await pending;
                 const ready_ms=performance.now()-start;
+                measuring=false;
                 if (outcome===false || outcome===null || document.getElementById('content').hasAttribute('aria-busy'))
                     throw new Error('Interaction returned before successful completion');
                 await new Promise(requestAnimationFrame); await new Promise(requestAnimationFrame);
@@ -95,7 +100,7 @@ def measure(browser, url, timeout, scattered=False, folded=False, bidirectional=
                 const digest=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(data));
                 const resources=performance.getEntriesByType('resource').filter(entry=>/\\/text-\\d+\\.html$/.test(entry.name) &&
                     entry.startTime>=start && entry.responseEnd<=start+ready_ms);
-                return {sync_ms,ready_ms,feedback_ms,longest_task_ms:Math.max(0,...timings),
+                return {sync_ms,ready_ms,feedback_ms,operation_frames,longest_task_ms:Math.max(0,...timings),
                     text_requests:resources.length,text_resources:new Set(resources.map(entry=>entry.name)).size,
                     text_bytes:resources.reduce((total,entry)=>total+entry.encodedBodySize,0),
                     mounted:document.querySelectorAll('#content .line-container').length,
@@ -130,7 +135,7 @@ def main():
                   trace=dict(path=str(arguments.trace.resolve()), bytes=arguments.trace.stat().st_size,
                              sha256=hashlib.sha256(arguments.trace.read_bytes()).hexdigest()), runs=[], scattered=arguments.scattered, folded=arguments.folded,
                   bidirectional=arguments.bidirectional,
-                  basis='No CPU profiler; alternating independent Chromium processes; same actions; API, synchronous-prefix and two-rAF timings; full model and per-action complete visibility/order digests; not a frame or total-memory bound')
+                  basis='No CPU profiler; alternating independent Chromium processes; same actions; API, synchronous-prefix and two-rAF timings, operation rAF callback counts and task-separated Long Tasks observation; full model and per-action complete visibility/order digests; not FPS or a frame or total-memory bound')
     try:
         for name, path in reports.items():
             servers[name] = create_server(path)

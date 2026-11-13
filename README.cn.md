@@ -16,7 +16,7 @@ FuncGraph 支持可视化仅用户态、仅内核态和混合 uftrace 记录。�
 
 窗口重建改为一次提交完整导航可见性，避免逐行重复查 Set/Map；私有状态缓存与每次临时输入各增加每行 1 字节。完整重排校验和已挂载行的折叠投影不变。热操作改善及冷读取等剩余阻塞见[导航批量更新实测](docs/performance-text-navigation-visibility.md)，不代表页面已无卡顿。
 
-窗口耗时排序首次计算时改为排序数字位置，避免为每条记录创建临时元数据对象；相同耗时保持原排列顺序，非有限值保留旧路径。临时耗时数组及剩余开销见[耗时排序对照](docs/performance-text-duration-ranking.md)。
+窗口冷耗时排序在超过 16,384 条记录时分批稳定排序，批间让出主线程，完整排列准备好前保留旧窗口；改变排列或离开 Text 会取消过期工作。小输入及非有限耗时保留原生排序，其他完整模型计算和 DOM 解析仍可能阻塞。用法、内存成本及实测见[协作式排序](docs/performance-text-cooperative-ranking.md)。
 
 [![ci](https://github.com/pengdonglin137/FuncGraph/actions/workflows/ci.yml/badge.svg)](https://github.com/pengdonglin137/FuncGraph/actions/workflows/ci.yml)
 

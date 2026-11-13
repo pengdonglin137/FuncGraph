@@ -15,6 +15,7 @@ include docs/performance-text-fold-visibility.md
 include docs/performance-text-navigation.md
 include docs/performance-text-navigation-visibility.md
 include docs/performance-text-duration-ranking.md
+include docs/performance-text-cooperative-ranking.md
 include docs/performance-text-block-locality.md
 include docs/design.md docs/guide.cn.md docs/guide.en.md
 include docs/detail-layout.md

@@ -31,10 +31,11 @@ size. Full order validation and mounted-row projection remain intact. See
 [navigation measurements and memory limits](docs/performance-text-navigation-visibility.md);
 cold reads and full-model work can still pause the page.
 
-Cold windowed duration sorting now ranks numeric positions instead of allocating
-one metadata object per record. Equal durations retain their original plan
-order; non-finite values keep the legacy path. Temporary duration storage and
-remaining costs are documented in the [duration-ranking comparison](docs/performance-text-duration-ranking.md).
+Cold windowed duration sorting now yields between stable sorting batches above
+16,384 records, retaining the previous window until the complete order is ready.
+Changing order or leaving Text cancels outdated work. Small inputs and non-finite
+durations keep native sorting; other full-model and DOM work can still block.
+See [cooperative sorting, memory costs and measurements](docs/performance-text-cooperative-ranking.md).
 
 ## What is FuncGraph?
 

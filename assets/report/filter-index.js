@@ -331,6 +331,9 @@
             durations[index] = duration; ranked[index] = index;
             if (!Number.isFinite(duration)) finite = false;
         }
+        return rankDurationValues(plan, durations, direction, finite, ranked);
+    }
+    function rankDurationValues(plan, durations, direction, finite, ranked) {
         if (!finite) {
             for (let index = 0; index < ranked.length; index++) {
                 ranked[index] = { number: plan.order[index], ordinal: plan.ordinals ? plan.ordinals[index] : index,
@@ -342,6 +345,70 @@
         ranked.sort((left, right) => direction === 'desc' ? durations[right] - durations[left] : durations[left] - durations[right]);
         return { order: ranked.map(index => plan.order[index]),
             ordinals: Uint32Array.from(ranked, index => plan.ordinals ? plan.ordinals[index] : index) };
+    }
+    function* prepareDuration(model, plan, direction) {
+        if (direction !== 'asc' && direction !== 'desc') throw new Error('Invalid Text duration order');
+        const length = plan.order.length, durations = new Float64Array(length);
+        let finite = true;
+        for (let index = 0; index < length; index++) {
+            const ordinal = plan.ordinals ? plan.ordinals[index] : index, record = model.records[ordinal];
+            const duration = parseFloat(record.getAttribute('data-sort-duration') || record.getAttribute('data-duration') || '0');
+            durations[index] = duration;
+            if (!Number.isFinite(duration)) finite = false;
+            if ((index + 1) % 2048 === 0) yield 'Reading exact durations: ' + (index + 1) + ' / ' + length + '…';
+        }
+        if (!finite) {
+            yield 'Sorting non-finite durations with legacy ordering…';
+            return rankDurationValues(plan, durations, direction, false, new Array(length));
+        }
+        let ranked = new Uint32Array(length), scratch = new Uint32Array(length);
+        for (let index = 0; index < length; index++) {
+            ranked[index] = index;
+            if ((index + 1) % 2048 === 0) yield 'Preparing stable duration positions…';
+        }
+        const compare = direction === 'desc' ? (left, right) => durations[right] - durations[left] :
+            (left, right) => durations[left] - durations[right];
+        const run = 1024;
+        for (let start = 0; start < length; start += run) {
+            ranked.subarray(start, Math.min(start + run, length)).sort(compare);
+            yield 'Sorting duration runs: ' + Math.min(start + run, length) + ' / ' + length + '…';
+        }
+        for (let width = run; width < length; width *= 2) {
+            for (let start = 0; start < length; start += width * 2) {
+                const middle = Math.min(start + width, length), end = Math.min(start + width * 2, length);
+                let left = start, right = middle;
+                for (let index = start; index < end; index++) {
+                    scratch[index] = left < middle && (right >= end || compare(ranked[left], ranked[right]) <= 0) ?
+                        ranked[left++] : ranked[right++];
+                    if ((index + 1) % 2048 === 0) yield 'Merging complete duration order…';
+                }
+            }
+            const previous = ranked; ranked = scratch; scratch = previous;
+        }
+        const order = new Array(length), ordinals = new Uint32Array(length);
+        for (let index = 0; index < length; index++) {
+            const position = ranked[index];
+            order[index] = plan.order[position];
+            ordinals[index] = plan.ordinals ? plan.ordinals[position] : position;
+            if ((index + 1) % 2048 === 0) yield 'Building duration order: ' + (index + 1) + ' / ' + length + '…';
+        }
+        return { order, ordinals };
+    }
+    async function rankDurationAsync(model, plan, direction, signal, progress = () => {}) {
+        const iterator = prepareDuration(model, plan, direction);
+        try {
+            while (true) {
+                if (signal?.aborted) throw new DOMException('Duration order cancelled', 'AbortError');
+                const start = performance.now();
+                let result;
+                do {
+                    result = iterator.next();
+                    if (result.done) return result.value;
+                } while (performance.now() - start < 8);
+                progress(result.value);
+                await new Promise(resolve => setTimeout(resolve, 0));
+            }
+        } finally { iterator.return(); }
     }
     function navigation(order, expandable, hidden = []) {
         const original = new Set(order);
@@ -501,7 +568,7 @@
         }
         return navigation(order, expandable);
     }
-    window.fgTextModel = { fields, presentationFields, prepare, locate, filter, folding, prepareFolding, order, prepareOrder, rankDuration, navigation, prepareNavigation };
+    window.fgTextModel = { fields, presentationFields, prepare, locate, filter, folding, prepareFolding, order, prepareOrder, rankDuration, prepareDuration, rankDurationAsync, navigation, prepareNavigation };
     window.fgIndexedFilter = async function (data, text, signal, progress) {
         const iterator = steps(data, text);
         try {
