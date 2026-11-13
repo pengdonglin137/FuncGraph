@@ -7,6 +7,12 @@ range and filter; trace-line links still navigate to the requested record.
 Regenerate older HTML reports to receive these changes.
 See [view round-trip behavior and performance limits](performance-view-roundtrip.md).
 
+Switching back to Timeline after opening source in Text retains the source panels
+and reading position without unloading Text. Selected passages are suspended while
+Text is hidden and restored on return. Empty native caret ranges are cleared to
+avoid repeated browser scans of hidden Text delaying slice highlights and tooltips;
+editable controls retain their editing selection.
+
 Text keyboard navigation, `#L<n>` anchors and Timeline → Text jumps now share a
 latest-request-wins path. Leaving Text or pressing Escape cancels a pending jump;
 late loads and delayed scrolling cannot pull focus back. Mounted rows still

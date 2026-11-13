@@ -36,11 +36,50 @@ HTML reports to receive the updated runtime.
   view cancels queued hover work. Source-request cancellation and complete
   tooltip contents are retained.
 
-The local headless baseline did **not** establish a repeatable persistent
-slowdown after every Timeline → Text → Timeline round trip. It did establish
-the lost tabs and redundant per-event tooltip work. These fixes remove that
-confirmed work and test repeated round trips; they are not evidence that every
-possible source of large-report jank has been eliminated.
+The earlier scroll-only headless baseline did **not** establish a repeatable
+persistent slowdown after every Timeline → Text → Timeline round trip. The
+subsequent source-expansion reproduction below identifies a separate native
+browser cost which tooltip/event optimizations alone cannot fix.
+
+## Source expansion and native selection
+
+The important reproduction is **Timeline → Text → click a trace row to open
+its source → Timeline**, not just scrolling Text. In a headed Chromium 145 run
+of the 38,938-row real report, opening three neighboring source panels around
+Text line 1,360 makes the problem repeatable. The browser leaves an empty
+native text selection (a caret) on the clicked Timeline tab. Blink repeatedly
+canonicalizes that position across the large, `content-visibility:hidden`
+Text subtree during its frame lifecycle. This is native browser work, not slow
+JavaScript tooltip formatting: the trace shows `VisibleUnits::canonicalPosition`
+and `EditingUtility::nextCandidateAlgorithm` taking hundreds of milliseconds.
+
+The view lifecycle now clears empty native caret ranges when entering or
+reselecting a non-Text view. Real Text selections are temporarily suspended
+before hiding Text, then restored on return with their ranges and direction;
+clearing a selected passage permanently would lose useful reading state.
+Editable controls retain their own caret/selection. Removed ranges are not
+restored. Text DOM, expanded source panels, source links, keyboard-selected
+rows, scroll position and the complete Timeline model remain in place.
+
+In a matched, serial headed Chrome profile with 100 real pointer moves after
+opening source, the measurements are:
+
+| After opening source and returning | Previous runtime | Selection lifecycle fix |
+| --- | ---: | ---: |
+| Pointer-profile wall time | 31.91 s | 1.87 s |
+| Main-thread task time | 31.98 s | 0.47 s |
+| Maximum animation-frame interval | 350 ms | 16.8 ms |
+| JavaScript time | 149 ms | 171 ms |
+| Native caret canonicalizations | 100 | 0 |
+
+The small script-time difference cannot explain the roughly 30-second delay,
+distinguishing this fix from the earlier hover coalescing change.
+These are local profile results, not universal timing
+guarantees. An independent intervention clearing native selection on the old
+runtime also removes the delay without detaching Text. A nonempty Text
+selection exercises the same expensive browser path and is suspended as well.
+The original `write4.html` stays unchanged; `write4.source-hover.html` is the
+updated local preview. Both public samples receive the same runtime-only fix.
 
 ## Regression coverage
 
@@ -53,9 +92,9 @@ PYTHONPATH=.:tests python3 -m unittest \
   test_browser -v
 ```
 
-The **540 existing tests** pass with Playwright/Chromium available. The three
-new hover tests also pass in a final **10-test focused run** covering hover,
-Text round trips, tooltip bounds and resizing. The new wheel test waits for
+The source-expansion update passes **546 tests** with Playwright/Chromium
+available, including all six hover tests, Text round trips, tooltip bounds and
+resizing. The wheel test waits for
 the requested scroll delta before taking its snapshot; a pre-existing nonzero
 scroll position alone does not mean the next compositor scroll has finished.
 The compact-toolbar
@@ -75,6 +114,20 @@ These changes do not unload already prepared Text, remove source/argument
 information, force sidecar mode or replace the complete analysis model with a
 viewport subset. Default Text still initializes the full DOM; that initial
 work and its memory cost can remain substantial on large traces.
+
+The source-expansion regressions add real row clicks, repeated visible-tab
+returns and same-tab reselection across both delivery modes, themes and DPR
+1/2. They check the native selection invariant rather than relying on flaky
+wall-time limits, and compare complete Timeline JSON, hover pixels, source DOM
+identity/content, row order, keyboard selection and reading position. Forward
+and backward selected passages must restore their exact endpoints and text;
+search editing is not interrupted and removed selections are discarded.
+The two new source/selection tests fail in 12 subcases with the previous boot
+asset, then pass with the lifecycle fix.
+An additional Firefox check restores two native selection ranges with identical
+text and endpoints. Both sample screenshots, the Text screenshot and the detail
+guide screenshot regenerate byte-identically. JavaScript syntax and 387 local
+documentation paths also validate successfully.
 
 ### Latest-pointer regression
 
@@ -162,8 +215,9 @@ This is a synthetic input-pressure test, not the user's mouse frequency or an
 end-to-end latency speedup: formatting now occurs in the paint callback, so
 dispatch-handler time alone would overstate the gain. A separate 100-real-move
 profile keeps a maximum frame interval of 16.8 ms both before/after scrolling,
-with either runtime. The locally unconfirmed persistent delay remains a
-limitation, rather than being reported as conclusively resolved.
+with either runtime. That scroll-only experiment did not reproduce the
+source-expansion delay; the later source-specific reproduction and fix are
+documented separately above.
 
 Both samples and `write4.hover.html` receive only byte-reversible runtime asset
 replacements; the original `write4.html` is untouched. Sample/guide screenshots
@@ -182,4 +236,5 @@ including all trace and source payloads. Sample and guide screenshots are
 regenerated and remain byte-identical at their existing initial view positions.
 JavaScript syntax, 184 local documentation links/anchors and `git diff --check`
 also pass. The original real report is not overwritten; the updated local
-preview uses `write4.fixed.html`.
+preview at that stage uses `write4.fixed.html`; the current source-expansion
+preview is `write4.source-hover.html`.
