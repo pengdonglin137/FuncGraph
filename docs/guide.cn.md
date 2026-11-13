@@ -809,6 +809,7 @@ python3 funcgraph.py --timeline --tail-calls --fast --func-links \
 
 - 标题旁的标签：上下文（`?` 表示推断）、irqs off、BH off、need-resched、preempt off（抢占计数高于这份 trace 的基线，`×N` 表示多关了几层，悬停标签可看到具体数值。function_graph 在记录时自己关了一层抢占，开了 `CONFIG_PREEMPTION` 的内核上每行的 preempt 数字都多 1：基线取任务上下文里出现过的最小值，最大为 1，这样整份 trace 都在关抢占区间里时也不会被掩盖。时间轴里的 preempt off、Sections、在原子上下文睡眠、Preempt depth 叠加层、Sched latency 的 max preempt off 都扣除了基线；文本视图显示的是原始数字，过滤时要用 `preempt:>1` 这样的写法）、migrate off、error origin/propagated、may sleep in atomic context、no exit、no entry、estimated。
 - 左栏：duration、self（及占总耗时的比例）、start、task、depth、flags、return、caller site、args、trace lines（入口和出口在 trace 中的行号，点击跳到文本视图）。
+  - 已记录的 **flags** 直接显示在主要数值区，无需展开 **Trace metadata**，纯内核报告也一样；保留原始 preempt 计数及基线说明。`none` 表示采集了 latency 标志且均未置位；未采集 latency 数据时不显示 flags 行，包括没有内核标志的用户态调用。task、depth 和原始 trace 元数据仍在可展开区域内。
   - **call site** 下面是调用所在的源码位置（`文件:行号`，点击打开在线源码）；调用点在内联代码里时附上 `in 内联函数 (inlined)`。
   - **Call site source**：调用点的源码块，和文本视图展开一行时看到的完全相同（语法高亮、`>行号<` 标出调用所在行、内联链按 Source 按钮的 chain/flat 布局）。点标题可以收起，状态会被记住。Text 和 Timeline 共享去重源码池及“trace 行号 → source ID”索引，不要求对应 Text 行已存在于 DOM 中。没有 `--kernel-src` / `--source-rev` / `--source-url` 时只显示位置链接；普通 `--no-text-view` 不保留两者，加上 `--keep-source` 可在纯 Timeline 报告中保留已有的源码/位置/内联信息。
 - 右栏：
@@ -848,6 +849,8 @@ python3 funcgraph.py --timeline --tail-calls --fast --func-links \
 列表内容独立于共享过滤条件，保留完整上下文。真实选中调用不再匹配时仍会关闭详情；合成帧只要还有任一真实子调用匹配，就保持选中。Overhead 仅改变耗时/自身耗时数值，不改变原始位置和缓存结构。同一选择的 Inline/过滤/Overhead 刷新保留已加载页数。祖先帧时长相互包含，不能当作选中区间的分区相加。
 
 详情面板和各个分析面板共用底部区域。拖动面板上方的横条可以调整高度，画布随之变高或变矮；双击横条恢复默认高度（窗口高度的 32%，限制在 180 到 400 像素之间）。高度按占窗口的比例记在浏览器里，换一份报告或换一个窗口尺寸也保持同样的比例。
+
+调整高度会保留当前选择、时间范围和完整记录数据。画布尺寸更新与重绘在同一动画帧完成，避免拖动期间图表空白；相同尺寸的重复更新不会清空画布。这只修复调整尺寸的路径，不代表消除了大型单文件 Text/源码报告的首次 DOM 开销。旧的独立 HTML 内嵌自身运行时，需要重新生成才能获得界面修复，无需删减调用、参数、flags 或源码信息。
 
 当面板高度不足 140px（例如手机横屏或手动缩得很小）时，关闭按钮旁会出现低调的**展开图标**。点击后，详情临时借用图表区域；再次点击恢复分屏，关闭详情或按 Esc 也会恢复图表。它与 **Full screen / M** 扩大整个时间轴的作用不同，不会修改已保存的分屏比例，也不清空查询、当前任务页或调用选择。展开状态在本次视图切换、窗口调整和面板导航期间保留，不保存到下一次打开报告；帮助按钮仍正常可用。极矮窗口仍可滚动详情。
 

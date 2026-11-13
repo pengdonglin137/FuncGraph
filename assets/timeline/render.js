@@ -4,7 +4,7 @@ const ctx = elCv.getContext('2d'), hctx = elHead.getContext('2d');
 const FONT = '11px ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace';
 const FONT_B = '600 11.5px system-ui, -apple-system, "Segoe UI", sans-serif';
 const FONT_S = '11px system-ui, -apple-system, "Segoe UI", sans-serif';
-let charW = 6.6;
+let charW = null;
 const CTX_HUE = [214, 152, 30, 282];
 
 function palette() {
@@ -235,19 +235,27 @@ function resize() {
     W = elScroll.clientWidth;
     H = elScroll.clientHeight;
     for (const [cv, w, h] of [[elCv, W, H], [elHead, W, HEAD_H]]) {
-        cv.width = Math.max(1, Math.round(w * DPR));
-        cv.height = Math.max(1, Math.round(h * DPR));
         cv.style.height = h + 'px';
         // both canvases are drawn for W = width of the track area without its scrollbar; the ruler
         // is wider in CSS (no scrollbar above it) and would be stretched: x positions drift apart
         cv.style.width = w + 'px';
     }
-    ctx.font = FONT;
-    charW = ctx.measureText('abcdefghijklmnopqrstuvwxyz_0123').width / 31;
     ovDirty = true;
     layout();
     draw();
     scheduleDistHistogram();
+}
+function syncCanvasSizes() {
+    let changed = false;
+    for (const [canvas, width, height] of [[elCv, W, H], [elHead, W, HEAD_H]]) {
+        const pixelsWide = Math.max(1, Math.round(width * DPR)), pixelsHigh = Math.max(1, Math.round(height * DPR));
+        if (canvas.width !== pixelsWide) { canvas.width = pixelsWide; changed = true; }
+        if (canvas.height !== pixelsHigh) { canvas.height = pixelsHigh; changed = true; }
+    }
+    if (changed || charW === null) {
+        ctx.font = FONT;
+        charW = ctx.measureText('abcdefghijklmnopqrstuvwxyz_0123').width / 31;
+    }
 }
 const visibleTracks = [];
 function layout() {
@@ -310,6 +318,7 @@ function drawCursor() {
         rafPending = false;
         if (sceneDirty || !sceneCache) {
             sceneDirty = false;
+            syncCanvasSizes();
             render(); renderHead();
             if (cursorX >= 0 && window.fgCurrentView() === 'timeline') saveScene();
         } else restoreScene();

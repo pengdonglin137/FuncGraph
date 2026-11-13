@@ -4053,6 +4053,42 @@ class BrowserSmokeTest(unittest.TestCase):
         self.assertRegex(self.page.locator('.tl-cs-at .tl-link').inner_text(), r'\.[ch]:\d+$')
         self.assertTrue(self.page.locator('.tl-cs-at a').get_attribute('href').startswith('https://example.org/src/'))
 
+    def test_timeline_flags_are_visible_without_opening_trace_metadata(self):
+        flags = (1 << 15) | 4 | 8 | (2 << 4) | (3 << 7) | (2 << 11)
+        self.open_range_data(['flagged'], columns={'flags': [flags]}, extra={'preempt_base': 1})
+        original = self.ev('JSON.stringify(fgData.read("tlData"))')
+        self.ev("fgView('timeline').probe().select(0)")
+        label = self.page.locator('.tl-call-facts > .k').filter(has_text='flags')
+        self.assertTrue(label.is_visible())
+        value = label.locator('xpath=following-sibling::span[1]').inner_text()
+        for expected in ['irqs off', 'BH off', 'need-resched + preempt (N)', 'preempt 3',
+                         'migrate-off 2', 'baseline 1', 'preemption disabled 2 levels']:
+            self.assertIn(expected, value)
+        self.assertFalse(self.page.locator('[data-trace-metadata]').evaluate('element => element.open'))
+        self.assertEqual(self.ev('JSON.stringify(fgData.read("tlData"))'), original)
+
+    def test_timeline_zero_latency_flags_are_explicit_not_missing(self):
+        self.open_range_data(['clear_flags'], columns={'flags': [1 << 15]}, extra={'preempt_base': 0})
+        self.ev("fgView('timeline').probe().select(0)")
+        label = self.page.locator('.tl-call-facts > .k').filter(has_text='flags')
+        self.assertTrue(label.is_visible())
+        self.assertEqual(label.locator('xpath=following-sibling::span[1]').inner_text(), 'none')
+
+    def test_timeline_user_calls_do_not_invent_unrecorded_kernel_flags(self):
+        self.open_range_data(['user_call', 'kernel_call'], columns={'flags': [1 << 25, (1 << 15) | 4]},
+                             extra={'uftrace': {'spaces': ['user', 'kernel']}})
+        self.ev("fgView('timeline').probe().select(0)")
+        self.assertEqual(self.page.locator('.tl-call-facts > .k').filter(has_text='flags').count(), 0)
+        self.ev("fgView('timeline').probe().select(1)")
+        label = self.page.locator('.tl-call-facts > .k').filter(has_text='flags')
+        self.assertTrue(label.is_visible())
+        self.assertIn('irqs off', label.locator('xpath=following-sibling::span[1]').inner_text())
+
+    def test_timeline_calls_without_latency_data_do_not_show_false_flags(self):
+        self.open_range_data(['no_flags'])
+        self.ev("fgView('timeline').probe().select(0)")
+        self.assertEqual(self.page.locator('.tl-call-facts > .k').filter(has_text='flags').count(), 0)
+
     def test_timeline_cursor_reuses_scene_until_hover_or_display_state_changes(self):
         self.check_cursor_scene()
 

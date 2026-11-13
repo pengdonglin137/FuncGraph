@@ -335,7 +335,7 @@ python3 funcgraph.py trace.txt --vmlinux vmlinux --filter --fast
 `--timeline` 会在文本视图旁增加一个 **Timeline** 标签页。每个任务一条轨道，轨道内横轴是时间、纵轴是调用深度，切片宽度即耗时（类似 Android Studio 的 method trace 或 Perfetto，数据来自内核 function_graph）。数据内嵌在同一个 HTML 中，用 Canvas 绘制，十几万次调用也能流畅缩放。
 
 显示内容：
-- **上下文配色**（来自 latency 标志）：任务（蓝）、softirq（绿）、hardirq（橙）、NMI（紫）。斜线表示关中断；琥珀色横条/角标表示 need-resched 已置位但尚未调度（调度延迟窗口）；可选显示 preempt 深度条。
+- **上下文配色**（来自 latency 标志）：任务（蓝）、softirq（绿）、hardirq（橙）、NMI（紫）。斜线表示关中断；琥珀色横条/角标表示 need-resched 已置位但尚未调度（调度延迟窗口）；可选显示 preempt 深度条。调用详情直接展示已记录的 flags，纯内核报告同样支持；缺少 latency 数据时不会误报为所有标志均未置位。
 - **Off-CPU 时段**：根据上下文切换标记生成，标注任务在哪个函数里等待（如 `mutex_lock`），以及是被抢占还是阻塞。
 - **错误路径**（需 `funcgraph-retval`）：错误源头（第一个返回 errno 的函数）若一直传到用户态（链上有 `*_sys_*`）显示为实心红色，被调用者处理掉的显示为橙色；传播帧加红色描边。返回类型从 BTF 读取，因此 void 函数（寄存器残值）、无符号和 bool 返回值不会误报，指针返回值按 `IS_ERR` 语义判断。
 - **调用点**（需 `funcgraph-retaddr`）；紫色角标表示调用者与父切片不一致（中间有未跟踪、内联或汇编帧）。

@@ -78,7 +78,7 @@ only for `fullscreenElement` to become null.
 ## Trace metadata
 
 - Open **Trace metadata** below the primary facts to inspect the task/CPU,
-  depth, recorded context flags, trace-line links and, when present, the recorded
+  depth, trace-line links and, when present, the recorded
   user function-entry address and raw return bits retained alongside BTF type
   information.
 - This section starts collapsed. Its open/closed state is remembered in the
@@ -86,20 +86,26 @@ only for `fullscreenElement` to become null.
   opening an analysis panel. Focus its summary and use Enter or Space to toggle
   it with the keyboard.
 - Context/error badges, incomplete-record warnings, caller mismatches and
-  tail-jump evidence remain visible outside metadata. Moving the raw flags
-  does not hide the existing IRQ/preemption/atomic-context warnings.
+  tail-jump evidence remain visible outside metadata. Recorded **flags** also
+  appear in the primary facts, including kernel-only calls, with the raw preempt
+  count and baseline explanation. The existing IRQ/preemption/atomic-context
+  warnings are unchanged. Calls without recorded latency data have no flags
+  row; missing flags are not presented as clear flags.
 - A recorded function-entry address is still labeled as an entry, not a caller
   site. Original bits for a BTF `void` return remain inspectable but are explicitly
   not a return value. If a value is untyped or only raw bytes were captured, it
   remains visible as raw data rather than disappearing into metadata.
 
-点击主信息下方的 **Trace metadata** 可核对任务/CPU、深度、已有上下文 flags、trace 行号，
+点击主信息下方的 **Trace metadata** 可核对任务/CPU、深度、trace 行号，
 以及适用时的用户态函数入口地址、BTF 修正前返回位。默认折叠，浏览器会在同一存储上下文中
 记住展开状态；切换函数、分析视图后仍保留。键盘聚焦标题后可用 Enter 或空格切换。
 
 错误、未完整采集、IRQ/抢占/atomic 告警、caller 不匹配和尾跳转证据仍直接可见。入口地址
 不会被改称调用地址，`void` 的原始返回位不会被伪装成有效返回值。仅有原始参数/返回数据时，
 主信息仍直接展示原始数据，不因为没有类型信息而隐藏。
+
+已记录的 **flags** 直接放在主信息区，纯内核调用同样可见，保留原始抢占计数及基线说明。
+没有采集 latency 数据时不显示 flags 行，不把未采集误报为所有标志均未置位。
 
 ## Arguments and evidence / 参数与证据
 

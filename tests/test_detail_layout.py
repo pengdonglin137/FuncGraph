@@ -241,17 +241,25 @@ class DetailLayoutBrowserTest(unittest.TestCase):
                 self.assertFalse(metadata.evaluate('element => element.open'))
                 self.assertEqual(self.value('raw argument bytes').inner_text(), 'deadbeef12345678')
 
-    def test_kernel_flags_are_available_in_metadata_and_raw_only_calls_stay_readable(self):
+    def test_kernel_flags_are_visible_outside_metadata_and_raw_only_calls_stay_readable(self):
         for mode in ('single', 'sidecar'):
             with self.subTest(mode=mode):
                 self.open(mode=mode, kind='ftrace', name='ksys_dup3')
-                self.assertFalse(self.value('flags').is_visible())
+                original = self.page.evaluate('JSON.stringify(fgData.read("tlData"))')
+                flags_text = self.value('flags').inner_text()
+                self.assertTrue(self.value('flags').is_visible())
+                self.assertFalse(self.page.locator('[data-trace-metadata]').evaluate('element => element.open'))
                 self.page.locator('[data-trace-metadata] > summary').click()
                 self.assertTrue(self.value('flags').is_visible())
                 self.assertTrue(self.value('task').is_visible())
                 self.assertTrue(self.value('trace lines').is_visible())
                 self.assertTrue(self.value('args').is_visible())
                 self.assertTrue(self.value('return').is_visible())
+                self.page.locator('[data-trace-metadata] > summary').click()
+                self.assertTrue(self.value('flags').is_visible())
+                self.assertEqual(self.value('flags').inner_text(), flags_text)
+                self.assertFalse(self.value('task').is_visible())
+                self.assertEqual(self.page.evaluate('JSON.stringify(fgData.read("tlData"))'), original)
                 self.open(mode=mode)
                 self.select('legacy')
                 self.assertEqual(self.value('raw argument bytes').inner_text(), 'deadbeef12345678')

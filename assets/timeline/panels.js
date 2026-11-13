@@ -410,7 +410,7 @@ function showDetail(i) {
     h += kv('start', '+' + fmtDur(sStart[i]) + (MODE === 'abs' ? ' &nbsp;' + fmtAbs(sStart[i]) + ' s' : ''));
     let metadata = kv('task', esc(trackLabel(t)) + (cpuOf(i) >= 0 ? ' &nbsp;on CPU ' + cpuOf(i) : ''));
     metadata += kv('depth', String(sDepth[i]));
-    if (f & FL.LAT) metadata += kv('flags', esc(ctxFlagText(f).replace(/^ · /, '').replace(' (preempt off)', '') || 'none') +
+    if (f & FL.LAT) h += kv('flags', esc(ctxFlagText(f).replace(/^ · /, '').replace(' (preempt off)', '') || 'none') +
         ((f >> FL.PR_SHIFT) & 15 ? ' <span class="d">(baseline ' + PBASE + ': ' + (pd > 0 ? 'preemption disabled ' + pd + ' level' + (pd > 1 ? 's' : '') : 'preemptible') + ')</span>' : ''));
     const r = retOf(i), rawReturn = rawRetOf(i), typedReturn = kernelTypesOf(i)?.ret;
     if (typedReturn && rawReturn !== null) metadata += kv('raw return', detailToken('raw', rawReturn) +
@@ -781,13 +781,19 @@ elResizer.addEventListener('pointerdown', ev => {
     };
     const up = () => {
         elResizer.removeEventListener('pointermove', move);
+        elResizer.removeEventListener('pointerup', up);
+        elResizer.removeEventListener('pointercancel', up);
+        elResizer.removeEventListener('lostpointercapture', up);
+        if (pend) { cancelAnimationFrame(pend); pend = 0; }
         elResizer.classList.remove('drag');
         document.body.classList.remove('tl-resizing');
+        if (elResizer.hasPointerCapture(ev.pointerId)) elResizer.releasePointerCapture(ev.pointerId);
         resize();
     };
     elResizer.addEventListener('pointermove', move);
     elResizer.addEventListener('pointerup', up, { once: true });
     elResizer.addEventListener('pointercancel', up, { once: true });
+    elResizer.addEventListener('lostpointercapture', up, { once: true });
 });
 elResizer.addEventListener('dblclick', () => { prefSet('detailFrac', null); resize(); });
 
