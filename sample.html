@@ -8176,6 +8176,18 @@ function makeHatch(color) {
 let hatch = null, offHatch = null;
 
 // ---- colors ----
+const COMPILER_SUFFIX = /(?:\.(?:isra|constprop|part|clone|lto|lto_priv)\.\d+|\.(?:cold|hot)(?:\.\d+)?|\.llvm\.[0-9a-fA-F]+)+$/;
+const sliceNameCache = new Map();
+function sliceLabel(index) {
+    const name = nameOf(index);
+    const cached = sliceNameCache.get(name);
+    if (cached !== undefined) return cached;
+    const clone = / \[clone ([^\]]+)\]$/.exec(name);
+    const base = clone && !clone[1].replace(COMPILER_SUFFIX, '') ? name.slice(0, clone.index) : name;
+    const label = base.replace(COMPILER_SUFFIX, '') || name;
+    sliceNameCache.set(name, label);
+    return label;
+}
 const nameHash = new Int32Array(S.length).fill(-1);
 function hashOf(si) {
     let h = nameHash[si];
@@ -8891,7 +8903,7 @@ function drawSlice(i, x0, x1, y, h, labels) {
         ctx.beginPath(); ctx.moveTo(cx0 + ww - 6, y); ctx.lineTo(cx0 + ww, y); ctx.lineTo(cx0 + ww, y + 6); ctx.closePath(); ctx.fill();
     }
     if (labels && w > 26) {
-        const nm = nameOf(i);
+        const nm = sliceLabel(i);
         let txt = i >= N ? (isGhost(i) ? (nm === '?' ? 'untraced frame' : 'untraced ' + nm) : 'inline ' + nm) : nm;
         if (ov.err && eRole[i] === 0 && (showMinor || !CHAINS[eChain[i]][6])) { const en = errName(eErr[i]); txt += ' = ' + (en || eErr[i]); }
         const maxc = Math.floor((w - 8) / charW);

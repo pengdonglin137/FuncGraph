@@ -257,6 +257,12 @@ lost[]    [cpu, count, line]
 `cpu` 同样以 `-1` 表示未知，CPU `0` 必须保留。只有 `eline` 的 `0` 表示未记录退出行。
 序列化时仅在整列都是对应缺失值时省略该列，原生 ftrace 和 uftrace 使用同一规则。
 
+Canvas 的 `sliceLabel()` 只对显示文字去除已识别的末尾 GCC/LLVM 克隆后缀，
+按原始符号缓存简名，避免每次重绘重复做正则匹配。不修改 `S`、`sName`、
+`nameOf()` 或 trace 数据；悬停、详情、CALL STACK、搜索、源码、类型信息、
+配色和聚合仍使用完整符号，多个克隆即使显示同一简名也不合并。未知后缀与
+非末尾片段保留，`.plt`/`.ifunc` 等有语义的名称不做清理。
+
 `flags` 的位定义（`timeline.py` 和 `model.js` 中的 `FL` 必须保持一致）：
 
 | 位 | 含义 |
