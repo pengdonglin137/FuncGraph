@@ -20,6 +20,8 @@ FuncGraph 支持可视化仅用户态、仅内核态和混合 uftrace 记录。�
 
 导航重排不再为每行创建临时键值对，任务边界直接按计划位置消费，完整行号与排列校验保留；成本与实测见[重建分配优化](docs/performance-text-rebuild-allocation.md)。
 
+大型 sidecar 资源最多复用两个校验 Worker，不改变完整性校验或 trace 数据；收益与剩余限制见[并行校验实测](docs/performance-checksum-workers.md)。
+
 [![ci](https://github.com/pengdonglin137/FuncGraph/actions/workflows/ci.yml/badge.svg)](https://github.com/pengdonglin137/FuncGraph/actions/workflows/ci.yml)
 
 [![FuncGraph 可视化示例（点击打开示例报告）](sample.png)](https://pengdonglin137.github.io/FuncGraph/sample.html)

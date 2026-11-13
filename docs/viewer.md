@@ -60,14 +60,17 @@ Generation still renders the full report once and stages the filter index even f
 
 ### Sidecar loading
 
-External resources of at least 1 MiB use one lazily started SHA-256 Worker,
+External resources of at least 1 MiB use up to two lazily started SHA-256 Workers,
 transferring original buffers rather than copying them. Size/checksum validation
 still precedes decoding and caching. `fgview` adds only `worker-src blob:` to its
 CSP; network access stays same-origin, and remote Workers remain blocked.
 Missing Worker support, startup failure or a five-second startup timeout falls
 back to complete main-thread verification. A running Worker failure rejects the
-request; Retry uses the main thread. Canceling the last active checksum job
-terminates its Worker without canceling another subscriber or resource's job.
+active pool jobs; Retry uses the main thread. Idle Workers are reused and queued
+requests reserve the least-loaded Worker, including while it starts. Canceling
+an isolated checksum job terminates only its Worker, without canceling another
+subscriber, resource's job or reserved request. The Worker limit is not a bound
+on queued resources or total memory; see [pool measurements](performance-checksum-workers.md).
 Text prefetches only the next network chunk and still mounts after complete
 preparation. This is not viewport windowing; see [delivery measurements and
 limits](performance-text-delivery.md).

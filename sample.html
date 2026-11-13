@@ -2418,7 +2418,7 @@ document.documentElement.setAttribute('data-theme', currentTheme);
     const sourceCache = { entries: new Map(), bytes: 0, chunks: 8, limit: 16 * 1024 * 1024 };
     const textCache = { entries: new Map(), bytes: 0, chunks: 4, limit: 16 * 1024 * 1024 };
     const requests = new Map();
-    let checksumWorker = null;
+    const checksumWorkers = [];
     let checksumWorkerUnavailable = false;
     let checksumSequence = 0;
     let descriptor = null;
@@ -2435,7 +2435,8 @@ document.documentElement.setAttribute('data-theme', currentTheme);
         self.postMessage({ ready: !!self.crypto?.subtle });
     }
     function stopChecksumWorker(state, error) {
-        if (checksumWorker === state) checksumWorker = null;
+        const index = checksumWorkers.indexOf(state);
+        if (index >= 0) checksumWorkers.splice(index, 1);
         clearTimeout(state.timer);
         state.worker?.terminate();
         if (state.url) URL.revokeObjectURL(state.url);
@@ -2448,22 +2449,28 @@ document.documentElement.setAttribute('data-theme', currentTheme);
         state.jobs.clear();
     }
     function prepareChecksumWorker() {
-        if (checksumWorkerUnavailable || !window.Worker || !window.Blob || !window.URL?.createObjectURL) return Promise.resolve(null);
-        if (checksumWorker) return checksumWorker.ready;
-        const state = { worker: null, jobs: new Map(), ready: null, resolve: null, url: null, timer: 0 };
+        if (checksumWorkerUnavailable || !window.Worker || !window.Blob || !window.URL?.createObjectURL) return null;
+        let available = checksumWorkers[0];
+        for (const state of checksumWorkers) if (state.pending < available.pending) available = state;
+        if (available && (!available.pending || checksumWorkers.length >= 2)) {
+            available.pending++;
+            return available;
+        }
+        const state = { worker: null, jobs: new Map(), ready: null, resolve: null, url: null, timer: 0, pending: 1 };
         state.ready = new Promise(resolve => { state.resolve = resolve; });
-        checksumWorker = state;
+        checksumWorkers.push(state);
         const failed = message => {
-            if (checksumWorker !== state) return;
+            if (!checksumWorkers.includes(state)) return;
             checksumWorkerUnavailable = true;
-            stopChecksumWorker(state, new Error(typeof message === 'string' ? message :
-                'Report checksum worker failed; retry to use the main-thread verifier'));
+            const error = new Error(typeof message === 'string' ? message :
+                'Report checksum worker failed; retry to use the main-thread verifier');
+            for (const current of [...checksumWorkers]) stopChecksumWorker(current, error);
         };
         try {
             state.url = URL.createObjectURL(new Blob(['(' + checksumWorkerMain.toString() + ')()'], { type: 'text/javascript' }));
             state.worker = new Worker(state.url, { name: 'FuncGraph checksums' });
             state.worker.onmessage = event => {
-                if (checksumWorker !== state) return;
+                if (!checksumWorkers.includes(state)) return;
                 const data = event.data;
                 if (data?.ready !== undefined) {
                     if (!data.ready) { failed(); return; }
@@ -2492,34 +2499,38 @@ document.documentElement.setAttribute('data-theme', currentTheme);
             state.worker.onmessageerror = failed;
             state.timer = setTimeout(failed, 5000);
         } catch (error) { failed(); }
-        return state.ready;
+        return state;
     }
     async function checksum(bytes, signal) {
-        const state = bytes.byteLength >= 1024 * 1024 ? await prepareChecksumWorker() : null;
-        aborted(signal);
-        if (!state || checksumWorker !== state) {
-            return { bytes, digest: await window.crypto.subtle.digest('SHA-256', bytes) };
-        }
-        return new Promise((resolve, reject) => {
-            const id = ++checksumSequence;
-            const cleanup = () => signal?.removeEventListener('abort', cancel);
-            const cancel = () => {
-                state.jobs.delete(id);
-                cleanup();
-                const error = new DOMException('Data request canceled', 'AbortError');
-                reject(error);
-                if (!state.jobs.size) stopChecksumWorker(state, error);
-            };
-            state.jobs.set(id, { resolve, reject, cleanup, bytes: bytes.byteLength });
-            signal?.addEventListener('abort', cancel, { once: true });
-            const buffer = bytes instanceof ArrayBuffer ? bytes : bytes.buffer;
-            try { state.worker.postMessage({ id, buffer }, [buffer]); }
-            catch (error) {
-                state.jobs.delete(id);
-                cleanup();
-                reject(error);
+        const reserved = bytes.byteLength >= 1024 * 1024 ? prepareChecksumWorker() : null;
+        try {
+            const state = reserved ? await reserved.ready : null;
+            aborted(signal);
+            if (!state || !checksumWorkers.includes(state)) {
+                const digest = await window.crypto.subtle.digest('SHA-256', bytes);
+                return { bytes, digest };
             }
-        });
+            return await new Promise((resolve, reject) => {
+                const id = ++checksumSequence;
+                const cleanup = () => signal?.removeEventListener('abort', cancel);
+                const cancel = () => {
+                    state.jobs.delete(id);
+                    cleanup();
+                    const error = new DOMException('Data request canceled', 'AbortError');
+                    reject(error);
+                    if (!state.jobs.size && state.pending <= 1) stopChecksumWorker(state, error);
+                };
+                state.jobs.set(id, { resolve, reject, cleanup, bytes: bytes.byteLength });
+                signal?.addEventListener('abort', cancel, { once: true });
+                const buffer = bytes instanceof ArrayBuffer ? bytes : bytes.buffer;
+                try { state.worker.postMessage({ id, buffer }, [buffer]); }
+                catch (error) {
+                    state.jobs.delete(id);
+                    cleanup();
+                    reject(error);
+                }
+            });
+        } finally { if (reserved) reserved.pending--; }
     }
     function cacheRelease(key) {
         for (const policy of [sourceCache, textCache]) {

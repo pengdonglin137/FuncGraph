@@ -6,6 +6,9 @@ use the updated provider; `fgview` supports its locally generated Blob Worker.
 This improves delivery before the existing complete Text mount. It is not DOM
 windowing, bounded model memory or a claim that large reports are finished.
 
+This is the historical single-Worker measurement. The November 13 follow-up
+uses at most two reusable Workers; see [parallel checksum measurements](performance-checksum-workers.md).
+
 ## Evidence and implementation
 
 The current 72,176-row Text-opening profile attributes about 1,068 ms to HTML

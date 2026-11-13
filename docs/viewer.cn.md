@@ -59,12 +59,14 @@ CLI 输出实际模式、完整 HTML 字节数、阈值和入口路径；进入 
 
 ### Sidecar 加载行为
 
-至少 1 MiB 的外置资源使用单个按需启动的 SHA-256 Worker，原始缓冲区转移而非复制；
+至少 1 MiB 的外置资源使用最多两个按需启动的 SHA-256 Worker，原始缓冲区转移而非复制；
 通过大小/摘要校验后才解码和缓存。`fgview` 的 CSP 只新增允许本页生成的 `blob:` Worker，
 网络仍限同源，不允许远程 Worker。浏览器无 Worker 能力、无法启动或 5 秒内未就绪时，
-自动保留主线程完整校验；运行中的 Worker 失败会让当前请求报错，Retry 使用主线程。
-取消最后一个正在校验的请求会终止该 Worker；同资源的其他消费者、同 Worker 的其他
-校验任务不会被一个消费者误取消。Text 最多预取下一网络块，仍在全部准备后挂载；
+自动保留主线程完整校验；运行中的 Worker 失败会让池内活动校验任务报错，Retry 使用主线程。
+优先复用空闲 Worker，否则选择未完成预约最少的 Worker，启动中的预约也计入负载。
+取消独立校验任务只终止它所在的 Worker，不影响其他消费者、资源任务或已预约请求。
+两个 Worker 的限制不是待处理资源或总内存上限；实测见[并行校验](performance-checksum-workers.md)。
+Text 最多预取下一网络块，仍在全部准备后挂载；
 这不是视口窗口化。实测、开销和限制见 [Text 交付优化](performance-text-delivery.md)。
 
 - 首次 Timeline 读取完整模型，不获取 Text/Compare/源码正文，不创建逐行 Text DOM。精简的 trace 行号 → source ID 索引仍内嵌；源码 HTML 按最多 64 条源码记录放入 `source-<首个ID>.json`。展开 Text 源码或已打开的 Timeline 调用点面板时只读取对应块；收起的调用点面板等到打开才请求。已解析的悬停位置直接使用 Timeline 紧凑位置，不请求源码 HTML；旧版/未知位置可读取对应块回退。
