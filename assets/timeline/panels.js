@@ -408,13 +408,11 @@ function showDetail(i) {
         fmtDur(d) + (f & FL.EST ? ' (estimated)' : f & FL.TRUNC && D.uftrace ? ' (incomplete span)' : ''));
     h += kv('self', fmtDur(sSelf[i]) + (d > 0 ? ' (' + (100 * sSelf[i] / d).toFixed(1) + '%)' : ''));
     h += kv('start', '+' + fmtDur(sStart[i]) + (MODE === 'abs' ? ' &nbsp;' + fmtAbs(sStart[i]) + ' s' : ''));
-    let metadata = kv('task', esc(trackLabel(t)) + (cpuOf(i) >= 0 ? ' &nbsp;on CPU ' + cpuOf(i) : ''));
-    metadata += kv('depth', String(sDepth[i]));
+    h += kv('task', esc(trackLabel(t)) + (cpuOf(i) >= 0 ? ' &nbsp;on CPU ' + cpuOf(i) : ''));
     if (f & FL.LAT) h += kv('flags', esc(ctxFlagText(f).replace(/^ · /, '').replace(' (preempt off)', '') || 'none') +
         ((f >> FL.PR_SHIFT) & 15 ? ' <span class="d">(baseline ' + PBASE + ': ' + (pd > 0 ? 'preemption disabled ' + pd + ' level' + (pd > 1 ? 's' : '') : 'preemptible') + ')</span>' : ''));
+    if (ATOMIC.has(i)) h += kv('context', 'called with ' + esc(atomicText(ATOMIC.get(i))) + ' (sleeping function in atomic context)', 'err');
     const r = retOf(i), rawReturn = rawRetOf(i), typedReturn = kernelTypesOf(i)?.ret;
-    if (typedReturn && rawReturn !== null) metadata += kv('raw return', detailToken('raw', rawReturn) +
-        (typedReturn[0] === 'void' ? '<div class="tl-context-note">void (BTF) · these bits are not a return value.</div>' : ''));
     const c = callerOf(i);
     if (c) h += kv('caller site', detailSymbolHtml(c) + '<span class="tl-cs-at"></span>' + (f & FL.MISMATCH ? '<div class="tl-context-note tl-tail-note">' + esc(callerRelationText(i)) + '</div>' : ''));
     const tailJump = tailJumpOf(i);
@@ -428,7 +426,6 @@ function showDetail(i) {
     const a = argsOf(i);
     const userDetail = f & FL.USER ? D.uftrace?.user_details?.[sLine[i]] : null;
     if (userDetail) {
-        metadata += kv('recorded address', detailToken('raw', userDetail.address) + '<div class="tl-context-note">Function entry address, not the call site.</div>');
         const callAddress = userCallAddress(i);
         const userSite = userCallSite(i);
         if (callAddress) h += kv('caller site', detailSymbolHtml(callAddress) +
@@ -459,9 +456,12 @@ function showDetail(i) {
         else if (f & FL.NULLRET) rv += ' (' + detailToken('keyword', 'NULL') + ')';
         h += kv(typedReturn ? 'return (BTF)' : D.uftrace ? 'raw return' : 'return', rv, eRole[i] >= 0 ? 'err' : '');
     }
-    if (ATOMIC.has(i)) h += kv('context', 'called with ' + esc(atomicText(ATOMIC.get(i))) + ' (sleeping function in atomic context)', 'err');
-    metadata += kv('trace lines', lineLink(sLine[i]) + (sEline && sEline[i] && sEline[i] !== sLine[i] ? ' → ' + lineLink(sEline[i]) : ''));
-    h += '</div><details class="tl-metadata" data-trace-metadata open><summary>Trace metadata</summary><div class="tl-kv tl-call-facts">' + metadata + '</div></details>' +
+    if (typedReturn && rawReturn !== null) h += kv('raw return', detailToken('raw', rawReturn) +
+        (typedReturn[0] === 'void' ? '<div class="tl-context-note">void (BTF) · these bits are not a return value.</div>' : ''));
+    h += kv('depth', String(sDepth[i]));
+    if (userDetail) h += kv('recorded address', detailToken('raw', userDetail.address) + '<div class="tl-context-note">Function entry address, not the call site.</div>');
+    h += kv('trace lines', lineLink(sLine[i]) + (sEline && sEline[i] && sEline[i] !== sLine[i] ? ' → ' + lineLink(sEline[i]) : ''));
+    h += '</div>' +
         '<details class="tl-cs" open><summary class="tl-sec">' + (f & FL.USER ? userCallSite(i) ? 'User call site source' : 'User function source (entry)' : D.uftrace && !D.sources?.callers?.[sCaller?.[i]]?.length ? 'Kernel function source' : 'Call site source') + '</summary><div class="tl-cs-src"></div></details></div><div>';
     h += breakdownHtml(i);
     if (context.lists.has('error')) h += detailListHtml('error');
@@ -722,17 +722,8 @@ elCallActions.addEventListener('click', event => {
 function openDetail(html) {
     closeCallActions();
     const was = elDetail.classList.contains('show');
-    const previousMetadata = elDetail.querySelector('[data-trace-metadata]');
-    if (previousMetadata) prefSet('metadataCollapsed', previousMetadata.open ? '0' : '1');
     fgCancelSources(elDetail);
     elDetail.innerHTML = html;
-    const metadata = elDetail.querySelector('[data-trace-metadata]');
-    if (metadata) {
-        metadata.open = prefGet('metadataCollapsed') !== '1';
-        metadata.addEventListener('toggle', () => {
-            if (metadata.isConnected) prefSet('metadataCollapsed', metadata.open ? '0' : '1');
-        });
-    }
     const head = elDetail.querySelector('.tl-detail-head');
     const close = head && head.querySelector('.tl-close');
     if (close) {

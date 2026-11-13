@@ -809,7 +809,7 @@ python3 funcgraph.py --timeline --tail-calls --fast --func-links \
 
 - 标题旁的标签：上下文（`?` 表示推断）、irqs off、BH off、need-resched、preempt off（抢占计数高于这份 trace 的基线，`×N` 表示多关了几层，悬停标签可看到具体数值。function_graph 在记录时自己关了一层抢占，开了 `CONFIG_PREEMPTION` 的内核上每行的 preempt 数字都多 1：基线取任务上下文里出现过的最小值，最大为 1，这样整份 trace 都在关抢占区间里时也不会被掩盖。时间轴里的 preempt off、Sections、在原子上下文睡眠、Preempt depth 叠加层、Sched latency 的 max preempt off 都扣除了基线；文本视图显示的是原始数字，过滤时要用 `preempt:>1` 这样的写法）、migrate off、error origin/propagated、may sleep in atomic context、no exit、no entry、estimated。
 - 左栏：duration、self（及占总耗时的比例）、start、task、depth、flags、return、caller site、args、trace lines（入口和出口在 trace 中的行号，点击跳到文本视图）。
-  - 已记录的 **flags** 直接显示在主要数值区，纯内核报告也一样；保留原始 preempt 计数及基线说明。`none` 表示采集了 latency 标志且均未置位；未采集 latency 数据时不显示 flags 行，包括没有内核标志的用户态调用。task、depth 和原始 trace 元数据在默认展开的 **Trace metadata** 内，无需额外点击；手动折叠仍可用并记住选择。
+  - 详情字段直接对齐展示，不再有 **Trace metadata** 标题或折叠分组：依次为耗时/self/开始时间、task/CPU 与 flags/上下文告警、调用位置与参数/返回值、depth/原始入口地址/trace 行号。已记录的 **flags** 保留原始 preempt 计数及基线说明，纯内核报告也一样；`none` 表示采集了 latency 标志且均未置位，未采集时不显示 flags 行，包括没有内核标志的用户态调用。原始返回位紧随 BTF 解码返回值，仍保留原始数据与解释。
   - **call site** 下面是调用所在的源码位置（`文件:行号`，点击打开在线源码）；调用点在内联代码里时附上 `in 内联函数 (inlined)`。
   - **Call site source**：调用点的源码块，和文本视图展开一行时看到的完全相同（语法高亮、`>行号<` 标出调用所在行、内联链按 Source 按钮的 chain/flat 布局）。点标题可以收起，状态会被记住。Text 和 Timeline 共享去重源码池及“trace 行号 → source ID”索引，不要求对应 Text 行已存在于 DOM 中。没有 `--kernel-src` / `--source-rev` / `--source-url` 时只显示位置链接；普通 `--no-text-view` 不保留两者，加上 `--keep-source` 可在纯 Timeline 报告中保留已有的源码/位置/内联信息。
 - 右栏：

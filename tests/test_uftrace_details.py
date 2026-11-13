@@ -531,13 +531,15 @@ class UftraceDetailBrowserTest(unittest.TestCase):
                                          'no parameters' if argument is None else 'value=' + argument)
                         self.assertIn(raw, panel.locator('details:has(summary:text-is("Raw argument slots"))').text_content())
                         self.assertIn(raw, panel.locator('.k:text-is("raw return") + .v').text_content())
-                        self.assertFalse(panel.locator('.k:text-is("raw return") + .v').is_visible())
+                        self.assertEqual(panel.locator('[data-trace-metadata], .tl-metadata').count(), 0)
+                        self.assertTrue(panel.locator('.k:text-is("raw return") + .v').is_visible())
+                        fields = panel.locator('.tl-call-facts > .k').all_text_contents()
+                        self.assertLess(fields.index('raw return'), fields.index('depth'))
                         if returned is None:
                             self.assertEqual(panel.locator('.k:text-is("return (BTF)")').count(), 0)
                         else:
                             self.assertIn(returned, panel.locator('.k:text-is("return (BTF)") + .v').inner_text())
-                        panel.locator('[data-trace-metadata] > summary').click()
-                        self.assertTrue(panel.locator('.k:text-is("raw return") + .v').is_visible())
+                            self.assertEqual(fields.index('raw return'), fields.index('return (BTF)') + 1)
                         if kind == 'void':
                             self.assertIn('these bits are not a return value', panel.inner_text())
                     finally:

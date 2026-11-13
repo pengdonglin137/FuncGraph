@@ -107,9 +107,7 @@ class TimelineZeroBrowserTest(unittest.TestCase):
                         detail = page.locator('.tl-detail').inner_text()
                         self.assertIn(expected, detail)
                         task = page.locator('.tl-kv .k:text-is("task") + .v')
-                        self.assertFalse(task.is_visible())
-                        self.assertIn('on CPU 0', task.text_content())
-                        page.locator('[data-trace-metadata] > summary').click()
+                        self.assertEqual(page.locator('[data-trace-metadata], .tl-metadata').count(), 0)
                         self.assertTrue(task.is_visible())
                         self.assertIn('on CPU 0', task.inner_text())
                         if column == 'caller':

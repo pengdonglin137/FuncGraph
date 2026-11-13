@@ -4055,7 +4055,8 @@ class BrowserSmokeTest(unittest.TestCase):
 
     def test_timeline_flags_are_visible_without_opening_trace_metadata(self):
         flags = (1 << 15) | 4 | 8 | (2 << 4) | (3 << 7) | (2 << 11)
-        self.open_range_data(['flagged'], columns={'flags': [flags]}, extra={'preempt_base': 1})
+        self.open_range_data(['flagged'], columns={'flags': [flags]},
+                             extra={'preempt_base': 1, 'atomic': [[0, 1]]})
         original = self.ev('JSON.stringify(fgData.read("tlData"))')
         self.ev("fgView('timeline').probe().select(0)")
         label = self.page.locator('.tl-call-facts > .k').filter(has_text='flags')
@@ -4064,10 +4065,14 @@ class BrowserSmokeTest(unittest.TestCase):
         for expected in ['irqs off', 'BH off', 'need-resched + preempt (N)', 'preempt 3',
                          'migrate-off 2', 'baseline 1', 'preemption disabled 2 levels']:
             self.assertIn(expected, value)
-        self.assertTrue(self.page.locator('[data-trace-metadata]').evaluate('element => element.open'))
-        self.page.locator('[data-trace-metadata] > summary').click()
-        self.assertFalse(self.page.locator('[data-trace-metadata]').evaluate('element => element.open'))
-        self.assertTrue(label.is_visible())
+        self.assertEqual(self.page.locator('[data-trace-metadata], .tl-metadata').count(), 0)
+        self.assertEqual(self.page.get_by_text('Trace metadata', exact=True).count(), 0)
+        self.assertEqual(self.page.locator('.tl-call-facts > .k').all_text_contents(),
+                         ['duration', 'self', 'start', 'task', 'flags', 'context', 'depth', 'trace lines'])
+        self.assertTrue(self.page.locator('.tl-call-facts > .v.err').is_visible())
+        self.assertIn('sleeping function in atomic context', self.page.locator('.tl-call-facts').inner_text())
+        for field in ('task', 'depth', 'trace lines'):
+            self.assertTrue(self.page.locator('.tl-call-facts > .k').filter(has_text=field).is_visible())
         self.assertEqual(self.ev('JSON.stringify(fgData.read("tlData"))'), original)
 
     def test_timeline_zero_latency_flags_are_explicit_not_missing(self):

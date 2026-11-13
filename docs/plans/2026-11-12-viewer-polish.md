@@ -14,6 +14,10 @@ Text 行号复制、源码单击/双击已共享正文级事件委托，避免�
 阅读方式见 [detail-layout.md](../detail-layout.md)
 和 [filtering.md](../filtering.md)。其余 P1 仍为待实施的设计建议。
 
+更新（2026-11-13）：详情不再使用 Trace metadata 分组，字段直接对齐展示；顺序为
+时间指标 → 任务/CPU 与执行上下文 → 调用位置、参数和返回值 → 深度、原始入口地址、trace 行号。
+原始返回位紧随 BTF 解码返回值，参数字节/来源和源码的按需展开保持不变。
+
 大 trace 首开进一步将 SHA-256 校验移出主线程，并只预取下一 Text 网络块；
 单文件、auto 阈值、完整分析和可视外观不变。完整 DOM/模型仍保留，窗口化尚未完成，
 实测与取消/故障边界见 [performance-text-delivery.md](../performance-text-delivery.md)。

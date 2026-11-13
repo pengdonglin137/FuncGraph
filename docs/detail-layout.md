@@ -1,13 +1,15 @@
 # Timeline detail layout / 详情阅读层级
 
 The selected call keeps its usual two-column layout on wide screens and stacks
-vertically on small screens. The left column prioritizes duration, self time,
-start, caller site, arguments and return value, in that order when available.
+vertically on small screens. All recorded facts share one aligned field list;
+there is no metadata heading or disclosure. The reading order is timing, task
+and execution context, call site and values, then low-level record references.
 Call-stack alignment, source links, user/kernel boundaries and measured data
 are unchanged. This is a presentation change, not a new decoding mode.
 
-宽屏详情保留双栏，小屏纵向排列。左栏按已有数据优先展示耗时、self、开始时间、调用位置、
-参数和返回值；调用栈对齐、源码链接、用户/内核分界及测量含义不变。本次只调整阅读层级，
+宽屏详情保留双栏，小屏纵向排列。左栏字段直接对齐展示，不再有元数据标题或折叠分组；
+按“耗时 → 任务与执行上下文 → 调用位置、参数和返回值 → 底层记录”安排阅读顺序。
+调用栈对齐、源码链接、用户/内核分界及测量含义不变。本次只调整阅读层级，
 不增加解码或推断。
 
 ## Selected-call actions / 所选调用操作
@@ -75,34 +77,38 @@ only for `fullscreenElement` to become null.
 不靠固定延时反复强制聚焦；测试等待真实焦点目标，不能仅凭 `fullscreenElement`
 已清空就认定焦点也同步恢复。旧报告需重新生成。
 
-## Trace metadata
+## Field order / 字段顺序
 
-- **Trace metadata** below the primary facts shows the task/CPU,
-  depth, trace-line links and, when present, the recorded
-  user function-entry address and raw return bits retained alongside BTF type
-  information.
-- This section starts expanded, so recorded metadata is visible without an
-  extra click. You can collapse it manually; that choice is remembered in the
-  browser's local storage context, including when navigating between calls or
-  opening an analysis panel. Focus its summary and use Enter or Space to toggle
-  it with the keyboard.
-- The earlier automatically saved collapsed default is not carried over.
-  Explicit open/closed choices in updated reports still persist normally.
+- **Timing:** duration, self time (and percentage), start time.
+- **Execution context:** task/CPU, recorded flags, and any atomic-context warning.
+- **Call and values:** caller site, any static tail-jump evidence, arguments,
+  return value, then original return bits alongside a BTF-decoded return.
+- **Record references:** depth, recorded user function-entry address when
+  available, and trace-line links.
+- Fields appear directly in one grid without a **Trace metadata** heading or
+  extra click. Old metadata open/closed preferences are no longer read or
+  written; navigating, opening analysis and reloading cannot hide these fields.
+  Other disclosures, such as original argument bytes and source code, are
+  unchanged.
 - Context/error badges, incomplete-record warnings, caller mismatches and
-  tail-jump evidence remain visible outside metadata. Recorded **flags** also
-  appear in the primary facts, including kernel-only calls, with the raw preempt
-  count and baseline explanation. The existing IRQ/preemption/atomic-context
-  warnings are unchanged. Calls without recorded latency data have no flags
-  row; missing flags are not presented as clear flags.
+  tail-jump evidence remain visible. Recorded **flags** retain the raw preempt
+  count and baseline explanation, including kernel-only calls. The existing
+  IRQ/preemption/atomic-context warnings are unchanged. Calls without recorded
+  latency data have no flags row; missing flags are not presented as clear flags.
 - A recorded function-entry address is still labeled as an entry, not a caller
   site. Original bits for a BTF `void` return remain inspectable but are explicitly
   not a return value. If a value is untyped or only raw bytes were captured, it
-  remains visible as raw data rather than disappearing into metadata.
+  remains visible as raw data rather than being hidden.
 
-主信息下方的 **Trace metadata** 默认展开，直接显示任务/CPU、深度、trace 行号，
-以及适用时的用户态函数入口地址、BTF 修正前返回位。仍可手动折叠，浏览器会在同一存储上下文中
-记住选择；切换函数、分析视图后仍保留。键盘聚焦标题后可用 Enter 或空格切换。
-旧版本自动保存的默认折叠状态不沿用；新版中手动选择的展开/折叠状态仍正常保留。
+所有字段在同一网格内直接展示，不再显示 **Trace metadata** 标题或折叠开关，顺序如下：
+
+1. **时间指标**：duration、self（含占比）、start。
+2. **执行上下文**：task/CPU、已记录的 flags、atomic 上下文告警（如有）。
+3. **调用与数值**：caller site、静态尾跳转证据（如有）、参数、返回值，以及 BTF 解码前的原始返回位。
+4. **底层记录**：depth、用户态函数入口地址（如有）、trace 行号链接。
+
+不再读写旧的元数据展开/折叠偏好，切换函数、打开分析、重载都不会隐藏这些字段。
+参数原始字节、源码等其他折叠区保持原有行为。
 
 错误、未完整采集、IRQ/抢占/atomic 告警、caller 不匹配和尾跳转证据仍直接可见。入口地址
 不会被改称调用地址，`void` 的原始返回位不会被伪装成有效返回值。仅有原始参数/返回数据时，
@@ -167,7 +173,8 @@ Semantic colors are documented in [detail-colors.md](detail-colors.md).
 
 ```bash
 PYTHONPATH=.:tests python3 -m unittest \
-    test_detail_layout test_detail_actions test_detail_expand test_timeline_fullscreen -v
+    test_detail_layout test_detail_actions test_detail_colors test_detail_expand \
+    test_timeline_fullscreen test_timeline_resize test_timeline_zero test_uftrace_details -v
 ```
 
 These browser checks require Playwright and Chromium. The Actions suite covers
@@ -177,13 +184,17 @@ full screen; keyboard focus and dismissal; disabled Text; stale selection and
 synthetic frames. Menu-only operations must retain the model, call timestamps,
 track identity, selection and time range, and must not fetch deferred Text or
 Compare resources. Scroll checks require actual movement, not a synthetic event.
-The layout suite verifies expanded metadata on first use even with the legacy
-closed-default preference, mouse/keyboard disclosure, remembered choices through
-navigation/reload, readable raw evidence and exact model/selection/range equality.
+The layout suite verifies exact field order in mixed and kernel-only reports,
+direct visibility despite old collapsed preferences or navigation/reload,
+unchanged keyboard argument disclosure, working trace links, readable raw evidence and exact
+model/selection/range equality.
+Zero-valued CPU/symbol indexes, BTF scalar widths and `void` return evidence
+remain covered rather than being dropped as empty fields.
 
 浏览器检查需要 Playwright 和 Chromium。Actions 用例覆盖两种交付方式、三种地址空间、
 明暗主题、窄屏 / 短横屏 / 宽触屏平板、原生 / 页面全屏、键盘与触屏操作、禁用 Text、
 切换选择和合成帧。只打开或关闭菜单不能改写调用时间、轨道、选择或视野，也不能提前
 请求延迟加载的 Text / Compare。滚动用例验证实际位置变化，不靠伪造滚动事件通过。
-布局用例还核对旧默认折叠偏好存在时首次仍展开、鼠标/键盘切换、跨导航/重载的状态记忆、
-原始证据可读性，以及模型、选择和时间范围不变。
+布局用例还核对混合和纯内核报告的字段顺序、旧折叠偏好或跨导航/重载不隐藏字段、
+参数原始字节的键盘折叠操作、trace 链接跳转、原始证据可读性，以及模型、选择和时间范围不变。
+CPU/符号索引为零、BTF 标量位宽和 `void` 原始返回位均有覆盖，不会被误当成空字段丢弃。
