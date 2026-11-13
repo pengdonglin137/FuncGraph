@@ -165,7 +165,7 @@ funcgraph --no-config kernel.txt --timeline --enable-fold --filter --output kern
 
 要解析内核参数名、位宽和源码，生成报告时再传匹配的 `--vmlinux`、`--kernel-src`、
 `--func-links --highlight-code`，以及固定的源码浏览器版本。用户源码始终通过
-`--user-src` 选择，不能套用内核链接。完整命令见 [README](../README.cn.md#仅用户态与混合模式)。
+`--user-src` 选择，不能套用内核链接。完整命令见 [README](../README.cn.md#源码与类型信息)。
 
 ## 默认行为
 
