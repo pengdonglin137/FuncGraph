@@ -231,6 +231,16 @@
             #content.text-layout-auto > .text-chunk.text-layout-reset {
                 content-visibility: hidden;
             }
+            #content.text-layout-measured > .text-chunk {
+                contain-intrinsic-inline-size: var(--fg-text-inline-size, 0px);
+            }
+            #content.text-layout-auto > .text-chunk.text-layout-measure {
+                content-visibility: visible;
+                width: max-content;
+            }
+            #content.text-layout-auto > .text-chunk.text-layout-measure > .expanded-content {
+                display: none !important;
+            }
             #content.text-layout-auto > .text-chunk:focus-within,
             #content.text-layout-auto > .text-chunk:has(> .line-container.keyboard-selected),
             #content.text-layout-auto > .text-chunk:has(> .expanded-content[style*="display: block"]) {

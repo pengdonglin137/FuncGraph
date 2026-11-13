@@ -288,6 +288,7 @@
         let fgTextLineRequest = null;
         let fgTextRequestedLine = null;
         let fgTextInitialized = false;
+        const fgTextLayoutPending = new Set();
         let fgFilterGeneration = 0;
         let fgFilterController = null;
         function fgTextDeferred() { return document.getElementById('content').hasAttribute('data-fg-text'); }
@@ -298,12 +299,38 @@
             try { getComputedStyle(resetting[resetting.length - 1]).getPropertyValue('content-visibility'); }
             finally { for (const chunk of resetting) chunk.classList.remove('text-layout-reset'); }
         }
+        function fgMeasureTextLayout(chunks) {
+            const root = document.getElementById('content');
+            if (!root?.classList.contains('text-layout-measured')) return;
+            for (const chunk of fgTextLayoutPending) if (chunk.parentElement !== root) fgTextLayoutPending.delete(chunk);
+            for (const chunk of chunks) if (chunk.classList.contains('text-chunk')) fgTextLayoutPending.add(chunk);
+            if (root.classList.contains('fg-off')) return;
+            const measuring = Array.from(fgTextLayoutPending);
+            if (!measuring.length) return;
+            fgTextLayoutPending.clear();
+            for (const chunk of measuring) chunk.classList.add('text-layout-measure');
+            try {
+                const widths = measuring.map(chunk => chunk.getBoundingClientRect().width);
+                measuring.forEach((chunk, index) => chunk.style.setProperty('--fg-text-inline-size', widths[index] + 'px'));
+            } finally {
+                for (const chunk of measuring) chunk.classList.remove('text-layout-measure');
+            }
+            fgResetTextLayout(measuring);
+        }
+        function fgPrepareTextLayout() {
+            if (fgTextLayoutPending.size) fgRefreshTextLayout(fgTextLayoutPending);
+        }
         function fgRefreshTextLayout(chunks = null) {
             const content = document.getElementById('content');
             if (!content?.classList.contains('text-layout-auto')) return;
+            const targets = chunks ? Array.from(chunks) : Array.from(content.children);
+            if (content.classList.contains('text-layout-measured') && content.classList.contains('fg-off')) {
+                fgMeasureTextLayout(targets);
+                return;
+            }
             const grouped = content.classList.contains('grouped');
             const resetting = [];
-            for (const chunk of chunks || content.children) {
+            for (const chunk of targets) {
                 if (!chunk.classList.contains('text-chunk')) continue;
                 const counts = { plain: 0, empty: 0, expandable: 0 };
                 for (const row of chunk.children) {
@@ -324,6 +351,7 @@
                 if (changed) resetting.push(chunk);
             }
             fgResetTextLayout(resetting);
+            fgMeasureTextLayout(targets);
         }
         function fgTextScrollBehavior(line, bounds = null) {
             if (!fgTextWindow && !document.getElementById('content').classList.contains('text-layout-auto')) return 'smooth';
@@ -3190,8 +3218,11 @@
             if (fgTextInitialized || fgTextDeferred()) return;
             const pendingNavigation = fgTextLineRequest !== null;
             const root = document.getElementById('content');
-            fgRefreshTextLayout();
             total_lines = renderer ? model.records.length : root.querySelectorAll('.line-container').length;
+            if (!mounted && !renderer && total_lines >= 4096 && window.CSS?.supports('content-visibility: auto') &&
+                CSS.supports('contain-intrinsic-block-size: calc(2 * (max(13px * 1.5 + 4px, 21px) + 2px))') &&
+                CSS.supports('selector(:has(*))')) root.classList.add('text-layout-auto', 'text-layout-measured');
+            fgRefreshTextLayout();
             if (renderer && (renderer.model !== model || renderer.navigation !== navigation || renderer.root !== root ||
                 model.version !== 4 || fgData.textChunks()?.count !== total_lines)) throw new Error('Incomplete Text window model');
             if (model) {
@@ -3203,7 +3234,8 @@
                 fgTextNavigation = navigation;
             }
             if (root.classList.contains('text-layout-auto'))
-                matchMedia('(max-width: 768px)').addEventListener('change', () => fgResetTextLayout(root.children));
+                matchMedia('(max-width: 768px)').addEventListener('change', () =>
+                    root.classList.contains('text-layout-measured') ? fgRefreshTextLayout() : fgResetTextLayout(root.children));
             fgTextInitialized = true;
             root.addEventListener('click', fgHandleTextInteraction);
             root.addEventListener('dblclick', fgHandleTextInteraction);

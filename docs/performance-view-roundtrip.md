@@ -81,11 +81,81 @@ selection exercises the same expensive browser path and is suspended as well.
 The original `write4.html` stays unchanged; `write4.source-hover.html` is the
 updated local preview. Both public samples receive the same runtime-only fix.
 
+## Repeated entry into large inline Text
+
+This is separate from the native-selection hover issue above. The existing
+38,938-row, approximately 63 MiB standalone report retains about 597,000 DOM
+elements. Entering Text does not parse its trace or rebuild its model again,
+but restoring the hidden full Text tree invalidates expensive browser paint
+work. In the serial headed Chrome profile, repeated entry takes roughly
+1.04–1.16 seconds to a double-animation-frame feedback proxy even though script
+execution accounts for only about 2 ms. The main Paint span alone takes about
+710–780 ms. Nested Paint event durations must not be summed as independent work.
+
+Previously, browser offscreen layout skipping applied only to the chunked
+sidecar mounting path. Complete inline reports now opt in at **4,096 Text rows**,
+including headers/comments, after the same capability checks. This also works
+without Timeline. Small inline reports, unsupported browsers and print keep
+their full native layout. The explicit windowed renderer is unchanged.
+
+Simply enabling the sidecar styles is not sufficient: the real report's
+unvisited long rows would shrink its horizontal extent from 2,435 to 2,099 CSS
+pixels. Inline mode therefore batches real, trace-only intrinsic width
+measurements for its existing 512-row paint blocks. Expanded source is excluded
+from that temporary measurement, but remains fully laid out while open.
+Filtering, folding, reordering and narrow/wide font changes refresh affected
+widths and remembered block sizes; warm view switches perform no such
+measurement. If Text is hidden, dirty blocks are queued until Text entry,
+before restoring selection and reading position. This avoids imposing full
+width measurement on a saved Timeline-first startup. No rows, raw arguments,
+source panels or analysis records are removed. There is no new network resource,
+worker, threshold for sidecar output, or promise of bounded DOM/model memory.
+
+Two alternating baseline/fixed pairs of fresh, serial headed Chrome 145 runs
+on that same report give the following local medians. Each browser makes three
+entries at the top and three after an actual source-row click at Text line 1,360:
+
+| Feedback proxy | Previous runtime | Inline block rendering |
+| --- | ---: | ---: |
+| First Text entry after Timeline startup | 3,751 ms | 2,136 ms |
+| Warm entry at the top | 1,086 ms | 37.8 ms |
+| Entry with source already expanded | 1,147 ms | 46.9 ms |
+
+All four runs have identical complete row/metadata, source-panel and Timeline
+SHA-256 digests in both phases, and identical reading positions. The complete
+Timeline JSON digest is
+`2c185313a114a2d02e576ffb13cf08e8b180003f19cd59359dc06b3fac714a80`.
+The updated local preview is `write4.text-entry.html`; the prior previews and
+original input are not overwritten. A separate 100-pointer-move profile after
+opening three source panels still has a maximum rAF interval of 16.8 ms.
+
+These are not universal speed guarantees. Saved-Timeline reload through ready
+is 1.32–1.38 s in the baseline pair and 1.50–1.66 s in the fixed pair, so this is
+not a claim that every startup metric improves. Complete eager DOM preparation
+and additional layout bookkeeping still exist. Width measurement itself stays
+deferred until Text is shown, and the first Text entry is not a warm-switch
+result. Never present the warm figures as cold loading or a DOM-memory bound.
+
+Reproduce feedback and full Text/source/Timeline digests outside timing windows:
+
+```sh
+xvfb-run -a python3 tests/benchmark_textentry.py /path/to/report.html \
+  --rounds 3 --source-line 1360 --headed --executable /usr/bin/google-chrome \
+  --output /tmp/text-entry.json
+```
+
+Choose an expandable original Text line for `--source-line`, or omit it to
+measure top-of-report entry only. Run comparisons serially, in fresh browsers,
+without tests, builds or screenshot generation in parallel. Double-rAF feedback
+is a proxy, not proof of actual frame presentation; initial measurement and
+later geometry refreshes still require full native layout and can be expensive.
+
 ## Regression coverage
 
 ```sh
 PYTHONPATH=.:tests python3 -m unittest \
-  test_timeline_hover test_textviewport test_textwindow test_detail_actions test_detail_expand \
+  test_text_layout test_textchunks test_timeline_hover test_textviewport \
+  test_textwindow test_detail_actions test_detail_expand \
   test_timeline_fullscreen test_timeline_resize test_detail_layout \
   test_detail_colors test_mixed_sample test_mixed_tree_guides test_report \
   test_timeline_names test_timeline_sources test_cpu_coverage test_sidecar \
@@ -113,7 +183,24 @@ scene rendering and full-screen focus are also covered by adjacent suites.
 These changes do not unload already prepared Text, remove source/argument
 information, force sidecar mode or replace the complete analysis model with a
 viewport subset. Default Text still initializes the full DOM; that initial
-work and its memory cost can remain substantial on large traces.
+work, inline width measurement and memory cost can remain substantial on large
+traces.
+
+The inline block-rendering suite checks the 4,095/4,096-row boundary, capability
+fallbacks and Text-only output. Full-layout comparisons cover long unvisited
+arguments, source open/close, filtering, sorting, task/time order, nested folds,
+responsive fonts, print and hidden-Text resizing. Cross-block native mouse
+selection, browser find, complete mixed user/kernel records, flags, call
+boundaries and source links remain available. Repeated warm view switches keep
+the same row/source nodes, complete Timeline JSON, selection and reading
+position, with no repeated width measurement.
+
+For this inline-rendering update, full unittest discovery runs **1,387 tests**
+with Chromium, raw decoding and a fresh build of the pinned uftrace plus its
+current patch series: 1,384 pass and three optional tests skip because no
+`FG_VMLINUX`/`FG_KERNEL_SRC` or `FG_TRACES` are configured. A separate Firefox
+159 check preserves both native selection ranges and their exact endpoints
+after source expansion and repeated view changes.
 
 The source-expansion regressions add real row clicks, repeated visible-tab
 returns and same-tab reselection across both delivery modes, themes and DPR

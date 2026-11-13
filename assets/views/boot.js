@@ -397,6 +397,7 @@
         }
         delete pausedSources[which];
         if (which === 'text') {
+            fgPrepareTextLayout();
             restoreTextSelection();
             if (pc.textViewport) pc.textViewport.scrollLeft = textScrollLeft;
             window.scrollTo(0, textScroll);

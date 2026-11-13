@@ -98,7 +98,9 @@ faddr2line 的查找顺序：`<kernel-src>/scripts/faddr2line`，然后 PATH，�
 
 trace 的每一行（包括注释行）对应一个 `div.line-container#L<行号>`。行上的 `data-*` 属性用来过滤：`cpu`、`pid`、`comm`、`func`、`params`、`duration`、`heat`、`irqs`、`resched`、`hirq`、`preempt`、`fold-id`、`fold-type`、`fold-ancestors`、`call-depth`。
 
-输出按 `TEXT_CHUNK_ROWS = 512` 条完整片段流式增加 `div.text-chunk[data-chunk-size]` 包装；片段中的原始行与相邻源码占位不拆开，不缓冲整块或整份 Text。所有行和源码仍保留，块不是请求或模型边界。支持 `overflow-clip-margin:6px` 才给块开启 `contain:paint` 和 `will-change:transform` 合成提示；后者不施加实际 transform，也不隔离每一行。浏览器自行决定哪些块实际合成，不承诺固定层数或内存上限。不启用 `content-visibility` 跳过块，以免改变选区、滚动和源码展开。`#content` 仍保留 fit-content 横向尺寸。
+输出按 `TEXT_CHUNK_ROWS = 512` 条完整片段流式增加 `div.text-chunk[data-chunk-size]` 包装；片段中的原始行与相邻源码占位不拆开，不缓冲整块或整份 Text。所有行和源码仍保留，块不是请求或模型边界。支持 `overflow-clip-margin:6px` 才给块开启 `contain:paint` 和 `will-change:transform` 合成提示；后者不施加实际 transform，也不隔离每一行。浏览器自行决定哪些块实际合成，不承诺固定层数或内存上限。新分块 sidecar 与达到 4,096 行的内嵌完整 Text，在能力检测通过后启用 `content-visibility:auto`；小型内嵌报告保留完整布局。打印、不支持的浏览器和显式 Windowed Text 不走内嵌优化路径。
+
+内嵌完整 Text 的 `text-layout-measured` 路径，在初始化及过滤/折叠/重排/窄宽字体变化时，先批量将受影响的块临时切到正常布局及 `max-content` 宽度，再统一读取块宽，写入 `--fg-text-inline-size`，最后恢复样式并清理已记忆的尺寸。测量忽略展开源码，以免关闭源码后残留过宽占位；已展开源码、键盘选中及聚焦块始终正常布局。Text 隐藏时只登记待测量块，返回 Text 后、恢复选区和阅读位置之前再处理，不把完整宽度测量提前到 Timeline 首开。测量不跨帧展示；无尺寸变更的热往返不测量、不卸载 DOM、不重建模型。`#content` 保留 fit-content 横向尺寸，屏外长行的真实宽度不会因跳过绘制而丢失。首次布局和状态变更时的测量仍有成本，不能据此宣称冷启动或所有操作都更快。选区、原生查找、打印及滚动位置的回归见 `test_text_layout`，往返实测见 `performance-view-roundtrip.md`。
 
 ### 4.2 源码块懒加载
 
