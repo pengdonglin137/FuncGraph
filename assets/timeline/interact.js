@@ -274,20 +274,25 @@ function loadCallSitePosition(index, source) {
     }).catch(error => {
         if (hoverSourceRequest !== request || error.name === 'AbortError' || hov !== index) return;
         elTip.insertAdjacentHTML('beforeend', '<div class="t-warn">Source not loaded: ' + esc(error.message) + '. Select the call to retry.</div>');
+        tipHtml = null;
     });
 }
+let tipHtml = null;
 function showTip(html, ev) {
-    elTip.innerHTML = html;
+    if (tipHtml !== html) {
+        elTip.innerHTML = html;
+        tipHtml = html;
+    }
     elTip.style.display = 'block';
     const r = elTip.getBoundingClientRect();
     let x = ev.clientX + 14, y = ev.clientY + 16;
     if (x + r.width > window.innerWidth - 6) x = ev.clientX - r.width - 14;
     if (y + r.height > window.innerHeight - 6) y = ev.clientY - r.height - 12;
-    elTip.style.left = Math.max(4, x) + 'px';
-    elTip.style.top = Math.max(4, y) + 'px';
+    elTip.style.transform = 'translate(' + Math.max(4, x) + 'px, ' + Math.max(4, y) + 'px)';
 }
 function hideTip() {
     elTip.style.display = 'none';
+    tipHtml = null;
     hoverSourceRequest?.controller.abort();
     hoverSourceRequest = null;
     hoverSourcePointer = null;

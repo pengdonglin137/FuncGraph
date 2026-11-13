@@ -1,9 +1,13 @@
 /* Shared by all non-text views (tabs, page chrome hiding). */
 .view-tabs {
     display: flex;
+    position: sticky;
+    top: 0;
+    z-index: 1001;
     gap: 2px;
     margin: 0 0 10px 0;
     border-bottom: 1px solid var(--border-color);
+    background: var(--container-bg);
 }
 .view-tab {
     appearance: none;

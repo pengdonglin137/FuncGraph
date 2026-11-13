@@ -615,7 +615,7 @@
         /* Controls: sticky bar at the top of the page (toolbar first, filter below) */
         .controls {
             position: sticky;
-            top: 0;
+            top: var(--view-tabs-h, 0px);
             z-index: 1000;
             display: flex;
             flex-direction: column-reverse;

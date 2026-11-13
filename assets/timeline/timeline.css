@@ -214,9 +214,13 @@ body.tl-max.tl-active { padding: 2px; }
 /* tooltip */
 .tl-tip {
     position: fixed;
+    top: 0;
+    left: 0;
     z-index: 3000;
     pointer-events: none;
-    max-width: 460px;
+    box-sizing: border-box;
+    width: max-content;
+    max-width: min(480px, calc(100vw - 8px));
     background: rgba(22, 25, 32, .96);
     color: #e9edf3;
     border-radius: 7px;

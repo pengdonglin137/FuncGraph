@@ -1,5 +1,10 @@
 # FuncGraph 使用指南
 
+Text / Timeline（以及启用时的 Compare）标签栏在正文滚动时固定在页面顶部，
+Text 工具栏位于其下方，无需回到页首即可切换视图。往返保留 Text 的纵向/横向阅读位置，
+以及 Timeline 的选择、时间范围和筛选；跳行仍会定位到目标记录。旧 HTML 需重新生成。
+切换与悬浮提示的实现、验证和性能边界见[视图往返说明](performance-view-roundtrip.md)。
+
 Text 跳行统一处理键盘、`#L<n>` 和 Timeline → Text 的定位请求。连续操作只采用最新
 目标，离开 Text 或按 Escape 会取消待完成定位，旧加载或延迟滚动不会把焦点拉回。
 默认 renderer 的已挂载行仍同步响应；默认 Text 的首次初始化仍为完整加载。

@@ -88,6 +88,155 @@ class TextViewportTest(unittest.TestCase):
                 })};
         }''')
 
+    def test_view_tabs_stay_above_text_controls_and_switch_without_losing_position(self):
+        for mode in ('single', 'sidecar'):
+            for width in (390, 1500):
+                for theme in ('light', 'dark'):
+                    with self.subTest(mode=mode, width=width, theme=theme):
+                        page = self.open_report(mode, width, theme)
+                        page.evaluate('''() => {
+                            document.getElementById('textViewport').scrollLeft = 550;
+                            scrollTo(0, 12000);
+                        }''')
+                        page.wait_for_function('() => scrollY >= 12000')
+                        position = self.facts(page)
+                        facts = page.evaluate('''() => {
+                            const tabs = document.querySelector('.view-tabs');
+                            const controls = document.querySelector('.controls');
+                            const bounds = tabs.getBoundingClientRect();
+                            const button = tabs.querySelector('[data-view=timeline]').getBoundingClientRect();
+                            return {top:bounds.top, bottom:bounds.bottom,
+                                controlTop:controls.getBoundingClientRect().top,
+                                reachable:document.elementFromPoint(button.x + button.width / 2,
+                                    button.y + button.height / 2)?.closest('.view-tab')?.dataset.view};
+                        }''')
+                        self.assertGreaterEqual(facts['top'], 0)
+                        self.assertAlmostEqual(facts['controlTop'], facts['bottom'], delta=1)
+                        self.assertEqual(facts['reachable'], 'timeline')
+                        page.locator('.view-tab[data-view=timeline]').click()
+                        page.wait_for_function("() => fgCurrentView() === 'timeline'")
+                        self.assertEqual(page.evaluate('scrollY'), 0)
+                        page.locator('.view-tab[data-view=text]').click()
+                        page.wait_for_function("() => fgCurrentView() === 'text'")
+                        restored = self.facts(page)
+                        self.assertEqual(restored['y'], position['y'])
+                        self.assertEqual(restored['left'], position['left'])
+
+    def test_tab_height_changes_keep_controls_and_anchor_targets_clear(self):
+        for mode in ('single', 'sidecar'):
+            with self.subTest(mode=mode):
+                page = self.open_report(mode, width=1500)
+                page.locator('.view-tab').first.evaluate('node => node.style.paddingBlock = "20px"')
+                page.evaluate('''() => {
+                    history.replaceState(null, '', '#L4101');
+                    handleAnchorNavigation();
+                }''')
+                page.wait_for_function('''() => {
+                    const tabs = document.querySelector('.view-tabs').getBoundingClientRect();
+                    const controls = document.querySelector('.controls').getBoundingClientRect();
+                    const row = document.getElementById('L4101').getBoundingClientRect();
+                    return tabs.top >= 0 && Math.abs(controls.top - tabs.bottom) <= 1 &&
+                        row.top >= controls.bottom && row.bottom <= innerHeight;
+                }''')
+                page.set_viewport_size({'width': 390, 'height': 844})
+                page.wait_for_function('''() => {
+                    const tabs = document.querySelector('.view-tabs').getBoundingClientRect();
+                    const controls = document.querySelector('.controls').getBoundingClientRect();
+                    return tabs.top >= 0 && Math.abs(controls.top - tabs.bottom) <= 1;
+                }''')
+                self.assertLessEqual(page.evaluate('document.documentElement.scrollWidth'), 390)
+
+    def test_trace_line_roundtrips_keep_hover_work_bounded_and_all_data_intact(self):
+        for mode in ('single', 'sidecar'):
+            for theme in ('light', 'dark'):
+                with self.subTest(mode=mode, theme=theme):
+                    page = self.open_report(mode, width=1500, theme=theme)
+                    page.set_default_timeout(10000)
+                    page.evaluate('''async () => {
+                        await fgSwitchView('timeline');
+                        const model = fgView('timeline').probe();
+                        model.select(3500);
+                        model.zoomTo(model.sStart[0], model.sEnd[0], 3500);
+                        window.roundtripSnapshot = () => ({data:JSON.stringify(fgData.read('tlData')),
+                            selected:model.sel(), view:model.view(), rows:fgTextNavigation.order.slice(),
+                            original:document.getElementById('content').textContent});
+                        window.originalRoundtrip = roundtripSnapshot();
+                        window.hiddenTextMeasurements = 0;
+                        const bounds = Element.prototype.getBoundingClientRect;
+                        Element.prototype.getBoundingClientRect = function(...args) {
+                            if (fgCurrentView() !== 'text' && document.getElementById('content').contains(this)) {
+                                hiddenTextMeasurements++;
+                            }
+                            return bounds.apply(this, args);
+                        };
+                        window.hoverRoundtrip = () => {
+                            const canvas = document.querySelector('.tl-canvas');
+                            const [center, vertical] = model.xyOf(0);
+                            const move = offset => canvas.dispatchEvent(new MouseEvent('mousemove',
+                                {bubbles:true, clientX:center + offset, clientY:vertical}));
+                            move(0);
+                            const tip = document.querySelector('.tl-tip');
+                            const node = tip.firstElementChild;
+                            const text = tip.textContent;
+                            const first = tip.getBoundingClientRect().toJSON();
+                            for (let offset = 1; offset <= 12; offset++) move(offset);
+                            return {sameNode:node === tip.firstElementChild, sameText:text === tip.textContent,
+                                first, last:tip.getBoundingClientRect().toJSON(),
+                                hiddenMeasurements:hiddenTextMeasurements};
+                        };
+                        await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+                    }''')
+                    session = page.context.new_cdp_session(page)
+                    session.send('Performance.enable')
+                    for iteration in range(4):
+                        before = {metric['name']: metric['value'] for metric in
+                                  session.send('Performance.getMetrics')['metrics']}
+                        result = page.evaluate('hoverRoundtrip()')
+                        after = {metric['name']: metric['value'] for metric in
+                                 session.send('Performance.getMetrics')['metrics']}
+                        self.assertTrue(result['sameNode'])
+                        self.assertTrue(result['sameText'])
+                        self.assertEqual(result['hiddenMeasurements'], 0)
+                        self.assertAlmostEqual(abs(result['last']['x'] - result['first']['x']), 12, delta=1)
+                        self.assertLessEqual(after['LayoutCount'] - before['LayoutCount'], 2)
+                        self.assertEqual(page.locator('.tl-tip .t-name').inner_text(), 'root')
+                        self.assertTrue(page.evaluate('JSON.stringify(roundtripSnapshot()) === JSON.stringify(originalRoundtrip)'))
+                        if iteration == 3:
+                            break
+                        page.locator('.tl-detail a[data-line]').last.click()
+                        page.wait_for_function("() => fgCurrentView() === 'text' && scrollY > 5000")
+                        tab = page.locator('.view-tab[data-view=timeline]').bounding_box()
+                        self.assertGreaterEqual(tab['y'], 0)
+                        self.assertLess(tab['y'] + tab['height'], 844)
+                        page.locator('.view-tab[data-view=timeline]').click()
+                        page.wait_for_function("() => fgCurrentView() === 'timeline'")
+                        page.evaluate('() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))')
+
+    def test_tooltips_fit_the_viewport_and_update_on_different_hover_targets(self):
+        for mode in ('single', 'sidecar'):
+            for width in (320, 1500):
+                with self.subTest(mode=mode, width=width):
+                    page = self.open_report(mode, width=width, touch=False)
+                    page.evaluate('''async () => {
+                        await fgSwitchView('timeline');
+                        const model = fgView('timeline').probe();
+                        model.select(0); model.zoomTo(model.sStart[0], model.sEnd[0], 0);
+                    }''')
+                    for index in (0, 1):
+                        result = page.evaluate('''index => {
+                            const model = fgView('timeline').probe();
+                            model.select(index); model.zoomTo(model.sStart[index], model.sEnd[index], index);
+                            const canvas = document.querySelector('.tl-canvas');
+                            const [center, vertical] = model.xyOf(index);
+                            canvas.dispatchEvent(new MouseEvent('mousemove',
+                                {bubbles:true, clientX:center, clientY:vertical}));
+                            return {expected:model.nameOf(index), bounds:document.querySelector('.tl-tip').getBoundingClientRect().toJSON()};
+                        }''', index)
+                        self.assertEqual(page.locator('.tl-tip .t-name').inner_text(), result['expected'])
+                        self.assertGreaterEqual(result['bounds']['left'], 0)
+                        self.assertLessEqual(result['bounds']['right'], width)
+                        self.assertGreaterEqual(result['bounds']['top'], 0)
+
     def test_compact_symbols_preserve_pixels_character_styles_and_native_selection(self):
         for mode in ['single', 'sidecar']:
             for width in [390, 1500]:

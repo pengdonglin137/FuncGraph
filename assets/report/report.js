@@ -179,8 +179,7 @@
             parent.replaceChild(marker, container);
             try { fgReorder(container, mode); } finally { parent.replaceChild(container, marker); }
             fgRefreshTextLayout();
-            const ctl = document.querySelector('.controls');
-            if (ctl) document.documentElement.style.setProperty('--ctl-h', ctl.offsetHeight + 'px');
+            fgUpdateTextControlHeight();
             updateExpandableLines();
         }
         function fgReorder(container, mode, orderedBlocks) {
@@ -412,6 +411,7 @@
             function drawGuideScope() {
                 guideFrame = null;
                 if (guideLayer) guideLayer.getContext('2d').clearRect(0, 0, guideLayer.width, guideLayer.height);
+                if (typeof fgCurrentView === 'function' && fgCurrentView() !== 'text') return;
                 const guideMeasure = content.querySelector('.call-indent');
                 if (!guideMeasure || !guideStyle || guideStyle.sheet.disabled) return;
                 const contentRect = content.getBoundingClientRect();
@@ -747,6 +747,17 @@
                 lsSet('filterBoxVisible', String(open));
             }
         }
+        function fgUpdateTextControlHeight() {
+            const controls = document.querySelector('.controls');
+            if (!controls) return;
+            const height = controls.offsetHeight;
+            if (!height) return;
+            const tabsHeight = document.querySelector('.view-tabs')?.getBoundingClientRect().height || 0;
+            const tabsValue = tabsHeight + 'px';
+            if (controls.style.getPropertyValue('--view-tabs-h') !== tabsValue) controls.style.setProperty('--view-tabs-h', tabsValue);
+            const inset = height + tabsHeight + 'px';
+            if (document.documentElement.style.getPropertyValue('--ctl-h') !== inset) document.documentElement.style.setProperty('--ctl-h', inset);
+        }
         function fgInitTextControls() {
             const controls = document.querySelector('.controls');
             const filter = document.getElementById('filterBox');
@@ -760,9 +771,6 @@
                     filter.style.display = 'flex';
                     filterButton.setAttribute('aria-expanded', 'true');
                 }
-            }
-            function updateHeight() {
-                if (controls.offsetHeight) document.documentElement.style.setProperty('--ctl-h', controls.offsetHeight + 'px');
             }
             fgTextCompactMedia.addEventListener('change', sync);
             document.addEventListener('pointerdown', event => {
@@ -780,8 +788,13 @@
                 } else fgSetTextControlPanel('', true);
             }, true);
             sync();
-            updateHeight();
-            if (window.ResizeObserver) new ResizeObserver(updateHeight).observe(controls);
+            fgUpdateTextControlHeight();
+            if (window.ResizeObserver) {
+                const observer = new ResizeObserver(fgUpdateTextControlHeight);
+                observer.observe(controls);
+                const tabs = document.querySelector('.view-tabs');
+                if (tabs) observer.observe(tabs);
+            }
         }
 
         // ====== Unified Filter Expression Parser ======

@@ -448,6 +448,7 @@ class BrowserSmokeTest(unittest.TestCase):
         self.page.set_viewport_size(dict(width=390, height=640))
         for theme in ['light', 'dark']:
             with self.subTest(theme=theme):
+                self.page.reload(wait_until='load')
                 facts = self.ev('''theme => {
                     document.documentElement.setAttribute('data-theme', theme);
                     window.scrollTo(0, 0);

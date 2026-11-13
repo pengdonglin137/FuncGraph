@@ -1,5 +1,12 @@
 # FuncGraph User Guide
 
+The Text / Timeline tabs (and Compare when enabled) stay at the top while
+scrolling, with Text controls directly below them. Switching views retains
+Text's vertical/horizontal reading position and Timeline's selection, time
+range and filter; trace-line links still navigate to the requested record.
+Regenerate older HTML reports to receive these changes.
+See [view round-trip behavior and performance limits](performance-view-roundtrip.md).
+
 Text keyboard navigation, `#L<n>` anchors and Timeline → Text jumps now share a
 latest-request-wins path. Leaving Text or pressing Escape cancels a pending jump;
 late loads and delayed scrolling cannot pull focus back. Mounted rows still

@@ -622,7 +622,7 @@
         /* Controls: sticky bar at the top of the page (toolbar first, filter below) */
         .controls {
             position: sticky;
-            top: 0;
+            top: var(--view-tabs-h, 0px);
             z-index: 1000;
             display: flex;
             flex-direction: column-reverse;
@@ -1392,9 +1392,13 @@
 /* Shared by all non-text views (tabs, page chrome hiding). */
 .view-tabs {
     display: flex;
+    position: sticky;
+    top: 0;
+    z-index: 1001;
     gap: 2px;
     margin: 0 0 10px 0;
     border-bottom: 1px solid var(--border-color);
+    background: var(--container-bg);
 }
 .view-tab {
     appearance: none;
@@ -1683,9 +1687,13 @@ body.tl-max.tl-active { padding: 2px; }
 /* tooltip */
 .tl-tip {
     position: fixed;
+    top: 0;
+    left: 0;
     z-index: 3000;
     pointer-events: none;
-    max-width: 460px;
+    box-sizing: border-box;
+    width: max-content;
+    max-width: min(480px, calc(100vw - 8px));
     background: rgba(22, 25, 32, .96);
     color: #e9edf3;
     border-radius: 7px;
@@ -3630,8 +3638,7 @@ document.documentElement.setAttribute('data-theme', currentTheme);
             parent.replaceChild(marker, container);
             try { fgReorder(container, mode); } finally { parent.replaceChild(container, marker); }
             fgRefreshTextLayout();
-            const ctl = document.querySelector('.controls');
-            if (ctl) document.documentElement.style.setProperty('--ctl-h', ctl.offsetHeight + 'px');
+            fgUpdateTextControlHeight();
             updateExpandableLines();
         }
         function fgReorder(container, mode, orderedBlocks) {
@@ -3863,6 +3870,7 @@ document.documentElement.setAttribute('data-theme', currentTheme);
             function drawGuideScope() {
                 guideFrame = null;
                 if (guideLayer) guideLayer.getContext('2d').clearRect(0, 0, guideLayer.width, guideLayer.height);
+                if (typeof fgCurrentView === 'function' && fgCurrentView() !== 'text') return;
                 const guideMeasure = content.querySelector('.call-indent');
                 if (!guideMeasure || !guideStyle || guideStyle.sheet.disabled) return;
                 const contentRect = content.getBoundingClientRect();
@@ -4198,6 +4206,17 @@ document.documentElement.setAttribute('data-theme', currentTheme);
                 lsSet('filterBoxVisible', String(open));
             }
         }
+        function fgUpdateTextControlHeight() {
+            const controls = document.querySelector('.controls');
+            if (!controls) return;
+            const height = controls.offsetHeight;
+            if (!height) return;
+            const tabsHeight = document.querySelector('.view-tabs')?.getBoundingClientRect().height || 0;
+            const tabsValue = tabsHeight + 'px';
+            if (controls.style.getPropertyValue('--view-tabs-h') !== tabsValue) controls.style.setProperty('--view-tabs-h', tabsValue);
+            const inset = height + tabsHeight + 'px';
+            if (document.documentElement.style.getPropertyValue('--ctl-h') !== inset) document.documentElement.style.setProperty('--ctl-h', inset);
+        }
         function fgInitTextControls() {
             const controls = document.querySelector('.controls');
             const filter = document.getElementById('filterBox');
@@ -4211,9 +4230,6 @@ document.documentElement.setAttribute('data-theme', currentTheme);
                     filter.style.display = 'flex';
                     filterButton.setAttribute('aria-expanded', 'true');
                 }
-            }
-            function updateHeight() {
-                if (controls.offsetHeight) document.documentElement.style.setProperty('--ctl-h', controls.offsetHeight + 'px');
             }
             fgTextCompactMedia.addEventListener('change', sync);
             document.addEventListener('pointerdown', event => {
@@ -4231,8 +4247,13 @@ document.documentElement.setAttribute('data-theme', currentTheme);
                 } else fgSetTextControlPanel('', true);
             }, true);
             sync();
-            updateHeight();
-            if (window.ResizeObserver) new ResizeObserver(updateHeight).observe(controls);
+            fgUpdateTextControlHeight();
+            if (window.ResizeObserver) {
+                const observer = new ResizeObserver(fgUpdateTextControlHeight);
+                observer.observe(controls);
+                const tabs = document.querySelector('.view-tabs');
+                if (tabs) observer.observe(tabs);
+            }
         }
 
         // ====== Unified Filter Expression Parser ======
@@ -9399,20 +9420,25 @@ function loadCallSitePosition(index, source) {
     }).catch(error => {
         if (hoverSourceRequest !== request || error.name === 'AbortError' || hov !== index) return;
         elTip.insertAdjacentHTML('beforeend', '<div class="t-warn">Source not loaded: ' + esc(error.message) + '. Select the call to retry.</div>');
+        tipHtml = null;
     });
 }
+let tipHtml = null;
 function showTip(html, ev) {
-    elTip.innerHTML = html;
+    if (tipHtml !== html) {
+        elTip.innerHTML = html;
+        tipHtml = html;
+    }
     elTip.style.display = 'block';
     const r = elTip.getBoundingClientRect();
     let x = ev.clientX + 14, y = ev.clientY + 16;
     if (x + r.width > window.innerWidth - 6) x = ev.clientX - r.width - 14;
     if (y + r.height > window.innerHeight - 6) y = ev.clientY - r.height - 12;
-    elTip.style.left = Math.max(4, x) + 'px';
-    elTip.style.top = Math.max(4, y) + 'px';
+    elTip.style.transform = 'translate(' + Math.max(4, x) + 'px, ' + Math.max(4, y) + 'px)';
 }
 function hideTip() {
     elTip.style.display = 'none';
+    tipHtml = null;
     hoverSourceRequest?.controller.abort();
     hoverSourceRequest = null;
     hoverSourcePointer = null;
