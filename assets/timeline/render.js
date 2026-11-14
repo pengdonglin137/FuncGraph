@@ -4,6 +4,7 @@ const ctx = elCv.getContext('2d'), hctx = elHead.getContext('2d');
 const FONT = '11px ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace';
 const FONT_B = '600 11.5px system-ui, -apple-system, "Segoe UI", sans-serif';
 const FONT_S = '11px system-ui, -apple-system, "Segoe UI", sans-serif';
+const FONT_INLINE = '500 9px ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace';
 let charW = null;
 const CTX_HUE = [214, 152, 30, 282];
 
@@ -12,6 +13,7 @@ function palette() {
     P = dark ? {
         bg: '#1f2126', hdr: '#272a31', hdrText: '#e6e9ef', sub: '#8d95a3', grid: 'rgba(255,255,255,.05)',
         text: '#f3f5f8', textDim: '#c9ced6', sel: '#ffffff', hov: 'rgba(255,255,255,.7)',
+        inlineFill: 'rgba(150,165,185,.14)', inlineHover: 'rgba(150,165,185,.25)', inlineEdge: 'rgba(170,185,205,.5)', inlineTag: '#a6b2c4',
         off: 'rgba(150,158,170,.16)', offLine: 'rgba(170,178,190,.55)', offPre: 'rgba(245,158,11,.20)',
         ovBar: '#4f7fd9', ovWin: 'rgba(255,255,255,.10)', ovMask: 'rgba(0,0,0,.35)', axis: '#a7afbc',
         range: 'rgba(80,140,255,.16)', rangeLine: '#6ea0ff', cursor: 'rgba(255,255,255,.35)', selBand: 'rgba(110,160,255,.07)', selLine: 'rgba(130,175,255,.8)', selTag: '#3b6fd8',
@@ -20,6 +22,7 @@ function palette() {
     } : {
         bg: '#ffffff', hdr: '#f3f5f8', hdrText: '#1d2433', sub: '#7a8494', grid: 'rgba(0,0,0,.045)',
         text: '#16202e', textDim: '#3b4555', sel: '#111827', hov: 'rgba(17,24,39,.55)',
+        inlineFill: 'rgba(110,120,140,.10)', inlineHover: 'rgba(110,120,140,.18)', inlineEdge: 'rgba(90,105,125,.5)', inlineTag: '#647184',
         off: 'rgba(120,128,140,.10)', offLine: 'rgba(110,118,130,.55)', offPre: 'rgba(245,158,11,.16)',
         ovBar: '#3b6fd8', ovWin: 'rgba(59,111,216,.10)', ovMask: 'rgba(255,255,255,.55)', axis: '#5b6573',
         range: 'rgba(59,111,216,.12)', rangeLine: '#3b6fd8', cursor: 'rgba(0,0,0,.30)', selBand: 'rgba(59,111,216,.05)', selLine: 'rgba(59,111,216,.75)', selTag: '#3b6fd8',
@@ -134,6 +137,7 @@ function baseColor(i) {
 }
 function sliceStyle(i) {
     // returns [fill, textColor, borderColor|null]
+    if (i >= N && !isGhost(i)) return [i === hov ? P.inlineHover : P.inlineFill, P.textDim, P.inlineEdge];
     if (i >= N) return [dark ? 'rgba(120,130,150,.22)' : 'rgba(110,120,140,.13)', P.textDim, dark ? 'rgba(170,180,200,.7)' : 'rgba(90,100,120,.6)'];
     if (ov.err && eRole[i] >= 0 && (showMinor || eChain[i] < 0 || !CHAINS[eChain[i]][6])) {
         const handled = eFate[i] === 0;
@@ -743,6 +747,7 @@ function drawSlice(i, x0, x1, y, h, labels) {
     const st = sliceStyle(i);
     const dim = isDim(i);
     const f = sFlags[i];
+    const inlineFrame = i >= N && !isGhost(i);
     if (dim) ctx.globalAlpha = 0.18;
     ctx.fillStyle = st[0];
     ctx.fillRect(cx0, y, ww, h);
@@ -755,8 +760,16 @@ function drawSlice(i, x0, x1, y, h, labels) {
         const p = preemptOff(f);   // above the tracer's own level
         if (p) { ctx.fillStyle = dark ? 'rgba(255,255,255,' + (0.1 + 0.08 * p) + ')' : 'rgba(0,0,0,' + (0.08 + 0.07 * p) + ')'; ctx.fillRect(cx0, y + h - 3, ww, 3); }
     }
-    if (i >= N) {
-        // inline frame: dashed outline; the dashed ends say "extent known only from the traced calls inside"
+    if (inlineFrame) {
+        const leftVisible = x0 >= 0 && x0 < W, rightVisible = x1 > 0 && x1 <= W;
+        if (w > 3 && h > 4 && (leftVisible || rightVisible)) {
+            ctx.strokeStyle = st[2]; ctx.lineWidth = 1; ctx.setLineDash([2, 3]);
+            ctx.beginPath();
+            if (leftVisible) { const edge = Math.round(x0) + 0.5; ctx.moveTo(edge, y + 2); ctx.lineTo(edge, y + h - 2); }
+            if (rightVisible) { const edge = Math.round(x1) - 1.5; ctx.moveTo(edge, y + 2); ctx.lineTo(edge, y + h - 2); }
+            ctx.stroke(); ctx.setLineDash([]);
+        }
+    } else if (i >= N) {
         ctx.strokeStyle = st[2]; ctx.lineWidth = 1; ctx.setLineDash([3, 3]);
         ctx.strokeRect(cx0 + 0.5, y + 0.5, ww - 1, h - 1);
         ctx.setLineDash([]);
@@ -781,14 +794,20 @@ function drawSlice(i, x0, x1, y, h, labels) {
     }
     if (labels && w > 26) {
         const nm = sliceLabel(i);
-        let txt = i >= N ? (isGhost(i) ? (nm === '?' ? 'untraced frame' : 'untraced ' + nm) : 'inline ' + nm) : nm;
+        let txt = i >= N && isGhost(i) ? (nm === '?' ? 'untraced frame' : 'untraced ' + nm) : nm;
         if (ov.err && eRole[i] === 0 && (showMinor || !CHAINS[eChain[i]][6])) { const en = errName(eErr[i]); txt += ' = ' + (en || eErr[i]); }
-        const maxc = Math.floor((w - 8) / charW);
+        const labelInset = inlineFrame && w - 8 >= 24 + 6 * charW ? 24 : 0;
+        ctx.textBaseline = 'middle';
+        if (labelInset) {
+            ctx.font = FONT_INLINE; ctx.fillStyle = P.inlineTag;
+            ctx.fillText('inl', Math.max(cx0, 0) + 4, y + h / 2 + 0.5);
+            ctx.font = FONT;
+        }
+        const maxc = Math.floor((w - 8 - labelInset) / charW);
         if (maxc >= 3) {
             if (txt.length > maxc) txt = txt.slice(0, maxc - 1) + '…';
             ctx.fillStyle = st[1];
-            ctx.textBaseline = 'middle';
-            ctx.fillText(txt, Math.max(cx0, 0) + 4, y + h / 2 + 0.5);
+            ctx.fillText(txt, Math.max(cx0, 0) + 4 + labelInset, y + h / 2 + 0.5);
         }
     }
     ctx.globalAlpha = 1;

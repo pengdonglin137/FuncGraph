@@ -5651,6 +5651,85 @@ class BrowserSmokeTest(unittest.TestCase):
         self.assertEqual(self.ev("getComputedStyle(document.querySelector('[data-act=inl]')).display"), 'none')
         self.assertEqual(self.page.locator('.tl-options [data-act=inl]').count(), 0)
 
+    def test_inline_canvas_tag_and_neutral_style_preserve_recorded_data(self):
+        self.ev('''() => {
+            window.inlineLabels = [];
+            const original = CanvasRenderingContext2D.prototype.fillText;
+            CanvasRenderingContext2D.prototype.fillText = function(text, ...parameters) {
+                if (this.canvas.matches('.tl-canvas')) inlineLabels.push({text, font:this.font});
+                return original.call(this, text, ...parameters);
+            };
+        }''')
+        self.open_range_data(['outer', 'child'], starts=[0, 1000], durations=[10000, 6000], parents=[-1, 0],
+                             callers=[None, 'outer+0x1/0x20'],
+                             columns={'depth': [0, 1], 'module': [0, 0], 'cpu': [0, 0]},
+                             extra={'inline': {'2': [['outer', 'outer.c', 10], ['helper_inline', 'inline.h', 20]]}})
+        original = self.ev('JSON.stringify(fgData.read("tlData"))')
+        self.ev('''() => {
+            const model = fgView('timeline').probe();
+            model.inline(true);
+            window.inlineIndex = Array.from({length:model.NA - model.N}, (_, offset) => model.N + offset)
+                .find(index => !model.isGhost(index) && model.nameOf(index) === 'helper_inline');
+            model.zoomTo(0, 10000, 0);
+        }''')
+        self.assertTrue(self.ev('Number.isInteger(inlineIndex)'))
+        self.page.wait_for_function('inlineLabels.some(label => label.text === "inl")')
+        labels = self.ev('inlineLabels')
+        self.assertTrue(any(label['text'] == 'inl' and '9px' in label['font'] for label in labels))
+        self.assertTrue(any(label['text'] == 'helper_inline' and '11px' in label['font'] for label in labels))
+        self.assertFalse(any(label['text'].startswith('inline ') for label in labels))
+        for theme, mode in product(('light', 'dark'), ('ctx', 'name', 'cpu', 'module', 'total', 'heat')):
+            with self.subTest(theme=theme, mode=mode):
+                self.ev('theme => document.documentElement.setAttribute("data-theme", theme)', theme)
+                helpers.open_timeline_tools(self.page)
+                self.page.locator('[data-role=color]').select_option(mode)
+                self.page.locator('[data-act=options]').click()
+                self.assertTrue(self.ev('fgView("timeline").probe().styleOf(inlineIndex)[0].startsWith("rgba(")'))
+                self.assertEqual(self.ev('JSON.stringify(fgData.read("tlData"))'), original)
+
+    def test_inline_hover_click_and_filter_keep_exact_extent_and_identity(self):
+        self.open_range_data(['outer', 'child'], starts=[0, 1000], durations=[10000, 6000], parents=[-1, 0],
+                             callers=[None, 'outer+0x1/0x20'], columns={'depth': [0, 1]},
+                             extra={'inline': {'2': [['outer', 'outer.c', 10], ['helper_inline', 'inline.h', 20]]}})
+        self.ev('''() => {
+            const model = fgView('timeline').probe();
+            model.inline(true);
+            window.inlineIndex = Array.from({length:model.NA - model.N}, (_, offset) => model.N + offset)
+                .find(index => !model.isGhost(index) && model.nameOf(index) === 'helper_inline');
+            model.zoomTo(0, 10000, 0);
+        }''')
+        self.assertTrue(self.ev('Number.isInteger(inlineIndex)'))
+        original = self.ev('''() => {
+            const model = fgView('timeline').probe();
+            return {start:model.sStart[inlineIndex], end:model.sEnd[inlineIndex],
+                parent:model.sParent[inlineIndex], depth:model.sDepth[inlineIndex],
+                raw:JSON.stringify(fgData.read('tlData'))};
+        }''')
+        for theme in ('light', 'dark'):
+            with self.subTest(theme=theme):
+                self.ev('theme => document.documentElement.setAttribute("data-theme", theme)', theme)
+                self.page.mouse.move(0, 0)
+                self.page.wait_for_timeout(60)
+                fill = self.ev('fgView("timeline").probe().styleOf(inlineIndex)[0]')
+                point = self.ev('fgView("timeline").probe().xyOf(inlineIndex)')
+                self.page.mouse.move(*point)
+                self.page.locator('.tl-tip').wait_for(state='visible')
+                self.assertIn('helper_inline', self.page.locator('.tl-tip').inner_text())
+                self.assertIn('traced extent', self.page.locator('.tl-tip').inner_text())
+                self.assertNotEqual(self.ev('fgView("timeline").probe().styleOf(inlineIndex)[0]'), fill)
+                self.page.mouse.click(*point)
+                self.assertEqual(self.ev('fgView("timeline").probe().sel()'), self.ev('inlineIndex'))
+                self.assertIn('traced extent', self.page.locator('.tl-detail').inner_text())
+                self.ev("fgNotifyFilter('child only', new Set([2]))")
+                self.assertEqual(self.ev('fgView("timeline").probe().sel()'), self.ev('inlineIndex'))
+                self.assertEqual(self.ev('''() => {
+                    const model = fgView('timeline').probe();
+                    return {start:model.sStart[inlineIndex], end:model.sEnd[inlineIndex],
+                        parent:model.sParent[inlineIndex], depth:model.sDepth[inlineIndex],
+                        raw:JSON.stringify(fgData.read('tlData'))};
+                }'''), original)
+                self.ev("fgNotifyFilter('', null)")
+
     def test_inline_toggle_is_next_to_fit_without_opening_tools(self):
         self.open_range_data(['outer', 'child'], starts=[0, 100], durations=[10000, 1000], parents=[-1, 0],
                              columns={'depth': [0, 1], 'adj': None},
