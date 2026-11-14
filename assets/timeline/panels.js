@@ -1539,8 +1539,8 @@ if (!D.resched.length && !D.caps.latency) tlRoot.querySelector('[data-ov=rs]').c
 if (!D.offcpu.length) tlRoot.querySelector('[data-ov=off]').classList.add('na');
 if (!sDurAdj) tlRoot.querySelector('[data-act=adj]').style.display = 'none';
 if (!HAS_INL) tlRoot.querySelector('[data-act=inl]').style.display = 'none';
-if (!sDurAdj && !HAS_INL) tlRoot.querySelector('[aria-label="Timeline display"]').style.display = 'none';
-else if (typeof lsGet === 'function' && lsGet('tlInline') === '1') toggleInlineView(true);
+if (!sDurAdj) tlRoot.querySelector('[aria-label="Timeline display"]').style.display = 'none';
+if (HAS_INL && typeof lsGet === 'function' && lsGet('tlInline') === '1') toggleInlineView(true);
 const noteCount = elNotes.children.length;
 if (noteCount) elNotesButton.textContent = 'Notes ' + noteCount;
 else elNotesButton.hidden = true;

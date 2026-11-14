@@ -5649,6 +5649,70 @@ class BrowserSmokeTest(unittest.TestCase):
     def test_inline_toggle_hidden_without_data(self):
         self.open_timeline()      # fake faddr2line has no inline chains
         self.assertEqual(self.ev("getComputedStyle(document.querySelector('[data-act=inl]')).display"), 'none')
+        self.assertEqual(self.page.locator('.tl-options [data-act=inl]').count(), 0)
+
+    def test_inline_toggle_is_next_to_fit_without_opening_tools(self):
+        self.open_range_data(['outer', 'child'], starts=[0, 100], durations=[10000, 1000], parents=[-1, 0],
+                             columns={'depth': [0, 1], 'adj': None},
+                             extra={'inline': {'1': [['inlined', 'inline.h', 20], ['outer', 'outer.c', 10]]}})
+        button = self.page.locator('[data-act=inl]')
+        self.assertEqual(button.count(), 1)
+        self.assertTrue(button.is_visible())
+        self.assertEqual(button.inner_text(), 'Inline: hidden')
+        self.assertEqual(self.page.locator('.tl-options [data-act=inl]').count(), 0)
+        self.assertTrue(button.evaluate('''node => node.parentElement.classList.contains('tl-quick') &&
+            node.previousElementSibling.lastElementChild.dataset.act === 'fit' '''))
+        fit = self.page.locator('[data-act=fit]').bounding_box()
+        bounds = button.bounding_box()
+        self.assertAlmostEqual(bounds['y'], fit['y'])
+        self.assertGreaterEqual(bounds['x'], fit['x'] + fit['width'])
+        self.assertFalse(self.page.get_by_role('group', name='Timeline display', exact=True).is_visible())
+        original = self.page.locator('#tlData').text_content()
+        button.press('Space')
+        self.assertEqual(button.inner_text(), 'Inline: shown')
+        self.assertTrue(button.evaluate("node => node.classList.contains('on')"))
+        self.page.locator('.tl-canvas').focus()
+        self.page.keyboard.press('i')
+        self.assertEqual(button.inner_text(), 'Inline: hidden')
+        button.press('Enter')
+        self.assertEqual(button.inner_text(), 'Inline: shown')
+        self.assertEqual(self.ev("lsGet('tlInline')"), '1')
+        self.assertEqual(self.page.locator('#tlData').text_content(), original)
+        self.assertEqual(self.page.locator('[data-act=options]').get_attribute('aria-expanded'), 'false')
+
+    def test_inline_toggle_stays_reachable_in_compact_and_fullscreen_layouts(self):
+        self.page.close()
+        self.page = self.browser.new_page(viewport={'width': 390, 'height': 844}, is_mobile=True, has_touch=True)
+        self.page.on('pageerror', lambda error: self.errors.append(str(error)))
+        self.page.on('console', lambda message: self.errors.append(message.text) if message.type == 'error' else None)
+        self.page.goto(self.url, wait_until='load')
+        self.ev('localStorage.clear()')
+        self.open_range_data(['outer', 'child'], starts=[0, 100], durations=[10000, 1000], parents=[-1, 0],
+                             columns={'depth': [0, 1]},
+                             extra={'inline': {'1': [['inlined', 'inline.h', 20], ['outer', 'outer.c', 10]]}})
+        self.ev('Element.prototype.requestFullscreen = undefined')
+        for theme, size, fullscreen in product(('light', 'dark'), ((390, 844), (320, 700), (844, 390)), (False, True)):
+            with self.subTest(theme=theme, size=size, fullscreen=fullscreen):
+                self.page.set_viewport_size(dict(zip(('width', 'height'), size)))
+                self.page.wait_for_function('document.getElementById("timelineView").classList.contains("tl-compact")')
+                self.ev('theme => document.documentElement.setAttribute("data-theme", theme)', theme)
+                if self.ev('document.getElementById("timelineView").classList.contains("tl-fullscreen")') != fullscreen:
+                    self.page.locator('[data-act=max]').click()
+                self.page.wait_for_function('''fullscreen =>
+                    document.getElementById('timelineView').classList.contains('tl-fullscreen') === fullscreen &&
+                    !document.querySelector('[data-act=max]').disabled''', arg=fullscreen)
+                for selector in ('[data-act=fit]', '[data-act=inl]', '[data-act=options]'):
+                    bounds = self.page.locator(selector).bounding_box()
+                    self.assertIsNotNone(bounds)
+                    self.assertGreaterEqual(bounds['height'], 44)
+                    self.assertGreaterEqual(bounds['x'], 0)
+                    self.assertLessEqual(bounds['x'] + bounds['width'], size[0])
+                button = self.page.locator('[data-act=inl]')
+                button.click()
+                self.assertEqual(button.inner_text(), 'Inline: shown')
+                button.click()
+                self.assertEqual(button.inner_text(), 'Inline: hidden')
+                self.assertEqual(self.page.locator('[data-act=options]').get_attribute('aria-expanded'), 'false')
 
     def test_text_order_by_task(self):
         self.page.click('#textOrderBtn')

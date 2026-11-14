@@ -644,8 +644,8 @@ Text 的焦点与滚动分开处理：初始化、恢复选中或其他明确要
 
 从上到下依次是：
 
-1. **主工具栏**：函数 Search 与匹配导航、缩放 / **Fit trace**（显示整份 trace）、**Notes**、**Full screen**（全屏，快捷键 `M`）。全屏按钮始终可见，不藏进菜单；手机上与 Search 并排，缩放、Fit trace、Notes 和 **Tools** 位于下一行。
-2. **视图与分析工具**：Color、Overlay、错误导航、Tracks（展开或收起轨道）、Tasks（7.7 节）、Go to…（6.10 节）、Overhead、Inline、Errors、**Critical sections**（临界区）、**Scheduling latency**（调度延迟），以及与 Text 共用的 **Filter**（6.6 节）。桌面和手机均把这些工具收进 **Tools ▾** 分组下拉菜单，不再把按钮平铺在画布上方。打开菜单不挤压画布；点击空白处或按 Escape 关闭，Tab 可导航其中的控件。导航、显示和分析按钮分别分组。帮助统一使用页头 **?**，全屏时在工具栏显示替代入口。
+1. **主工具栏**：函数 Search 与匹配导航、缩放 / **Fit trace**（显示整份 trace）、紧随其后的 **Inline: hidden / shown**（内联帧，快捷键 `I`）、**Notes**、**Full screen**（全屏，快捷键 `M`）。没有内联信息时隐藏 Inline 按钮。全屏按钮始终可见，不藏进菜单；手机上与 Search 并排，缩放、Fit trace、Inline、Notes 和 **Tools** 位于下方并按宽度换行。
+2. **视图与分析工具**：Color、Overlay、错误导航、Tracks（展开或收起轨道）、Tasks（7.7 节）、Go to…（6.10 节）、Overhead、Errors、**Critical sections**（临界区）、**Scheduling latency**（调度延迟），以及与 Text 共用的 **Filter**（6.6 节）。桌面和手机均把这些工具收进 **Tools ▾** 分组下拉菜单，不再把按钮平铺在画布上方。打开菜单不挤压画布；点击空白处或按 Escape 关闭，Tab 可导航其中的控件。导航、显示和分析按钮分别分组。帮助统一使用页头 **?**，全屏时在工具栏显示替代入口。
 3. **提示条**：说明这份 trace 缺少哪些信息、有什么限制，例如"No timestamps…""Arguments are not printed…"。蓝色是提示，黄色是需要注意的问题。
 4. **概览条**：整份 trace 的缩略图。蓝色柱子表示各时刻的繁忙程度，红色竖线是错误源头（高的表示传到了用户态，矮的橙色表示被调用者处理掉了），蓝框是当前看到的范围。点击或拖动可以跳转，在上面滚动滚轮可以缩放。
 5. **时间刻度**：右侧显示当前范围的跨度（`span`）和起始的绝对时间（`start`）。框选范围后会显示 `selected`，鼠标所在位置的时间显示在光标旁。

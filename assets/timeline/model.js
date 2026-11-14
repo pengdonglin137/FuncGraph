@@ -708,6 +708,7 @@ tlRoot.innerHTML = `
       <button class="tl-btn tl-touch-zoom" data-act="zoomin" aria-label="Zoom timeline in">+</button>
       <button class="tl-btn" data-act="fit" title="Show the whole trace (0)">Fit trace</button>
     </span>
+    <button class="tl-btn" data-act="inl" title="Show inlined functions as frames between the traced calls (I)">Inline: hidden</button>
     <button class="tl-btn" data-act="notes" title="Show / hide the notes about this trace" aria-pressed="false">Notes</button>
     <button class="tl-btn tl-more" data-act="options" title="Filters, colors, overlays and analysis tools" aria-haspopup="dialog" aria-expanded="false" aria-controls="tlOptions">Tools<span class="tl-more-filter" hidden> · Filter on</span></button>
   </span>
@@ -786,7 +787,6 @@ tlRoot.innerHTML = `
   <span class="tl-group" role="group" aria-label="Timeline display">
     <span class="tl-label tl-menu-heading">Display</span>
     <button class="tl-btn" data-act="adj" title="Subtract the estimated tracing overhead from durations (O)">Overhead: measured</button>
-    <button class="tl-btn" data-act="inl" title="Show inlined functions as frames between the traced calls (I)">Inline: hidden</button>
   </span>
   <span class="tl-group tl-menu-wide" role="group" aria-label="Timeline analysis">
     <span class="tl-label tl-menu-heading">Analyze</span>
