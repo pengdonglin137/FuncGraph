@@ -22,13 +22,13 @@
 **默认顺序：准备 → 本地验证 → push master → CI / Pages 验收 → push tag → Release 验收 → 留档。**
 任一关失败都先停止，不把“已触发”“部分 job 通过”或“网页刷新了”视为发布完成。
 
-## 最近完成的发布：v0.9.3
+## 最近完成的发布：v0.9.4
 
-`v0.9.3` 已于 2026 年 11 月 13 日发布，包含统一采集入口、大型 Text 渲染与导航优化、
-Timeline 修复和中英文文档重设计，详见 [版本说明](releases/v0.9.3.md)。
+`v0.9.4` 已于 2026 年 11 月 14 日发布，包含保存分析现场、精确过滤草稿、内联展示优化、
+详情标题统一和 BTF 编译器克隆参数安全解析，详见 [版本说明](releases/v0.9.4.md)。
 发布 job 会将匹配的 `docs/releases/vTAG.md` 写入 Release 正文，再附 GitHub 生成的说明。
 升版本身不会发布；仍须按下方清单核对实际标签、工作流与附件，不把源码版本当成发布成功。
-已发布的 `v0.9.3`、`v0.9.2` 标签与更早的验收记录均保留为历史，不能重新使用。
+已发布的 `v0.9.4`、`v0.9.3`、`v0.9.2` 标签与更早的验收记录均保留为历史，不能重新使用。
 
 ## 1. 先区分 push、标签和 Release
 
@@ -77,11 +77,11 @@ git log -5 --oneline
 
 ### 选择版本并更新版本号
 
-以下以 **`0.9.4` 为下一次发布的示例**，并不表示已经升级或发布该版本。
-每次都应先检查是否已使用；`v0.9.3` 已经发布，不能重新创建或移动到新提交。
+以下以 **`0.9.5` 为下一次发布的示例**，并不表示已经升级或发布该版本。
+每次都应先检查是否已使用；`v0.9.4` 已经发布，不能重新创建或移动到新提交。
 
 ```bash
-next_version=0.9.4
+next_version=0.9.5
 release_tag="v${next_version}"
 git tag --list "$release_tag"
 git ls-remote --tags origin "refs/tags/$release_tag" "refs/tags/$release_tag^{}"
@@ -373,6 +373,40 @@ Release 运行 ID / head_sha / 全部 job 与 publish 结果：
 Pages 部署提交、七文件比较和哈希结果：
 未覆盖项、失败及重试原因（若有）：
 ```
+
+### 已验证：v0.9.4
+
+| 项目 | 已验证结果 |
+| --- | --- |
+| 发布时间 | 2026-11-14 06:41:47 UTC；[正式 Release](https://github.com/pengdonglin137/FuncGraph/releases/tag/v0.9.4) |
+| 发布提交 | `e05e9280f1f072c1cbe1fd6689f295def7acce3e` |
+| Annotated tag 对象 | `v0.9.4` → `a886cf2c4e0ae214e60776c72bfa533fa51d29db`，解析到上述发布提交 |
+| CI / Pages | [运行 43563486436](https://github.com/pengdonglin137/FuncGraph/actions/runs/43563486436)，发布提交的 8 个 job 全部成功，包含 Pages 部署 |
+| Release | [运行 43565377158](https://github.com/pengdonglin137/FuncGraph/actions/runs/43565377158)，同一发布提交的 9 个 job 全部成功，包含 publish |
+| 本地回归 | `python3 -m unittest discover -s tests -p 'test_*.py' -v`：1,479 项，2 项可选环境检查跳过，其余通过；raw、uftrace 和 Chromium 依赖均要求可用；另设置 `FG_SAMPLE_VMLINUX` 和 `FG_TRACES` 验证真实样例 |
+| 跳过与补测 | 标准全量运行未设置 `FG_VMLINUX` / `FG_KERNEL_SRC`，跳过真实内核 BTF / 固定地址 faddr2line 对照；另外单独通过真实镜像 BTF、编译器 clone 检查，以及当前镜像三处有效地址与内核 `scripts/faddr2line` 的对照 |
+| 包构建与安装 | universal wheel、sdist、x86_64 native wheel 的构建和 Twine 检查通过；三种包分别在仓库外新环境安装 base / `[all]` 并跑 14 项冒烟测试；可选依赖和未内置 uftrace 的跳过符合包类型，native `[all]` + raw + uftrace 零跳过 |
+| 发布附件 | 六个附件全部下载，均与 GitHub 展示的 SHA-256 一致；`SHA256SUMS` 的五项全部匹配；两架构 manifest、ELF 架构、许可证、上游 pin 均核对通过；两份 wheel 内对应源码均与独立源码附件逐字节一致，并核对其内容与本地构建源码一致 |
+| 正式包试装 | 实际下载的 x86_64 wheel，仓库外新虚拟环境、`[all]`、`--with-extras --with-raw --with-uftrace`：14 项全部通过、零跳过；ARM64 安装 / 采集验证由对应 runner 完成 |
+| 样例完整性 | 内核样例 485 个调用；混合样例 714 个调用（25 user / 689 kernel）；刷新前后除构建时间外的完整模型一致，保留时间、层级、flags、参数、raw 信息、符号与源码数据 |
+| Pages | 推标签前七文件与该发布提交逐字节一致；SHA-256 见下表。之后留档文档提交不改变已发布标签或这些站点文件 |
+| 诊断与重试 | 最初启用可选真实镜像对照时，测试中三处固定地址范围不适用当前镜像，也不适用旧镜像；未修改断言或把原固定地址测试记为通过，改用当前镜像有效地址另行对照。GitHub API 共享额度耗尽和临时连接超时后等待恢复；未绕过发布门禁或移动标签 |
+| 验收时状态 | 正式 latest 为 `v0.9.4`，标签仍指向上述发布提交；后续仅补交验收记录，不再升版本、不重发，不向 PyPI 上传 |
+
+<details>
+<summary>v0.9.4 线上 Pages 文件 SHA-256</summary>
+
+| 文件 | SHA-256 |
+| --- | --- |
+| `.nojekyll` | `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855` |
+| `index.html` | `edb6e80e8cf486491db9dc7bb731b9eee0f4390131566926a5c13e164e87d539` |
+| `sample.html` | `5dcc0877d0b0984f65111d4ce7016b320c810ef0f97401b91912327529b1a3e4` |
+| `sample.png` | `651e8d70dea8fc0fe0759ec530b015e07f8c8dd471d233c38d80ba7a8fd6dd5a` |
+| `sample_mixed.html` | `8d88a43fe53b359719248683685cf402eb03e0d4a299f1677fe9fcc32b46318f` |
+| `sample_mixed.png` | `589bae242db5c3f5967e77c4a668ad51a3b93efc7a6025560b217118e45c196d` |
+| `sample_text.png` | `9a7c15ea6fbbed5d8960af7ea7cb156379b90cf7a0ba4c75ddbaa037478b8b73` |
+
+</details>
 
 ### 已验证：v0.9.3
 

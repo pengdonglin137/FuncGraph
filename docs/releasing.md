@@ -39,21 +39,21 @@ workflow must finish successfully.
 Push the tag with your normal authenticated Git connection, not another
 workflow's default `GITHUB_TOKEN`, which does not trigger new workflow runs.
 
-## Most recently completed release: v0.9.3
+## Most recently completed release: v0.9.4
 
-`v0.9.3` was published on November 13, 2026: unified capture, large-Text
-rendering and navigation improvements, Timeline fixes and redesigned bilingual
-documentation are listed in [the release notes](releases/v0.9.3.md). The
+`v0.9.4` was published on November 14, 2026: saved analysis views, staged exact
+filters, inline-frame presentation, consistent detail titles and safe BTF
+compiler-clone arguments are listed in [the release notes](releases/v0.9.4.md). The
 publish job includes a matching `docs/releases/vTAG.md` file in the Release body
 when present, followed by generated GitHub notes. A version change alone does
 not publish anything: verify the actual tag, workflow and attachments below.
-Keep the published `v0.9.3`, `v0.9.2` tags and earlier verification records as history; do not reuse them.
+Keep the published `v0.9.4`, `v0.9.3`, `v0.9.2` tags and earlier verification records as history; do not reuse them.
 
 ## Release checklist
 
 Run commands from the repository root in the same Bash session. **Stop if any
-command fails.** `0.9.4` below is an example for a future release, not an upgrade
-or publication of that version. Always check availability; published tags such as `v0.9.3` must not be moved or overwritten.
+command fails.** `0.9.5` below is an example for a future release, not an upgrade
+or publication of that version. Always check availability; published tags such as `v0.9.4` must not be moved or overwritten.
 
 ### 1. Prepare the release commit
 
@@ -81,7 +81,7 @@ git log -5 --oneline
 Choose an unused version; the following future-version example must not be copied blindly:
 
 ```bash
-next_version=0.9.4
+next_version=0.9.5
 release_tag="v${next_version}"
 git tag --list "$release_tag"
 git ls-remote --tags origin "refs/tags/$release_tag" "refs/tags/$release_tag^{}"
@@ -403,6 +403,40 @@ Downloaded-package isolated install: architecture, extras, raw, uftrace, tests:
 Pages deployment commit, seven-file comparisons and hashes:
 Uncovered cases, failures and retry reasons, if any:
 ```
+
+### Verified: v0.9.4
+
+| Item | Verified result |
+| --- | --- |
+| Publication | November 14, 2026, 06:41:47 UTC; [formal Release](https://github.com/pengdonglin137/FuncGraph/releases/tag/v0.9.4) |
+| Release commit | `e05e9280f1f072c1cbe1fd6689f295def7acce3e` |
+| Annotated tag object | `v0.9.4` → `a886cf2c4e0ae214e60776c72bfa533fa51d29db`, resolving to that release commit |
+| CI / Pages | [Run 43563486436](https://github.com/pengdonglin137/FuncGraph/actions/runs/43563486436); all 8 jobs for the release commit succeeded, including Pages deployment |
+| Release | [Run 43565377158](https://github.com/pengdonglin137/FuncGraph/actions/runs/43565377158); all 9 jobs for the same release commit succeeded, including publish |
+| Local regression | `python3 -m unittest discover -s tests -p 'test_*.py' -v`: 1,479 tests, 2 optional-environment skips, all others passed; raw, uftrace and Chromium dependencies were required; `FG_SAMPLE_VMLINUX` and `FG_TRACES` enabled real-sample checks |
+| Skips and separate checks | The standard full run omitted `FG_VMLINUX` / `FG_KERNEL_SRC`, skipping real-kernel BTF / fixed-address faddr2line comparisons; separate real-image BTF, compiler-clone checks and three valid current-image addresses compared against kernel `scripts/faddr2line` all passed |
+| Package builds and installs | Universal wheel, sdist and x86_64 native wheel built and passed Twine; each was installed base / `[all]` into fresh environments outside the checkout and ran 14 smoke tests; optional-dependency / unbundled-uftrace skips matched each package type; native `[all]` + raw + uftrace had no skips |
+| Attachments | All six downloaded and matched GitHub's SHA-256 digests; all five `SHA256SUMS` entries matched; both native manifests, ELF architectures, licenses and upstream pins verified; both wheels' corresponding-source archives matched the standalone attachment byte-for-byte, with contents also verified against the local source build |
+| Published-package install | Downloaded x86_64 wheel, fresh environment outside checkout, `[all]`, `--with-extras --with-raw --with-uftrace`: all 14 tests passed without skips; ARM64 installation / recording validated on its runner |
+| Sample integrity | Kernel sample: 485 calls; mixed sample: 714 calls (25 user / 689 kernel); complete before/after models matched except build time, preserving timings, hierarchy, flags, arguments, raw evidence, symbols and source data |
+| Pages | All seven files matched the release commit byte-for-byte before tagging; SHA-256 values follow. Later acceptance-documentation commits do not change the published tag or these site files |
+| Diagnostics and retries | Three fixed address ranges in the optional real-image comparison did not fit either the current or older image; assertions were not changed and those original fixed-address tests are not claimed to pass; valid current-image addresses were compared separately. Waited out the shared GitHub API quota and temporary connection timeouts without bypassing gates or moving tags |
+| State at acceptance | Stable latest was `v0.9.4`, still pointing at the release commit; the later acceptance record is documentation-only, without another version, republishing or a PyPI upload |
+
+<details>
+<summary>v0.9.4 deployed Pages SHA-256</summary>
+
+| File | SHA-256 |
+| --- | --- |
+| `.nojekyll` | `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855` |
+| `index.html` | `edb6e80e8cf486491db9dc7bb731b9eee0f4390131566926a5c13e164e87d539` |
+| `sample.html` | `5dcc0877d0b0984f65111d4ce7016b320c810ef0f97401b91912327529b1a3e4` |
+| `sample.png` | `651e8d70dea8fc0fe0759ec530b015e07f8c8dd471d233c38d80ba7a8fd6dd5a` |
+| `sample_mixed.html` | `8d88a43fe53b359719248683685cf402eb03e0d4a299f1677fe9fcc32b46318f` |
+| `sample_mixed.png` | `589bae242db5c3f5967e77c4a668ad51a3b93efc7a6025560b217118e45c196d` |
+| `sample_text.png` | `9a7c15ea6fbbed5d8960af7ea7cb156379b90cf7a0ba4c75ddbaa037478b8b73` |
+
+</details>
 
 ### Verified: v0.9.3
 

@@ -66,7 +66,7 @@ tests/run.sh --golden                # afterwards: byte-for-byte comparison on r
 
 ## Releasing
 
-- Follow **docs/releasing.cn.md** (Chinese) or **docs/releasing.md** (English) for every release: complete the required gates, then add the verified outcome using the record template; v0.9.3 is the current worked example.
+- Follow **docs/releasing.cn.md** (Chinese) or **docs/releasing.md** (English) for every release: complete the required gates, then add the verified outcome using the record template; v0.9.4 is the current worked example.
 - Push `master` first; wait for that exact SHA's full CI and Pages success and compare all seven deployed files before pushing an annotated version tag for the same SHA. Then wait for the independent Release workflow, verify all six downloaded attachments and isolated installed-package tests, and record results. Do not use a combined branch/tag push to bypass these gates.
 - `fglib/constants.py:APP_VERSION` is the single version source. A pushed tag must exactly equal `v` + `APP_VERSION`; `release.yml` publishes wheel, sdist, and `SHA256SUMS` to GitHub Releases, not PyPI.
 - A branch push is not a release request: do not create a version tag unless a release is requested. Only `master` pushes trigger branch CI; feature branches need a PR or manual CI run.
