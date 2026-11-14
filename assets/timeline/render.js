@@ -761,13 +761,10 @@ function drawSlice(i, x0, x1, y, h, labels) {
         if (p) { ctx.fillStyle = dark ? 'rgba(255,255,255,' + (0.1 + 0.08 * p) + ')' : 'rgba(0,0,0,' + (0.08 + 0.07 * p) + ')'; ctx.fillRect(cx0, y + h - 3, ww, 3); }
     }
     if (inlineFrame) {
-        const leftVisible = x0 >= 0 && x0 < W, rightVisible = x1 > 0 && x1 <= W;
-        if (w > 3 && h > 4 && (leftVisible || rightVisible)) {
-            ctx.strokeStyle = st[2]; ctx.lineWidth = 1; ctx.setLineDash([2, 3]);
-            ctx.beginPath();
-            if (leftVisible) { const edge = Math.round(x0) + 0.5; ctx.moveTo(edge, y + 2); ctx.lineTo(edge, y + h - 2); }
-            if (rightVisible) { const edge = Math.round(x1) - 1.5; ctx.moveTo(edge, y + 2); ctx.lineTo(edge, y + h - 2); }
-            ctx.stroke(); ctx.setLineDash([]);
+        if (w > 3 && h > 4) {
+            ctx.strokeStyle = st[2]; ctx.lineWidth = 1; ctx.setLineDash([3, 3]);
+            ctx.strokeRect(cx0 + 0.5, y + 0.5, ww - 1, h - 1);
+            ctx.setLineDash([]);
         }
     } else if (i >= N) {
         ctx.strokeStyle = st[2]; ctx.lineWidth = 1; ctx.setLineDash([3, 3]);

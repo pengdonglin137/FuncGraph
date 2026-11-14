@@ -808,7 +808,7 @@ Other visuals:
 - **Dimmed**: slices excluded by search or filter are drawn at 18% opacity.
 - **Dense blocks**: slices narrower than 1.5 CSS px share a pixel at this zoom. Every member contributes to matching: a pixel stays bright if **any one frame** matches both the function search and shared filter; an unmatched neighboring pixel stays dim. Color uses the first matching representative, or the first frame if none match, and neighboring pixels with the same dim state can merge for drawing. Hover reports the **frame count**, matching count and representative; click chooses the first matching frame (otherwise the first). This is a task/depth pixel group, not a new runtime call or a sum of measured time; synthetic frames are counted as frames, not traced calls. A wide call actually under the cursor wins over nearby thin frames. Zoom in or use recorded navigation to inspect individual calls. Zero-duration calls starting at the view's left boundary are included.
 - **Selected**: thick dark outline. **Hovered**: thin outline. As in Perfetto, the selected slice's start and end are marked with two blue lines over all tracks (light blue in between); the time ruler shows the same span as a blue bracket with its duration, and the overview strip shows where it is. These marks are hidden while a range is selected.
-- **Inline frames** (Inline view): a soft neutral fill with short dashed end caps. A small `inl` tag precedes the function name when space permits; narrow slices prioritize the name. Hover slightly strengthens the fill, and selection uses the same outline as recorded calls. See 6.8.
+- **Inline frames** (Inline view): a soft neutral fill with a thin dashed outline. A small `inl` tag precedes the function name when space permits; narrow slices prioritize the name. Hover slightly strengthens the fill, and selection uses the same outline as recorded calls. See 6.8.
 - **Untraced frames** (always shown): translucent grey with a dashed outline, labeled `untraced name`. The kernel's call depth sometimes jumps by two or more levels, e.g. on arm64 `unwind_find_stack` appears two levels below `__might_sleep` (no entry was recorded for `arch_stack_walk` in between), and so do the interrupt entry calls `irq_enter_rcu` and `do_interrupt_handler` (the untraceable `el1_interrupt`). That used to leave an empty row. These calls now belong to the enclosing slice (its self time no longer includes them) and the missing level is drawn as an untraced frame named after the calls' return address (their caller); further missing levels are shown as `untraced frame` (name unknown). Its extent is the first to the last call inside; the real start and end are unknown. Tooltip and detail panel say so, and call stacks list these frames (marked `untraced`).
 
 ![tl_dense](img/tl_dense.png)
@@ -963,7 +963,7 @@ With an overhead estimate (the header written by `fgcapture.sh --calibrate`, or 
 
 ![tl_inline](img/tl_inline.png)
 
-*Inline view: a soft fill, small `inl` tag and dashed end caps distinguish inlined functions (`__do_sys_sendto`, ...); the tooltip explains where their extent comes from. Untraced frames retain their full dashed outline and `untraced` label.*
+*Inline view: a soft fill, small `inl` tag and thin dashed outline distinguish inlined functions (`__do_sys_sendto`, ...); the tooltip explains where their extent comes from. Untraced frames retain their full dashed outline and `untraced` label.*
 
 With `--vmlinux` and `funcgraph-retaddr` the tool knows whether a call site is inside inlined code. **Inline** (`I`) switches between two views and is remembered:
 
@@ -972,7 +972,7 @@ With `--vmlinux` and `funcgraph-retaddr` the tool knows whether a call site is i
 
 An inline frame **starts and ends** with the first and the last traced call inside it. Inlined code has no entry or return events, so the real start may be earlier and the real end later; tooltip and details say so.
 
-The dashed end caps indicate this extent limitation; endpoints outside the visible window are not redrawn at the viewport edges. Function names keep the same font as recorded calls, with a subdued `inl` tag omitted when space is tight; hover and details retain the complete inline identity. The fill stays neutral rather than coloring an inferred extent as a measured duration. This styling does not change hierarchy, extent, filtering or hit testing.
+The thin dashed outline indicates this extent limitation; it is clipped with the slice rather than adding borders at viewport edges. Function names keep the same font as recorded calls, with a subdued `inl` tag omitted when space is tight; hover and details retain the complete inline identity. The fill stays neutral rather than coloring an inferred extent as a measured duration. This styling does not change hierarchy, extent, filtering or hit testing.
 
 Tooltip and detail panel of an inline frame:
 

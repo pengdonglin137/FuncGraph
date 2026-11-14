@@ -91,30 +91,32 @@ class InlineSliceDrawingTest(unittest.TestCase):
             assert.notEqual(fills[0], fills[1]);
         ''')
 
-    def test_inline_has_only_vertical_dashed_end_caps(self):
+    def test_inline_has_a_thin_complete_dashed_outline(self):
         self.check_drawing('''
             const painted = paint();
-            assert.equal(painted.filter(operation => operation.kind === 'outline').length, 0);
-            const caps = painted.filter(operation => operation.kind === 'path');
-            assert.equal(caps.length, 1);
-            assert.deepEqual(caps[0].dash, [2, 3]);
-            assert.equal(caps[0].width, 1);
-            assert.deepEqual(caps[0].path, [
-                {kind:'move', point:[20.5, 22]}, {kind:'line', point:[20.5, 34]},
-                {kind:'move', point:[218.5, 22]}, {kind:'line', point:[218.5, 34]}
-            ]);
+            const outlines = painted.filter(operation => operation.kind === 'outline');
+            assert.equal(outlines.length, 1);
+            assert.deepEqual(outlines[0].dash, [3, 3]);
+            assert.equal(outlines[0].width, 1);
+            assert.equal(outlines[0].color, P.inlineEdge);
+            assert.deepEqual(outlines[0].bounds, [20.5, 20.5, 198, 15]);
+            assert.equal(painted.filter(operation => operation.kind === 'path').length, 0);
             assert.deepEqual(ctx.dash, []);
         ''')
 
-    def test_clipping_never_invents_endpoints_at_viewport_edges(self):
+    def test_clipped_outlines_stay_bounded_without_adding_viewport_edges(self):
         self.check_drawing('''
-            for (const [left, right, expected] of [[-50, 220, 218.5], [20, 350, 20.5]]) {
-                const caps = paint(2, left, right).find(operation => operation.kind === 'path');
-                assert.equal(caps.path.length, 2);
-                assert.equal(caps.path[0].point[0], expected);
-                assert.equal(caps.path[1].point[0], expected);
+            for (const [left, right] of [[-50, 220], [20, 350], [-50, 350], [-1e12, 1e12]]) {
+                const outline = paint(2, left, right).find(operation => operation.kind === 'outline');
+                const [start, top, width, height] = outline.bounds;
+                assert.deepEqual(outline.dash, [3, 3]);
+                assert.equal(top, 20.5);
+                assert.equal(height, 15);
+                assert.ok(width > 0 && width <= W + 4);
+                if (left < 0) assert.ok(start + outline.width / 2 < 0);
+                if (right > W) assert.ok(start + width - outline.width / 2 >= W);
+                assert.deepEqual(ctx.dash, []);
             }
-            assert.equal(paint(2, -50, 350).filter(operation => operation.kind === 'path').length, 0);
         ''')
 
     def test_small_tag_restores_font_and_narrow_slices_prioritize_function_names(self):
@@ -164,12 +166,14 @@ class InlineSliceDrawingTest(unittest.TestCase):
             hov = 2;
             let painted = paint();
             assert.equal(painted[0].color, P.inlineHover);
-            assert.equal(painted.find(operation => operation.kind === 'outline').color, P.hov);
+            assert.equal(painted.filter(operation => operation.kind === 'outline').length, 2);
+            assert.equal(painted.find(operation => operation.kind === 'outline' && !operation.dash.length).color, P.hov);
             sel = 2;
             dimmed = true;
             painted = paint();
             assert.equal(painted[0].alpha, 0.18);
-            const selection = painted.find(operation => operation.kind === 'outline');
+            assert.equal(painted.find(operation => operation.kind === 'outline' && operation.dash.length).alpha, 0.18);
+            const selection = painted.find(operation => operation.kind === 'outline' && !operation.dash.length);
             assert.equal(selection.color, P.sel);
             assert.equal(selection.width, 2);
             assert.equal(selection.alpha, 1);
