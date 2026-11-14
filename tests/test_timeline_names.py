@@ -1,6 +1,7 @@
-"""Readable slice labels retain original symbol identity and detailed evidence."""
+"""Readable slice labels and detail titles retain exact symbol identities."""
 
 from pathlib import Path
+import csv
 import json
 import shutil
 import subprocess
@@ -29,6 +30,7 @@ class SliceLabelTest(unittest.TestCase):
             const names = pairs.map(pair => pair[0]);
             function nameOf(index) { return names[index]; }
             pairs.forEach(([raw, expected], index) => {
+                assert.equal(symbolLabel(raw), expected, raw);
                 assert.equal(sliceLabel(index), expected, raw);
                 assert.equal(nameOf(index), raw);
                 assert.equal(sliceLabel(index), expected);
@@ -99,7 +101,7 @@ class SliceLabelBrowserTest(unittest.TestCase):
             raise unittest.SkipTest(str(error))
         cls.addClassCleanup(cls.browser.close)
 
-    def open_report(self, mode='single', theme='light'):
+    def open_report(self, mode='single', theme='light', configuration=None):
         context = self.browser.new_context(viewport={'width': 1440, 'height': 900})
         self.addCleanup(context.close)
         context.add_init_script('''
@@ -116,10 +118,15 @@ class SliceLabelBrowserTest(unittest.TestCase):
         page.on('pageerror', lambda error: errors.append(str(error)))
         self.addCleanup(lambda: self.assertEqual(errors, []))
         page.goto(Path(self.kernel.dir, 'single.html').as_uri() if mode == 'single' else self.server.url)
-        page.evaluate('''async theme => {
+        page.evaluate('''async ({theme, configuration}) => {
             document.documentElement.setAttribute('data-theme', theme);
+            if (configuration) {
+                const data = await fgData.load('tlData');
+                Object.assign(data.cols, configuration.columns || {});
+                Object.assign(data, configuration.extra || {});
+            }
             await fgSwitchView('timeline');
-        }''', theme)
+        }''', dict(theme=theme, configuration=configuration))
         page.locator('.tl-canvas').wait_for()
         return page
 
@@ -134,7 +141,7 @@ class SliceLabelBrowserTest(unittest.TestCase):
                     self.assertNotIn('work.constprop.1', labels)
                     self.assertNotIn('work.constprop.2', labels)
 
-    def test_tooltip_detail_search_and_raw_data_keep_distinct_original_symbols(self):
+    def test_readable_titles_keep_tooltip_search_and_original_symbols_distinct(self):
         for mode in ['single', 'sidecar']:
             with self.subTest(mode=mode):
                 page = self.open_report(mode)
@@ -147,7 +154,7 @@ class SliceLabelBrowserTest(unittest.TestCase):
                 page.mouse.move(*page.evaluate('fgView("timeline").probe().xyOf(0)'))
                 self.assertEqual(page.locator('.tl-tip .t-name').inner_text(), names[0])
                 page.evaluate('fgView("timeline").probe().select(1)')
-                self.assertEqual(page.locator('.tl-detail-title').inner_text(), names[1])
+                self.assertEqual(page.locator('.tl-detail-title').inner_text(), 'work')
                 self.assertEqual(page.locator('.tl-detail-title').get_attribute('title'), names[1])
                 self.assertIn(names[0], page.locator('.tl-context-row').all_inner_texts()[0])
                 for index in [2, 1]:
@@ -155,5 +162,86 @@ class SliceLabelBrowserTest(unittest.TestCase):
                     page.locator('.tl-search').press('Enter')
                     page.wait_for_function('() => document.querySelector(".tl-count").getAttribute("aria-busy") === "false"')
                     self.assertEqual(page.evaluate('fgView("timeline").probe().sel()'), index)
-                    self.assertEqual(page.locator('.tl-detail-title').inner_text(), names[index])
+                    self.assertEqual(page.locator('.tl-detail-title').inner_text(), 'work')
+                    self.assertEqual(page.locator('.tl-detail-title').get_attribute('title'), names[index])
                 self.assertEqual(page.evaluate('JSON.stringify(fgData.read("tlData"))'), original)
+
+    def test_distribution_titles_do_not_merge_compiler_variants(self):
+        for mode in ('single', 'sidecar'):
+            for theme in ('light', 'dark'):
+                with self.subTest(mode=mode, theme=theme):
+                    page = self.open_report(mode, theme)
+                    original = page.evaluate('JSON.stringify(fgData.read("tlData"))')
+                    for index in (1, 2):
+                        page.evaluate('index => { const model = fgView("timeline").probe(); model.dist(model.sName[index]); }', index)
+                        self.assertEqual(page.locator('.tl-detail-title').inner_text(), 'work')
+                        self.assertEqual(page.locator('.tl-detail-title').get_attribute('title'), f'work.constprop.{index}')
+                        self.assertEqual(page.locator('.an-dist-heading .tl-pill').first.inner_text(), '1 calls')
+                    self.assertEqual(page.evaluate('JSON.stringify(fgData.read("tlData"))'), original)
+
+    def test_inline_and_untraced_titles_use_the_same_readable_names(self):
+        names = ['inode_has_perm.isra.0', 'work.constprop.1', 'work.constprop.2',
+                 'missing.llvm.deadbeef+0x1/0x20']
+        configuration = dict(columns=dict(name=[0, 1, 2], caller=[-1, 3, 3], depth=[0, 3, 3]), extra=dict(
+            strings=names, inline={'3': [['inode_has_perm.isra.0', 'root.c', 10],
+                                       ['helper.isra.3.constprop.2', 'helper.h', 20]]}))
+        for mode in ('single', 'sidecar'):
+            for theme in ('light', 'dark'):
+                with self.subTest(mode=mode, theme=theme):
+                    page = self.open_report(mode, theme, configuration)
+                    frames = page.evaluate('''() => {
+                        const model = fgView('timeline').probe();
+                        model.inline(true);
+                        return Array.from({length:model.NA - model.N}, (_, offset) => model.N + offset)
+                            .map(index => ({index, name:model.nameOf(index), ghost:model.isGhost(index)}));
+                    }''')
+                    self.assertEqual(len(frames), 3)
+                    original = page.evaluate('JSON.stringify(fgData.read("tlData"))')
+                    for frame in frames:
+                        page.evaluate('index => fgView("timeline").probe().select(index)', frame['index'])
+                        expected = 'unknown frame' if frame['name'] == '?' else 'missing' if frame['ghost'] else 'helper'
+                        self.assertEqual(page.locator('.tl-detail-title').inner_text(), expected)
+                        raw = 'unknown frame' if frame['name'] == '?' else frame['name']
+                        self.assertEqual(page.locator('.tl-detail-title').get_attribute('title'), raw)
+                        if not frame['ghost']:
+                            self.assertIn('into inode_has_perm', page.locator('.tl-slice-head .tl-pill').all_inner_texts())
+                            self.assertEqual(page.locator('.tl-slice-head .tl-pill[title]').get_attribute('title'), names[0])
+                    self.assertEqual(page.evaluate('JSON.stringify(fgData.read("tlData"))'), original)
+
+    def test_kernel_user_and_module_titles_keep_original_identity_and_exports(self):
+        names = ['inode_has_perm.isra.0', 'work.constprop.1', 'work.constprop.2', 'driver.isra.7']
+        for mode in ('single', 'sidecar'):
+            for user in (False, True):
+                with self.subTest(mode=mode, user=user):
+                    configuration = dict(columns=dict(name=[0, 1, 2], flags=[(1 << 25) if user else 0] * 3,
+                                                      module=None if user else [-1, 3, -1]),
+                                         extra=dict(strings=names))
+                    page = self.open_report(mode, configuration=configuration)
+                    original = page.evaluate('JSON.stringify(fgData.read("tlData"))')
+                    page.evaluate('fgView("timeline").probe().select(1)')
+                    expected = 'work' if user else 'work [driver.isra.7]'
+                    self.assertEqual(page.locator('.tl-detail-title').inner_text(), expected)
+                    self.assertEqual(page.locator('.tl-detail-title').get_attribute('title'), names[1])
+                    with page.expect_download() as download:
+                        page.locator('[data-context-export=stack]').click()
+                    with open(download.value.path(), encoding='utf-8-sig', newline='') as source:
+                        rows = list(csv.DictReader(source))
+                    self.assertEqual([row['function'] for row in rows], names[:2])
+                    self.assertEqual(page.evaluate('JSON.stringify(fgData.read("tlData"))'), original)
+
+    def test_unknown_suffixes_and_escaped_symbols_remain_literal_in_titles(self):
+        names = ['work.isra.0.extra', 'work.plt', '<img src=x onerror="window.titleInjected=1">.isra.0']
+        configuration = dict(columns=dict(name=[0, 1, 2]), extra=dict(strings=names))
+        for mode in ('single', 'sidecar'):
+            for theme in ('light', 'dark'):
+                with self.subTest(mode=mode, theme=theme):
+                    page = self.open_report(mode, theme, configuration)
+                    original = page.evaluate('JSON.stringify(fgData.read("tlData"))')
+                    for index, raw in enumerate(names):
+                        page.evaluate('index => fgView("timeline").probe().select(index)', index)
+                        expected = raw if index < 2 else raw[:-len('.isra.0')]
+                        self.assertEqual(page.locator('.tl-detail-title').inner_text(), expected)
+                        self.assertEqual(page.locator('.tl-detail-title').get_attribute('title'), raw)
+                        self.assertEqual(page.locator('.tl-detail-title img').count(), 0)
+                    self.assertTrue(page.evaluate('window.titleInjected === undefined'))
+                    self.assertEqual(page.evaluate('JSON.stringify(fgData.read("tlData"))'), original)

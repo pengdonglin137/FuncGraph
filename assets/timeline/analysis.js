@@ -539,7 +539,7 @@ function showDist(nameIdx) {
     AN.distIds = ids;
     const quantile = fraction => distQuantile(ids, fraction);
     const statistic = value => ids.length ? fmtDur(value) : '—';
-    let h = '<div class="tl-detail-head an-dist-head"><div class="an-dist-heading"><span class="tl-detail-title" title="' + esc(S[nameIdx]) + '">' + esc(S[nameIdx]) + '</span>' +
+    let h = '<div class="tl-detail-head an-dist-head"><div class="an-dist-heading"><span class="tl-detail-title" title="' + esc(S[nameIdx]) + '">' + esc(symbolLabel(S[nameIdx])) + '</span>' +
         pill('mute', ids.length + ' calls') + pill('mute', 'total ' + fmtDur(population.total)) + (textHits ? pill('warn', 'filtered') : '') +
         (adjOn ? pill('warn', 'overhead subtracted') : '') + (AN.site !== null ? '<span class="tl-pill warn" title="' + esc(AN.site) + '">from ' + esc(AN.site) + '</span>' : '') +
         '</div><span class="an-dist-actions">' + (AN.site !== null ? '<button class="tl-btn" data-act="dist-reset-site">All call sites</button>' : '') +

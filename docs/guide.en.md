@@ -725,12 +725,13 @@ The **time mode** depends on the columns in the trace and is named at the right 
 - The thin strip at the bottom of a segment is interrupt time: **orange** hardirq, **green** softirq, **purple** NMI.
 - Hover: how long the task ran on this CPU in one go and how much of it went to hard/soft interrupts; click to jump to the task's track and select the innermost real call at that time (even when tracing began at nonzero depth). With no overlapping call, the click clears the previous slice details and opens Tasks scoped to this identity, keeping the time range. Tracks without calls are revealed on demand as headers, not invented slices.
 
-Canvas labels hide recognized trailing compiler suffixes: for example,
+Canvas labels and detail titles hide recognized trailing compiler suffixes: for example,
 `inode_has_perm.isra.0` displays as `inode_has_perm`. Known GCC numeric clones,
 `.cold`/`.hot`, LLVM `.llvm.<hex hash>` and known demangled `[clone ...]` suffixes
 are supported. Unknown suffixes, embedded dots and `.plt`/`.ifunc` remain.
-**Only the canvas text changes**: hover, detail titles and CALL STACK preserve
-the exact symbol. Regex search, source resolution, parameter types, function
+**Only display names change**: recorded-call, inline/untraced-frame and function
+distribution titles use the same rules. Title tooltips, canvas hover and CALL STACK
+preserve the exact symbol. Regex search, source resolution, parameter types, function
 colors and statistics keep original identities; clones are not merged.
 Regenerate older HTML reports to use the readable labels.
 

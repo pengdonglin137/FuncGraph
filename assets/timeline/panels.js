@@ -344,8 +344,8 @@ function exportDetailCsv(kind) {
 
 function showInlineDetail(i) {
     const f = detailContextData(i).facts;
-    let h = '<div class="tl-detail-head tl-slice-head"><span class="tl-detail-title" title="' + esc(f.fn) + '">' + detailSymbolHtml(f.fn) + '</span>' + pill('mute', 'inlined') +
-        pill('mute', 'into ' + f.intoFn) + '<span class="sp"></span>' + lineLink(sLine[f.kids[0]], 'Open first call in text view ↵') +
+    let h = '<div class="tl-detail-head tl-slice-head"><span class="tl-detail-title" title="' + esc(f.fn) + '">' + detailSymbolHtml(symbolLabel(f.fn)) + '</span>' + pill('mute', 'inlined') +
+        pill('mute', 'into ' + symbolLabel(f.intoFn), f.intoFn) + '<span class="sp"></span>' + lineLink(sLine[f.kids[0]], 'Open first call in text view ↵') +
         '<button class="tl-close" title="Close (Esc)">×</button></div>' + callNavigationHtml(i) + '<div class="tl-detail-body"><div class="tl-kv">';
     h += kv('traced extent', fmtDur(f.span) + ' &nbsp;<span class="d">from the first traced call inside to the end of the last one</span>');
     h += kv('start / end', fmtDur(sStart[i]) + ' → ' + fmtDur(sEnd[i]));
@@ -361,7 +361,7 @@ function showInlineDetail(i) {
 function showGhostDetail(i) {
     const f = detailContextData(i).facts, y = f.y;
     const nm = y.name === '?' ? 'unknown frame' : y.name;
-    let h = '<div class="tl-detail-head tl-slice-head"><span class="tl-detail-title" title="' + esc(nm) + '">' + detailSymbolHtml(nm) + '</span>' + pill('mute', 'not traced') +
+    let h = '<div class="tl-detail-head tl-slice-head"><span class="tl-detail-title" title="' + esc(nm) + '">' + detailSymbolHtml(symbolLabel(nm)) + '</span>' + pill('mute', 'not traced') +
         '<span class="sp"></span>' + lineLink(sLine[f.kids[0]], 'Open first call in text view ↵') +
         '<button class="tl-close" title="Close (Esc)">×</button></div>' + callNavigationHtml(i) + '<div class="tl-detail-body"><div class="tl-kv">';
     h += kv('extent', fmtDur(f.span) + ' &nbsp;<span class="d">from the first call inside to the end of the last one</span>');
@@ -398,7 +398,7 @@ function showDetail(i) {
     if (f & FL.TRUNC) pills += pill('mute', 'no exit');
     if (f & FL.ORPHAN) pills += pill('mute', 'no entry');
     if (f & FL.EST) pills += pill('mute', 'estimated');
-    let h = '<div class="tl-detail-head tl-slice-head"><span class="tl-detail-title" title="' + esc(nameOf(i)) + '">' + detailSymbolHtml(nameOf(i)) +
+    let h = '<div class="tl-detail-head tl-slice-head"><span class="tl-detail-title" title="' + esc(nameOf(i)) + '">' + detailSymbolHtml(sliceLabel(i)) +
         (modOf(i) ? ' [' + esc(modOf(i)) + ']' : '') + '</span>' + pills + '<span class="sp"></span>' +
         '<button class="tl-btn tl-call-actions-button" type="button" data-call-actions aria-haspopup="menu" ' +
         'aria-controls="tlCallActions" aria-expanded="false" aria-label="Selected call actions">Actions ▾</button>' +

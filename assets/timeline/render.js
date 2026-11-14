@@ -48,8 +48,7 @@ let hatch = null, offHatch = null;
 // ---- colors ----
 const COMPILER_SUFFIX = /(?:\.(?:isra|constprop|part|clone|lto|lto_priv)\.\d+|\.(?:cold|hot)(?:\.\d+)?|\.llvm\.[0-9a-fA-F]+)+$/;
 const sliceNameCache = new Map();
-function sliceLabel(index) {
-    const name = nameOf(index);
+function symbolLabel(name) {
     const cached = sliceNameCache.get(name);
     if (cached !== undefined) return cached;
     const clone = / \[clone ([^\]]+)\]$/.exec(name);
@@ -58,6 +57,7 @@ function sliceLabel(index) {
     sliceNameCache.set(name, label);
     return label;
 }
+function sliceLabel(index) { return symbolLabel(nameOf(index)); }
 const nameHash = new Int32Array(S.length).fill(-1);
 function hashOf(si) {
     let h = nameHash[si];
