@@ -20,6 +20,7 @@ vmlinux, so a base BtfInfo must be supplied when loading it.
 import gzip
 import lzma
 import os
+import re
 import struct
 import zlib
 
@@ -39,6 +40,9 @@ _KIND_EXTRA = {
 _MODIFIERS = (KIND_TYPEDEF, KIND_VOLATILE, KIND_CONST, KIND_RESTRICT, KIND_TYPE_TAG)
 
 SHF_COMPRESSED = 0x800
+COMPILER_SUFFIX = re.compile(
+    r'(?:\.(?:isra|constprop|part|clone|lto|lto_priv)\.\d+|'
+    r'\.(?:cold|hot)(?:\.\d+)?|\.llvm\.[0-9a-fA-F]+)+$')
 
 
 class BtfError(Exception):
@@ -123,6 +127,7 @@ class BtfInfo:
 
     def __init__(self, blob, base=None, source='', word_size=None):
         self.source = source
+        self.elf_source = None
         self.base = base
         self.word_size = word_size or (base.word_size if base else None)
         if len(blob) < 24:
@@ -277,8 +282,11 @@ def load_btf(path, base=None):
             return None
     else:
         blob = data
-    return BtfInfo(blob, base=base, source=path,
+    info = BtfInfo(blob, base=base, source=path,
                    word_size=(8 if data[4] == 2 else 4) if data[:4] == b'\x7fELF' else None)
+    if data[:4] == b'\x7fELF':
+        info.elf_source = path
+    return info
 
 
 def format_scalar(value, kind, bits, returning=False):
@@ -302,13 +310,15 @@ def format_scalar(value, kind, bits, returning=False):
 
 
 class ReturnTypeDB:
-    """Aggregate function return classes from vmlinux and module BTF."""
+    """Index return types and trusted argument prototypes from kernel/module BTF."""
 
     def __init__(self):
         self.funcs = {}
         self.params = {}
         self.sources = []
         self.errors = []
+        self._argument_sources = []
+        self._argument_prototypes = {}
 
     def add(self, info):
         if info is None:
@@ -322,14 +332,53 @@ class ReturnTypeDB:
             else:
                 self.params[name] = params
         self.sources.append(info.source)
+        if info.elf_source:
+            self._argument_sources.append((info.elf_source, info.func_params))
+        self._argument_prototypes.clear()
 
     def __len__(self):
         return len(self.funcs)
 
+    def prepare_arguments(self, func_names):
+        """Batch and cache ABI checks for suffix-stripped, non-exact BTF matches."""
+        from .btf_abi import verified_clones
+        requests = {}
+        candidates = {}
+        for name in dict.fromkeys(func_names):
+            if name in self.params or name in self._argument_prototypes:
+                continue
+            self._argument_prototypes[name] = None
+            base = COMPILER_SUFFIX.sub('', name)
+            params = self.params.get(base) if base != name else None
+            if params is None:
+                continue
+            fields, returned, word_size = params
+            if returned[0] == 'other' or word_size is None or any(
+                    not field or bits is None or not 0 < bits <= 64 or
+                    kind not in ('ptr', 'sint', 'uint', 'bool', 'enum') or not 0 < size <= word_size
+                    for field, kind, size, bits in fields):
+                continue
+            paths = {path for path, prototypes in self._argument_sources if prototypes.get(base) == params}
+            if not paths:
+                continue
+            candidates[name] = (params, paths)
+            for path in paths:
+                requests.setdefault(path, {})[name] = (base, fields, word_size)
+        verified = {path: verified_clones(path, names) for path, names in requests.items()}
+        for name, (params, paths) in candidates.items():
+            if all(name in verified[path] for path in paths):
+                self._argument_prototypes[name] = params
+
+    def _parameters(self, func_name):
+        if func_name in self.params:
+            return self.params[func_name], True
+        self.prepare_arguments((func_name,))
+        return self._argument_prototypes.get(func_name), False
+
     def argument_names(self, func_name, count):
         """Name only an ABI-safe prefix of captured integer argument slots."""
-        params = self.params.get(func_name)
-        if params is None or any(suffix in func_name for suffix in ('.isra.', '.constprop.', '.part.', '.llvm.')):
+        params, _exact = self._parameters(func_name)
+        if params is None:
             return ()
         fields, returned, word_size = params
         if returned[0] == 'other':
@@ -343,8 +392,8 @@ class ReturnTypeDB:
         return tuple(names)
 
     def function_types(self, func_name):
-        params = self.params.get(func_name)
-        if params is None or any(suffix in func_name for suffix in ('.isra.', '.constprop.', '.part.', '.llvm.')):
+        params, exact = self._parameters(func_name)
+        if params is None:
             return None
         fields, returned, word_size = params
         result = {}
@@ -358,7 +407,7 @@ class ReturnTypeDB:
             if len(arguments) == len(fields):
                 result['argc'] = len(fields)
         kind, size, bits = returned
-        if bits is not None and (kind == 'void' or kind == 'ptr' or size <= (word_size or 4)):
+        if exact and bits is not None and (kind == 'void' or kind == 'ptr' or size <= (word_size or 4)):
             result['ret'] = (kind, bits)
         return result or None
 

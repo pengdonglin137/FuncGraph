@@ -440,6 +440,8 @@ class UftraceTimeline(TimelineBuilder):
             values = self.records[self.s_line[index] - 3].get('args')
             name = self.s_name[index]
             counts[name] = max(counts.get(name, 0), len(values or ()))
+        if hasattr(self.rettypes, 'prepare_arguments'):
+            self.rettypes.prepare_arguments(self.strings[name] for name in counts)
         for name, count in counts.items():
             names = self.rettypes.argument_names(self.strings[name], count)
             if any(names):

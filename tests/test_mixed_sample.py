@@ -189,7 +189,7 @@ class MixedSampleTest(unittest.TestCase):
         index = names.index('__sys_sendto')
         self.assertEqual(data['uftrace']['kernel_arg_names'][str(cols['name'][index])],
                          ['fd', 'buff', 'len', 'flags', 'addr', 'addr_len'])
-        self.assertEqual(len(data['uftrace']['kernel_arg_names']), 280)
+        self.assertEqual(len(data['uftrace']['kernel_arg_names']), 283)
         signature = data['uftrace']['kernel_types'][str(cols['name'][index])]
         self.assertEqual(signature['argc'], 6)
         self.assertEqual(signature['args'], [['sint', 32], ['ptr', 64], ['uint', 64],
@@ -198,6 +198,17 @@ class MixedSampleTest(unittest.TestCase):
         raw = entries[cols['line'][index]]['args']
         self.assertEqual(data['strings'][cols['args'][index]], ', '.join(raw))
         self.assertEqual(raw[2], '0x200')
+        for name, parameters in (('__napi_poll.constprop.0', ['n', 'repoll']),
+                                 ('__netif_receive_skb_core.constprop.0', ['pskb', 'pfmemalloc', 'ppt_prev']),
+                                 ('selinux_parse_skb.constprop.0', ['skb', 'ad', '_addrp', 'src', 'proto'])):
+            clone = names.index(name)
+            symbol = str(cols['name'][clone])
+            self.assertEqual(data['uftrace']['kernel_arg_names'][symbol], parameters)
+            self.assertEqual(data['uftrace']['kernel_types'][symbol]['argc'], len(parameters))
+            self.assertNotIn('ret', data['uftrace']['kernel_types'][symbol])
+            self.assertEqual(data['strings'][cols['args'][clone]], ', '.join(entries[cols['line'][clone]]['args']))
+        for name in ('inet_addr_hash.isra.0', 'validate_xmit_skb.constprop.0'):
+            self.assertNotIn(str(cols['name'][names.index(name)]), data['uftrace']['kernel_types'])
         expected_counts = {'main': 2, 'run_round': 4, 'transfer_file': 4, 'read_block': 3,
                            'write_block': 3, 'exchange_loopback': 4, 'send_frame': 4,
                            'dispatch_datagram': 5, 'receive_frame': 4}
@@ -498,6 +509,17 @@ class MixedSampleBrowserTest(unittest.TestCase):
         data = helpers.json_script(REPORT.read_text(encoding='utf-8'), 'tlData')
         raw = data['strings'][data['cols']['args'][index]]
         self.assertIn(raw, arguments.locator('details').inner_text())
+        clone = page.evaluate('''() => {
+            const model = fgView('timeline').probe();
+            const index = Array.from({length: model.N}, (unused, candidate) => candidate)
+                .find(candidate => model.nameOf(candidate) === '__napi_poll.constprop.0');
+            model.select(index);
+            return index;
+        }''')
+        self.assertIn('n=', arguments.inner_text())
+        self.assertIn('repoll=', arguments.inner_text())
+        arguments.get_by_text('Raw argument slots', exact=True).click()
+        self.assertIn(data['strings'][data['cols']['args'][clone]], arguments.locator('details').inner_text())
         self.assertEqual(errors, [])
         self.assertEqual(requests, [REPORT.as_uri()])
 

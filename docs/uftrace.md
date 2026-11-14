@@ -57,7 +57,7 @@ entry and **Call site source** in `do_syscall_x64`, `arch/x86/entry/syscall_64.c
 The recorded PC `0xffffffff82129117` is retained separately from
 `do_syscall_64+0xb7/0x580`. Expanding its Text row shows the same call-site chain.
 The matching BTF also verifies the nonblocking receive error path and supplies
-safe argument-name prefixes for 280 kernel functions and typed values for 292 functions. Select `__sys_sendto` for
+safe argument-name prefixes for 283 kernel functions and typed values for 295 functions. Select `__sys_sendto` for
 `fd`, `buff`, `len`, `flags`, `addr` and `addr_len`; expand **Raw argument slots**
 to inspect the unchanged recorded values. Select each `receive_frame` call to see
 its distinct caller line, `demo_mixed.c:47` or `demo_mixed.c:49`, rather than its
@@ -323,13 +323,27 @@ kernel names separately, even when their symbols have identical spelling.
   Expand **Raw argument slots** or **Original return bits** for unmodified
   register values; the JSONL and model retain their original data.
   Only an ABI-safe integer/pointer prefix is interpreted. Aggregates, floats,
-  variadic tails, conflicting prototypes, compiler clones and unknown pointer
+  variadic tails, conflicting prototypes and unknown pointer
   word sizes never force a count/slot mapping. Remaining slots use `slotN`.
-  No additional DWARF lookup is needed. Without matching BTF, **raw args** and
+  Full compiler-suffixed names are matched first: an exact BTF prototype for
+  `fn.isra.0` or `fn.constprop.0` is not discarded just because it is a clone.
+  If only `fn` has BTF, removing the suffix alone is not sufficient: optimizations
+  may remove or reorder parameters. For a matching ELF with DWARF, the optional
+  `fast` dependency (`pyelftools`) verifies the complete argument names, scalar
+  widths and entry-register layout before reusing that BTF prototype. This
+  conservative fallback currently supports x86-64 and AArch64; missing symbols,
+  debug aranges or entry locations, ambiguous prototypes and changed layouts
+  keep **raw args**. Return-type equivalence is not inferred from argument
+  locations. Raw BTF alone still supports exact suffixed prototypes, but cannot
+  prove an alias's ABI. BTF is indexed once by function name; ELF/DWARF checks
+  are batched per source/compilation unit and cached per report, not per call.
+  Ordinary and exact-suffix matches require no DWARF lookup. Without matching BTF, **raw args** and
   **raw return** remain; byte-for-byte equivalence with every kernel version's
   `cat trace` formatter is not claimed.
 - **BTF reader dependencies:** the report-side `fglib/btf.py` uses only the Python
-  standard library; neither libbpf nor bpftool is required. It reads matching raw
+  standard library for BTF parsing; neither libbpf nor bpftool is required.
+  The optional compiler-clone ABI check uses the existing `fast` extra, not libbpf.
+  It reads matching raw
   BTF, ELF `.BTF` sections and module split BTF with its base, extracting the
   prototypes and scalar types needed here. It is not a complete libbpf replacement
   and does not load eBPF programs. Native recorder build dependencies are separate;

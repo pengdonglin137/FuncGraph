@@ -44,7 +44,7 @@ Linux `7.4.0-rc2` 上对 [`demo_mixed.c`](../samples/demo_mixed.c) 的实际采�
 `net/socket.c:2286`；**Call site source** 展示 `do_syscall_x64` 中的
 `arch/x86/entry/syscall_64.c:61`。原始 PC `0xffffffff82129117` 与
 `do_syscall_64+0xb7/0x580` 分开展示；展开 Text 行可看同一调用点的内联源码链。匹配的 BTF 还可
-校验非阻塞接收的错误路径，为 280 个内核函数提供 ABI 安全的参数名前缀，并为 292 个函数提供类型修正信息。
+校验非阻塞接收的错误路径，为 283 个内核函数提供 ABI 安全的参数名前缀，并为 295 个函数提供类型修正信息。
 选中 `__sys_sendto` 可看 `fd`、`buff`、`len`、`flags`、`addr`、`addr_len`；展开
 **Raw argument slots** 可核对未经改写的原始参数槽。分别选中两次 `receive_frame`，
 源码应落在 `demo_mixed.c:47` 和 `demo_mixed.c:49`，而非共同的第 36 行函数入口；
@@ -250,11 +250,20 @@ Compare 与 `--export` 分开统计用户态、内核态的同名函数。
   完整原型为零参时不展示残余槽；声明参数多于实采槽时以 `…` 标出缺失，不补值。
   **return (BTF)** 同样修正返回值的位宽和符号；布尔返回值取 bit 0，显示 `true/false`，`void` 不伪造返回值。
   参数和返回寄存器的原始位模式仍分别保存在 **Raw argument slots** 和 **Original return bits**，JSONL 和模型原值不变。
-  只解释 ABI 对应关系已确认的整数/指针前缀；聚合参数、浮点、可变参数、原型冲突、编译器克隆、
-  未知指针字长等不能确认的布局不强行裁剪，其余槽位保持 `slotN`。不额外做 DWARF 查询。
+  只解释 ABI 对应关系已确认的整数/指针前缀；聚合参数、浮点、可变参数、原型冲突、
+  未知指针字长等不能确认的布局不强行裁剪，其余槽位保持 `slotN`。
+  优先匹配完整符号：BTF 中明确存在的 `fn.isra.0`、`fn.constprop.0` 等原型，不再因后缀而跳过。
+  若 BTF 中只有 `fn`，不能仅删除后缀就套用参数，因为优化可能删除或重排参数。
+  对带 DWARF 的匹配 ELF，可选 `fast` 依赖中的 `pyelftools` 会核对全部参数名、标量位宽和入口寄存器布局，
+  确认一致后才复用 BTF 原型。目前该保守回退支持 x86-64 和 AArch64；符号、调试 aranges 或入口位置缺失、
+  原型冲突及布局变化时保留 **raw args**，也不根据参数位置推断返回类型等价。
+  只有原始 BTF 时仍支持完整后缀名的精确匹配，但不能证明别名的 ABI。
+  BTF 加载时一次建立函数名索引；ELF / DWARF 校验按来源和编译单元批量执行，结果在报告内缓存，
+  不会对每条调用重新扫描。普通函数和完整后缀名的精确匹配不需要查询 DWARF。
   无匹配 BTF 时仍显示 **raw args** / **raw return**，不承诺与所有内核版本的 `cat trace` 逐字一致。
-- **BTF 解析依赖**：报告端的 `fglib/btf.py` 仅使用 Python 标准库，不要求安装 libbpf 或
-  bpftool。它读取匹配目标内核的原始 BTF、ELF 的 `.BTF` 段及有基准 BTF 的模块 split BTF，
+- **BTF 解析依赖**：报告端的 `fglib/btf.py` 使用 Python 标准库解析 BTF，不要求安装 libbpf 或
+  bpftool；可选的编译器克隆 ABI 校验使用已有的 `fast` 扩展依赖，不使用 libbpf。
+  它读取匹配目标内核的原始 BTF、ELF 的 `.BTF` 段及有基准 BTF 的模块 split BTF，
   提取本项目所需的原型与标量类型；不是 libbpf 的完整替代实现，也不负责加载 eBPF 程序。
   原生采集程序的构建依赖与这条报告端解析路径分开，见下方可复现构建说明。
 - **用户态参数**：应用应带调试信息编译，采集时使用 `--auto-args`，或以 `-A` / `-R` 明确规格。
