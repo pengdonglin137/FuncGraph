@@ -251,7 +251,7 @@ class TextReturnBrowserTest(unittest.TestCase):
                     row = page.locator(f'[data-space={space}][data-func={name}][data-fold-type=entry]')
                     row.evaluate("row => _setFolded(row.getAttribute('data-fold-id'), true)")
                     returned = row.locator('.fold-summary .summary-ret')
-                    self.assertEqual(returned.inner_text(), 'ret=' + value)
+                    self.assertEqual(returned.inner_text(), 'ret=' + value + (' (EINVAL)' if error else ''))
                     self.assertEqual(returned.evaluate("node => node.classList.contains('summary-error')"), error)
 
     def test_errno_filter_matches_timeline_and_never_labels_user_returns(self):

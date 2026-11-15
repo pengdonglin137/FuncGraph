@@ -3339,16 +3339,10 @@
                 parts.push('<span class="summary-time">' + timeStr + '</span>');
             }
             if (retValue) {
-                // Look up error code name from the ERROR_CODE_MAP if embedded
                 let retDisplay = 'ret=' + retValue;
-                // Try to find error name from sibling exit line
-                if (exitEl) {
-                    const exitContent = exitEl.querySelector('.line-content');
-                    if (exitContent) {
-                        const errMatch = exitContent.textContent.match(/\/\*\s*(-?\d+\s*=\s*\w+)\s*\*\//);
-                        if (errMatch) retDisplay = errMatch[1].trim();
-                    }
-                }
+                const errorCode = exitEl?.getAttribute('data-ret');
+                const errorName = hasErrorReturn && fgData.ready('fgErrnoNames') ? fgData.read('fgErrnoNames')?.[errorCode] : null;
+                if (typeof errorName === 'string' && errorName) retDisplay += ' (' + errorName + ')';
                 parts.push('<span class="summary-ret' + (hasErrorReturn ? ' summary-error' : '') + '">' + escapeHtml(retDisplay) + '</span>');
             }
 

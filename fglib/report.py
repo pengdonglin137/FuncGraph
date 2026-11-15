@@ -1494,7 +1494,13 @@ class HtmlGenerator:
 
     def _generate_javascript(self):
         """Main report JavaScript (assets/report/report.js)."""
-        return '\n    <script>\n' + read_asset(REPORT_DATA_JS) + read_asset(REPORT_FILTER_INDEX_JS) + read_asset(REPORT_JS) + read_asset(REPORT_WINDOW_JS) + '    </script>\n'
+        metadata = ''
+        has_text = not (self.omit_text or getattr(self.script_args, 'no_text_view', False) or
+                        (self.timeline_json or {}).get('no_text'))
+        if self.enable_fold and has_text:
+            metadata = ('\n    <script type="application/json" id="fgErrnoNames">' +
+                        json.dumps(ERROR_CODE_MAP, separators=(',', ':')) + '</script>\n')
+        return metadata + '\n    <script>\n' + read_asset(REPORT_DATA_JS) + read_asset(REPORT_FILTER_INDEX_JS) + read_asset(REPORT_JS) + read_asset(REPORT_WINDOW_JS) + '    </script>\n'
 
     def _generate_css(self):
         """Main report CSS (assets/report/report.css)."""

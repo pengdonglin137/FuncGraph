@@ -25,6 +25,9 @@ attributes despite five BTF-classified Timeline error observations.
 - `data-fold-ret` retains the displayed scalar independently of errno classification,
   so user returns and non-error kernel values get neutral summaries. Error color
   depends on `data-ret`, not the leading sign or raw hexadecimal bit pattern.
+  Known errors append their mnemonic, e.g. `ret=-22 (EINVAL)`, while keeping the
+  original scalar token. Names use the existing errno metadata, never a parsed
+  comment; normal user values do not gain kernel error labels.
 - Original JSONL, return register bits, user raw payloads, source mappings,
   timestamps and Timeline data are unchanged. This adds Text metadata, not a
   capture option or stream-schema revision. Existing recordings with saved
@@ -76,3 +79,39 @@ finishes **868 tests** with no failures and one default skip: the optional
 `test_btf.BtfTest.test_real_vmlinux` check requires `FG_VMLINUX`. That exact check
 is then run separately against the matching sample vmlinux and passes.
 Logs are retained under `build/uftrace-text-returns/`.
+
+## Readable errno labels
+
+Fold summaries now append names only for existing classified errors, preserving
+the original scalar or pointer token. The embedded `fgErrnoNames` dictionary is
+2,579 JSON bytes and is parsed once, on demand. It is omitted without folding or
+a Text view and retained inline in sidecar reports. Missing metadata falls back
+to the scalar alone; comments cannot supply or override classification or names.
+
+The seven tests in `tests/test_text_errno_labels.py` cover native and structured
+records, light/dark themes, plain Text, standalone, sidecar and windowed Text,
+lazy once-only parsing, unsafe text, missing metadata and misleading comments.
+The final focused run passes **69 tests**; matching-vmlinux sample/usage/BTF/
+clone/name/inline checks pass **77 tests**. The wider regression run passes
+**875 tests**, with `FG_VMLINUX` set and no skips. Wheel/sdist builds succeed;
+installed-wheel smoke runs **14 tests**, with **4 optional checks skipped**.
+
+Both regenerated samples preserve all 739 native rows / 10 events and all 1,504
+mixed rows / 74 events, with identical row attributes/text, source pools/maps and
+Timeline identity/data apart from `stats.build_time`. The folding screenshot is
+refreshed to show the current version and Events button; the default sample,
+mixed, source-expanded Text, Timeline detail and help screenshots are unchanged.
+The additional event/event-only run passes **34 tests**. Browser checks on both
+complete samples hide and restore all event rows across return filtering and
+Text/Timeline round trips, preserving row counts and Timeline data without page
+errors (`rendered-samples.json`).
+
+A Chromium check also loads the complete 65,751,022-byte real `write4.html`
+report with only its frontend script replaced and the dictionary inserted.
+This is not CLI regeneration, new BTF classification or a performance benchmark.
+The original file and all retained payload bytes stay unchanged. Its 38,938
+rows and 187 classified errno rows remain intact; visible folds verify
+`ENOEXEC`, `ENODATA`, `EINVAL`, `ENOENT` and `EOPNOTSUPP`. The 168 `-1` rows and
+one `-10` row are leaf-only, with no paired exit to fold. The dictionary is
+parsed once, no Timeline/source data is read, and no page errors occur.
+Logs and fidelity/browser results are retained under `build/text-errno-labels/`.

@@ -165,7 +165,7 @@ class InstalledPackageTest(unittest.TestCase):
         trace.write_text('# tracer: function_graph\n'
                          ' 0)               |  parent() { /* <-caller+0x1/0x20 */\n'
                          ' 0)   0.001 us    |    leaf(); /* <-caller+0x1/0x20 */\n'
-                         ' 0)   0.010 us    |  } /* parent */\n', encoding='utf-8')
+                         ' 0)   0.010 us    |  } /* parent ret=-2 */\n', encoding='utf-8')
         output = trace.with_suffix('.html')
         self.run_command(self.executable('funcgraph'), '--no-config', '--enable-fold',
                          '--output', str(output), str(trace))
@@ -182,6 +182,11 @@ class InstalledPackageTest(unittest.TestCase):
         self.assertIn('const strokePixels = Math.max(1, Math.round(scale));', report)
         self.assertIn('data-fold-end="L4"', report)
         self.assertIn('data-fold-start="L2"', report)
+        names = re.search(r'<script type="application/json" id="fgErrnoNames">(.*?)</script>', report, re.S)
+        self.assertIsNotNone(names)
+        self.assertEqual(json.loads(names.group(1))['-2'], 'ENOENT')
+        self.assertIn('data-ret="-2"', report)
+        self.assertNotIn('id="tlData"', report)
 
     @unittest.skipUnless(WITH_EXTRAS and platform.machine() in ('x86_64', 'aarch64'), 'tail-jump ELF dependencies / architecture unavailable')
     def test_tail_jump_from_installed_package(self):

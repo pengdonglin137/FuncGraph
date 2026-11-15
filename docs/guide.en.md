@@ -584,6 +584,12 @@ Ancestor rails, arrow continuations, exit corners and hover emphasis share one v
 - A folded entry shows `{ … }` followed by a compact summary before any call-site annotation: all recorded descendant calls (including leaf calls, excluding exits and the entry itself), recorded inclusive time when available, and return value. Ordinary values stay grey; known errno returns retain error coloring. These are recorded-call counts, not all functions that ran on the CPU.
 - Folding state is kept in the browser's localStorage, per report.
 
+Classified errors append a readable name, e.g. `ret=-11 (EAGAIN)`, without
+replacing the original scalar or pointer bits. Names follow the row's existing
+errno metadata, not its sign or comment text; user negatives stay neutral.
+The small embedded dictionary works without Filter, Timeline or source loading.
+Regenerate older reports to receive the names.
+
 Background colors related to folding:
 
 | Color | Meaning |
