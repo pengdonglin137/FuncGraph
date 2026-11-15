@@ -1919,8 +1919,9 @@
         }
         
         // 导航到下一个可展开行
-        function navigateToExpandableLine(direction) {
-            const start = fgTextRequestedLine === null ? keyboardSelectedIndex : fgTextNavigation.indexOf(fgTextRequestedLine);
+        function navigateToExpandableLine(direction, fromLine = null) {
+            const start = fromLine !== null ? fgTextNavigation.indexOf(fromLine) :
+                fgTextRequestedLine === null ? keyboardSelectedIndex : fgTextNavigation.indexOf(fgTextRequestedLine);
             const next = fgTextNavigation.next(start, direction);
             if (next >= 0) return setKeyboardSelectedLine(next, true);
         }
@@ -2540,6 +2541,9 @@
 
         // 添加键盘快捷键支持
         document.addEventListener('keydown', function(event) {
+            if (event.defaultPrevented || event.isComposing || event.keyCode === 229) return;
+            if ((event.ctrlKey || event.metaKey || event.altKey) &&
+                !(event.key === 'a' && (event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey)) return;
             if (event.key === 'Escape' && !event.target.matches('input, textarea, select') &&
                 document.getElementById('keyboardHint').style.display === 'block') {
                 event.preventDefault();
@@ -2548,14 +2552,10 @@
             }
             if (typeof fgCurrentView === 'function' && fgCurrentView() !== 'text') return;
             if (fgTextDeferred()) return;
-            if ((event.key === 'Enter' || event.key === ' ') &&
-                event.target.closest('.fold-icon, .fold-brace, #foldGuidesBtn, #viewHelpBtn, .keyboard-hint-close')) return;
-            
-            // 检查是否在输入框中
-            if (event.defaultPrevented || event.target.isContentEditable ||
-                event.target.closest('button, input, textarea, select, summary, a, [role="button"]')) {
-                return;
-            }
+            const control = event.target.closest('button, input, textarea, select, summary, a, [role="button"]');
+            const foldLine = control?.matches('.fold-icon, .fold-brace') ? control.closest('#content .line-container') : null;
+            if (event.target.isContentEditable || (control && !foldLine)) return;
+            if (foldLine && (event.key === 'Enter' || event.key === ' ')) return;
             
 
             
@@ -2657,11 +2657,11 @@
             if (keyLower === 'j' || event.key === 'ArrowDown') {
                 event.preventDefault();
                 handled = true;
-                navigateToExpandableLine(1);
+                navigateToExpandableLine(1, foldLine ? +foldLine.dataset.lineNumber : null);
             } else if (keyLower === 'k' || event.key === 'ArrowUp') {
                 event.preventDefault();
                 handled = true;
-                navigateToExpandableLine(-1);
+                navigateToExpandableLine(-1, foldLine ? +foldLine.dataset.lineNumber : null);
             }
             
             // 处理水平滚动（h/l 键）

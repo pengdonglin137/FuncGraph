@@ -215,6 +215,70 @@ class TextEventBrowserTest(unittest.TestCase):
         self.page.keyboard.press('Home')
         self.assertEqual(self.page.evaluate('controlNavigations'), [['step', 1], ['edge', False]])
 
+    def test_reading_shortcuts_preserve_modifiers_composition_and_consumed_keys(self):
+        self.open_report()
+        facts = self.page.evaluate('''() => {
+            window.browserKeyActions = [];
+            navigateToExpandableLine = () => browserKeyActions.push('step');
+            navigateToTextBoundary = () => browserKeyActions.push('boundary');
+            window.scrollBy = () => browserKeyActions.push('page');
+            document.getElementById('textViewport').scrollBy = () => browserKeyActions.push('horizontal');
+            foldToDepth = () => browserKeyActions.push('depth');
+            unfoldAllBlocks = () => browserKeyActions.push('unfold');
+            showKeyboardHint = () => browserKeyActions.push('help');
+            closeKeyboardHint = () => browserKeyActions.push('close-help');
+            document.getElementById('keyboardHint').style.display = 'block';
+            const keys = ['j','k','h','l','ArrowDown','ArrowUp','Home','End','PageDown','PageUp',' ','?','0','1','Escape'];
+            const variants = [{ctrlKey:true},{metaKey:true},{altKey:true},{ctrlKey:true,altKey:true},
+                {isComposing:true},{keyCode:229},{consumed:true}];
+            const facts = [];
+            for (const selector of ['body','#content .fold-icon','#textEventsBtn']) {
+                const target = document.querySelector(selector);
+                if (!target) throw new Error('Missing keyboard target: '+selector);
+                for (const key of keys) for (const variant of variants) {
+                    const event = new KeyboardEvent('keydown',{key,bubbles:true,cancelable:true,...variant});
+                    if (variant.consumed) event.preventDefault();
+                    target.dispatchEvent(event);
+                    facts.push({selector,key,variant,prevented:event.defaultPrevented});
+                }
+            }
+            return facts;
+        }''')
+        self.assertEqual(len(facts), 315)
+        for fact in facts:
+            self.assertEqual(fact['prevented'], bool(fact['variant'].get('consumed')), fact)
+        self.assertEqual(self.page.evaluate('browserKeyActions'), [])
+
+    def test_text_select_all_stays_scoped_without_overriding_native_controls(self):
+        self.open_report()
+        for modifier in ['ctrlKey', 'metaKey']:
+            with self.subTest(modifier=modifier):
+                facts = self.page.evaluate('''modifier => {
+                    const root = document.getElementById('content');
+                    const selection = window.getSelection();
+                    const events = [];
+                    for (const selector of ['body','#content .fold-icon']) {
+                        selection.removeAllRanges();
+                        const event = new KeyboardEvent('keydown',{key:'a',[modifier]:true,bubbles:true,cancelable:true});
+                        document.querySelector(selector).dispatchEvent(event);
+                        events.push(event.defaultPrevented && selection.rangeCount === 1 &&
+                            root.contains(selection.anchorNode) && root.contains(selection.focusNode));
+                    }
+                    for (const selector of ['#textEventsBtn','#filterInput']) {
+                        selection.removeAllRanges();
+                        const event = new KeyboardEvent('keydown',{key:'a',[modifier]:true,bubbles:true,cancelable:true});
+                        document.querySelector(selector).dispatchEvent(event);
+                        events.push(!event.defaultPrevented && selection.rangeCount === 0);
+                    }
+                    for (const variant of [{altKey:true},{shiftKey:true}]) {
+                        const event = new KeyboardEvent('keydown',{key:'a',[modifier]:true,...variant,bubbles:true,cancelable:true});
+                        document.body.dispatchEvent(event);
+                        events.push(!event.defaultPrevented && selection.rangeCount === 0);
+                    }
+                    return events;
+                }''', modifier)
+                self.assertEqual(facts, [True] * 6)
+
     def test_hidden_events_stay_hidden_after_filter_reset_folding_and_reload(self):
         self.open_report()
         self.page.locator('#textEventsBtn').click()

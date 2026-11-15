@@ -32,6 +32,30 @@ activating the focused control. It now respects already-handled events, native
 buttons/links/forms, disclosure summaries, button-role controls and editable
 content. Reading-area shortcuts remain available outside those controls.
 
+A subsequent keyboard review restores reading/depth shortcuts specifically on
+inline call-fold buttons while preserving native Enter/Space activation. Step
+navigation starts at the focused call rather than a stale selected row. Other
+native controls remain excluded. Modifier combinations are not intercepted
+(except reading-area Ctrl/Cmd+A); composing/legacy-IME and previously consumed
+events are ignored before help or navigation handling. This prevents browser
+shortcuts such as Ctrl+L, Ctrl+J and Ctrl+0 from scrolling, navigating or unfolding
+Text. See the [keyboard guide](guide.en.md#58-keyboard-and-mouse).
+
+The local old-runtime reproducer `build/text-keyboard/baseline.log` confirms the
+fold-button regression and the modifier/selection failures without modifying the
+checked-out assets. Targeted regressions also cover focused-call navigation in
+time/task order with folded/unfolded children, source preservation, Escape,
+315 modifier/composition/consumed-event combinations and scoped Ctrl/Cmd+A.
+
+The follow-up browser/Text/Timeline/report/sidecar run passes **499 tests**, and
+the matching-vmlinux sample/BTF/name/inline/usage run passes **60 tests**. The final
+help/control-focused run passes **22 tests**. Refreshed samples preserve all 739
+kernel and 1,504 mixed rows, original source mappings and Timeline data except the
+regenerated build timestamp; all three tracked screenshots remain byte-identical.
+Help bounds and its close button are also checked at 1500×900, dark touch 390×844
+and touch landscape 844×390. Details are retained under `build/text-keyboard/`.
+These are behavior/layout checks, not new performance measurements.
+
 ## Verification
 
 Browser regression tests first reproduced both all-record projection and failed

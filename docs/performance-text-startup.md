@@ -122,6 +122,13 @@ the exact pre-change frontend assets, on a fixture without the startup hint.
 They are not silently counted as passing or changed as part of this startup fix.
 The baseline reproducer log is `build/single-startup/baseline-failures.log`.
 
+A later [keyboard review](performance-text-events.md) addresses these historical
+failures: inline fold buttons again accept reading/depth keys while keeping native
+Enter/Space. The guide-button check now verifies its actual place at the start of
+secondary tools, viewport bounds and reachability through **More** on touch
+screens, rather than the obsolete absolute `x < 150` assumption predating the
+event button. The toolbar itself is not rearranged to satisfy that old assertion.
+
 This does **not** bound DOM/model memory, stream or window single-file Text,
 remove geometry work, or make the final initialization cooperative. Width
 measurement and complete navigation preparation can still block the main thread

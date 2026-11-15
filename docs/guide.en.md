@@ -678,6 +678,14 @@ The top-right header **?** is the shared help entry, with content specific to th
 | click a line number | copy an anchor link (`#Lnumber`) to share the exact line |
 | Alt + click a line | show this call in the timeline |
 
+After clicking or tabbing to an inline fold triangle/brace, reading navigation and
+`1`–`9` / `0` still work. `j`/`k` and arrow navigation start at that focused call,
+not an older selected row. Enter/Space activates only its fold button, without
+opening source or paging. Toolbar buttons, links and form controls retain native
+keys; IME composition and already-handled keys do not trigger Text shortcuts.
+Ctrl/Cmd/Alt combinations stay with the browser, except Ctrl/Cmd+A in the reading
+area or on inline fold buttons still selects trace text. Regenerate older HTML.
+
 Text handles focus separately from scrolling: initialization, selection restoration and other explicitly non-scrolling updates keep native row focus without moving the viewport. Keyboard navigation scrolls explicitly when needed. The visible range accounts for the sticky toolbar's actual height, including wrapped controls in narrow windows, so navigation reveals rows behind it.
 
 `j`/`k` and the arrow keys follow the current Text presentation order and wrap at either end. From a comment or exit row they choose the nearest visible source-expandable call in that direction, without skipping it. Time/task ordering and duration sorting keep the selected trace line's identity; filtering and folding update the navigation candidates together. Home/End use the first/last visible expandable row, falling back to visible plain rows if no source-expandable calls remain; with no visible rows they do nothing. Logical lookup uses a complete numeric line index, so clicks, anchor selection and candidate refresh no longer query every mounted row. Sources, focus and scrolling still require the target DOM node, and full rendering/layout can still block. Regenerate old reports to use these fixes.

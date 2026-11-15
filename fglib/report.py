@@ -308,7 +308,7 @@ class HtmlGenerator:
         </ul>
         <h3>Function Call Folding</h3>
         <ul>
-            <li>Click <strong>▶</strong> to fold/unfold; <kbd>Shift</kbd>+Click for recursive fold/unfold</li>
+            <li>Click <strong>▶</strong> to fold/unfold (or <kbd>Enter</kbd>/<kbd>Space</kbd> when focused); <kbd>Shift</kbd>+Click: subtree</li>
             <li>On a phone, tap the left gutter to fold without scrolling to the function name</li>
             <li>On a phone, <strong>Filter</strong> opens the query editor; <strong>More</strong> contains Tree guides and other Text tools</li>
             <li><strong>Events: shown / hidden</strong> toggles Text event rows only; calls, loss warnings and Timeline evidence remain</li>

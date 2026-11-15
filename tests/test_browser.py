@@ -1258,6 +1258,45 @@ class BrowserSmokeTest(unittest.TestCase):
         self.ev('document.activeElement.blur()')
         self.assertEqual(self.page.locator('.fold-scope').count(), 0)
 
+    def test_fold_controls_continue_navigation_from_the_focused_call(self):
+        parent, child, grandchild, outside = self.nested_fold_rows()
+        for order, folded, selector, key in product(
+                ['time', 'task'], [False, True], ['.fold-icon', '.fold-brace'],
+                ['j', 'k', 'ArrowDown', 'ArrowUp']):
+            direction = -1 if key in ['k', 'ArrowUp'] else 1
+            with self.subTest(order=order, folded=folded, selector=selector, key=key):
+                expected = self.ev('''({order,folded,child,outside,direction}) => {
+                    unfoldAllBlocks(); fgSetTextOrder(order);
+                    if (folded) toggleFold(child.fold);
+                    setKeyboardSelectedLine(fgTextNavigation.indexOf(+outside.row.slice(1)), false);
+                    const next = fgTextNavigation.next(fgTextNavigation.indexOf(+child.row.slice(1)), direction);
+                    return 'L' + fgTextNavigation.order[next];
+                }''', dict(order=order,folded=folded,child=child,outside=outside,direction=direction))
+                self.page.locator('#' + child['row'] + ' ' + selector).press(key)
+                self.assertEqual(self.ev('keyboardSelectedLine?.id'), expected)
+                self.assertTrue(self.ev('document.activeElement === keyboardSelectedLine'))
+
+    def test_fold_controls_keep_depth_keys_and_escape_without_toggling_source(self):
+        parent, child, grandchild, outside = self.nested_fold_rows()
+        self.expand_fold_source(grandchild)
+        self.ev('''() => {
+            window.foldSourceCalls = 0;
+            const original = toggleExpand;
+            toggleExpand = (...parameters) => { foldSourceCalls++; return original(...parameters); };
+        }''')
+        for selector in ['.fold-icon', '.fold-brace']:
+            with self.subTest(selector=selector):
+                control = self.page.locator('#' + parent['row'] + ' ' + selector)
+                control.press('1')
+                self.assertFalse(self.page.locator('#' + grandchild['row']).is_visible())
+                control.press('0')
+                self.assertTrue(self.page.locator('#' + grandchild['row']).is_visible())
+                self.assertTrue(self.page.locator('#' + grandchild['line'] + '_content').is_visible())
+                control.press('Escape')
+                self.assertTrue(self.ev('document.activeElement === document.body'))
+                self.assertIsNone(self.ev('keyboardSelectedLine'))
+        self.assertEqual(self.ev('foldSourceCalls'), 0)
+
     def test_fold_guides_toggle_preserves_text_geometry_and_controls(self):
         parent, child, grandchild, outside = self.nested_fold_rows()
         row = self.page.locator('#' + parent['row'])
@@ -1816,16 +1855,39 @@ class BrowserSmokeTest(unittest.TestCase):
             self.assertTrue(all(segment['top'] + segment['height'] <= bounds['y'] + 1 or
                                 segment['top'] >= bounds['y'] + bounds['height'] - 1 for segment in segments))
 
-    def test_fold_guides_button_is_at_the_left_and_visible_in_compact_windows(self):
+    def test_fold_guides_lead_secondary_tools_and_stay_reachable(self):
         for width in [380, 800, 1500]:
             self.page.set_viewport_size({'width':width, 'height':600})
             self.ev('window.scrollTo(0, 0)')
             bounds = self.page.locator('#foldGuidesBtn').bounding_box()
             self.assertGreaterEqual(bounds['x'], 0)
             self.assertLess(bounds['x'] + bounds['width'], width)
-            self.assertLess(bounds['x'], 150)
-            self.assertLess(bounds['y'], 200)
+            self.assertTrue(self.page.locator('#foldGuidesBtn').evaluate('button => button.closest("#textToolbarOptions") !== null && button === button.parentElement.firstElementChild'))
+            self.assertGreaterEqual(bounds['y'], 0)
+            self.assertLessEqual(bounds['y'] + bounds['height'], 600)
             self.page.locator('#foldGuidesBtn').click()
+        for width, height, theme in [(320, 700, 'dark'), (390, 844, 'light'), (844, 390, 'dark')]:
+            with self.subTest(width=width, height=height), self.browser.new_context(
+                    viewport=dict(width=width,height=height), is_mobile=True, has_touch=True) as context:
+                page = context.new_page()
+                page.on('pageerror', lambda error: self.errors.append(str(error)))
+                page.goto(self.url, wait_until='load')
+                page.evaluate("theme => document.documentElement.dataset.theme = theme", theme)
+                self.assertFalse(page.locator('#foldGuidesBtn').is_visible())
+                page.locator('#textMoreToggle').press('Enter')
+                button = page.locator('#foldGuidesBtn')
+                bounds = button.bounding_box()
+                self.assertIsNotNone(bounds)
+                self.assertGreaterEqual(bounds['x'], 0)
+                self.assertLessEqual(bounds['x'] + bounds['width'], width)
+                self.assertLessEqual(bounds['y'] + bounds['height'], height)
+                self.assertTrue(button.evaluate('button => button.closest("#textToolbarOptions") !== null && button === button.parentElement.firstElementChild'))
+                before = button.get_attribute('aria-pressed')
+                button.press('Space')
+                self.assertNotEqual(button.get_attribute('aria-pressed'), before)
+                button.press('Escape')
+                self.assertFalse(button.is_visible())
+                self.assertTrue(page.locator('#textMoreToggle').evaluate('button => button === document.activeElement'))
 
     def test_fold_palette_remains_muted_in_both_themes(self):
         parent = self.nested_fold_rows()[0]

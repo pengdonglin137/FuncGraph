@@ -123,9 +123,9 @@ tests**. The wheel and source distribution build successfully; installed-wheel
 smoke reports 14 tests with four optional native/extras cases skipped. Refreshed
 samples retain every original row, source mapping and Timeline payload except
 the regenerated build time; all three tracked screenshots remain byte-identical.
-The earlier unrelated broad-browser failures remain documented in the
-[startup verification notes](performance-text-startup.md); these selected-suite
-results are not a claim that every repository test passes.
+The earlier unrelated broad-browser failures and their subsequent keyboard/layout
+review remain documented in the [startup verification notes](performance-text-startup.md).
+These selected-suite results are not a claim that every repository test passes.
 
 These timings are not instant interaction: new-runtime samples still reach
 **1,156 ms** of synchronous API work, and two-rAF feedback is a proxy, not
