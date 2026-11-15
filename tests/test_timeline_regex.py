@@ -19,7 +19,8 @@ except ImportError:
 @unittest.skipUnless(shutil.which('node'), 'node not installed')
 class RegexWorkerModelTest(unittest.TestCase):
     def check(self, assertions):
-        source = Path(helpers.ROOT, 'assets/timeline/search.js').read_text()
+        source = (Path(helpers.ROOT, 'assets/report/function-search.js').read_text() + '\n' +
+                  Path(helpers.ROOT, 'assets/timeline/search.js').read_text())
         result = subprocess.run(['node', '-e', source + "\nconst assert = require('node:assert/strict');\n" + assertions],
                                 capture_output=True, text=True, timeout=20)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
@@ -74,7 +75,8 @@ class RegexWorkerBrowserTest(unittest.TestCase):
     def setUpClass(cls):
         cls.kernel = helpers.FakeKernel()
         cls.addClassCleanup(cls.kernel.close)
-        cls.source = Path(helpers.ROOT, 'assets/timeline/search.js').read_text()
+        cls.source = (Path(helpers.ROOT, 'assets/report/function-search.js').read_text() + '\n' +
+                      Path(helpers.ROOT, 'assets/timeline/search.js').read_text())
         cls.names = ['a' * 28 + 'b', 'root', 'CHILD<int>', 'child+symbol', '中文🙂', 'first\nsecond',
                      'quote"\\path', 'z' * 70000] + [f'function_{index}' for index in range(650)]
         records = []

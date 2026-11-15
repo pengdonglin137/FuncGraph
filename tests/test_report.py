@@ -221,6 +221,7 @@ class JsSyntaxTest(unittest.TestCase):
         self.node_check(assets.read_asset(assets.REPORT_FILTER_INDEX_JS), 'filter-index.js')
         self.node_check(assets.read_asset(assets.VIEWS_EARLY_JS), 'early.js')
         self.node_check(assets.timeline_script(), 'timeline')
+        self.node_check(assets.compare_script(), 'compare')
 
     def test_generated_inline_scripts(self):
         k = helpers.FakeKernel()

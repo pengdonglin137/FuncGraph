@@ -20,7 +20,7 @@ window.fgViews.compare = { el: 'compareView', data: ['cmpData'], init: function 
     let sortKey = 'self', sortBy = 'absdiff', query = null, onlyChanged = true, limit = 400;
     let ROWS = D.rows;
     let matchingRows = [], maxDelta = 1, renderedCount = 0, adjustedMode = false;
-    let filterTimer = 0, queryText = '';
+    let filterTimer = 0, queryText = '', queryNames = null, pendingQuery = null, nameIndex = null, composing = false;
     const fmt = ns => {
         const a = Math.abs(ns);
         if (a < 1000) return ns.toFixed(0) + ' ns';
@@ -52,6 +52,7 @@ window.fgViews.compare = { el: 'compareView', data: ['cmpData'], init: function 
         <span class="cmp-count"></span>
       </div>
       <div class="cmp-note">Durations include tracing overhead; compare traces captured with the same options. Self time = inclusive minus traced children.</div>
+      <div class="cmp-filter-status" hidden><span role="status"></span> <button class="cmp-cancel" type="button">Cancel</button></div>
       <div id="cmpFilterError" class="cmp-filter-error" role="alert" hidden></div>
       <div class="cmp-empty" role="status" hidden>No functions match the current filters.</div>
       <div class="cmp-wrap" tabindex="0" role="region" aria-label="Function comparison table"><table class="cmp-table"><thead></thead><tbody></tbody></table></div>`;
@@ -71,6 +72,7 @@ window.fgViews.compare = { el: 'compareView', data: ['cmpData'], init: function 
     const wrap = root.querySelector('.cmp-wrap');
     const filterInput = root.querySelector('.cmp-q'), filterError = root.querySelector('.cmp-filter-error');
     const exportButton = root.querySelector('.cmp-export');
+    const filterStatus = root.querySelector('.cmp-filter-status');
     const note = root.querySelector('.cmp-note'), measuredNote = note.textContent;
     function resize() {
         const top = Math.max(0, wrap.getBoundingClientRect().top);
@@ -86,7 +88,8 @@ window.fgViews.compare = { el: 'compareView', data: ['cmpData'], init: function 
     function updateRows() {
         const col = COLS.find(c => c.k === sortKey) || COLS[2];
         let rows = ROWS;
-        if (query) rows = rows.filter(r => query.test(r[0]));
+        if (queryNames) rows = rows.filter(row => queryNames.has(row[0]));
+        else if (query) rows = rows.filter(row => query.test(row[0]));
         if (onlyChanged) rows = rows.filter(row => row[1] !== row[6] || row[2] !== row[7] ||
             row[3] !== row[8] || row[4] !== row[9] || row[5] !== row[10]);
         const key = r => {
@@ -135,29 +138,117 @@ window.fgViews.compare = { el: 'compareView', data: ['cmpData'], init: function 
         renderedCount = Math.min(limit, matchingRows.length);
         root.querySelector('.cmp-count').textContent = matchingRows.length + ' of ' + ROWS.length + ' functions';
         root.querySelector('.cmp-empty').hidden = matchingRows.length !== 0;
-        exportButton.disabled = !matchingRows.length || filterInput.classList.contains('bad');
+        updateExportState();
         exportButton.title = 'Export all ' + matchingRows.length + ' matching functions in the current order; durations are in ns';
         resize();
     }
-    function applyQuery() {
+    function updateExportState() {
+        exportButton.disabled = !matchingRows.length || filterInput.classList.contains('bad') || !!pendingQuery;
+    }
+    function stopFilter(restore = false) {
         clearTimeout(filterTimer);
-        if (filterInput.value === queryText && !filterInput.classList.contains('bad')) return true;
-        let nextQuery;
-        try { nextQuery = filterInput.value ? new RegExp(filterInput.value, 'i') : null; }
-        catch (error) {
-            filterInput.classList.add('bad');
-            filterInput.setAttribute('aria-invalid', 'true');
-            filterError.textContent = 'Invalid regular expression. Fix the filter before exporting; the last valid results are still shown.';
-            filterError.hidden = false;
-            exportButton.disabled = true;
-            resize();
-            return false;
+        const request = pendingQuery;
+        pendingQuery = null;
+        request?.controller.abort();
+        filterStatus.hidden = true;
+        wrap.removeAttribute('aria-busy');
+        if (restore) {
+            filterInput.value = queryText;
+            clearFilterError();
         }
-        query = nextQuery;
-        queryText = filterInput.value;
+        updateExportState();
+        resize();
+    }
+    function clearFilterError() {
         filterInput.classList.remove('bad');
         filterInput.removeAttribute('aria-invalid');
         filterError.hidden = true;
+    }
+    function filterFailed(message, invalid = false) {
+        filterInput.classList.add('bad');
+        if (invalid) filterInput.setAttribute('aria-invalid', 'true');
+        filterError.textContent = message;
+        filterError.hidden = false;
+        updateExportState();
+        resize();
+    }
+    function indexedNames() {
+        if (!nameIndex) {
+            const unique = new Set();
+            for (const rows of [D.rows, D.rows_adj || []]) {
+                for (const row of rows) unique.add(row[0]);
+            }
+            const strings = Array.from(unique);
+            nameIndex = {strings, names: Int32Array.from(strings, (name, index) => index)};
+        }
+        return nameIndex;
+    }
+    async function runQuery(request, matcher) {
+        try {
+            const index = indexedNames(), signal = request.controller.signal;
+            let hits = null;
+            try {
+                const background = matchSearchNamesWorker(index, index.strings, request.text, signal);
+                if (background) hits = await background;
+            } catch (error) {
+                if (error.searchKind !== 'unavailable') throw error;
+            }
+            if (!hits) {
+                if (signal.aborted) return false;
+                filterStatus.querySelector('span').textContent = 'Filtering in page… Complex expressions may block; previous results are shown.';
+                hits = new Uint8Array(index.strings.length);
+                for (let position = 0; position < index.strings.length; position++) {
+                    if (position % 256 === 0) {
+                        await new Promise(resolve => setTimeout(resolve, 0));
+                        if (signal.aborted) return false;
+                    }
+                    hits[position] = matcher.test(index.strings[position]) ? 1 : 0;
+                }
+            }
+            if (pendingQuery !== request || signal.aborted) return false;
+            const names = new Set();
+            for (let position = 0; position < hits.length; position++) {
+                if (hits[position]) names.add(index.strings[position]);
+            }
+            query = null;
+            queryNames = names;
+            queryText = request.text;
+            stopFilter();
+            updateRows();
+            return true;
+        } catch (error) {
+            if (pendingQuery !== request || request.controller.signal.aborted) return false;
+            stopFilter();
+            filterFailed('Background filter failed. Press Enter to retry or edit the expression; previous results are still shown.');
+            return false;
+        }
+    }
+    function applyQuery() {
+        clearTimeout(filterTimer);
+        if (pendingQuery?.text === filterInput.value) return pendingQuery.promise;
+        stopFilter();
+        clearFilterError();
+        if (filterInput.value === queryText) { updateExportState(); resize(); return true; }
+        let nextQuery;
+        try { nextQuery = filterInput.value ? new RegExp(filterInput.value, 'i') : null; }
+        catch (error) {
+            filterFailed('Invalid regular expression. Fix the filter before exporting; the last valid results are still shown.', true);
+            return false;
+        }
+        if (nextQuery && searchNeedsWorker(filterInput.value)) {
+            const request = {text: filterInput.value, controller: new AbortController(), promise: null};
+            pendingQuery = request;
+            filterStatus.querySelector('span').textContent = 'Filtering function names… Previous results are shown.';
+            filterStatus.hidden = false;
+            wrap.setAttribute('aria-busy', 'true');
+            updateExportState();
+            resize();
+            request.promise = runQuery(request, nextQuery);
+            return request.promise;
+        }
+        query = nextQuery;
+        queryNames = null;
+        queryText = filterInput.value;
         updateRows();
         return true;
     }
@@ -165,8 +256,8 @@ window.fgViews.compare = { el: 'compareView', data: ['cmpData'], init: function 
         const text = String(value);
         return /[",\r\n]/.test(text) ? '"' + text.replace(/"/g, '""') + '"' : text;
     }
-    function exportCsv() {
-        if (!applyQuery() || !matchingRows.length) return;
+    async function exportCsv() {
+        if (!await applyQuery() || !matchingRows.length) return;
         const columns = COLS.slice(1), headings = ['function'];
         const bySpace = D.rows[0]?.length > 11;
         if (bySpace) headings.push('space');
@@ -221,16 +312,22 @@ window.fgViews.compare = { el: 'compareView', data: ['cmpData'], init: function 
         });
     }
     root.querySelector('.cmp-changed').addEventListener('change', ev => { onlyChanged = ev.target.checked; updateRows(); });
-    filterInput.addEventListener('input', () => {
-        clearTimeout(filterTimer);
+    filterInput.addEventListener('input', event => {
+        stopFilter();
+        if (composing || event.isComposing) return;
         filterTimer = setTimeout(applyQuery, 150);
     });
+    filterInput.addEventListener('compositionstart', () => { composing = true; stopFilter(); });
+    filterInput.addEventListener('compositionend', () => { composing = false; filterTimer = setTimeout(applyQuery, 150); });
     filterInput.addEventListener('keydown', ev => {
         ev.stopPropagation();
+        if (composing || ev.isComposing) return;
         if (ev.key === 'Enter') { ev.preventDefault(); applyQuery(); }
+        else if (ev.key === 'Escape') { ev.preventDefault(); stopFilter(true); }
     });
+    root.querySelector('.cmp-cancel').addEventListener('click', () => { stopFilter(true); filterInput.focus(); });
     exportButton.addEventListener('click', exportCsv);
     window.addEventListener('resize', () => { if (window.fgCurrentView() === 'compare') resize(); });
     updateRows();
-    return { resize: resize };
+    return { resize: resize, suspend: () => stopFilter(true) };
 } };

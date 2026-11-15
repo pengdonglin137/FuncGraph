@@ -18,6 +18,7 @@ REPORT_JS = 'report/report.js'
 REPORT_WINDOW_JS = 'report/window.js'
 REPORT_DATA_JS = 'report/data.js'
 REPORT_FILTER_INDEX_JS = 'report/filter-index.js'
+FUNCTION_SEARCH_JS = 'report/function-search.js'
 VIEWS_CSS = 'views/views.css'
 VIEWS_EARLY_JS = 'views/early.js'
 VIEWS_BOOT_JS = 'views/boot.js'
@@ -36,7 +37,7 @@ def read_asset(rel):
 
 def timeline_script():
     """The timeline closure (registered as a view by views/boot.js)."""
-    parts = ''.join(read_asset(p) for p in TIMELINE_JS_PARTS)
+    parts = read_asset(FUNCTION_SEARCH_JS) + '\n' + ''.join(read_asset(p) for p in TIMELINE_JS_PARTS)
     return ('function* __tlSteps() {\n' + parts + '\n}\n'
             'function __tlBoot() {\n'
             '    const steps = __tlSteps();\n'
@@ -46,5 +47,10 @@ def timeline_script():
             '}\n')
 
 
+def compare_script():
+    """The Compare view and its isolated shared function-name matcher."""
+    return '(function () {\n' + read_asset(FUNCTION_SEARCH_JS) + '\n' + read_asset(COMPARE_JS) + '\n})();\n'
+
+
 def all_asset_paths():
-    return (REPORT_CSS, REPORT_TREE_CSS, REPORT_JS, REPORT_WINDOW_JS, REPORT_DATA_JS, REPORT_FILTER_INDEX_JS, VIEWS_CSS, VIEWS_EARLY_JS, VIEWS_BOOT_JS, TIMELINE_CSS, COMPARE_CSS, COMPARE_JS) + TIMELINE_JS_PARTS
+    return (REPORT_CSS, REPORT_TREE_CSS, REPORT_JS, REPORT_WINDOW_JS, REPORT_DATA_JS, REPORT_FILTER_INDEX_JS, FUNCTION_SEARCH_JS, VIEWS_CSS, VIEWS_EARLY_JS, VIEWS_BOOT_JS, TIMELINE_CSS, COMPARE_CSS, COMPARE_JS) + TIMELINE_JS_PARTS

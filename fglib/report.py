@@ -12,7 +12,7 @@ from collections import defaultdict
 from pathlib import Path
 from itertools import islice
 
-from .assets import COMPARE_CSS, COMPARE_JS, REPORT_CSS, REPORT_DATA_JS, REPORT_FILTER_INDEX_JS, REPORT_JS, REPORT_TREE_CSS, REPORT_WINDOW_JS, TIMELINE_CSS, VIEWS_BOOT_JS, VIEWS_CSS, VIEWS_EARLY_JS, read_asset, timeline_script
+from .assets import COMPARE_CSS, REPORT_CSS, REPORT_DATA_JS, REPORT_FILTER_INDEX_JS, REPORT_JS, REPORT_TREE_CSS, REPORT_WINDOW_JS, TIMELINE_CSS, VIEWS_BOOT_JS, VIEWS_CSS, VIEWS_EARLY_JS, compare_script, read_asset, timeline_script
 from .constants import APP_AUTHOR, APP_TITLE, APP_VERSION, ERROR_CODE_MAP, PROJECT_DIR
 from .inline import parse_chain, timeline_inline_map
 from .modules import ModuleIndex
@@ -340,6 +340,7 @@ class HtmlGenerator:
             <h3>Compare Help</h3>
             <ul>
                 <li>Filter function names with a case-insensitive regular expression.</li>
+                <li>Complex filters run in the background; Cancel or Escape restores the previous complete result.</li>
                 <li>Click a metric heading to sort; choose |Δ|, Δ, Δ%, current or base.</li>
                 <li>Turn off Changed only to include unchanged functions.</li>
                 <li>Load more appends rows; Export CSV includes all matching rows.</li>
@@ -398,7 +399,7 @@ class HtmlGenerator:
                       read_asset(TIMELINE_CSS), 'tlData', self.timeline_json, timeline_script()))
         if self.compare_json:
             v.append(('compare', 'Compare', f"vs {self.compare_json['names'][0]}", 'compareView',
-                      read_asset(COMPARE_CSS), 'cmpData', self.compare_json, read_asset(COMPARE_JS)))
+                      read_asset(COMPARE_CSS), 'cmpData', self.compare_json, compare_script()))
         return v
 
     def _timeline_css(self):

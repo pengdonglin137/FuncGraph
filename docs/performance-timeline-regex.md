@@ -1,5 +1,12 @@
 # Timeline regex responsiveness
 
+The worker matcher is now shared with Compare in
+`assets/report/function-search.js`; Timeline retains its existing indexing,
+query lifecycle and result-merging code. The original measurements below
+describe the earlier Timeline change, not a new performance gain from extraction.
+Compare's separate measurements and cancellation/export behavior are documented
+in [responsive Compare filtering](performance-compare-regex.md).
+
 ## Reproduced bottleneck
 
 Cooperative indexing and batches cannot interrupt one native `RegExp.test()`.
