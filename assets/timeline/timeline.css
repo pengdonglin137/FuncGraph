@@ -639,7 +639,7 @@ table.tl-sum td.err { color: #c62828; }
 }
 .tl-compact .tl-quick, .tl-compact .tl-zoom-group { gap: 4px; }
 .tl-compact .tl-primary { gap: 4px; }
-.tl-compact .tl-primary .tl-search-group { flex: 1 1 0; }
+.tl-compact .tl-primary .tl-search-group { flex: 1 1 194px; min-width: min-content; }
 .tl-compact .tl-primary .tl-quick { order: 3; flex: 0 1 auto; }
 .tl-compact .tl-fullscreen-button { order: 1; min-height: 44px; }
 .tl-compact .tl-primary [data-act=help] { order: 2; min-width: 44px; min-height: 44px; }

@@ -92,6 +92,11 @@ No recapture, symbol simplification or evidence filtering is involved.
 
 Actual Chromium layout observations after searching `.*`:
 
+These observations compare the examples before the menu fix with revision
+`348faa0a7d9f`. Later [search-toolbar sizing](search-toolbar.md) changes the
+opener's position in affected windows, so exact current pixel positions may
+differ; viewport containment and hit-testing remain the required invariants.
+
 | Report | Window / input | Previous menu bottom | Updated menu bottom |
 | --- | --- | ---: | ---: |
 | Kernel | 568 × 320 / touch | 395.69 px | 145.8 px |

@@ -42,6 +42,14 @@ the input or shrink the previous/next and full-screen touch targets.
 仅 `calls` 单位可以换行；极长计数允许移到下一行，避免挤压输入框或缩小跳转、全屏的
 触屏目标。
 
+Compact search also reserves room for its input and navigation pair, so Full
+screen cannot cover them when quick actions share a landscape toolbar. Visible
+controls remain non-overlapping and counts stay exact; see
+[search toolbar layout](search-toolbar.md).
+
+紧凑布局会为查找输入和前后跳转保留空间，避免横屏时被旁边的全屏按钮盖住；空间
+不足时由原有布局换行，不缩小触屏目标或省略计数。见[查找工具栏说明](search-toolbar.md)。
+
 The published [kernel](../sample.html) and [mixed](../sample_mixed.html) examples
 include the current filter and search controls, with refreshed overview, Text
 and mixed screenshots. They reuse the saved captures (485 and 714 calls) and

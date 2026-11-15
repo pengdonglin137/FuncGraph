@@ -6,6 +6,11 @@ They paint above sticky view tabs without adding controls or changing trace
 data. Regenerate old HTML to use this behavior; see
 [menu placement and validation boundaries](toolbar-overlays.md).
 
+Compact Find also keeps its input and navigation buttons separate from Full
+screen, wrapping existing action groups instead of overlapping touch targets.
+Counts remain exact and search semantics are unchanged. See
+[search toolbar layout](search-toolbar.md); regenerate older HTML to update it.
+
 The Text / Timeline tabs (and Compare when enabled) stay at the top while
 scrolling, with Text controls directly below them. Switching views retains
 Text's vertical/horizontal reading position and Timeline's selection, time
