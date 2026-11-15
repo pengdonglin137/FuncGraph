@@ -866,9 +866,19 @@
 
         // 切换过滤器窗口的显示/隐藏
         const fgTextCompactMedia = matchMedia('(any-pointer: coarse) and (max-width: 640px), (any-pointer: coarse) and (max-height: 480px)');
-        function fgCloseFieldDropdowns() {
-            document.querySelectorAll('.field-dropdown').forEach(dropdown => dropdown.remove());
-            document.querySelectorAll('.field-btn.active').forEach(button => button.classList.remove('active'));
+        let fgFieldDropdown = null;
+        function fgCloseFieldDropdowns(restoreFocus = false) {
+            const state = fgFieldDropdown;
+            if (!state) return;
+            fgFieldDropdown = null;
+            const {panel, owner} = state;
+            const focused = panel.contains(document.activeElement);
+            panel.remove();
+            owner.classList.remove('active');
+            owner.setAttribute('aria-expanded', 'false');
+            if (restoreFocus && focused && owner.isConnected && !owner.disabled && owner.getClientRects().length) {
+                owner.focus({preventScroll: true});
+            }
         }
         function fgSetTextControlPanel(panel, restoreFocus = false) {
             const controls = document.querySelector('.controls');
@@ -884,6 +894,7 @@
             if (restoreFocus) (previous === 'filter' ? filterButton : moreButton).focus({preventScroll: true});
         }
         function fgCloseTextControls() {
+            fgCloseFieldDropdowns();
             if (fgTextCompactMedia.matches && document.querySelector('.controls').dataset.panel) fgSetTextControlPanel('');
         }
         function fgToggleTextMore() {
@@ -898,6 +909,7 @@
                 fgSetTextControlPanel(open ? 'filter' : '');
                 if (open && event?.detail === 0) document.getElementById('filterInput').focus({preventScroll: true});
             } else {
+                if (!open) fgCloseFieldDropdowns();
                 filterBox.style.display = open ? 'flex' : 'none';
                 document.getElementById('textFilterToggle').setAttribute('aria-expanded', String(open));
                 lsSet('filterBoxVisible', String(open));
@@ -933,15 +945,18 @@
                 if (!controls.contains(event.target) && !event.target.closest('.field-dropdown')) fgCloseTextControls();
             });
             document.addEventListener('keydown', event => {
-                if (event.key !== 'Escape' || event.isComposing || !fgTextCompactMedia.matches || !controls.dataset.panel) return;
+                if (event.key !== 'Escape' || event.defaultPrevented || event.isComposing || event.keyCode === 229 ||
+                    event.ctrlKey || event.metaKey || event.altKey) return;
+                if (fgFieldDropdown) {
+                    event.preventDefault();
+                    event.stopImmediatePropagation();
+                    fgCloseFieldDropdowns(true);
+                    return;
+                }
+                if (!fgTextCompactMedia.matches || !controls.dataset.panel) return;
                 event.preventDefault();
                 event.stopImmediatePropagation();
-                const dropdown = document.querySelector('.field-dropdown');
-                if (dropdown) {
-                    const owner = controls.querySelector('.field-btn.active');
-                    fgCloseFieldDropdowns();
-                    owner?.focus({preventScroll: true});
-                } else fgSetTextControlPanel('', true);
+                fgSetTextControlPanel('', true);
             }, true);
             sync();
             fgUpdateTextControlHeight();
@@ -1646,8 +1661,7 @@
             if (tagsDiv) tagsDiv.innerHTML = '';
 
             // Close any open dropdowns
-            document.querySelectorAll('.field-dropdown').forEach(d => d.remove());
-            document.querySelectorAll('.field-btn.active').forEach(b => b.classList.remove('active'));
+            fgCloseFieldDropdowns();
 
             if (fgTextWindow) return fgApplyWindowFilter('', fgFilterGeneration);
 
@@ -1746,8 +1760,13 @@
 
             // Field button click handlers
             document.querySelectorAll('.field-btn').forEach(btn => {
+                btn.type = 'button';
+                btn.setAttribute('aria-haspopup', 'dialog');
+                btn.setAttribute('aria-controls', 'textFieldDropdown');
+                btn.setAttribute('aria-expanded', 'false');
                 btn.addEventListener('click', function(e) {
                     e.stopPropagation();
+                    const wasOpen = fgFieldDropdown?.owner === this;
                     const field = this.dataset.field;
                     const values = this.dataset.values ? this.dataset.values.split(',').filter(Boolean) : [];
                     const hints = {};
@@ -1760,13 +1779,19 @@
 
                     // Close any existing dropdown
                     fgCloseFieldDropdowns();
+                    if (wasOpen) return;
 
                     // Toggle active state
                     this.classList.add('active');
+                    this.setAttribute('aria-expanded', 'true');
 
                     // Create dropdown (will be appended to document.body, not inside button)
                     const dropdown = document.createElement('div');
+                    dropdown.id = 'textFieldDropdown';
                     dropdown.className = 'field-dropdown';
+                    dropdown.setAttribute('role', 'dialog');
+                    dropdown.setAttribute('aria-label', 'Filter by ' + field);
+                    fgFieldDropdown = {panel: dropdown, owner: this};
 
                     if (field === 'params' || field === 'duration' || values.length === 0) {
                         // Text input for free-form fields
@@ -1774,6 +1799,7 @@
                         inputDiv.className = 'field-dropdown-input';
                         const placeholder = field === 'duration' ? 'e.g. >10 or <5' : 'regex pattern';
                         inputDiv.innerHTML = '<input type="text" placeholder="' + placeholder + '">';
+                        inputDiv.querySelector('input').setAttribute('aria-label', 'Filter by ' + field);
                         dropdown.appendChild(inputDiv);
 
                         const actionsDiv = document.createElement('div');
@@ -1782,8 +1808,7 @@
                         dropdown.appendChild(actionsDiv);
 
                         actionsDiv.querySelector('.cancel-btn').addEventListener('click', () => {
-                            dropdown.remove();
-                            btn.classList.remove('active');
+                            fgCloseFieldDropdowns(true);
                         });
 
                         actionsDiv.querySelector('button:last-child').addEventListener('click', () => {
@@ -1793,23 +1818,18 @@
                                 const numVal = op ? val.slice(op.length) : val;
                                 appendToFilter(field + ':' + (op || '') + numVal);
                             }
-                            dropdown.remove();
-                            btn.classList.remove('active');
+                            fgCloseFieldDropdowns(true);
                         });
 
                         // Enter key in text input
                         inputDiv.querySelector('input').addEventListener('keydown', (ev) => {
+                            if (ev.defaultPrevented || ev.isComposing || ev.keyCode === 229 ||
+                                ev.ctrlKey || ev.metaKey || ev.altKey) return;
                             if (ev.key === 'Enter') {
                                 ev.preventDefault();
                                 actionsDiv.querySelector('button:last-child').click();
-                            } else if (ev.key === 'Escape') {
-                                dropdown.remove();
-                                btn.classList.remove('active');
                             }
                         });
-
-                        positionDropdown(dropdown, this);
-                        setTimeout(() => inputDiv.querySelector('input').focus(), 50);
                     } else {
                         // Checkbox multi-select for enumerable fields
                         values.forEach(val => {
@@ -1827,8 +1847,7 @@
                         dropdown.appendChild(actionsDiv);
 
                         actionsDiv.querySelector('.cancel-btn').addEventListener('click', () => {
-                            dropdown.remove();
-                            btn.classList.remove('active');
+                            fgCloseFieldDropdowns(true);
                         });
 
                         actionsDiv.querySelector('button:last-child').addEventListener('click', () => {
@@ -1842,12 +1861,12 @@
                                     appendToFilter(expr);
                                 }
                             }
-                            dropdown.remove();
-                            btn.classList.remove('active');
+                            fgCloseFieldDropdowns(true);
                         });
-
-                        positionDropdown(dropdown, this);
                     }
+                    dropdown.querySelectorAll('button').forEach(button => { button.type = 'button'; });
+                    positionDropdown(dropdown, this);
+                    dropdown.querySelector('input').focus({preventScroll: true});
                 });
             });
 
@@ -1868,8 +1887,7 @@
             // Global click to close dropdowns
             document.addEventListener('click', function(e) {
                 if (!e.target.closest('.field-btn') && !e.target.closest('.field-dropdown')) {
-                    document.querySelectorAll('.field-dropdown').forEach(d => d.remove());
-                    document.querySelectorAll('.field-btn.active').forEach(b => b.classList.remove('active'));
+                    fgCloseFieldDropdowns();
                 }
             });
         }

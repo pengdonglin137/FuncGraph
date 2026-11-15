@@ -859,7 +859,7 @@
         }
         .field-dropdown-actions button.cancel-btn {
             background: transparent;
-            color: var(--text-secondary);
+            color: var(--text-color);
         }
         /* Text input for dropdown (params, duration) */
         .field-dropdown-input {
@@ -878,6 +878,12 @@
         }
         [data-theme="dark"] .field-dropdown-input input {
             background: rgba(100, 100, 100, 0.3);
+        }
+        @media (any-pointer: coarse) and (max-width: 640px), (any-pointer: coarse) and (max-height: 480px) {
+            .field-dropdown { max-width: calc(100vw - 8px); box-sizing: border-box; }
+            .field-dropdown-item { min-height: 44px; box-sizing: border-box; font-size: 12px; }
+            .field-dropdown-actions button { min-width: 44px; min-height: 44px; font-size: 12px; }
+            .field-dropdown-input input { min-width: 0; min-height: 44px; font-size: 16px; box-sizing: border-box; }
         }
 
         /* Filter help button */

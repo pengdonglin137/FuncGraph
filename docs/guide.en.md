@@ -628,6 +628,16 @@ layout can still block. See [measurements and limits](performance-text-order.md)
 
 Type `field:value` in the filter box, combine with `AND`, `OR`, `NOT` and parentheses, and press Enter or Apply. The field buttons below open drop-down lists of values.
 
+Opening a field popup focuses its first native checkbox or input for Space, Tab
+and Enter. **Add / OK** appends and applies conditions; **Cancel / Escape**
+discards unapplied choices and returns to the field button without clearing the
+existing filter. Activating the same field again also closes it. On phones,
+Escape closes the field popup first, then the Filter panel. View changes,
+hiding Filter and outside clicks leave no orphan popup or stolen focus.
+Compact touch layouts use 44px option/action targets and 16px input text;
+desktop dimensions stay unchanged.
+Regenerate older HTML; see [field-filter interaction checks](filter-field-interaction.md).
+
 | Field | Matches | Examples |
 |---|---|---|
 | `cpu` | CPU number (regex) | `cpu:0`, `cpu:0\|1` |
