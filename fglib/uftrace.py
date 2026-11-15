@@ -241,6 +241,7 @@ class UftraceTimeline(TimelineBuilder):
         version = KERNEL_VERSION.match(settings.get('kernel_release', ''))
         self.lazy_resched = tuple(map(int, version.groups())) >= (6, 13) if version else None
         selected = CLOCK.search(settings.get('trace_clock', ''))
+        self.kvm.clock = selected[1] if selected else None
         self.aligned = clock in ('mono', 'mono_raw', 'boot') and selected is not None and selected[1] == clock
         self.mixed = len(self.spaces) == 2
         self.parsed = []
@@ -371,11 +372,15 @@ class UftraceTimeline(TimelineBuilder):
             space, kind, timestamp = record.get('space'), record['type'], record['time_ns']
             if space is None:
                 continue
+            if space == 'kernel':
+                self.kvm.observe(timestamp)
             tid, cpu = record['tid'], record['cpu']
             pending = user_sites.pop(tid, None) if space == 'user' else None
             if 'user_callsite' in record:
                 user_sites[tid] = (timestamp, record['user_callsite'])
             if kind == 'lost':
+                if space == 'kernel':
+                    self.kvm.lost(cpu, lineno)
                 self.lost.append([cpu, timestamp, record['count'] if record['count'] >= 0 else None, lineno])
                 if space == 'kernel':
                     for task in self.task_list:
@@ -405,7 +410,7 @@ class UftraceTimeline(TimelineBuilder):
             if lat is not None and kind != 'event':
                 self._track_lat(task, lat, flags, timestamp, lineno, previous)
             if kind == 'event':
-                self._event(record, task, timestamp, cpu, context)
+                self._event(record, task, timestamp, cpu, context, lineno, flags)
                 phase = LIFECYCLE.get(record.get('name'))
                 if phase is not None:
                     self.lifecycle.append((task.tid, timestamp, phase, lineno))
@@ -472,7 +477,7 @@ class UftraceTimeline(TimelineBuilder):
         signature = self.kernel_types.get(self.s_name[index], {})
         return format_scalar(value, *signature['ret'], returning=True) if value is not None and 'ret' in signature else value
 
-    def _event(self, record, task, timestamp, cpu, context):
+    def _event(self, record, task, timestamp, cpu, context, lineno, flags):
         name, payload = record.get('name', ''), record.get('text', '')
         if name == 'sched:sched_switch':
             match = RE_SCHED_SWITCH.search('sched_switch: ' + payload)
@@ -487,6 +492,9 @@ class UftraceTimeline(TimelineBuilder):
                 self._track_run(next_task, cpu, timestamp)
         elif name in ('sched:sched_waking', 'sched:sched_wakeup', 'sched:sched_wakeup_new'):
             self._on_comment(name.split(':', 1)[1] + ': ' + payload, task, timestamp, cpu, context)
+        elif name.startswith('kvm:'):
+            if self.kvm.event(name.split(':', 1)[1], payload, task, timestamp, cpu, lineno, flags):
+                self.caps['kvm'] = True
 
     def _join(self):
         users, kernel_roots = defaultdict(list), []

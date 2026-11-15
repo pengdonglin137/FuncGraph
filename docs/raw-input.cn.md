@@ -36,9 +36,15 @@ fgview trace-report
 
 默认 `--input-format auto` 自动识别；`raw` 强制要求 trace-cmd 容器，`text` 遇到二进制容器则明确报错。`--compare` 的文件独立自动识别，可以混合对比 raw 和文本。
 
-默认读取顶层 buffer。`--raw-instance NAME` 选择一个命名 buffer，也用于 raw 格式的比较基线，不会静默合并多个 instance。当前 buffer 没有调用或调度事件时，错误会列出可选实例。
+默认读取顶层 buffer。`--raw-instance NAME` 选择一个命名 buffer，也用于 raw 格式的比较基线，不会静默合并多个 instance。当前 buffer 没有调用、调度或 KVM 事件时，错误会列出可选实例。
 
 支持 `.gz/.xz/.lzma/.bz2` 和二进制标准输入。压缩容器与 stdin 会先写入私有临时文件，以满足 libtracecmd 的随机访问要求；多输入按纳秒时间戳合并。`fgreport trace.dat -- --raw-instance NAME` 可透传参数；它不会把二进制中的换行字节当作文本行数。大型 raw 报告请显式预过滤或使用 `--no-text-view`。
+
+## Host KVM 事件
+
+也支持只有 Host KVM 事件的容器：现有 Timeline 展示 vCPU 边界区间和原始证据，
+不会伪造函数调用，详见 [Host KVM](kvm.cn.md)。`--raw-instance` 可选择含调用、
+调度或 KVM 事件的 buffer；不支持的 buffer 仍明确报错。
 
 ## 可选依赖
 

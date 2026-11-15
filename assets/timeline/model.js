@@ -259,8 +259,27 @@ yield 'Indexing task tracks…';
 const TRACKS = D.tasks.map((t, i) => ({
     id: i, pid: t.pid, comm: t.comm, comms: t.comms || [], kind: t.kind, cpu: t.cpu, runs: t.runs || [],
     lo: -1, hi: -1, maxD: -1, rows: [], rowsT: [], rowsI: [], maxDT: -1, maxDI: -1, busy: 0, off: [], rs: [], io: [], errs: [], cpus: new Set(),
-    collapsed: false, hidden: false, hits: 0, y: 0, h: 0
+    collapsed: false, hidden: false, hits: 0, y: 0, h: 0, kvm: [], kvmEvents: [], vcpus: new Set()
 }));
+const KVM = D.kvm?.v === 1 ? D.kvm : null;
+const KVM_EVENTS = KVM?.events || [], KVM_INTERVALS = KVM?.intervals || [];
+const KVM_EVENT_POS = new Int32Array(KVM_EVENTS.length), KVM_INTERVAL_POS = new Int32Array(KVM_INTERVALS.length);
+for (let index = 0; index < KVM_EVENTS.length; index++) {
+    if (index && (index & (PREPARE_BATCH - 1)) === 0) yield 'Indexing KVM events…';
+    const event = KVM_EVENTS[index], track = TRACKS[event[0]];
+    track.kvmEvents.push(index);
+    if (event[6] >= 0) track.vcpus.add(event[6]);
+}
+for (const track of TRACKS) {
+    track.kvmEvents.sort((left, right) => KVM_EVENTS[left][1] - KVM_EVENTS[right][1] || left - right);
+    for (let position = 0; position < track.kvmEvents.length; position++) KVM_EVENT_POS[track.kvmEvents[position]] = position;
+}
+for (let index = 0; index < KVM_INTERVALS.length; index++) {
+    if (index && (index & (PREPARE_BATCH - 1)) === 0) yield 'Indexing KVM windows…';
+    const track = TRACKS[KVM_INTERVALS[index][0]];
+    KVM_INTERVAL_POS[index] = track.kvm.length;
+    track.kvm.push(index);
+}
 const PROCESS_EVENTS = D.uftrace?.lifecycle || [];
 const PROCESS_BY_TASK = new Map();
 const unorderedProcessTasks = new Set();
@@ -401,6 +420,8 @@ for (let index = 0; index < N; index++) {
     callEnd = Math.max(callEnd, sEnd[index]);
 }
 for (const task of TRACKS) for (const run of task.runs) { observeTime(run[0]); observeTime(run[1]); }
+for (const event of KVM_EVENTS) observeTime(event[1]);
+for (const interval of KVM_INTERVALS) { observeTime(interval[1]); observeTime(interval[2]); }
 for (const records of [D.offcpu, D.resched, D.irqoff]) for (const record of records) {
     observeTime(record[1]); observeTime(record[2]);
 }
@@ -500,10 +521,12 @@ if (!N) {
     for (const section of SECTIONS) EVENT_TASKS.add(section[0]);
 }
 const ORDER = TRACKS.filter(t => t.lo >= 0 || t.off.length || PROCESS_BY_TASK.has(t.id) ||
+    t.kvmEvents.length ||
     (!N && (t.rs.length || t.io.length || EVENT_TASKS.has(t.id) ||
         ((D.caps.sched_events || D.caps.switch_markers) && t.runs.length)))).sort((a, b) => {
     if (a.kind !== b.kind) return a.kind - b.kind;
     if (a.kind === 1) return (a.cpu || 0) - (b.cpu || 0);
+    if (a.kvmEvents.length || b.kvmEvents.length) return b.kvmEvents.length - a.kvmEvents.length || b.busy - a.busy;
     return b.busy - a.busy;
 });
 yield 'Preparing scheduling context…';
@@ -544,7 +567,7 @@ const CPU_LIST = Array.from(CPU_SEGS.keys()).sort((a, b) => a - b);
 if (CPU_LIST.length && ORDER.some(t => t.kind === 0)) {
     const ct = { id: -1, pid: -1, comm: 'CPUs', comms: [], kind: 9, cpu: null, runs: [], lo: -1, hi: -1,
         maxD: CPU_LIST.length - 1, rows: [], busy: 0, off: [], rs: [], io: [], errs: [], cpus: new Set(),
-        collapsed: false, hidden: false, hits: 1, y: 0, h: 0 };
+        collapsed: !!KVM, hidden: false, hits: 1, y: 0, h: 0, kvm: [], kvmEvents: [], vcpus: new Set() };
     ORDER.unshift(ct);
 }
 
@@ -556,13 +579,15 @@ function trackLabel(t) {
     if (t.kind === 1) return '<idle>' + (t.cpu !== null && t.cpu !== undefined ? '  CPU ' + t.cpu : '');
     if (t.kind === 2) return 'CPU ' + t.cpu + '  (no funcgraph-proc)';
     if (t.kind === 3) return 'all';
-    return t.comm + '  ' + t.pid;
+    const vcpu = t.kvmEvents.length ? (t.vcpus.size ? 'vCPU ' + Array.from(t.vcpus).sort((left, right) => left - right).join(',') : 'KVM thread') + ' · ' : '';
+    return vcpu + t.comm + '  ' + t.pid;
 }
 function trackSub(t) {
     if (t.kind === 9) return CPU_LIST.length + ' CPU(s) · ' +
         (CPU_HAS_SWITCHES ? 'recorded scheduling, irq/softirq strip' : 'observed calls · no sched_switch') +
         ' · click a segment to open its task';
     const parts = [];
+    if (t.kvmEvents.length) parts.push(t.kvmEvents.length + ' KVM events · Host TID ' + t.pid);
     if (t.cpus.size) parts.push('CPU ' + Array.from(t.cpus).sort((a, b) => a - b).join(','));
     if (t.lo >= 0) parts.push((t.hi - t.lo) + ' calls');
     else parts.push('no traced calls' + (t.runs.length ? ' · ' + t.runs.length + ' recorded runs' : ''));
@@ -587,8 +612,9 @@ function fmtDur(ns) {
 }
 function fmtAbs(ns) {
     if (MODE !== 'abs') return '';
-    if (D.uftrace?.origin_ns) {
-        const time = BigInt(D.uftrace.origin_ns) + BigInt(Math.round(ns));
+    const origin = D.uftrace?.origin_ns || D.kvm?.origin_ns;
+    if (origin) {
+        const time = BigInt(origin) + BigInt(Math.round(ns));
         return (time / 1000000000n) + '.' + String(time % 1000000000n).padStart(9, '0');
     }
     const t = D.t0 + ns;
@@ -679,7 +705,7 @@ function ovX(t) { return (t - tMin) * ovK(); }
 function ovT(x) { return tMin + x / ovK(); }
 const ov = { err: true, irq: true, rs: true, off: true, wk: true, preempt: false, mk: true };
 let colorMode = 'ctx';
-let sel = -1, hov = -1, hovOff = null, hovCpu = null;
+let sel = -1, hov = -1, hovOff = null, hovCpu = null, selKvm = null, hovKvm = null;
 let savedViewsDialog = null;
 let range = null;            // {s, e, track|null}
 let searchHits = null;       // Uint8Array per name index
@@ -797,7 +823,7 @@ tlRoot.innerHTML = `
   </span>
   </div>
 </div>
-${N ? '' : '<div class="tl-event-only" role="note">No recorded function calls. Showing recorded scheduling / lifecycle observations only.</div>'}
+${N ? '' : '<div class="tl-event-only" role="note">No recorded function calls. Showing recorded ' + (KVM ? 'KVM / ' : '') + 'scheduling / lifecycle observations only.</div>'}
 <div class="tl-notes"></div>
 <div class="tl-stage">
   <canvas class="tl-head-canvas"></canvas>

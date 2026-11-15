@@ -15,6 +15,10 @@ function hitTest(mx, my) {
         const seg = lo < sg.s.length && sg.s[lo] <= tm ? { cpu: cpu, j: lo, t: sg.t[lo], s: sg.s[lo], e: sg.e[lo] } : null;
         return { track: t, slice: -1, off: null, header: false, cpuSeg: seg, tm: tm };
     }
+    if (t.kvmEvents.length && (t.collapsed || d === t.maxD + 1)) {
+        const eventBand = (yy - t.y - HDR) % ROW < 3;
+        return { track: t, slice: -1, off: null, header: false, kvm: hitKvm(t, tm, k, eventBand) };
+    }
     let best = -1, dense = null;
     if (d >= 0 && d < t.rows.length) {
         const row = t.rows[d];
@@ -80,6 +84,7 @@ function revealRow(i, expand = true) {
 }
 function setSelection(index) {
     closeCallActions();
+    selKvm = null;
     sel = index;
     updateSearchLabel();
 }
@@ -306,6 +311,7 @@ function activateCanvas(mx, my) {
     const h = hitTest(mx, my);
     if (h.header && h.track) { h.track.collapsed = !h.track.collapsed; layout(); draw(); return; }
     if (h.cpuSeg) { openTaskAt(h.cpuSeg.t, h.tm); return; }
+    if (h.kvm) { showKvmDetail(h.kvm); return; }
     if (h.slice >= 0) select(h.slice);
     else if (h.off) { setSelection(-1); showWaitChain(h.off); draw(); }
     else if (range) { range = null; hideDetail(); draw(); }
@@ -357,11 +363,14 @@ function flushHover() {
         hoverSourceRequest.controller.abort(); hoverSourceRequest = null;
     }
     const nextCpu = hit.cpuSeg || null;
-    const changed = slice !== hov || hit.off !== hovOff || nextCpu?.cpu !== hovCpu?.cpu || nextCpu?.j !== hovCpu?.j;
+    const changed = slice !== hov || hit.off !== hovOff || nextCpu?.cpu !== hovCpu?.cpu || nextCpu?.j !== hovCpu?.j ||
+        hit.kvm?.kind !== hovKvm?.kind || hit.kvm?.index !== hovKvm?.index;
     hov = slice; hovOff = hit.off;
     hovCpu = nextCpu;
-    elCv.classList.toggle('ptr', slice >= 0 || hit.header || !!hovCpu);
-    if (hovCpu) showTip(tipCpu(hovCpu), event);
+    hovKvm = hit.kvm || null;
+    elCv.classList.toggle('ptr', slice >= 0 || hit.header || !!hovCpu || !!hovKvm);
+    if (hovKvm) showTip(tipKvm(hovKvm), event);
+    else if (hovCpu) showTip(tipCpu(hovCpu), event);
     else if (slice >= 0) showTip(tipSlice(slice) + (hit.dense ? tipDense(hit.dense) : ''), event);
     else if (hit.off) showTip(tipOff(hit.off), event);
     else hideTip();
@@ -381,8 +390,9 @@ window.addEventListener('mouseup', ev => {
     activateCanvas(...localXY(ev, elCv));
 });
 elCv.addEventListener('mouseleave', () => {
-    const changed = hov >= 0 || hovOff !== null || hovCpu !== null;
+    const changed = hov >= 0 || hovOff !== null || hovCpu !== null || hovKvm !== null;
     cursorX = -1; hov = -1; hovOff = null; hovCpu = null; hideTip();
+    hovKvm = null;
     if (changed) draw();
     else drawCursor();
 });
@@ -390,6 +400,10 @@ elCv.addEventListener('dblclick', ev => {
     const [mx, my] = localXY(ev, elCv);
     const h = hitTest(mx, my);
     if (h.slice >= 0) select(h.slice, { zoom: true });
+    else if (h.kvm?.kind === 'interval') {
+        const interval = KVM_INTERVALS[h.kvm.index];
+        showKvmDetail(h.kvm); zoomTo(interval[1], interval[2], -1);
+    }
     else if (h.off) zoomTo(h.off[1], h.off[2], -1);
 });
 elCv.addEventListener('wheel', ev => {
@@ -694,7 +708,7 @@ elSearch.addEventListener('keydown', ev => {
 let positionBasis = 'offset', positionReturnFocus = null;
 function positionOrigin() {
     if (MODE !== 'abs' || MIXED && !D.uftrace.aligned) return null;
-    const origin = D.uftrace?.origin_ns;
+    const origin = D.uftrace?.origin_ns || D.kvm?.origin_ns;
     if (origin !== undefined) return typeof origin === 'string' && /^\d{1,32}$/.test(origin) ? BigInt(origin) : null;
     return Number.isSafeInteger(D.t0) && D.t0 >= 0 ? BigInt(D.t0) : null;
 }
@@ -843,7 +857,12 @@ window.addEventListener('keydown', ev => {
         case 'a': case 'A': case 'ArrowLeft': panBy(-span * 0.15); break;
         case 'd': case 'D': case 'ArrowRight': panBy(span * 0.15); break;
         case '0': case 'Home': fitAll(); break;
-        case 'f': case 'F': if (sel >= 0) zoomTo(sStart[sel], sEnd[sel], sel); else if (range) zoomTo(range.s, range.e, -1); break;
+        case 'f': case 'F':
+            if (sel >= 0) zoomTo(sStart[sel], sEnd[sel], sel);
+            else if (selKvm?.kind === 'interval') {
+                const record = KVM_INTERVALS[selKvm.index]; zoomTo(record[1], record[2], -1);
+            } else if (range) zoomTo(range.s, range.e, -1);
+            break;
         case 'e': gotoErr(1); break;
         case 'E': gotoErr(-1); break;
         case 'n': searchNext(1); break;

@@ -400,6 +400,37 @@ class NativeRawTest(unittest.TestCase):
                 self.assertEqual(data['wakeups'][0][1], 225)
                 self.assertIn('D', data['strings'])
 
+    def test_kvm_only_and_mixed_raw_keep_exact_events_and_separate_windows(self):
+        for endian in ('<', '>'):
+            for width in (4, 8):
+                for only in (False, True):
+                    with self.subTest(endian=endian, width=width, only=only):
+                        lines = self.decode(kvm=True, kvm_only=only, endian=endian, width=width)
+                        data = timeline.build_timeline(lines).to_data()
+                        self.assertEqual(data['n'], 0 if only else 2)
+                        self.assertEqual(len(data['kvm']['events']), 4)
+                        self.assertEqual([record[3] for record in data['kvm']['intervals']], [0, 1, 0, 1])
+                        self.assertEqual([record[2] - record[1] for record in data['kvm']['intervals'][:3]], [100] * 3)
+                        self.assertEqual(data['kvm']['issues'], [])
+                        self.assertIn('vcpu 4 reason CPUID rip 0x5678', data['strings'])
+
+    def test_kvm_only_raw_cli_single_sidecar_and_no_text(self):
+        self.path.write_bytes(container(kvm_only=True))
+        for mode in ('single', 'sidecar'):
+            for no_text in (False, True):
+                with self.subTest(mode=mode, no_text=no_text):
+                    destination = Path(self.directory.name) / f'kvm-{mode}-{no_text}'
+                    command = [sys.executable, str(Path(helpers.ROOT) / 'funcgraph.py'), '--no-config',
+                               str(self.path), '--timeline', '--no-btf', '--report-mode', mode,
+                               '--output', str(destination)]
+                    if no_text:
+                        command.append('--no-text-view')
+                    result = subprocess.run(command, capture_output=True, text=True)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertIn('KVM: 4 events', result.stdout)
+                    report = destination / 'index.html' if mode == 'sidecar' else destination
+                    self.assertIn('id="timelineView"', report.read_text())
+
     def test_prefilter_balances_nanosecond_call_window(self):
         lines = self.decode()
         filtered, _ = prefilter.apply(lines, prefilter.Filter(

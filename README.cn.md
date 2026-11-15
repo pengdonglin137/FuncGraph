@@ -96,6 +96,10 @@ funcgraph --no-config trace.txt --timeline --enable-fold --filter --output repor
 | uftrace 采集目录 | 使用 `--uftrace capture.data`，不要当作普通文件传入。 | FuncGraph 补丁版 uftrace；安装包内置时自动选用。 |
 | FuncGraph uftrace JSONL 导出 | 直接传 `capture.jsonl`。 | 无需本机 uftrace；并非任意上游 JSON 格式。 |
 
+Host QEMU/KVM 事件也直接使用同一个 Timeline，包括只有事件、没有函数调用的记录：
+展示 vCPU / Host TID 轨道、Guest/Host 边界窗口、退出原因及原始证据，
+不将其冒充函数调用或 Guest 内部栈。详见 [Host KVM 采集与读图](docs/kvm.cn.md)。
+
 ### 重放内置样例
 
 安装后，在仓库根目录执行：
@@ -234,6 +238,7 @@ fgview trace.report --open
 | 编译并跟踪真实工具和依赖库 | [pigz + zlib](docs/pigz.cn.md) |
 | 安装／构建 uftrace，了解采集边界 | [uftrace 集成](docs/uftrace.cn.md) |
 | 读取 trace-cmd 二进制输入 | [raw 输入](docs/raw-input.cn.md) |
+| 分析 Host QEMU/KVM 进入与退出时序 | [Host KVM Timeline](docs/kvm.cn.md) |
 | 打开大报告，选择交付方式 | [本地查看器](docs/viewer.cn.md) |
 | 理解实现或维护发布流程 | [设计文档](docs/design.md) · [发布操作清单与验收记录](docs/releasing.cn.md) |
 

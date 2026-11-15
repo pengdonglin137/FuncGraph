@@ -365,6 +365,12 @@ body.tl-max.tl-active { padding: 2px; }
 .tl-detail .src-chain .src-tag.traced { color: var(--tl-code-symbol); }
 .tl-cs-at span.tl-link:not([href]) { color: var(--tl-code-secondary); cursor: text; }
 .tl-left { min-width: 0; }
+.tl-kvm-payload { white-space: pre-wrap; overflow-wrap: anywhere; font: 11px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; color: var(--tl-code-secondary); }
+.tl-kvm-table th:first-child { width: 130px; }
+.tl-kvm-table th:nth-child(2) { width: auto; }
+.tl-kvm-table th:last-child { width: 80px; }
+.tl-kvm-table .tl-link { white-space: normal; }
+.tl-kvm-head .tl-pill { white-space: nowrap; flex-shrink: 0; }
 .tl-muted { color: var(--text-muted); font-style: italic; }
 .tl-cs { margin-top: 10px; }
 .tl-cs > summary { cursor: pointer; }

@@ -268,7 +268,7 @@ function layout() {
     for (const t of ORDER) {
         t.y = y;
         if (t.hidden) { t.h = 0; continue; }
-        t.h = HDR + (t.collapsed ? MINI : (t.maxD + 1) * ROW) + GAP;
+        t.h = HDR + (t.collapsed ? MINI : (t.maxD + 1 + (t.kvmEvents.length ? 1 : 0)) * ROW) + GAP;
         visibleTracks.push(t);
         y += t.h;
     }
@@ -460,6 +460,7 @@ function drawTrack(t, y, vs, ve, k) {
     if (t.kind === 9) { if (!t.collapsed) drawCpuTrack(top, vs, ve, k); return; }
     if (t.collapsed) {
         if (t.rows.length) drawRow(t.rows[0], top + 1, MINI - 2, vs, ve, k, false);
+        else if (t.kvmEvents.length) drawKvmTrack(t, top + 1, MINI - 2, vs, ve, k);
         return;
     }
     for (let d = 0; d < t.rows.length; d++) {
@@ -469,6 +470,7 @@ function drawTrack(t, y, vs, ve, k) {
     }
     if (ov.off && t.off.length) visitSchedulingIntervals(t.off, t.offIndex, vs, ve,
         record => drawOff(record, top + offRow(record) * ROW, vs, k));
+    if (t.kvmEvents.length) drawKvmTrack(t, top + (t.maxD + 1) * ROW, ROW - 1, vs, ve, k);
     if (ov.err) {
         // origins are always marked, even when merged into dense blocks
         for (const c of t.errs) {
@@ -842,6 +844,12 @@ function buildOverview() {
     const hasTasks = ORDER.some(track => track.kind === 0);
     for (const t of ORDER) {
         if (t.kind !== 0 && hasTasks) continue;
+        if (t.kvm.length) for (const index of t.kvm) {
+            const interval = KVM_INTERVALS[index];
+            const left = Math.max(0, ovX(interval[1])), right = ovX(interval[2]);
+            for (let pixel = Math.floor(left); pixel <= Math.min(ovDens.length - 1, Math.floor(right)); pixel++)
+                ovDens[pixel] += Math.min(right, pixel + 1) - Math.max(left, pixel);
+        }
         if (!t.rowsT.length) continue;
         for (const i of t.rowsT[0]) {
             const a = Math.max(0, ovX(sStart[i])), b = ovX(sEnd[i]);

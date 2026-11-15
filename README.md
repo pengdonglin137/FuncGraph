@@ -101,6 +101,11 @@ kernel presets out of this first run; source enrichment is optional.
 | uftrace recording directory | Use `--uftrace capture.data` instead of a trace file. | FuncGraph's patched uftrace, selected automatically when bundled. |
 | FuncGraph uftrace JSONL export | Pass `capture.jsonl` directly. | No local uftrace needed; not an arbitrary upstream JSON format. |
 
+Host QEMU/KVM recordings also open in this same Timeline, including event-only
+traces: vCPU / Host TID tracks, Guest/Host boundary windows, exit reasons and original
+event evidence, without inventing function calls or Guest internal stacks.
+See [Host KVM capture and interpretation](docs/kvm.md).
+
 ### Replay the included samples
 
 From the checkout root after installation:
@@ -252,6 +257,7 @@ directory, not an entire source/work tree.
 | Build and trace a real tool with its dependency | [pigz + zlib](docs/pigz.md) |
 | Install/build uftrace; inspect recording limits | [uftrace integration](docs/uftrace.md) |
 | Read trace-cmd binary inputs | [Raw input](docs/raw-input.md) |
+| Inspect Host QEMU/KVM entry/exit timing | [Host KVM Timeline](docs/kvm.md) |
 | Serve large reports and choose delivery modes | [Local viewer](docs/viewer.md) |
 | Understand implementation or publish a release | [Design](docs/design.md) · [Release checklist and verified records](docs/releasing.md) |
 

@@ -97,6 +97,22 @@ def build(d, errno_map=None, trace_name=''):
     }
     if by_space:
         result['meta']['uftrace'] = d['uftrace']
+    if d.get('kvm'):
+        kvm = d['kvm']
+        result['kvm'] = {
+            'origin_ns': kvm['origin_ns'], 'clock': kvm['clock'],
+            'events': [{'task_index': record[0], 'host_tid': d['tasks'][record[0]]['pid'],
+                        'time_ns': record[1], 'timestamp_ns': str(int(kvm['origin_ns']) + record[1]),
+                        'cpu': record[2], 'line': record[3], 'name': S[record[4]], 'payload': S[record[5]],
+                        'vcpu': record[6] if record[6] >= 0 else None, 'flags': record[7]}
+                       for record in kvm['events']],
+            'intervals': [{'task_index': record[0], 'start_ns': record[1], 'end_ns': record[2],
+                           'kind': 'host_window' if record[3] else 'guest_window',
+                           'vcpu': record[4] if record[4] >= 0 else None, 'start_event': record[5],
+                           'end_event': record[6] if record[6] >= 0 else None, 'open_end': bool(record[7])}
+                          for record in kvm['intervals']],
+            'issues': kvm['issues'], 'losses': kvm['losses'],
+        }
     if 'tail_calls' in d:
         evidence = d['tail_calls']
         result['tail_calls'] = dict(evidence, pairs=[dict(pair, parent=S[pair['parent']], child=S[pair['child']],

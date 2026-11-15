@@ -34,9 +34,16 @@ fgview trace-report
 
 Serve the directory with `fgview` instead of opening its `index.html` through `file://`. For explicit size-based selection, use `--report-mode auto --sidecar-threshold BYTES`; the threshold is the complete generated HTML size, not the raw file size or a count of binary newline bytes. Sidecar defers browser delivery of Text and source bodies, but does not make raw decoding streaming or bounded-memory. See the [viewer guide](viewer.md).
 
-`--input-format auto` is the default; `raw` requires a valid trace-cmd container, and `text` rejects one rather than decoding binary bytes as replacement characters. The comparison file is auto-detected independently, so raw and text can be compared. `--raw-instance NAME` selects one named buffer instead of the default top-level buffer; it also applies to raw comparison inputs. Buffers are never silently combined. If the selected buffer has no graph/scheduling events, the error lists available named instances.
+`--input-format auto` is the default; `raw` requires a valid trace-cmd container, and `text` rejects one rather than decoding binary bytes as replacement characters. The comparison file is auto-detected independently, so raw and text can be compared. `--raw-instance NAME` selects one named buffer instead of the default top-level buffer; it also applies to raw comparison inputs. Buffers are never silently combined. If the selected buffer has no graph, scheduling or KVM events, the error lists available named instances.
 
 Normal compressed inputs (`.gz`, `.xz`, `.lzma`, `.bz2`) and binary stdin work. Compressed containers/stdin are spooled into a private temporary file because libtracecmd needs seekable input. Multiple inputs use the existing chronological merge with nanosecond timestamp keys. `fgreport trace.dat -- --raw-instance NAME` passes decoder options through; its line-count shortcut deliberately does not count binary newline bytes. For large raw reports use pre-filtering or `--no-text-view` explicitly.
+
+## Host KVM events
+
+Host KVM event-only containers are supported too: the existing Timeline displays
+vCPU boundary windows and original evidence without fabricating function calls.
+See [Host KVM](kvm.md). A buffer with graph, scheduling or KVM events can be selected
+with `--raw-instance`; unsupported buffers still fail explicitly.
 
 ## Optional dependencies
 

@@ -115,17 +115,24 @@ def build_timeline_data(parsed_lines, vmlinux_path, module_dirs, args, structure
         if evidence['status'] == 'unavailable':
             print('Note: tail-jump analysis unavailable: ' + evidence['reason'], file=sys.stderr)
     st = data['stats']
+    if data.get('kvm'):
+        kvm = data['kvm']
+        closed = sum(not record[7] for record in kvm['intervals'])
+        print(f"KVM: {len(kvm['events'])} events, {closed} closed boundary windows, "
+              f"{len(kvm['intervals']) - closed} open ends, {len(kvm['issues'])} boundary gaps")
     print(f"Timeline: {st['slices']} slices, {st['tasks']} tasks, mode={data['mode']}, "
           f"{sum(1 for c in data['chains'] if not c[6])} error chains (+{sum(c[6] for c in data['chains'])} minor), {st['offcpu']} off-CPU, {time.time() - t0:.2f}s")
     if data['n'] == 0:
         timed_events = data['mode'] in ('abs', 'rel') and (
             any(data.get(name) for name in ('offcpu', 'wakeups', 'resched', 'irqoff', 'sections')) or
             data.get('uftrace', {}).get('lifecycle') or
+            data.get('kvm', {}).get('events') or
             data['caps'].get('sched_events') and any(task['runs'] for task in data['tasks']))
         if not timed_events:
             print("Note: no function calls or timed scheduling/lifecycle events found; timeline tab omitted", file=sys.stderr)
             return None
-        print("Note: no function calls found; timeline shows scheduling/lifecycle observations only", file=sys.stderr)
+        scope = 'KVM / scheduling / lifecycle' if data.get('kvm') else 'scheduling/lifecycle'
+        print(f"Note: no function calls found; timeline shows {scope} observations only", file=sys.stderr)
     return data
 
 

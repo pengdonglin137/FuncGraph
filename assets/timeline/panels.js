@@ -729,6 +729,7 @@ elCallActions.addEventListener('click', event => {
     }
 });
 function openDetail(html) {
+    if (AN.kind !== 'kvm') selKvm = null;
     closeCallActions();
     const was = elDetail.classList.contains('show');
     fgCancelSources(elDetail);
@@ -757,6 +758,7 @@ function openDetail(html) {
 }
 function hideDetail() {
     closeCallActions();
+    selKvm = null;
     if (!elDetail.classList.contains('show')) return;
     fgCancelSources(elDetail);
     elDetail.classList.remove('show');
@@ -1242,7 +1244,7 @@ function applyTextFilter() {
                 textHits[i] = 1; cnt++; TRACKS[sTask[i]].hits++;
             }
         }
-        for (const t of ORDER) t.hidden = hideUnmatched && t.kind !== 9 && t.hits === 0;
+        for (const t of ORDER) t.hidden = hideUnmatched && t.kind !== 9 && !t.kvmEvents.length && t.hits === 0;
         filteredCallCount = cnt;
         elFcount.textContent = cnt + ' of ' + N + ' calls';
         elFbar.classList.add('on');
@@ -1432,6 +1434,10 @@ function refreshPanel() {
 (function notes() {
     const c = D.caps, out = [];
     const note = (html, info) => out.push('<span class="tl-note' + (info ? ' info' : '') + '">' + html + '</span>');
+    if (KVM) {
+        note('KVM row: <b>Guest</b> = entry → exit; <b>Host</b> = exit → next entry, grouped by Host TID. Boundary windows are wall time, not function calls or CPU time; waits may be included. Guest internals are not recorded by these events.', true);
+        if (KVM.issues.length || KVM.losses.length) note('KVM boundary gaps: ' + KVM.issues.length + '; loss markers: ' + KVM.losses.length + '. Uncertain boundaries are not joined. Original events remain available in the KVM details and Text.');
+    }
     if (MODE === 'compressed') note('No timestamps: slices are packed by duration and gaps are lost. Enable <code>options/funcgraph-abstime</code>.');
     else if (MODE === 'count') note('No timestamps or durations: the x axis shows call order only. Enable <code>funcgraph-abstime</code> and <code>funcgraph-duration</code>.');
     if (D.uftrace) {
@@ -1508,6 +1514,7 @@ ${N ? '' : '<p>No function calls were recorded. Search has no call matches; shar
 ${HAS_USER ? '<i style="background:#9bcdbf"></i><span>user space (Context color)</span>' : ''}
 ${MIXED ? '<i style="background:currentColor;height:1px"></i><span>user → kernel boundary, only over a linked kernel call</span>' : ''}
 <i style="background:hsl(214,55%,70%)"></i><span>task context</span>
+${KVM ? '<i style="background:#d5e9e1"></i><span>KVM Guest boundary window (wall time, not CPU time)</span><i style="background:#dce3ee"></i><span>KVM Host boundary window (may include waits; not necessarily QEMU userspace)</span>' : ''}
 <i style="background:hsl(152,62%,68%)"></i><span>softirq</span>
 <i style="background:hsl(30,62%,68%)"></i><span>hardirq</span>
 <i style="background:hsl(282,62%,70%)"></i><span>NMI</span>
@@ -1566,6 +1573,7 @@ if (typeof ResizeObserver !== 'undefined') {
 
 // probe: read access to the model and a few actions, for tests and the browser console
 const probe = () => ({ N, NA, SYN, S, sName, sStart, sEnd, sDepth, sParent, sTask, nameOf, isGhost, gapOf, TRACKS, styleOf: sliceStyle,
+    kvm: { events: KVM_EVENTS, intervals: KVM_INTERVALS, select: showKvmDetail, xyOf: kvmCoordinates, selected: () => selKvm },
     select: (i) => select(i, { reveal: true }), zoomTo, sel: () => sel, view: () => [view.s, view.e],
     // page coordinates of slice i (center) / of off-CPU record r (center), for scripted mouse input
     xyOf: (i) => { const r = elCv.getBoundingClientRect(), k = W / (view.e - view.s), t = TRACKS[sTask[i]];

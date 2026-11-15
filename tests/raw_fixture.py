@@ -5,7 +5,7 @@ import struct
 def container(endian='<', width=8, clock='mono', lost=0, retaddr=False,
               symbols=True, bad_depth=False, args=True, module=False,
               sched=False, retval=True, dynamic_args=False, relative_args=False, fixed_args=False,
-              address_base=0):
+              address_base=0, kvm=False, kvm_only=False):
     def packed(layout, *values):
         return struct.pack(endian + layout, *values)
 
@@ -42,7 +42,7 @@ def container(endian='<', width=8, clock='mono', lost=0, retaddr=False,
                    ('unsigned long long', 'rettime', 24 + width, 8),
                    ('unsigned long', 'retval', 32 + width, width)]
     exiting = event_format('funcgraph_exit', 12, exit_fields if retval else exit_fields[:-1], '"exit"')
-    systems = packed('I', 0)
+    system_formats = []
     if sched:
         switch_fields = [('char', 'prev_comm[16]', 8, 16), ('int', 'prev_pid', 24, 4),
                          ('int', 'prev_prio', 28, 4), ('long', 'prev_state', 32, width),
@@ -58,7 +58,13 @@ def container(endian='<', width=8, clock='mono', lost=0, retaddr=False,
                              ('int', 'pid', 24, 4), ('int', 'prio', 28, 4), ('int', 'target_cpu', 32, 4)],
                              '"comm=%s pid=%d prio=%d target_cpu=%d", REC->comm, '
                              'REC->pid, REC->prio, REC->target_cpu')
-        systems = packed('I', 1) + b'sched\0' + packed('I', 2) + sized(switching) + sized(wakeup)
+        system_formats.append(b'sched\0' + packed('I', 2) + sized(switching) + sized(wakeup))
+    if kvm or kvm_only:
+        kvm_fields = [('unsigned int', 'vcpu_id', 8, 4)]
+        kvm_entry = event_format('kvm_entry', 15, kvm_fields, '"vcpu %u, rip 0x1234", REC->vcpu_id')
+        kvm_exit = event_format('kvm_exit', 16, kvm_fields, '"vcpu %u reason CPUID rip 0x5678", REC->vcpu_id')
+        system_formats.append(b'kvm\0' + packed('I', 2) + sized(kvm_entry) + sized(kvm_exit))
+    systems = packed('I', len(system_formats)) + b''.join(system_formats)
     header_size = 8 + width
     header = (f'field:u64 timestamp; offset:0; size:8; signed:0;\n'
               f'field:local_t commit; offset:8; size:{width}; signed:1;\n'
@@ -95,6 +101,12 @@ def container(endian='<', width=8, clock='mono', lost=0, retaddr=False,
     records = [(0, entry_data(0x1000, 0)), (101, entry_data(0x1100, 1)),
                (310, exit_data(0x1100, 1, 101, 310, (1 << (width * 8)) - 2)),
                (513, exit_data(0x1000, 0, 0, 513, 0))]
+    if kvm_only:
+        records = []
+    if kvm or kvm_only:
+        records.extend((timestamp, packed('HBBiI', identifier, 0, 1, 42, 4))
+                       for timestamp, identifier in ((100, 15), (200, 16), (300, 15), (400, 16)))
+        records.sort(key=lambda item: item[0])
     if sched:
         def switching_data(previous, following, prev_state):
             return (packed('HBBi', 13, 1, 2, previous) + b'worker\0'.ljust(16, b'\0') +

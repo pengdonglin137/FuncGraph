@@ -17,6 +17,7 @@ struct module_symbol {
 struct decoder {
     unsigned long graph;
     unsigned long sched;
+    unsigned long kvm;
     unsigned long other;
     struct module_symbol *modules;
     size_t module_count;
@@ -289,7 +290,10 @@ static int visit(struct tracecmd_input *handle, struct tep_record *record,
         number(event, record, "common_flags", &common) ||
         number(event, record, "common_preempt_count", &common))
         goto malformed;
-    if (!strcmp(event->system, "sched") && (event->flags & TEP_EVENT_FL_FAILED))
+    if ((!strcmp(event->system, "sched") ||
+         (!strcmp(event->system, "kvm") &&
+          (!strcmp(event->name, "kvm_entry") || !strcmp(event->name, "kvm_exit")))) &&
+        (event->flags & TEP_EVENT_FL_FAILED))
         goto malformed;
     if (record->missed_events > 0)
         printf("CPU:%d [LOST %lld EVENTS]\n", cpu, record->missed_events);
@@ -311,11 +315,13 @@ static int visit(struct tracecmd_input *handle, struct tep_record *record,
         struct trace_seq sequence;
         trace_seq_init(&sequence);
         tep_print_event(tep, &sequence, record, "%s", TEP_PRINT_INFO);
-        printf("              |  /* %s: ", event->name);
+        printf("              |  /* %s%s: ", !strcmp(event->system, "kvm") ? "kvm:" : "", event->name);
         safe_text(sequence.buffer, sequence.len);
         printf(" */\n");
         trace_seq_destroy(&sequence);
         state->other++;
+        if (!strcmp(event->system, "kvm"))
+            state->kvm++;
         if (!strcmp(event->system, "sched") &&
             (!strcmp(event->name, "sched_waking") || !strcmp(event->name, "sched_wakeup") ||
              !strcmp(event->name, "sched_wakeup_new")))
@@ -369,8 +375,8 @@ int main(int argc, char **argv)
     printf("# raw: args are untyped register values; retval is an untyped bit pattern\n");
     if (tracecmd_iterate_events(selected, NULL, 0, visit, &state) < 0)
         goto done;
-    if (!state.graph && !state.sched) {
-        fprintf(stderr, "no function_graph or scheduling events in selected buffer\n");
+    if (!state.graph && !state.sched && !state.kvm) {
+        fprintf(stderr, "no function_graph or scheduling events or KVM events in selected buffer\n");
         for (int index = 0; index < tracecmd_buffer_instances(root); index++)
             fprintf(stderr, "available --raw-instance %s\n", tracecmd_buffer_instance_name(root, index));
         goto done;

@@ -32,6 +32,8 @@ Timing modes, picked from what the trace contains:
 import re
 import time
 
+from .kvm import KvmTimeline
+
 # ------------------------------------------------------------------
 # Line grammar
 # ------------------------------------------------------------------
@@ -186,6 +188,7 @@ class TimelineBuilder:
         self.task_list = []
         self.strings = []
         self._str_idx = {}
+        self.kvm = KvmTimeline(self._s)
 
         self.cpu_current = {}     # cpu -> task key (from switch markers)
         self.cpu_last_ts = {}
@@ -366,6 +369,8 @@ class TimelineBuilder:
         ts_seen = False
         for lineno0, raw in enumerate(lines):
             if not raw or raw[0] == '#':
+                if raw:
+                    self.kvm.header(raw)
                 if raw and self.overhead is None and raw.startswith('# fgcapture: overhead'):
                     m = RE_OVERHEAD.match(raw)
                     if m:
@@ -383,6 +388,7 @@ class TimelineBuilder:
                 if m:
                     count = None if m.group(2) == '?' else int(m.group(2))
                     self.lost.append([int(m.group(1)), None, count, lineno])
+                    self.kvm.lost(int(m.group(1)), lineno)
                 continue
             if st.startswith('#####') or st.startswith('(Overruns'):
                 continue
@@ -404,6 +410,7 @@ class TimelineBuilder:
                 self.caps['duration'] = True
             if ts is not None:
                 ts_seen = True
+                self.kvm.observe(ts)
 
             stripped = body.strip()
             if not stripped:
@@ -438,7 +445,7 @@ class TimelineBuilder:
             depth = indent // 2
 
             if stripped.startswith('/*'):
-                self._on_comment(stripped, task, ts, cpu, lctx)
+                self._on_comment(stripped, task, ts, cpu, lctx, lineno, lflags)
                 continue
             if stripped[0] == '}':
                 self._on_exit(task, depth, stripped, ts, dur, lineno, lflags)
@@ -650,7 +657,10 @@ class TimelineBuilder:
             self.caps['retval_btf'] = True
         return v + (m.group(2) or '')
 
-    def _on_comment(self, stripped, task, ts, cpu, lctx=None):
+    def _on_comment(self, stripped, task, ts, cpu, lctx=None, lineno=0, lflags=0):
+        if self.kvm.comment(stripped, task, ts, cpu, lineno, lflags):
+            self.caps['kvm'] = True
+            return
         m = RE_SCHED_SWITCH.search(stripped)
         if m:
             self.caps['sched_events'] = True
@@ -1005,6 +1015,7 @@ class TimelineBuilder:
         # a need-resched window, a wakeup) would otherwise get negative times.
         starts = [min(self.s_start)] if n else []
         if timed:
+            starts += [event[1] for event in self.kvm.events]
             starts += [r[1] for r in self.offcpu if r[1] is not None]
             starts += [r[1] for r in self.resched] + [r[1] for r in self.irqoff] + [r[2] for r in self.sections]
             starts += [w[1] for w in self.wake_events if w[1] is not None]
@@ -1112,6 +1123,8 @@ class TimelineBuilder:
             'stats': {k: (round(v, 3) if isinstance(v, float) else v) for k, v in self.stats.items()},
             'overhead': {'child': ovh[0], 'self': ovh[1], 'source': self.overhead_source} if ovh else None,
         }
+        if self.kvm.events:
+            data['kvm'] = self.kvm.to_data(t0)
         return data
 
 
