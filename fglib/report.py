@@ -18,6 +18,7 @@ from .inline import parse_chain, timeline_inline_map
 from .modules import ModuleIndex
 from .output import ReportSpool
 from .sources import rewrite as rewrite_sources
+from .textindex import is_trace_event
 from .highlight import highlight_c_code, highlight_ftrace_line
 from .resolver import call_faddr2line_batch, call_faddr2line_for_func_names, create_source_link, parse_list_output, parse_module_url
 from .util import build_source_url, clean_file_path, escape_html_preserve_spaces, format_args_info, get_environment_info, get_relative_path, remove_compiler_suffix, verbose_print
@@ -188,6 +189,11 @@ class HtmlGenerator:
         # 2. 构建HTML字符串
         tree_css = ''
         tree_button = ''
+        event_button = ''
+        if not self.omit_text and any(is_trace_event(line) for line in self.parsed_lines):
+            event_button = ('<button type="button" class="control-btn btn-tool" id="textEventsBtn" '
+                            'onclick="fgSetTextEventsVisible(!fgTextEventsVisible)" aria-pressed="true" '
+                            'title="Show or hide trace event rows in Text only; Timeline and recorded data stay unchanged">Events: shown</button>')
         if self.enable_fold and not self.omit_text and any(line.get('fold_type') == 'entry' for line in self.parsed_lines):
             tree_css = '    <style id="fgTreeGuides">\n' + read_asset(REPORT_TREE_CSS) + '    </style>\n'
             tree_button = ('<button type="button" class="control-btn btn-guides" id="foldGuidesBtn" '
@@ -240,6 +246,7 @@ class HtmlGenerator:
                 <div class="btn-group">
                     <button class="control-btn btn-nav" id="textFilterToggle" onclick="toggleFilterBox(event)" aria-expanded="false"{' aria-controls="filterBox"' if self.filter_html else ''}>&#x1F50D; Filter<span id="textFilterStatus" hidden> · On</span></button>
                     <button class="control-btn btn-nav" onclick="scrollToTop()">Top</button>
+                    {event_button}
                     <button type="button" class="control-btn btn-nav text-more" id="textMoreToggle" onclick="fgToggleTextMore()" aria-expanded="false" aria-controls="textToolbarOptions">More</button>
                 </div>
                 <div class="text-toolbar-options" id="textToolbarOptions">
@@ -299,6 +306,7 @@ class HtmlGenerator:
             <li>Click <strong>▶</strong> to fold/unfold; <kbd>Shift</kbd>+Click for recursive fold/unfold</li>
             <li>On a phone, tap the left gutter to fold without scrolling to the function name</li>
             <li>On a phone, <strong>Filter</strong> opens the query editor; <strong>More</strong> contains Tree guides and other Text tools</li>
+            <li><strong>Events: shown / hidden</strong> toggles Text event rows only; calls, loss warnings and Timeline evidence remain</li>
             <li><kbd>1</kbd>-<kbd>9</kbd>: Fold to depth N (hide calls deeper than N)</li>
             <li><kbd>0</kbd>: Unfold all fold blocks</li>
             <li>Folded blocks show summary: call count, total time, return value</li>
@@ -1428,6 +1436,8 @@ class HtmlGenerator:
 
     def _text_attributes(self, line, raw_line, fold_ends, fold_starts):
         attributes = {name: str(line.get(name)) if line.get(name) is not None else '' for name in ('cpu', 'pid', 'comm')}
+        if is_trace_event(line):
+            attributes['trace-event'] = '1'
         if line.get('space') is not None:
             attributes['space'] = line.space
         if line.get('boundary'):

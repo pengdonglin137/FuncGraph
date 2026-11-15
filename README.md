@@ -34,7 +34,8 @@ and its [source/error-path screenshot](sample.png). No installation required.
 | How do I read or compare the evidence? | **Text** with folding, filtering, source expansion and keyboard navigation; **Compare** for per-function differences; JSON/CSV export for scripts. |
 
 Timeline offers full-screen viewing, resizable details, compact menus and
-light/dark themes. Text and Timeline share reachable view tabs and trace-line
+light/dark themes. Text's **Events: shown / hidden** button hides event rows without
+deleting data or changing Timeline. Text and Timeline share reachable view tabs and trace-line
 navigation. **Tools → Saved views…** keeps named analysis positions and notes,
 with export/import for someone using the same report data.
 Selected-call **Actions → Focus this task / Focus this function** prepares an exact filter draft for confirmation, with one-step undo after applying it.

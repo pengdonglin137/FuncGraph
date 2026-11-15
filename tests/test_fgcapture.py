@@ -18,7 +18,7 @@ class FgcaptureTest(unittest.TestCase):
     def test_help(self):
         p = subprocess.run(['bash', SCRIPT, '--help'], capture_output=True, text=True)
         self.assertEqual(p.returncode, 0)
-        for word in ('--args', '--sched', '--calibrate', 'set_graph_function', 'Examples'):
+        for word in ('--args', '--sched', '--event', '--calibrate', 'set_graph_function', 'Examples'):
             self.assertIn(word, p.stdout)
 
     def test_refuses_without_root(self):
@@ -46,6 +46,13 @@ class FgcaptureTest(unittest.TestCase):
 
 
 class FgcaptureProbeTest(unittest.TestCase):
+    def add_event(self, name, event_filter='common_pid == 123'):
+        path = self.tracefs / 'events' / name
+        path.mkdir(parents=True, exist_ok=True)
+        (path / 'enable').write_text('0\n')
+        (path / 'filter').write_text(event_filter + '\n')
+        return path
+
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory(prefix='fg-kernel-probe-')
         self.addCleanup(self.temporary.cleanup)
@@ -144,6 +151,56 @@ fi
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertFalse((self.root / 'date-state').exists())
         self.assertIn('args=0 retaddr=1', self.output.read_text())
+        self.assert_restored()
+
+    def test_extra_events_group_glob_and_duplicates_keep_all_functions_and_restore_filters(self):
+        for name in ('kvm/kvm_entry', 'kvm/kvm_exit', 'kvm/vcpu_match_mmio'):
+            self.add_event(name)
+        command = 'for event in kvm_entry kvm_exit vcpu_match_mmio; do ' \
+                  'test "$(cat "$FG_TRACEFS/events/kvm/$event/enable")" = 1 || exit 21; ' \
+                  'test "$(cat "$FG_TRACEFS/events/kvm/$event/filter")" = 0 || exit 22; done; ' \
+                  'test -z "$(cat "$FG_TRACEFS/set_graph_function")" || exit 23'
+        result = self.run_capture('--no-args', '-e', 'kvm', '--event=kvm:kvm_*',
+                                  '-e', 'kvm:kvm_entry', '--', '/bin/sh', '-c', command)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('command exited with 0', result.stdout)
+        header = next(line for line in self.output.read_text().splitlines() if 'extra_events=' in line)
+        self.assertEqual(header.count('kvm:kvm_entry'), 1)
+        for name in ('kvm_entry', 'kvm_exit', 'vcpu_match_mmio'):
+            self.assertEqual((self.tracefs / 'events/kvm' / name / 'enable').read_text().strip(), '0')
+            self.assertEqual((self.tracefs / 'events/kvm' / name / 'filter').read_text().strip(), 'common_pid == 123')
+        self.assert_restored()
+
+    def test_explicit_scheduler_event_is_enabled_without_sched_bundle(self):
+        result = self.run_capture('--no-args', '-e', 'sched:sched_switch', '--', '/bin/sh', '-c',
+                                  'test "$(cat "$FG_TRACEFS/events/sched/sched_switch/enable")" = 1')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('command exited with 0', result.stdout)
+        self.assert_restored()
+
+    def test_bad_event_selector_fails_before_mutating_tracefs(self):
+        for selector in ('kvm:absent', '../kvm', 'kvm:entry@kernel', 'kvm:entry;exit', ''):
+            with self.subTest(selector=selector):
+                result = self.run_capture('--no-args', '--event=' + selector)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertFalse(self.output.exists())
+                self.assert_restored()
+
+    def test_extra_event_filters_are_restored_when_output_fails(self):
+        event = self.add_event('kvm/kvm_entry')
+        self.output = self.root / 'missing' / 'trace.txt'
+        result = self.run_capture('--no-args', '-e', 'kvm:kvm_entry')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual((event / 'enable').read_text().strip(), '0')
+        self.assertEqual((event / 'filter').read_text().strip(), 'common_pid == 123')
+        self.assert_restored()
+
+    def test_extra_event_state_is_restored_after_interrupt(self):
+        event = self.add_event('kvm/kvm_entry')
+        result = self.run_capture('--no-args', '-e', 'kvm:kvm_entry', '--', '/bin/sh', '-c', 'kill -TERM "$PPID"')
+        self.assertEqual(result.returncode, 130, result.stderr)
+        self.assertEqual((event / 'enable').read_text().strip(), '0')
+        self.assertEqual((event / 'filter').read_text().strip(), 'common_pid == 123')
         self.assert_restored()
 
     def test_explicit_args_on_old_kernel_requires_scope_and_restores_on_error(self):

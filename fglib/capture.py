@@ -2,6 +2,7 @@
 import argparse
 import contextlib
 import fcntl
+import fnmatch
 import json
 import os
 from pathlib import Path
@@ -25,12 +26,29 @@ SETTINGS = ('tracing_on', 'current_tracer', 'trace_clock', 'max_graph_depth',
             'tracing_cpumask', 'set_event', 'buffer_size_kb') + FILTERS
 
 
+def resolve_events(root, selectors):
+    available = sorted(str(path.parent.relative_to(Path(root) / 'events')).replace('/', ':')
+                       for path in (Path(root) / 'events').glob('*/*/enable'))
+    selected = []
+    for selector in selectors:
+        if not re.fullmatch(r'[A-Za-z0-9_*?]+(?::[A-Za-z0-9_*?]+)?', selector):
+            raise OSError('invalid event selector: ' + selector)
+        pattern = selector if ':' in selector else selector + ':*'
+        matches = [name for name in available if fnmatch.fnmatchcase(name, pattern)]
+        if not matches:
+            raise OSError('event selector matched no available events: ' + selector)
+        selected.extend(name for name in matches if name not in selected)
+    return selected
+
+
 def write_json(path, value):
     path.write_text(json.dumps(value, indent=2, ensure_ascii=False) + '\n', encoding='utf-8')
 
 
 def normalized(name, value):
     value = value.strip()
+    if name.endswith('/filter') and value in ('none', '0'):
+        return ''
     if name == 'trace_clock':
         match = re.search(r'\[([^\]]+)\]', value)
         return match.group(1) if match else value
@@ -41,12 +59,13 @@ def normalized(name, value):
 
 
 class TracefsSession:
-    def __init__(self, root, evidence, lock_path=Path('/run/funcgraph-capture.lock')):
+    def __init__(self, root, evidence, lock_path=Path('/run/funcgraph-capture.lock'), events=()):
         self.root = Path(root)
         self.evidence = evidence
         self.lock_path = lock_path
         self.lock = None
         self.before = {}
+        self.events = events
 
     def snapshot(self):
         names = list(SETTINGS)
@@ -54,10 +73,14 @@ class TracefsSession:
         names += [str(path.relative_to(self.root))
                   for path in sorted(self.root.glob('per_cpu/cpu*/buffer_size_kb'))]
         names += ['events/sched/' + event + '/enable' for event in SCHED_EVENTS + LIFECYCLE_EVENTS]
+        names += ['events/' + event.replace(':', '/') + '/' + field
+                  for event in self.events for field in ('enable', 'filter')]
         return {name: normalized(name, (self.root / name).read_text())
                 for name in names if (self.root / name).exists()}
 
     def write(self, name, value):
+        if name.endswith('/filter') and value in ('', 'none'):
+            value = '0'
         (self.root / name).write_text((' ' if value == '' else str(value)) + '\n')
 
     def __enter__(self):
@@ -93,6 +116,10 @@ class TracefsSession:
             raise
 
     def configure(self, args):
+        for event in self.events:
+            path = 'events/' + event.replace(':', '/') + '/filter'
+            if path in self.before:
+                self.write(path, 0)
         for name, value in (('funcgraph-args', int(args.args)), ('funcgraph-retval', 1),
                             ('funcgraph-retaddr', 1)):
             path = 'options/' + name
@@ -225,6 +252,8 @@ def parser():
     result.add_argument('-g', '--graph', help='comma-separated kernel graph roots (default architecture syscall roots)')
     result.add_argument('-n', '--notrace', help='optional comma-separated excluded kernel graph roots')
     result.add_argument('--kernel-depth', type=positive, default=8, help='kernel depth limit (default 8; increase deliberately)')
+    result.add_argument('-e', '--event', action='append', default=[], metavar='SYSTEM:EVENT',
+                        help='extra kernel tracepoints; repeat, use SYSTEM or quote SYSTEM:*; requires kernel/mixed mode')
     result.add_argument('-A', '--argument', action='append', default=[], help='additional uftrace argument specification')
     result.add_argument('-R', '--retval', action='append', default=[], help='additional uftrace return specification')
     result.add_argument('command', nargs=argparse.REMAINDER, help='-- command [arguments...]')
@@ -232,17 +261,23 @@ def parser():
 
 
 def build_command(args, tracer, tracefs=None):
+    if args.user and args.event:
+        raise OSError('--event requires kernel or mixed mode, not --user')
     command = tracer + ['record', '--clock=mono', '--srcline', '-T', '.@callsite']
     if args.args:
         command += ['--auto-args']
     if args.mixed:
         command += ['-K', str(args.kernel_depth), '--kernel-full', '--kernel-buffer={}k'.format(args.b)]
         events = LIFECYCLE_EVENTS + (SCHED_EVENTS if args.sched is not False else ())
+        selected = []
         for event in events:
             if (tracefs / 'events/sched' / event / 'enable').exists():
-                command += ['-E', 'sched:' + event + '@kernel']
+                selected.append('sched:' + event)
             else:
                 print('fgcapture: kernel event unavailable: ' + event, file=sys.stderr)
+        selected.extend(event for event in resolve_events(tracefs, args.event) if event not in selected)
+        for event in selected:
+            command += ['-E', event + '@kernel']
     if args.mixed or not args.sched:
         command += ['--no-sched']
     if platform.machine() in ('aarch64', 'arm64'):
@@ -294,6 +329,8 @@ def main(argv=None):
             raise OSError('user/mixed capture requires -- command [arguments...]')
         if args.user and (args.graph or args.notrace):
             raise OSError('-g/-n select kernel graphs; use --mixed')
+        if args.user and args.event:
+            raise OSError('--event requires kernel or mixed mode, not --user')
         tracer = uftrace_runtime.command(args.uftrace_bin)
         args.output = Path(args.output or ('mixed.data' if args.mixed else 'user.data')).absolute()
         if args.output.exists() or args.output.is_symlink():
@@ -301,9 +338,10 @@ def main(argv=None):
         evidence = args.output.with_name(args.output.name + '.fgcapture')
         if args.mixed and os.geteuid() != 0:
             raise OSError('mixed capture requires root for tracefs; user-only capture does not')
-        evidence.mkdir()
         tracefs = tracefs_root() if args.mixed else None
-        session = TracefsSession(tracefs, evidence) if args.mixed else contextlib.nullcontext()
+        events = resolve_events(tracefs, args.event) if args.mixed else []
+        evidence.mkdir()
+        session = TracefsSession(tracefs, evidence, events=events) if args.mixed else contextlib.nullcontext()
         with interruptible(), session as state:
             if state is not None:
                 state.configure(args)

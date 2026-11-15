@@ -368,7 +368,7 @@ function fgCreateTextWindow(model, navigation, root) {
                 }
                 const record = model.records[ordinal];
                 const visible = (visibleRecord ? visibleRecord(record) : hidden === null || !hidden[ordinal]) &&
-                    (direction || mode !== 'task' || !plan.hidden.has(number));
+                    (direction || mode !== 'task' || !plan.hidden.has(number)) && fgTextEventVisible(record);
                 visibility[index] = visible ? 1 : 0;
                 if (!visible) continue;
                 if (pendingBoundaries.length) {

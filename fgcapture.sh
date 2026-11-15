@@ -24,6 +24,7 @@
 #   -n FUNC[,..]   do not trace these call graphs (set_graph_notrace)
 #   -b KB          per-CPU buffer size in KB (default 16384)
 #   --sched        also record scheduling and process exec/exit events
+#   -e, --event SYSTEM:EVENT  extra kernel events; repeat, use SYSTEM or quote SYSTEM:*
 #   --keep         do not restore the previous tracefs settings
 #   --calibrate    measure the tracing overhead with the same options first (vfs_read with and
 #                  without traced children, 3000 calls) and record it in the output header;
@@ -52,7 +53,7 @@ done
 T=${FG_TRACEFS:-/sys/kernel/tracing}
 if [ -z "${FG_TRACEFS:-}" ] && [ ! -d $T/options ]; then T=/sys/kernel/debug/tracing; fi
 OUT=./ftrace.txt DUR=1 PIDS= GRAPH= NOTRACE= BUF=16384 ARGS=auto SCHED=0 KEEP=0 CAL=0
-CMD=()
+CMD=() EXTRA_EVENTS=() SELECTED_EVENTS=()
 
 die() { echo "fgcapture: $*" >&2; exit 1; }
 usage() { sed -n '2,/^\[ -n /p' "$0" | sed '$d;s/^# \{0,1\}//'; exit "${1:-0}"; }
@@ -68,6 +69,8 @@ while [ $# -gt 0 ]; do
         --args) ARGS=1; shift ;;
         --no-args) ARGS=0; shift ;;
         --sched) SCHED=1; shift ;;
+        -e|--event) [ $# -ge 2 ] && [ -n "$2" ] || die "$1 requires an event selector"; EXTRA_EVENTS+=("$2"); shift 2 ;;
+        --event=*) EXTRA_EVENTS+=("${1#*=}"); shift ;;
         --keep) KEEP=1; shift ;;
         --calibrate) CAL=1; shift ;;
         -h|--help) usage 0 ;;
@@ -87,6 +90,31 @@ exec 9>"${FG_CAPTURE_LOCK:-/run/funcgraph-capture.lock}" || die "cannot open cap
 flock -n 9 || die "another fgcapture session owns tracefs"
 [ "$(cat $T/tracing_on)" = 0 ] || die "tracing became active; refusing to interrupt another session"
 
+declare -A EVENT_SELECTED=()
+for selector in "${EXTRA_EVENTS[@]}"; do
+    [[ "$selector" =~ ^[A-Za-z0-9_*?]+(:[A-Za-z0-9_*?]+)?$ ]] || die "invalid event selector: $selector"
+    system_pattern=${selector%%:*}
+    event_pattern='*'
+    [[ "$selector" = *:* ]] && event_pattern=${selector#*:}
+    matched=0
+    for event_path in "$T"/events/*/*/enable; do
+        [ -f "$event_path" ] || continue
+        event_path=${event_path%/enable}
+        event_name=${event_path##*/}
+        system_path=${event_path%/*}
+        system_name=${system_path##*/}
+        if [[ "$system_name" == $system_pattern && "$event_name" == $event_pattern ]]; then
+            matched=1
+            event_key=$system_name/$event_name
+            if [ -z "${EVENT_SELECTED[$event_key]:-}" ]; then
+                SELECTED_EVENTS+=("$event_key")
+                EVENT_SELECTED[$event_key]=1
+            fi
+        fi
+    done
+    [ "$matched" = 1 ] || die "event selector matched no available events: $selector"
+done
+
 # ---- save current state ----
 SAVE=$(mktemp -d /tmp/fgcapture.XXXXXX)
 OPTS="funcgraph-abstime funcgraph-proc funcgraph-retval funcgraph-retaddr funcgraph-tail funcgraph-args
@@ -103,6 +131,11 @@ save() {
     for e in $EVENTS; do
         [ -e $T/events/sched/$e/enable ] && cat $T/events/sched/$e/enable > $SAVE/ev_$e
     done
+    for event_key in "${SELECTED_EVENTS[@]}"; do
+        mkdir -p "$SAVE/events/$event_key"
+        cat "$T/events/$event_key/enable" > "$SAVE/events/$event_key/enable"
+        [ ! -e "$T/events/$event_key/filter" ] || cat "$T/events/$event_key/filter" > "$SAVE/events/$event_key/filter"
+    done
 }
 restore() {
     [ $KEEP = 1 ] && { echo "fgcapture: settings kept (--keep); previous state saved in $SAVE"; return; }
@@ -116,6 +149,14 @@ restore() {
     done
     for e in $EVENTS; do
         [ -e $SAVE/ev_$e ] && cat $SAVE/ev_$e > $T/events/sched/$e/enable
+    done
+    for event_key in "${SELECTED_EVENTS[@]}"; do
+        cat "$SAVE/events/$event_key/enable" > "$T/events/$event_key/enable"
+        if [ -e "$SAVE/events/$event_key/filter" ]; then
+            event_filter=$(cat "$SAVE/events/$event_key/filter")
+            case "$event_filter" in ''|none) event_filter=0 ;; esac
+            printf '%s\n' "$event_filter" > "$T/events/$event_key/filter"
+        fi
     done
     cat $SAVE/buf > $T/buffer_size_kb 2>/dev/null
     cat $SAVE/tracer > $T/current_tracer
@@ -253,6 +294,12 @@ if [ $CAL = 1 ]; then
     setlist set_graph_function "$GRAPH"
     setlist set_ftrace_pid "$PIDS"
 fi
+for event_key in "${SELECTED_EVENTS[@]}"; do
+    if [ -e "$T/events/$event_key/filter" ]; then
+        echo 0 > "$T/events/$event_key/filter" || die "cannot clear filter for $event_key"
+    fi
+    echo 1 > "$T/events/$event_key/enable" || die "cannot enable event $event_key"
+done
 echo function_graph > $T/current_tracer
 
 # ---- capture ----
@@ -278,7 +325,19 @@ fi
 
 # ---- save output ----
 echo "fgcapture: reading trace buffer..."
-{ [ -n "$CALLINE" ] && echo "$CALLINE"; cat $T/trace; } > "$OUT" || die "cannot write $OUT"
+{
+    [ -n "$CALLINE" ] && echo "$CALLINE"
+    if [ -e "$T/trace_clock" ]; then
+        clock=$(sed -n 's/.*\[\([^]]*\)\].*/\1/p' "$T/trace_clock")
+        [ -z "$clock" ] || printf '# fgcapture: clock=%s\n' "$clock"
+    fi
+    if [ ${#SELECTED_EVENTS[@]} -gt 0 ]; then
+        printf '# fgcapture: extra_events='
+        printf '%s ' "${SELECTED_EVENTS[@]//\//:}"
+        printf '\n'
+    fi
+    cat $T/trace
+} > "$OUT" || die "cannot write $OUT"
 END=$(date +%s.%N)
 LINES=$(grep -vc '^#' "$OUT")
 LOST=$(grep -c 'LOST.*EVENTS' "$OUT")

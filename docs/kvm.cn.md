@@ -49,6 +49,20 @@ funcgraph --no-config host.dat --raw-instance "$instance" \
 有其它 tracing 会话时，遵守自己的隔离与前后状态验证流程；分析阶段只读文件。
 此处刻意不要求 `function_graph`，它是否能在 instance 中使用取决于采集端内核。
 
+### 需要真实内核函数调用栈时
+
+使用 `fgcapture` 同时采集函数图与事件，不传 `-g / -n` 就不按函数名筛选：
+
+```bash
+sudo fgcapture --kernel --sched -p "$VCPU_TIDS" -e kvm -d 0.3 -o host-functions.txt
+funcgraph --no-config host-functions.txt --timeline --enable-fold --filter --output host-functions.html
+```
+
+在专用、空闲的 Host 上执行；如果采集器提示已有 tracing 会话，不要强行关闭。
+`VCPU_TIDS` 为目标 Host vCPU 线程列表；它不自动过滤事件，所以先用短窗口并检查丢失计数。
+这会增加真实 Host 内核函数行和 CALL STACK，但不是 QEMU 用户态或 Guest 内部函数。
+深度、参数、返回地址等仍取决于采集端内核能力。详见 [额外事件与 Text 显隐](capture.cn.md#函数调用与额外事件一起采集)。
+
 ## 页面使用
 
 - 标题显示观测到的 **vCPU ID 和 Host TID**。不同 Host 线程即使 vCPU ID 相同，
@@ -61,6 +75,7 @@ funcgraph --no-config host.dat --raw-instance "$instance" \
   不仅导出当前页。JSON 分析导出也保留事件及类型明确的 KVM 区间。
 - 函数搜索及调用过滤不会删除 KVM 证据；可折叠任务减少干扰。
   不含 KVM 的报告不会新增相关控件。
+- Text 顶部的 **Events: shown / hidden** 可隐藏事件行以专注调用，事件仍完整保留在 Timeline 和导出中。
 
 ## 准确性边界
 

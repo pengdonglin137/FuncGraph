@@ -52,6 +52,22 @@ reset. Follow your isolation and before/after verification procedure if other
 tracing is active. Analysis only reads the file. This example intentionally does
 not request `function_graph`; its availability in instances depends on the kernel.
 
+### When you need actual kernel call stacks
+
+Use `fgcapture` to record functions and events together. Omitting `-g / -n` avoids
+function-name filtering:
+
+```bash
+sudo fgcapture --kernel --sched -p "$VCPU_TIDS" -e kvm -d 0.3 -o host-functions.txt
+funcgraph --no-config host-functions.txt --timeline --enable-fold --filter --output host-functions.html
+```
+
+Use a dedicated idle Host; do not override an existing-session refusal.
+`VCPU_TIDS` lists target Host vCPU threads, not an event PID filter. Start short and
+check losses. This adds actual Host kernel rows and CALL STACK, not QEMU user or
+Guest internal calls. Depth, arguments and return addresses depend on the running
+kernel. See [extra events and Text visibility](capture.md#record-functions-and-extra-events-together).
+
 ## Read the report
 
 - Headers show observed **vCPU IDs and Host TIDs**. Same-numbered vCPUs in different
@@ -66,6 +82,8 @@ not request `function_graph`; its availability in instances depends on the kerne
   JSON analysis export also retains events and explicitly typed KVM windows.
 - Function search / call filters do not remove KVM evidence. Collapse tasks to
   reduce clutter. Non-KVM reports gain no extra controls.
+- Text's **Events: shown / hidden** button hides event rows without removing any
+  Timeline or exported evidence.
 
 ## Accuracy boundaries
 

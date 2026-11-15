@@ -18,6 +18,13 @@ from test_uftrace_export import AVAILABLE, COMPILE_FLAGS, EXECUTABLE
 
 
 class CaptureTest(unittest.TestCase):
+    def add_event(self, name, event_filter='common_pid == 42'):
+        path = self.tracefs / 'events' / name.replace(':', '/')
+        path.mkdir(parents=True, exist_ok=True)
+        (path / 'enable').write_text('0\n')
+        (path / 'filter').write_text(event_filter + '\n')
+        return path
+
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory(prefix='fg-capture-')
         self.addCleanup(self.temporary.cleanup)
@@ -79,6 +86,51 @@ class CaptureTest(unittest.TestCase):
         command = capture.build_command(self.arguments('--user', '--sched'), ['/recorder'])
         self.assertNotIn('--no-sched', command)
         self.assertNotIn('-E', command)
+
+    def test_extra_events_expand_groups_globs_and_deduplicate_defaults(self):
+        for name in ('kvm:kvm_entry', 'kvm:kvm_exit', 'kvm:vcpu_match_mmio'):
+            self.add_event(name)
+        args = self.arguments('--mixed', '-e', 'kvm', '--event', 'kvm:kvm_*', '-e', 'sched:sched_switch')
+        command = capture.build_command(args, ['/recorder'], self.tracefs)
+        for event in ('kvm:kvm_entry', 'kvm:kvm_exit', 'kvm:vcpu_match_mmio', 'sched:sched_switch'):
+            self.assertEqual(command.count(event + '@kernel'), 1)
+        self.assertIn('sched:sched_wakeup@kernel', command)
+        args = self.arguments('--mixed', '--no-sched', '-e', 'sched:sched_switch', '-g', '.*')
+        command = capture.build_command(args, ['/recorder'], self.tracefs)
+        self.assertIn('sched:sched_switch@kernel', command)
+        self.assertNotIn('sched:sched_waking@kernel', command)
+        self.assertIn('.*@kernel', command)
+
+    def test_extra_event_selection_rejects_unknown_and_unsafe_selectors(self):
+        for selector in ('absent:event', '../kvm', 'kvm:entry;exit', 'kvm:entry@kernel', ''):
+            with self.subTest(selector=selector), self.assertRaises(OSError):
+                capture.resolve_events(self.tracefs, [selector])
+        with self.assertRaisesRegex(OSError, 'not --user'):
+            capture.build_command(self.arguments('--user', '-e', 'kvm:kvm_entry'), ['/recorder'])
+
+    def test_extra_event_state_and_filters_restore_after_success_error_and_interrupt(self):
+        path = self.add_event('kvm:kvm_entry')
+        for failure in (None, RuntimeError('failed'), capture.CaptureInterrupted(signal.SIGTERM)):
+            state = capture.TracefsSession(self.tracefs, self.evidence, self.lock, events=['kvm:kvm_entry'])
+            try:
+                with state:
+                    state.configure(self.arguments('--mixed'))
+                    self.assertEqual((path / 'filter').read_text().strip(), '0')
+                    state.write('events/kvm/kvm_entry/enable', 1)
+                    if failure:
+                        raise failure
+            except (RuntimeError, capture.CaptureInterrupted):
+                if failure is None:
+                    raise
+            self.assertEqual(state.snapshot(), state.before)
+
+    def test_event_filter_none_is_cleared_with_zero_and_restores_semantically(self):
+        path = self.add_event('kvm:kvm_exit', 'none')
+        state = capture.TracefsSession(self.tracefs, self.evidence, self.lock, events=['kvm:kvm_exit'])
+        with state:
+            state.configure(self.arguments('--mixed'))
+        self.assertEqual((path / 'filter').read_text().strip(), '0')
+        self.assertEqual(state.snapshot(), state.before)
 
     def test_explicit_specs_buffers_depth_and_graphs_are_preserved(self):
         command = capture.build_command(self.arguments('--mixed', '-A', 'work@arg1/i32',
@@ -249,7 +301,7 @@ class CaptureTest(unittest.TestCase):
             with self.subTest(result=result):
                 output = self.root / ('mixed-' + str(result))
                 state = self.session()
-                factory = lambda *arguments: state
+                factory = lambda *arguments, **keywords: state
                 effect = {'side_effect': result} if isinstance(result, Exception) else {'return_value': result}
                 with patch.object(capture, 'TracefsSession', side_effect=factory), \
                         patch.object(capture, 'tracefs_root', return_value=self.tracefs), \

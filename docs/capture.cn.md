@@ -167,6 +167,37 @@ funcgraph --no-config kernel.txt --timeline --enable-fold --filter --output kern
 `--func-links --highlight-code`，以及固定的源码浏览器版本。用户源码始终通过
 `--user-src` 选择，不能套用内核链接。完整命令见 [README](../README.cn.md#源码与类型信息)。
 
+## 函数调用与额外事件一起采集
+
+`-e / --event` 可重复指定 `SYSTEM:EVENT`；也支持整个事件系统和加引号的 `* / ?`
+通配符。例如，同时抓取目标 vCPU 线程的全部可跟踪内核函数、调度和 KVM 事件：
+
+```bash
+sudo "$(command -v fgcapture)" --kernel --sched -p "$VCPU_TIDS" \
+    -e 'kvm:*' -d 0.3 -b 32768 -o host-kvm.txt
+funcgraph --no-config host-kvm.txt --timeline --enable-fold --filter --output host-kvm.html
+```
+
+`VCPU_TIDS` 是逗号分隔的 Host vCPU 线程 TID。这里没有 `-g / -n`，不按函数名筛选；
+并不意味着能记录不可跟踪、内联的函数或 QEMU 用户态。仍需检查内核深度限制及丢失计数。
+`-p` 只限定函数跟踪，**不会自动过滤额外事件或调度事件**；全 Host 事件可能很多，先用短窗口。
+同一 tracefs buffer 下的事件与函数共用采集时钟，报告头记录实际时钟。
+
+也可以只增加特定事件：`-e kvm:kvm_entry -e kvm:kvm_exit`。重复或重叠选择会去重；
+无效或没有匹配项的选择会在采集前报错，不静默遗漏。指定事件的旧过滤条件会暂时清除，
+其 enable / filter 配置随采集成功、失败或中断恢复；`--keep` 仍表示保留配置。
+
+混合模式同样支持 `-e`，例如 `--mixed -e kvm:kvm_entry`。它不会改变默认的 syscall
+函数根或 8 层深度；需要更多内核调用时，显式设置 `-g '.*'` 和合适的 `--kernel-depth`。
+`--no-sched` 只关闭默认调度组合，显式 `-e sched:sched_switch` 仍会采集。
+纯用户模式不支持内核 `--event`。额外事件至少保留在 Text；Timeline 只对已支持的事件类型
+做语义分析，不把任意事件伪造成函数调用。
+
+Text 顶部的 **Events: shown / hidden** 按钮只切换事件行的显示，保留函数、丢失警告和
+原始行号，不改变筛选条件、Timeline 或导出数据。设置会记住；从 Timeline 明确跳转到
+某个被隐藏的事件时，会自动恢复事件显示，保证原始证据仍可到达。单文件、sidecar 和
+实验性 Windowed Text 使用相同规则。
+
 ## 默认行为
 
 - 纯内核：原有 `-d/-p/-g/-n/--calibrate/--keep` 等选项仍交给 `fgcapture.sh`。
@@ -195,6 +226,7 @@ funcgraph --no-config kernel.txt --timeline --enable-fold --filter --output kern
 | `-n FUNC[,FUNC]` | 排除部分内核调用图 |
 | `--kernel-depth N` | 增大或减小内核深度；默认 8，不是无限深度 |
 | `-b KB` | 每 CPU 内核 buffer，默认 16384 KiB |
+| `-e SYSTEM:EVENT` | 额外内核事件，可重复；支持事件系统及加引号的通配符，仅内核 / 混合模式 |
 | `--uftrace-bin PATH` | 手动指定采集程序，不是必传项 |
 
 例如只跟踪网络 syscall，保留深一些的内核调用：

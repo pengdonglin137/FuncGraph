@@ -10,11 +10,12 @@
     const foldModels = new WeakMap();
     const orderModels = new WeakMap();
     class TextRecord {
-        constructor(row, version) { this.row = row; this.version = version; }
+        constructor(row, version, event = false) { this.row = row; this.version = version; this.event = event; }
         get textContent() { return this.row[1]; }
         get source() { return this.version >= 2 ? this.row[this.row.length - 1] : undefined; }
         getAttribute(name) {
             if (name === 'data-line-number') return String(this.row[0]);
+            if (name === 'data-trace-event') return this.event ? '1' : null;
             if (this.version >= 4) {
                 const position = (this.version === 5 ? symbolColumns : presentationColumns).get(name);
                 return position === undefined ? null : this.row[position];
@@ -33,6 +34,10 @@
         }
         if (!models.has(data)) {
             const records = [];
+            const events = data.events === undefined ? [] : data.events;
+            if (!Array.isArray(events) || events.some((number, index) => !Number.isSafeInteger(number) || number <= 0 ||
+                index && number <= events[index - 1])) throw new Error('Invalid Text event index');
+            const eventNumbers = new Set(events);
             let previous = 0;
             for (let index = 0; index < data.rows.length; index++) {
                 const row = data.rows[index];
@@ -44,9 +49,10 @@
                     throw new Error('Invalid Text filter index row ' + (index + 1));
                 }
                 previous = row[0];
-                records.push(new TextRecord(row, data.version));
+                records.push(new TextRecord(row, data.version, eventNumbers.delete(row[0])));
                 if (index % 1024 === 0) yield 'Checking full-trace filter index…';
             }
+            if (eventNumbers.size) throw new Error('Text event index references missing rows');
             models.set(data, { records, version: data.version });
         }
         return models.get(data);

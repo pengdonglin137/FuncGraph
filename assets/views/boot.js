@@ -284,8 +284,13 @@
         const validate = element => fgValidateTextLine(number, element, signal);
         const obtain = api => {
             check();
-            return api?.ensureLine ? api.ensureLine(number, options) :
-                fgTextDeferred() ? null : document.getElementById('L' + number);
+            const read = () => {
+                check();
+                return api?.ensureLine ? api.ensureLine(number, options) :
+                    fgTextDeferred() ? null : document.getElementById('L' + number);
+            };
+            const reveal = fgRevealTextEvent(number);
+            return reveal?.then ? reveal.then(read) : read();
         };
         check();
         const value = apis.text?.ensureLine || !fgTextDeferred() ? obtain(apis.text) : Promise.resolve(open('text')).then(obtain);

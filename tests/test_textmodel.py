@@ -32,6 +32,21 @@ class TextModelTest(unittest.TestCase):
         result = subprocess.run(['node', '-e', setup + source], capture_output=True, text=True, timeout=20)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
+    def test_optional_event_index_preserves_versions_and_rejects_invalid_references(self):
+        self.run_model('''
+            for (const version of [1,2,3,4,5]) {
+                const fields=version===5 ? fgTextModel.symbolFields : version===4 ? fgTextModel.presentationFields :
+                    version===3 ? [...fgTextModel.fields,'space'] : fgTextModel.fields;
+                const input={version,fields,events:[5],rows:[2,5,9].map(number=>
+                    [number,'row',...fields.map(()=>null),...(version>=2?[null]:[])])};
+                const model=drain(fgTextModel.prepare(input));
+                assert.equal(model.records[1].getAttribute('data-trace-event'),'1');
+                assert.equal(model.records[0].getAttribute('data-trace-event'),null);
+                for(const events of [[1],[5,5],[9,5],[0],[5.5],null,'5'])
+                    assert.throws(()=>drain(fgTextModel.prepare({...input,events})),/event index/);
+            }
+        ''')
+
     def test_raw_symbol_index_preserves_separate_names_sources_and_presentation_metadata(self):
         self.run_model('''
             const fields=fgTextModel.symbolFields;

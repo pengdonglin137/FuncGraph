@@ -179,6 +179,45 @@ This shows the command's kernel side, not `cat` user functions. Text input needs
 no uftrace; add kernel source options as in the previous example. Do not pass
 this file to `--uftrace`, which expects a recording **directory**.
 
+## Record functions and extra events together
+
+Repeat `-e / --event SYSTEM:EVENT` to add kernel tracepoints. A system name or
+quoted `* / ?` wildcard selects multiple events. For example, record all traceable
+kernel functions of selected vCPU threads together with scheduling and KVM events:
+
+```bash
+sudo "$(command -v fgcapture)" --kernel --sched -p "$VCPU_TIDS" \
+    -e 'kvm:*' -d 0.3 -b 32768 -o host-kvm.txt
+funcgraph --no-config host-kvm.txt --timeline --enable-fold --filter --output host-kvm.html
+```
+
+`VCPU_TIDS` is a comma-separated list of Host vCPU thread IDs. Omitting `-g / -n`
+does not filter by function name, but cannot record untraceable/inlined functions
+or QEMU user functions. Check kernel depth limits and loss counts. `-p` only
+limits function tracing: **scheduler and extra events are not automatically PID
+filtered**. Start with a short window because Host-wide events can be numerous.
+Events and functions use the same tracefs buffer clock; the report header records
+the actual clock.
+
+Use `-e kvm:kvm_entry -e kvm:kvm_exit` for individual events. Overlapping selectors
+are deduplicated. Invalid or unmatched selectors fail before capture rather than
+silently dropping evidence. Selected events' old filters are temporarily cleared;
+their enable/filter settings are restored on success, failure or interruption.
+Kernel `--keep` still deliberately retains configuration.
+
+Mixed mode also accepts `-e`, for example `--mixed -e kvm:kvm_entry`. This does not
+change its default syscall roots or eight-level kernel depth; explicitly choose
+`-g '.*'` and an appropriate `--kernel-depth` when needed. `--no-sched` disables the
+default scheduler bundle, not explicit `-e sched:sched_switch` requests. User-only
+mode rejects kernel events. Extra events remain in Text; Timeline interprets only
+supported event types, never fabricating calls from arbitrary tracepoints.
+
+The Text toolbar's **Events: shown / hidden** button is presentation-only: it keeps
+calls, loss warnings and original line numbers, without changing the filter,
+Timeline or exported evidence. The preference persists. Explicit navigation from
+Timeline to a hidden event restores event visibility so the original evidence
+remains reachable. Single-file, sidecar and experimental Windowed Text agree.
+
 ## Defaults and controls
 
 - Kernel-only mode forwards the existing duration/PID/graph/calibration options
@@ -208,6 +247,7 @@ this file to `--uftrace`, which expects a recording **directory**.
 | `-n FUNC[,FUNC]` | Exclude kernel graphs |
 | `--kernel-depth N` | Kernel depth limit, default 8; increase deliberately |
 | `-b KB` | Per-CPU kernel buffer, default 16384 KiB |
+| `-e SYSTEM:EVENT` | Repeatable extra kernel events; system names/quoted wildcards supported in kernel/mixed mode |
 | `--uftrace-bin PATH` | Optional recorder override |
 
 ## Safety boundary

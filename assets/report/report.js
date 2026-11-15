@@ -154,6 +154,32 @@
         // Grouping moves each task's lines together (original order inside the task) and replaces the
         // context switches by a summary line. Folding/filters work on attributes, not on order.
         let fgTextOrder = lsGet('textOrder') || 'time';
+        let fgTextEventsVisible = lsGet('textEvents') !== 'hidden';
+        function fgTextEventVisible(record) {
+            return fgTextEventsVisible || record.getAttribute('data-trace-event') !== '1';
+        }
+        function fgUpdateTextEventsButton() {
+            const button = document.getElementById('textEventsBtn');
+            if (!button) return;
+            button.textContent = 'Events: ' + (fgTextEventsVisible ? 'shown' : 'hidden');
+            button.setAttribute('aria-pressed', String(fgTextEventsVisible));
+        }
+        function fgSetTextEventsVisible(visible) {
+            fgTextEventsVisible = visible;
+            lsSet('textEvents', visible ? 'shown' : 'hidden');
+            fgUpdateTextEventsButton();
+            if (fgTextDeferred()) return;
+            if (fgTextWindow) return fgRefreshTextWindow();
+            const folding = fgGetTextFolding();
+            fgProjectFoldRecords(folding, folding.records);
+            fgUpdateTextControlHeight();
+        }
+        function fgRevealTextEvent(number) {
+            if (fgTextEventsVisible) return;
+            const model = fgDomTextModels.get(document.getElementById('content'));
+            const record = model && fgTextModel.locate(model, number)?.record;
+            if (record?.getAttribute('data-trace-event') === '1') return fgSetTextEventsVisible(true);
+        }
         let fgTextSort = '';
         function fgBlocks(container) {
             // [line, expandedContentOrNull] in DOM order
@@ -1337,7 +1363,7 @@
             let data;
             if (fgData.ready('fgTextIndex')) data = fgData.read('fgTextIndex');
             else {
-                const rows = [];
+                const rows = [], events = [];
                 const fields = fgTextModel.symbolFields;
                 for (const line of lines) {
                     let source = null;
@@ -1360,10 +1386,11 @@
                     }
                     rows.push([+line.getAttribute('data-line-number'), text,
                         ...fields.map(field => line.getAttribute('data-' + field)), source]);
+                    if (line.getAttribute('data-trace-event') === '1') events.push(+line.getAttribute('data-line-number'));
                     if (rows.length % 512 === 0) yield 'Reading complete Text rows: ' + rows.length + ' / ' + lines.length + '…';
                 }
                 rows.sort((left, right) => left[0] - right[0]);
-                data = { version: 5, fields, rows };
+                data = { version: 5, fields, rows, events: events.sort((left, right) => left - right) };
             }
             const model = yield* fgTextModel.prepare(data);
             if (model.records.length !== lines.length) throw new Error('Text model does not cover mounted rows');
@@ -1459,7 +1486,7 @@
 
             // Single-pass: filter lines + collapse expanded content
             allLineElems.forEach(line => {
-                const show = visibleLines === null || visibleLines.has(+line.getAttribute('data-line-number'));
+                const show = (visibleLines === null || visibleLines.has(+line.getAttribute('data-line-number'))) && fgTextEventVisible(line);
                 line.style.display = show ? '' : 'none';
                 fgTextNavigation?.setVisible(+line.getAttribute('data-line-number'), show);
 
@@ -1526,7 +1553,7 @@
             const visibleLines = Object.values(foldedBlocks).some(folded => folded === true)
                 ? fgTextModel.folding(fgGetTextModel(allLineElems)).visibleLines(foldedBlocks, null) : null;
             allLineElems.forEach(line => {
-                const show = visibleLines === null || visibleLines.has(+line.getAttribute('data-line-number'));
+                const show = (visibleLines === null || visibleLines.has(+line.getAttribute('data-line-number'))) && fgTextEventVisible(line);
                 fgProjectFoldLine(line, show);
             });
 
@@ -1763,6 +1790,7 @@
 
         window.fgEnsureTextLine = function (number, options = {}) {
             fgValidateTextLine(number, null, options.signal);
+            fgRevealTextEvent(number);
             return fgValidateTextLine(number, document.getElementById('L' + number), options.signal);
         };
 
@@ -2036,6 +2064,7 @@
 
         function fgProjectFoldLine(line, visible) {
             if (!line) return;
+            visible = visible && fgTextEventVisible(line);
             fgTextNavigation?.setVisible(+line.getAttribute('data-line-number'), visible);
             const display = visible ? '' : 'none';
             if (line.style.display !== display) line.style.display = display;
@@ -3234,6 +3263,7 @@
                 matchMedia('(max-width: 768px)').addEventListener('change', () =>
                     root.classList.contains('text-layout-measured') ? fgRefreshTextLayout() : fgResetTextLayout(root.children));
             fgTextInitialized = true;
+            fgUpdateTextEventsButton();
             root.addEventListener('click', fgHandleTextInteraction);
             root.addEventListener('dblclick', fgHandleTextInteraction);
             if (mounted) {
@@ -3258,6 +3288,7 @@
 
             // 初始化键盘导航
             initKeyboardNavigation(!pendingNavigation);
+            if (!fgTextEventsVisible && !renderer) fgSetTextEventsVisible(false);
 
             // 初始化统一过滤器（如果过滤框存在）
             if (document.getElementById('filterInput')) {
