@@ -66,7 +66,8 @@ class CompareRegexTest(unittest.TestCase):
             await fgSwitchView('compare');
         }''', dict(rows=rows, adjusted=adjusted))
         self.page.locator('.cmp-table').wait_for()
-        self.assertEqual(self.page.locator('.tl-canvas').count(), 0)
+        if mode == 'single':
+            self.assertEqual(self.page.locator('.tl-canvas').count(), 0)
 
     def start(self, query):
         self.page.evaluate('''query => {
@@ -77,7 +78,7 @@ class CompareRegexTest(unittest.TestCase):
         }''', query)
 
     def settled(self):
-        self.page.wait_for_function("document.querySelector('.cmp-wrap').getAttribute('aria-busy') !== 'true'")
+        self.page.wait_for_function("() => document.querySelector('.cmp-wrap').getAttribute('aria-busy') !== 'true'")
 
     def unchanged(self):
         self.assertTrue(self.page.evaluate("comparePayload === JSON.stringify(fgData.read('cmpData'))"))
@@ -109,7 +110,7 @@ class CompareRegexTest(unittest.TestCase):
         }''')
 
     def wait_worker(self):
-        self.page.wait_for_function('compareWorkers.at(-1)?.batch')
+        self.page.wait_for_function('() => compareWorkers.at(-1)?.batch')
 
     def test_native_regex_results_cover_all_names_spaces_and_batches(self):
         self.open_report()
@@ -199,6 +200,26 @@ class CompareRegexTest(unittest.TestCase):
         self.assertEqual(self.page.locator('.cmp-q').input_value(), '')
         self.assertEqual(self.page.locator('.cmp-count').inner_text(), '660 of 661 functions')
         self.assertFalse(self.page.locator('.cmp-filter-status').is_visible())
+        self.unchanged()
+
+    def test_combined_sidecar_keeps_timeline_and_compare_matchers_independent(self):
+        self.open_report(mode='sidecar')
+        self.start('root|worker')
+        self.settled()
+        self.assertEqual(self.page.locator('.cmp-count').inner_text(), '652 of 661 functions')
+        self.page.evaluate("async () => { await fgSwitchView('timeline'); }")
+        before = self.page.evaluate("JSON.stringify(fgData.read('tlData'))")
+        count = self.page.evaluate("fgView('timeline').probe().N")
+        self.page.locator('.tl-search').fill('(?:.*)')
+        self.page.locator('.tl-search').press('Enter')
+        self.page.wait_for_function("() => document.querySelector('.tl-count').getAttribute('aria-busy') === 'false'")
+        self.assertEqual(self.page.locator('.tl-count').inner_text(), f'1 / {count} calls')
+        self.page.evaluate("async () => { await fgSwitchView('compare'); }")
+        self.assertEqual(self.page.locator('.cmp-count').inner_text(), '652 of 661 functions')
+        self.start('child|中文')
+        self.settled()
+        self.assertEqual(self.page.locator('.cmp-count').inner_text(), '2 of 661 functions')
+        self.assertEqual(self.page.evaluate("JSON.stringify(fgData.read('tlData'))"), before)
         self.unchanged()
 
     def test_runtime_failure_does_not_rerun_regex_in_page_and_retry_is_complete(self):

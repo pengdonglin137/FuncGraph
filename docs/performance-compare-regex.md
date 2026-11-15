@@ -93,4 +93,9 @@ sorting, cancellation, stale replies, failure/retry, invalid syntax, IME,
 pending/cancelled full-result CSV exports and the compatibility fallback.
 It also checks real-worker heartbeat responsiveness and actual touch-coordinate
 cancellation on an HTTP sidecar in both themes. Shared worker protocol and
-Timeline behavior remain covered by `tests/test_timeline_regex.py`.
+Timeline behavior remain covered by `tests/test_timeline_regex.py`. A combined
+HTTP sidecar runs real queries in both views and verifies independent cached
+results plus unchanged payloads. Its default Timeline may already be initialized
+before Compare opens; the no-Timeline-initialization assertion belongs to the
+Compare-only fixture, not that asynchronous default-view race. Polling uses
+function predicates under the viewer's existing CSP without adding `unsafe-eval`.
