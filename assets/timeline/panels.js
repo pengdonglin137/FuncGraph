@@ -1371,7 +1371,7 @@ elToolbar.addEventListener('click', ev => {
         case 'zoomin': zoomAt(1 / 1.5, W / 2); break;
         case 'fit': fitAll(); break;
         case 'fitcalls': fitCalls(); break;
-        case 'help': elHelp.classList.toggle('show'); break;
+        case 'help': showKeyboardHint(b); break;
         case 'notes': setNotes(elNotes.classList.contains('hide')); break;
         case 'max': toggleFullscreen(); break;
         case 'adj': toggleAdjusted(); break;
@@ -1532,10 +1532,11 @@ ${KVM ? '<i style="background:#d5e9e1"></i><span>KVM Guest boundary window (wall
 <i style="background:#8fb3ef;border-right:2px dotted #6b7280"></i><span>dotted right / left edge: exit / entry not captured</span>
 <i style="background:#d32f2f;clip-path:polygon(50% 0,100% 100%,0 100%)"></i><span>error origin too narrow to label (triangle)</span>
 <i style="background:#f0a35a;height:3px"></i><span>CPU track strip: hardirq (orange) / softirq (green) / NMI (purple)</span></div>`;
-elHelp.querySelector('.tl-help-close').addEventListener('click', () => {
+function closeTimelineHelp(restoreFocus = true) {
+    fgCloseHelp(restoreFocus, elHelp);
     elHelp.classList.remove('show');
-    focusTimelineControl();
-});
+}
+elHelp.querySelector('.tl-help-close').addEventListener('click', () => closeTimelineHelp());
 
 // ---- init ----
 palette();
@@ -1586,4 +1587,4 @@ const probe = () => ({ N, NA, SYN, S, sName, sStart, sEnd, sDepth, sParent, sTas
     errors: showErrors, latency: showLatency, sections: showSections, dist: showDist, wait: showWaitChain,
     inline: (on) => { if (!!on !== inlineView) toggleInlineView(); } });
 return { resize: () => { resumeSearch(); resize(); }, revealLine: revealLine, draw: draw, probe: probe,
-    suspend: () => { suspendSearch(); closeSavedViews(); closeCallActions(); if (elPosition.open) elPosition.close(); if (tlRoot.classList.contains('tl-fullscreen') || document.fullscreenElement === tlRoot) leaveFullscreen(false); setToolbarOptions(false); hideTip(); discardSceneCache(); }, showHelp: () => { closeCallActions(); elHelp.classList.add('show'); } };
+    suspend: () => { closeTimelineHelp(false); suspendSearch(); closeSavedViews(); closeCallActions(); if (elPosition.open) elPosition.close(); if (tlRoot.classList.contains('tl-fullscreen') || document.fullscreenElement === tlRoot) leaveFullscreen(false); setToolbarOptions(false); hideTip(); discardSceneCache(); }, showHelp: opener => { closeCallActions(); elHelp.classList.add('show'); fgOpenHelpPanel(elHelp, () => elHelp.classList.remove('show'), opener); } };

@@ -739,7 +739,7 @@ tlRoot.innerHTML = `
     <button class="tl-btn tl-more" data-act="options" title="Filters, colors, overlays and analysis tools" aria-haspopup="dialog" aria-expanded="false" aria-controls="tlOptions">Tools<span class="tl-more-filter" hidden> · Filter on</span></button>
   </span>
   <button class="tl-btn tl-fullscreen-button" data-act="max" title="Enter full screen (M); Escape to exit" aria-label="Full screen" aria-pressed="false">Full screen</button>
-  <button class="tl-btn" data-act="help" title="Timeline help (?)" aria-label="Timeline help" hidden>?</button>
+  <button class="tl-btn" id="timelineHelpBtn" data-act="help" title="Timeline help (?)" aria-label="Timeline help" aria-haspopup="dialog" aria-controls="timelineHelp" aria-expanded="false" hidden>?</button>
   </div>
   ${MIXED ? '<span class="tl-group tl-space-key" aria-label="Address space legend"><span class="tl-space-user">User</span><span>Kernel</span>' +
     (D.stats.user_kernel_boundaries ? '<span class="tl-space-edge" title="Boundary spans the recorded kernel call">User → kernel</span>' : '') + '</span>' : ''}
@@ -828,7 +828,7 @@ ${N ? '' : '<div class="tl-event-only" role="note">No recorded function calls. S
 <div class="tl-stage">
   <canvas class="tl-head-canvas"></canvas>
   <div class="tl-scroll"><canvas class="tl-canvas" tabindex="0" aria-label="Interactive function timeline. Press question mark for keyboard shortcuts."></canvas><div class="tl-spacer"></div></div>
-  <div class="tl-help" role="dialog" aria-label="Timeline help"></div>
+  <div class="tl-help" id="timelineHelp" role="dialog" aria-label="Timeline help"></div>
 </div>
 <div class="tl-resizer" title="Drag to resize the panel, double-click to reset"></div>
 <div class="tl-detail"></div>

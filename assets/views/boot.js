@@ -371,7 +371,7 @@
             textScrollLeft = pageChrome().textViewport?.scrollLeft || 0;
             fgCloseTextControls();
         }
-        if (typeof closeKeyboardHint === 'function') closeKeyboardHint();
+        if (typeof fgCloseHelp === 'function') fgCloseHelp(false);
         pausedSources[current] = fgCancelSources(document.getElementById(current === 'text' ? 'content' : views[current]?.el));
         apis[current]?.suspend?.();
         cancel(current);

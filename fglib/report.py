@@ -233,7 +233,7 @@ class HtmlGenerator:
             </span>
             <span class="header-actions">
                 <button class="header-btn" onclick="toggleTheme()">Theme</button>
-                <button class="header-btn" id="viewHelpBtn" onclick="showKeyboardHint()" title="Help for current view" aria-label="Help for current view">?</button>
+                <button class="header-btn" type="button" id="viewHelpBtn" onclick="showKeyboardHint(this)" title="Help for current view" aria-label="Help for current view" aria-haspopup="dialog" aria-controls="keyboardHint" aria-expanded="false">?</button>
                 <button class="header-btn" onclick="toggleInfoPanel()">ⓘ</button>
             </span>
         </div>

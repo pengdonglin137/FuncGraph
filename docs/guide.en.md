@@ -663,6 +663,14 @@ The filter is shared with the timeline (6.6).
 
 The top-right header **?** is the shared help entry, with content specific to the active view: Text keyboard/folding shortcuts, Timeline zoom/navigation/Search-versus-Filter/legend, or Compare filtering/sorting/export guidance. Timeline no longer duplicates the button in its normal toolbar; a toolbar fallback appears only when maximization hides the header. Buttons support native Enter/Space; use the close button or Escape to dismiss. Switching views closes the shared Text/Compare hint. Timeline help waits for preparation without forcing synchronous initialization; canceled or superseded requests cannot open stale help.
 
+Help no longer disappears on a timer. Opening it focuses the close button; Escape,
+the help entry, an outside click or a view change dismisses it. Closing returns
+focus to the opener, while outside clicks and view changes keep the new focus
+destination. Long help keeps its close button visible while scrolling, and its
+reading keys do not navigate the trace behind it. Escape, Tab, a repeated entry
+activation or an outside click can cancel pending Timeline help without canceling
+chart preparation or stealing focus later. See [help interaction and verification](help-interaction.md).
+
 ![tl_help](img/tl_help.png)
 
 | Action | Effect |

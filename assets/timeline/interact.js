@@ -818,6 +818,7 @@ elPosition.addEventListener('close', () => {
 // ---- keyboard (capture phase: keeps the text view's shortcuts from firing) ----
 window.addEventListener('keydown', ev => {
     if (window.fgCurrentView() !== 'timeline') return;
+    if (elHelp.classList.contains('show') && elHelp.contains(ev.target instanceof Node ? ev.target : document.activeElement)) return;
     if (savedViewsDialog?.open) { ev.stopPropagation(); return; }
     if (callActionsKey(ev)) { ev.stopPropagation(); return; }
     if (elPosition.open) {
@@ -878,16 +879,16 @@ window.addEventListener('keydown', ev => {
         case 'o': case 'O': toggleAdjusted(); break;
         case 'i': case 'I': toggleInlineView(); break;
         case 'm': case 'M': toggleFullscreen(); break;
-        case '?': setToolbarOptions(false); elHelp.classList.toggle('show'); break;
+        case '?': setToolbarOptions(false); showKeyboardHint(); break;
         case 'Escape':
-            if (elHelp.classList.contains('show')) elHelp.classList.remove('show');
+            if (elHelp.classList.contains('show')) closeTimelineHelp();
             else { range = null; select(-1); }
             break;
         default: handled = false;
     }
     if (handled) {
         ev.preventDefault();
-        if (ev.key !== '/' && ev.key.toLowerCase() !== 'g' && window.fgCurrentView() === 'timeline') focusTimelineControl();
+        if (ev.key !== '/' && ev.key !== '?' && ev.key.toLowerCase() !== 'g' && window.fgCurrentView() === 'timeline') focusTimelineControl();
     }
 }, true);
 

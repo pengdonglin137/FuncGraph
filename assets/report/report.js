@@ -439,7 +439,9 @@
             window.scrollBy({top, behavior: options.behavior});
         }
         let textGuideRevision = 0;
-        let keyboardHintTimer = null;
+        let fgHelpState = null;
+        let fgHelpPending = false;
+        let fgHelpGeneration = 0;
         // 记录当前滚动位置
         let scrollPositionBeforeClick = { x: 0, y: 0 };
         // 是否显示过键盘提示
@@ -735,11 +737,49 @@
         }
         
         // 显示键盘提示
-        function showKeyboardHint() {
+        function fgHelpButtons() {
+            return ['viewHelpBtn', 'timelineHelpBtn'].map(id => document.getElementById(id)).filter(Boolean);
+        }
+        function fgCloseHelp(restoreFocus = true, panel = null) {
+            if (panel && fgHelpState?.panel !== panel) return;
+            fgHelpGeneration++;
+            fgHelpPending = false;
+            const state = fgHelpState;
+            fgHelpState = null;
+            for (const button of fgHelpButtons()) button.setAttribute('aria-expanded', 'false');
+            if (!state) return;
+            const focused = state.panel.contains(document.activeElement);
+            state.hide();
+            if (restoreFocus && focused) {
+                const usable = element => element?.isConnected && !element.disabled &&
+                    (element.tabIndex >= 0 || element.hasAttribute('tabindex')) && element.getClientRects().length;
+                const target = usable(state.opener) ? state.opener : fgHelpButtons().find(usable);
+                target?.focus({preventScroll: true});
+            }
+        }
+        function fgOpenHelpPanel(panel, hide, opener = document.activeElement) {
+            if (fgHelpState?.panel === panel) return;
+            fgCloseHelp(false);
+            fgHelpState = {panel, hide, opener};
+            panel.scrollTop = 0;
+            for (const button of fgHelpButtons()) {
+                button.setAttribute('aria-controls', panel.id);
+                button.setAttribute('aria-expanded', 'true');
+            }
+            panel.querySelector('[aria-label="Close help"]')?.focus({preventScroll: true});
+        }
+        function showKeyboardHint(opener = document.activeElement) {
+            if (fgHelpState || fgHelpPending) { fgCloseHelp(); return; }
             const view = typeof fgCurrentView === 'function' ? fgCurrentView() : 'text';
             if (view === 'timeline') {
+                const generation = ++fgHelpGeneration;
+                fgHelpPending = true;
                 Promise.resolve(fgSwitchView(view)).then(api => {
-                    if (fgCurrentView() === view && api && api.showHelp) api.showHelp();
+                    if (fgHelpGeneration !== generation || fgCurrentView() !== view) return;
+                    fgHelpPending = false;
+                    if (api?.showHelp) api.showHelp(opener);
+                }, () => {
+                    if (fgHelpGeneration === generation) fgCloseHelp(false);
                 });
                 return;
             }
@@ -747,25 +787,45 @@
             hint.querySelectorAll('[data-help-view]').forEach(section => { section.hidden = section.dataset.helpView !== view; });
             hint.setAttribute('aria-label', view === 'compare' ? 'Compare help' : 'Text view help');
             hint.style.display = 'block';
-            
-            // 8秒后自动隐藏
-            if (keyboardHintTimer) {
-                clearTimeout(keyboardHintTimer);
-            }
-            keyboardHintTimer = setTimeout(() => {
-                hint.style.display = 'none';
-            }, 8000);
+            fgOpenHelpPanel(hint, () => { hint.style.display = 'none'; }, opener);
         }
         
         // 关闭键盘提示
-        function closeKeyboardHint() {
+        function closeKeyboardHint(restoreFocus = true) {
             const hint = document.getElementById('keyboardHint');
+            fgCloseHelp(restoreFocus, hint);
             hint.style.display = 'none';
-            if (keyboardHintTimer) {
-                clearTimeout(keyboardHintTimer);
-                keyboardHintTimer = null;
-            }
         }
+        window.addEventListener('pointerdown', event => {
+            const target = event.target instanceof Element ? event.target : document.activeElement;
+            if ((!fgHelpState && !fgHelpPending) || fgHelpState?.panel.contains(target) ||
+                target.closest('#viewHelpBtn, #timelineHelpBtn')) return;
+            fgCloseHelp(false);
+        }, true);
+        window.addEventListener('keydown', event => {
+            const target = event.target instanceof Element ? event.target : document.activeElement;
+            if ((!fgHelpState && !fgHelpPending) || event.defaultPrevented || event.isComposing ||
+                event.keyCode === 229 || event.ctrlKey || event.metaKey || event.altKey ||
+                target.isContentEditable || target.closest('input, textarea, select')) return;
+            if (fgHelpPending && event.key === 'Tab') { fgCloseHelp(false); return; }
+            const panel = fgHelpState?.panel;
+            if (panel?.contains(target) && ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'PageUp', 'PageDown', 'Home', 'End'].includes(event.key)) {
+                event.preventDefault();
+                event.stopImmediatePropagation();
+                if (event.key === 'Home' || event.key === 'End') {
+                    panel.scrollTo({top: event.key === 'Home' ? 0 : panel.scrollHeight, behavior: 'auto'});
+                } else {
+                    const direction = event.key.endsWith('Up') || event.key === 'ArrowLeft' ? -1 : 1;
+                    const horizontal = event.key === 'ArrowLeft' || event.key === 'ArrowRight';
+                    panel.scrollBy({[horizontal ? 'left' : 'top']: direction * (event.key.startsWith('Page') ? panel.clientHeight * 0.9 : 40), behavior: 'auto'});
+                }
+                return;
+            }
+            if (event.key !== 'Escape' && !(event.key === '?' && fgHelpState?.panel.contains(target))) return;
+            event.preventDefault();
+            event.stopImmediatePropagation();
+            fgCloseHelp();
+        }, true);
 
         // 切换过滤语法帮助面板
         function toggleFilterHelp() {
@@ -1877,7 +1937,8 @@
 
                 // 移动焦点到该行，这样event.target会更新
                 // 这样Enter键就能正确处理
-                if (typeof fgCurrentView !== 'function' || fgCurrentView() === 'text') keyboardSelectedLine.focus({ preventScroll: true });
+                if (!fgHelpState?.panel.contains(document.activeElement) &&
+                    (typeof fgCurrentView !== 'function' || fgCurrentView() === 'text')) keyboardSelectedLine.focus({ preventScroll: true });
 
                 // 只有在需要滚动时才滚动
                 if (scrollIntoView) {
@@ -2544,6 +2605,7 @@
             if (event.defaultPrevented || event.isComposing || event.keyCode === 229) return;
             if ((event.ctrlKey || event.metaKey || event.altKey) &&
                 !(event.key === 'a' && (event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey)) return;
+            if (fgHelpState?.panel.contains(event.target)) return;
             if (event.key === 'Escape' && !event.target.matches('input, textarea, select') &&
                 document.getElementById('keyboardHint').style.display === 'block') {
                 event.preventDefault();

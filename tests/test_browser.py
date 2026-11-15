@@ -770,6 +770,52 @@ class BrowserSmokeTest(unittest.TestCase):
         self.assertEqual(self.page.locator('.tl-help.show').count(), 0)
         self.assertFalse(self.page.locator('#keyboardHint').is_visible())
 
+    def test_pending_timeline_help_can_be_cancelled_without_cancelling_the_view(self):
+        for action in ['escape', 'repeat']:
+            with self.subTest(action=action):
+                self.ev('localStorage.clear()')
+                self.page.goto(self.url, wait_until='load')
+                self.stage_timeline(slow=True)
+                facts = self.ev('''action => {
+                    window.pendingHelpView = fgSwitchView('timeline');
+                    const button = document.getElementById('viewHelpBtn');
+                    button.click();
+                    const requested = fgHelpPending;
+                    if (action === 'escape') window.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',cancelable:true}));
+                    else button.click();
+                    return {requested,pending:fgHelpPending,view:fgCurrentView()};
+                }''', action)
+                self.assertEqual(facts, dict(requested=True,pending=False,view='timeline'))
+                self.assertTrue(self.ev('async () => !!(await pendingHelpView)'))
+                self.assertFalse(self.page.locator('#timelineHelp').is_visible())
+                self.assertEqual(self.page.locator('#viewHelpBtn').get_attribute('aria-expanded'), 'false')
+                self.page.locator('#viewHelpBtn').click()
+                self.page.locator('#timelineHelp').wait_for(state='visible')
+                self.page.keyboard.press('Escape')
+                self.assertEqual(self.ev('fgCurrentView()'), 'timeline')
+
+    def test_pending_help_does_not_reopen_after_tabbing_or_clicking_elsewhere(self):
+        for action in ['tab', 'pointer']:
+            with self.subTest(action=action):
+                self.ev('localStorage.clear()')
+                self.page.goto(self.url, wait_until='load')
+                self.stage_timeline(slow=True)
+                facts = self.ev('''action => {
+                    window.pendingFocusView = fgSwitchView('timeline');
+                    const button = document.getElementById('viewHelpBtn');
+                    button.focus(); button.click();
+                    window.helpOtherControl = document.querySelector('.header-actions button:last-child');
+                    const event = action === 'tab' ? new KeyboardEvent('keydown',{key:'Tab',cancelable:true}) :
+                        new PointerEvent('pointerdown',{bubbles:true,cancelable:true});
+                    (action === 'tab' ? window : helpOtherControl).dispatchEvent(event);
+                    helpOtherControl.focus({preventScroll:true});
+                    return {pending:fgHelpPending,prevented:event.defaultPrevented};
+                }''', action)
+                self.assertEqual(facts, dict(pending=False,prevented=False))
+                self.assertTrue(self.ev('async () => !!(await pendingFocusView)'))
+                self.assertFalse(self.page.locator('#timelineHelp').is_visible())
+                self.assertTrue(self.ev('document.activeElement === helpOtherControl'))
+
     def test_page_header_stays_in_viewport_with_wide_trace(self):
         for width, height in [(1500, 900), (800, 600), (390, 844), (320, 700)]:
             self.page.set_viewport_size({'width': width, 'height': height})
