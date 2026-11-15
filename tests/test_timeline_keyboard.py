@@ -269,6 +269,38 @@ class TimelineKeyboardTest(unittest.TestCase):
                     self.end_composition('.*')
                     self.page.wait_for_function("() => document.querySelector('.tl-count').getAttribute('aria-busy') === 'false'")
 
+    def test_chromium_native_composition_waits_for_committed_text(self):
+        self.prepare_find()
+        selected = self.page.evaluate("fgView('timeline').probe().N - 1")
+        self.page.evaluate("selected => fgView('timeline').probe().select(selected)", selected)
+        self.page.locator('.tl-search').select_text()
+        self.page.evaluate('''() => {
+            window.nativeCompositionEvents = [];
+            for (const kind of ['compositionstart','compositionend','input']) {
+                document.querySelector('.tl-search').addEventListener(kind, event => {
+                    nativeCompositionEvents.push({kind,trusted:event.isTrusted,composing:!!event.isComposing});
+                });
+            }
+        }''')
+        session = self.context.new_cdp_session(self.page)
+        self.addCleanup(session.detach)
+        session.send('Input.imeSetComposition', dict(text='[', selectionStart=1, selectionEnd=1))
+        self.page.wait_for_timeout(220)
+        self.assertEqual(self.page.locator('.tl-search').input_value(), '[')
+        self.assertEqual(self.page.locator('.tl-count').inner_text(), 'Composing…')
+        self.assertEqual(self.page.locator('.tl-search').get_attribute('aria-invalid'), 'false')
+        self.assertEqual(self.page.evaluate("fgView('timeline').probe().sel()"), selected)
+        session.send('Input.insertText', dict(text='^mutex_unlock$'))
+        self.page.wait_for_function("() => document.querySelector('.tl-count').getAttribute('aria-busy') === 'false'")
+        self.assertEqual(self.page.locator('.tl-search').input_value(), '^mutex_unlock$')
+        self.assertEqual(self.page.evaluate("fgView('timeline').probe().sel()"), selected)
+        events = self.page.evaluate('nativeCompositionEvents')
+        self.assertTrue(any(event['kind'] == 'compositionstart' and event['trusted'] for event in events))
+        self.assertTrue(any(event['kind'] == 'input' and event['trusted'] and event['composing'] for event in events))
+        self.assertEqual(sum(event['kind'] == 'compositionend' for event in events), 1)
+        self.page.locator('.tl-search').press('Enter')
+        self.assertEqual(self.page.evaluate("fgView('timeline').probe().nameOf(fgView('timeline').probe().sel())"), 'mutex_unlock')
+
     def test_unmodified_find_filter_and_native_buttons_keep_existing_behavior(self):
         self.prepare_find()
         total = self.page.evaluate("fgView('timeline').probe().N")

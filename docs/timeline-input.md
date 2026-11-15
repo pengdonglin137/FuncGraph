@@ -58,8 +58,11 @@ cooperative-index yield before cancelling it, then verifies that the old
 navigation never selects a call and a new committed query can finish normally.
 
 Composition and legacy-key scenarios dispatch DOM composition/input/keyboard
-events in Chromium; these are not a claim of manual coverage of every OS IME
-or all browser engines. Page-full-screen handling is verified separately from
+events in Chromium. An additional CDP `Input.imeSetComposition` / `Input.insertText`
+check drives Chromium's native composition path, observes trusted composition
+start/input events and verifies commitment without automatic navigation. These
+are not a claim of manual coverage of every OS IME or all browser engines.
+Page-full-screen handling is verified separately from
 the browser's own full-screen Escape behavior, which a page cannot override.
 Tests bound unnecessary search work before commitment, not overall startup,
 memory use, regex worst-case latency or a measured end-to-end speedup. Large
