@@ -52,6 +52,23 @@ parameter names still use `slotN`, and missing symbol offsets are not invented.
 
 ## Draft, apply and clear
 
+Complex Find expressions run in a cancellable Web Worker when available,
+matching each unique recorded name with the same native JavaScript regex and
+case-insensitive flag. Literal expressions and the common `.*` query retain
+their existing in-page fast path. Escape, a new query, composition or leaving
+Timeline cancels the old work without publishing partial hits. No new controls
+or Text loading are required. If workers are unavailable/blocked before matching,
+the original page-thread path remains available and the input tooltip explains
+that it may block; a failure after background matching starts instead shows
+**Search unavailable** and never silently reruns it in the page. See
+[regex responsiveness and limits](performance-timeline-regex.md).
+
+复杂 Find 正则在可用时交给可取消的 Web Worker，仍按原始名称、不区分大小写匹配，
+不裁剪符号、不改变语法或结果。普通字面表达式和 `.*` 保留原来的快速路径。
+取消、改写、组合输入或离开 Timeline 会终止旧任务，不展示部分命中，也不为此加载 Text。
+浏览器不支持或策略阻止 Worker 启动时兼容原页面线程路径，输入框提示其阻塞风险；
+后台匹配启动后出错则明确显示不可用，不偷偷在页面重跑。见[实测与边界](performance-timeline-regex.md)。
+
 Input-method confirmation is not a viewer command: composing Enter/Escape,
 legacy IME key code 229, Ctrl/Cmd/Alt combinations and already-consumed keys
 do not navigate Find, apply or discard a filter draft, or close Tools/full screen.

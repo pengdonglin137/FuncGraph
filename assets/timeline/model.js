@@ -721,7 +721,7 @@ tlRoot.innerHTML = `
   <div class="tl-primary" role="group" aria-label="Timeline navigation and display">
   <span class="tl-group tl-search-group">
     <input class="tl-search" placeholder="/ Find function (regex)" spellcheck="false" aria-label="Search traced function names (regular expression)" aria-describedby="tlSearchStatus tlSearchHelp" aria-invalid="false" title="Highlight and navigate function-name matches. To filter calls, use Tools → Filter calls.">
-    <span id="tlSearchHelp" hidden>Find highlights and navigates function names within the current filter. It does not filter calls. Use Tools → Filter calls for the shared Text and Timeline filter.</span>
+    <span id="tlSearchHelp" hidden>Find highlights and navigates function names within the current filter. It does not filter calls. Use Tools → Filter calls for the shared Text and Timeline filter. Complex expressions use background search when available; Escape clears and cancels.</span>
     <span class="tl-search-nav">
       <button class="tl-btn" data-act="searchprev" title="Previous search match (Shift+Enter / Shift+N)" aria-label="Previous search match" disabled>◀</button>
       <button class="tl-btn" data-act="searchnext" title="Next search match (Enter / N)" aria-label="Next search match" disabled>▶</button>

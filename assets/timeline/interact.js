@@ -535,8 +535,9 @@ let searchQuery = '', searchError = '', searchErrorKind = '', searchTimer = 0;
 let searchPostingIndex = null, searchMatchQuery = null, searchNameHits = null;
 let searchMatches = new Uint32Array(0), searchVisibleMatches = searchMatches;
 let searchFilterBasis = null, searchWork = null, searchProgress = '', searchPaused = false;
-let searchReadyQuery = '', searchComposing = false;
+let searchReadyQuery = '', searchComposing = false, searchWorkerUnavailable = false;
 const searchDefaultTitle = 'Case-insensitive regular expression; highlights and navigates recorded function names. ' +
+    'Complex expressions use cancellable background search when available; Escape clears and cancels. ' +
     (document.getElementById('filterInput') ? 'Search is limited by the shared filter; it does not change that filter.' :
         'Shared filtering is not enabled for this report.');
 function searchIndex(target) {
@@ -553,7 +554,8 @@ function updateSearchLabel() {
     const invalid = !busy && searchErrorKind === 'regex';
     elSearch.classList.toggle('bad', invalid);
     elSearch.setAttribute('aria-invalid', String(invalid));
-    elSearch.title = !busy && searchError ? searchError : searchDefaultTitle;
+    elSearch.title = !busy && searchError ? searchError : searchDefaultTitle +
+        (searchWorkerUnavailable && searchNeedsWorker(searchQuery) ? ' Background search is unavailable; this expression uses the page thread and may block it.' : '');
     elCount.setAttribute('aria-busy', String(busy));
     elCount.title = searchComposing ? 'Finish text composition to search.' : busy ? searchProgress : searchError;
     const count = searchVisibleMatches.length;
@@ -574,8 +576,9 @@ function updateSearchLabel() {
     }
 }
 function cancelSearchWork() {
-    if (searchWork) clearTimeout(searchWork.timer);
+    const work = searchWork;
     searchWork = null;
+    if (work) { clearTimeout(work.timer); work.controller.abort(); work.steps.return(); }
     searchProgress = '';
 }
 function navigateSearch(dir) {
@@ -590,10 +593,28 @@ function navigateSearch(dir) {
     }
     select(searchVisibleMatches[position], { reveal: true });
 }
-function* prepareSearchMatches(query, matcher, accepted) {
+function* prepareSearchMatches(query, matcher, accepted, signal) {
     if (!searchPostingIndex) searchPostingIndex = yield* buildSearchIndex(sName, N);
     if (searchMatchQuery !== query) {
-        const hits = yield* matchSearchNames(searchPostingIndex, S, matcher);
+        let hits = null;
+        if (!matcher && !searchWorkerUnavailable) {
+            const pending = matchSearchNamesWorker(searchPostingIndex, S, query, signal);
+            if (pending) {
+                try { hits = yield { pending, status: 'Searching function names…' }; }
+                catch (error) {
+                    if (error.searchKind !== 'unavailable') throw error;
+                    searchWorkerUnavailable = true;
+                }
+            } else searchWorkerUnavailable = true;
+        }
+        if (!hits) {
+            if (!matcher) {
+                yield { pending: new Promise(resolve => setTimeout(resolve, 0)), status: 'Searching in page…' };
+                try { matcher = new RegExp(query, 'i'); }
+                catch (error) { error.searchKind = 'regex'; throw error; }
+            }
+            hits = yield* matchSearchNames(searchPostingIndex, S, matcher);
+        }
         const matches = yield* collectSearchCalls(searchPostingIndex, sName, N, hits);
         searchNameHits = hits;
         searchMatches = matches;
@@ -605,14 +626,17 @@ function* prepareSearchMatches(query, matcher, accepted) {
     return visible;
 }
 function startSearchWork(query, matcher, dir) {
-    const work = { steps: prepareSearchMatches(query, matcher, textHits), accepted: textHits, timer: 0, direction: dir };
+    const controller = new AbortController();
+    const work = { steps: prepareSearchMatches(query, matcher, textHits, controller.signal), accepted: textHits, controller, timer: 0, direction: dir };
     searchWork = work;
-    function advance() {
+    function advance(value, rejected = false) {
         if (searchWork !== work) return;
         try {
             const deadline = performance.now() + 6;
             do {
-                const result = work.steps.next();
+                const result = rejected ? work.steps.throw(value) : work.steps.next(value);
+                value = undefined;
+                rejected = false;
                 if (result.done) {
                     searchVisibleMatches = result.value;
                     searchReadyQuery = query;
@@ -623,14 +647,20 @@ function startSearchWork(query, matcher, dir) {
                     else draw();
                     return;
                 }
+                if (result.value?.pending) {
+                    searchProgress = result.value.status;
+                    updateSearchLabel();
+                    result.value.pending.then(value => advance(value), error => advance(error, true));
+                    return;
+                }
                 searchProgress = result.value;
             } while (performance.now() < deadline);
             updateSearchLabel();
             work.timer = setTimeout(advance, 0);
         } catch (error) {
             cancelSearchWork();
-            searchError = 'Could not prepare function search: ' + error.message + '. Press Enter to retry.';
-            searchErrorKind = 'work';
+            searchErrorKind = error.searchKind === 'regex' ? 'regex' : 'work';
+            searchError = searchErrorKind === 'regex' ? error.message : 'Could not prepare function search: ' + error.message + '. Press Enter to retry.';
             searchHits = null;
             searchVisibleMatches = new Uint32Array(0);
             updateSearchLabel();
@@ -683,7 +713,7 @@ function applySearch(query, dir = 0) {
         updateSearchLabel(); draw(); return true;
     }
     let matcher;
-    try { matcher = new RegExp(query, 'i'); }
+    try { if (!searchNeedsWorker(query)) matcher = new RegExp(query, 'i'); }
     catch (error) {
         searchError = error.message;
         searchErrorKind = 'regex';
