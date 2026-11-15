@@ -82,12 +82,16 @@ signature is
 Full results, asset/report hashes, navigation timing and individual toggle samples
 are in `build/single-startup/cold-after.json`.
 
-This full single-file workload also reveals a remaining problem: median API
+At this stage, the full single-file workload also reveals a remaining problem: median API
 durations for the four event toggles are **9,802.9 / 12,913.9 / 12,506.2 / 15,344.5 ms**.
 Updating full Text chunk geometry is still expensive. These are not the earlier
 prepared sidecar event-projection measurements, and they must not be substituted
 for one another. Staging fixes repeated startup rendering; it does not establish
 fast event toggles in a large measured-geometry single-file view.
+
+These observations precede [native event-width reuse](performance-text-event-widths.md).
+That subsequent change measures the same complete report in a paired comparison;
+the results above remain the historical staging-only observations.
 
 ## Verification and remaining limits
 

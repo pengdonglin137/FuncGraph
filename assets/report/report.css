@@ -241,6 +241,9 @@
             #content.text-layout-auto > .text-chunk.text-layout-measure > .expanded-content {
                 display: none !important;
             }
+            #content.text-layout-measured > .text-chunk.text-layout-witness > .line-container {
+                width: max-content;
+            }
             #content.text-layout-auto > .text-chunk:focus-within,
             #content.text-layout-auto > .text-chunk:has(> .line-container.keyboard-selected),
             #content.text-layout-auto > .text-chunk:has(> .expanded-content[style*="display: block"]) {

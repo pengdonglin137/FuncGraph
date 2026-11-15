@@ -172,7 +172,7 @@
             if (fgTextWindow) return fgRefreshTextWindow();
             const root = document.getElementById('content'), model = fgDomTextModels.get(root);
             const events = model ? model.eventRecords : root.querySelectorAll('.line-container[data-trace-event="1"]');
-            fgProjectTextRecords(events, fgTextModel.visibility(foldedBlocks, window.fgFilterState.lines));
+            fgProjectTextRecords(events, fgTextModel.visibility(foldedBlocks, window.fgFilterState.lines), true);
             fgUpdateTextControlHeight();
         }
         function fgRevealTextEvent(number) {
@@ -316,6 +316,7 @@
         let fgTextRequestedLine = null;
         let fgTextInitialized = false;
         const fgTextLayoutPending = new Set();
+        const fgTextLayoutWidths = new WeakMap();
         let fgFilterGeneration = 0;
         let fgFilterController = null;
         function fgTextDeferred() { return document.getElementById('content').hasAttribute('data-fg-text'); }
@@ -326,33 +327,73 @@
             try { getComputedStyle(resetting[resetting.length - 1]).getPropertyValue('content-visibility'); }
             finally { for (const chunk of resetting) chunk.classList.remove('text-layout-reset'); }
         }
-        function fgMeasureTextLayout(chunks) {
+        function fgRememberTextWidths(chunk, width, context, visible) {
+            let shown = 0, hidden = 0, complete = true;
+            for (const row of chunk.childNodes) {
+                if (row.nodeType === 3 && !row.textContent.trim()) continue;
+                if (row.nodeType !== 1) return null;
+                if (row.classList.contains('expanded-content')) continue;
+                if (!row.classList.contains('line-container')) return null;
+                const size = row.getBoundingClientRect().width;
+                shown = Math.max(shown, size);
+                if (row.getAttribute('data-trace-event') !== '1') hidden = Math.max(hidden, size);
+                else {
+                    const expected = visible(row) && !row.classList.contains('grp-hidden');
+                    if (size > 0 && !expected) return null;
+                    if (expected && size === 0) complete = false;
+                }
+            }
+            if (Math.abs(shown - width) > 0.01) return null;
+            return { context, shown: complete ? width : null, hidden };
+        }
+        function fgMeasureTextLayout(chunks, eventsOnly = false) {
             const root = document.getElementById('content');
             if (!root?.classList.contains('text-layout-measured')) return;
             for (const chunk of fgTextLayoutPending) if (chunk.parentElement !== root) fgTextLayoutPending.delete(chunk);
             for (const chunk of chunks) if (chunk.classList.contains('text-chunk')) fgTextLayoutPending.add(chunk);
             if (root.classList.contains('fg-off')) return;
-            const measuring = Array.from(fgTextLayoutPending);
-            if (!measuring.length) return;
+            const pending = Array.from(fgTextLayoutPending);
+            if (!pending.length) return;
             fgTextLayoutPending.clear();
-            for (const chunk of measuring) chunk.classList.add('text-layout-measure');
+            const style = getComputedStyle(root);
+            const context = [innerWidth, devicePixelRatio, document.documentElement.dataset.theme,
+                fgTextCompactMedia.matches, root.className, root.style.cssText,
+                ...['font-size', 'pad-x', 'pad-y'].map(name => style.getPropertyValue('--fg-text-' + name))].join('|');
+            const measuring = [], restoring = [];
+            for (const chunk of pending) {
+                const cached = eventsOnly && fgTextLayoutWidths.get(chunk);
+                const width = cached && cached.context === context ? cached[fgTextEventsVisible ? 'shown' : 'hidden'] : null;
+                if (width !== null && width !== undefined) restoring.push([chunk, width]);
+                else {
+                    fgTextLayoutWidths.delete(chunk);
+                    measuring.push(chunk);
+                    chunk.classList.add('text-layout-measure');
+                    if (chunk.querySelector('.line-container[data-trace-event="1"]')) chunk.classList.add('text-layout-witness');
+                }
+            }
             try {
                 const widths = measuring.map(chunk => chunk.getBoundingClientRect().width);
+                const visible = fgTextModel.visibility(foldedBlocks, window.fgFilterState.lines);
+                const remembered = measuring.map((chunk, index) => chunk.classList.contains('text-layout-witness') ?
+                    fgRememberTextWidths(chunk, widths[index], context, visible) : null);
+                restoring.forEach(([chunk, width]) => chunk.style.setProperty('--fg-text-inline-size', width + 'px'));
                 measuring.forEach((chunk, index) => chunk.style.setProperty('--fg-text-inline-size', widths[index] + 'px'));
+                remembered.forEach((cached, index) => { if (cached) fgTextLayoutWidths.set(measuring[index], cached); });
             } finally {
-                for (const chunk of measuring) chunk.classList.remove('text-layout-measure');
+                for (const chunk of measuring) chunk.classList.remove('text-layout-measure', 'text-layout-witness');
             }
-            fgResetTextLayout(measuring);
+            fgResetTextLayout(pending);
         }
         function fgPrepareTextLayout() {
             if (fgTextLayoutPending.size) fgRefreshTextLayout(fgTextLayoutPending);
         }
-        function fgRefreshTextLayout(chunks = null) {
+        function fgRefreshTextLayout(chunks = null, eventsOnly = false) {
             const content = document.getElementById('content');
             if (!content?.classList.contains('text-layout-auto')) return;
             const targets = chunks ? Array.from(chunks) : Array.from(content.children);
+            if (!eventsOnly) for (const chunk of targets) fgTextLayoutWidths.delete(chunk);
             if (content.classList.contains('text-layout-measured') && content.classList.contains('fg-off')) {
-                fgMeasureTextLayout(targets);
+                fgMeasureTextLayout(targets, eventsOnly);
                 return;
             }
             const grouped = content.classList.contains('grouped');
@@ -378,7 +419,7 @@
                 if (changed) resetting.push(chunk);
             }
             fgResetTextLayout(resetting);
-            fgMeasureTextLayout(targets);
+            fgMeasureTextLayout(targets, eventsOnly);
         }
         function fgTextScrollBehavior(line, bounds = null) {
             if (!fgTextWindow && !document.getElementById('content').classList.contains('text-layout-auto')) return 'smooth';
@@ -2088,14 +2129,14 @@
             fgProjectTextRecords(records, record => folding.visible(record, foldedBlocks, window.fgFilterState.lines));
         }
 
-        function fgProjectTextRecords(records, visible) {
+        function fgProjectTextRecords(records, visible, eventsOnly = false) {
             const chunks = document.getElementById('content').classList.contains('text-layout-auto') ? new Set() : null;
             for (const record of records) {
                 const line = record.row ? document.getElementById('L' + record.row[0]) : record;
                 fgProjectFoldLine(line, visible(record));
                 if (chunks && line) chunks.add(line.parentElement);
             }
-            if (chunks) fgRefreshTextLayout(chunks);
+            if (chunks) fgRefreshTextLayout(chunks, eventsOnly);
             updateExpandableLines();
         }
 

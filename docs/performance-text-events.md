@@ -125,6 +125,10 @@ These timeout observations precede the subsequent [staged inline-startup
 change](performance-text-startup.md); they are retained as historical evidence,
 not a claim that the new startup path has the same timeout.
 
+The subsequent [native-width reuse comparison](performance-text-event-widths.md)
+completes cold-model measurements on that same full single-file capture. It also
+reports the extra initial measurement cost and independent native geometry checks.
+
 The cold-mode harness was also exercised on the separate published mixed sample
 (1,504 rows, 74 events), using three alternating before/after browser pairs.
 Every old-runtime toggle reported a prepared model; every new-runtime toggle

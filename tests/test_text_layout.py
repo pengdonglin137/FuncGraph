@@ -51,6 +51,14 @@ class InlineTextLayoutTest(unittest.TestCase):
         original = original.replace('renderer = null) { return;',
                                     'renderer = null) { throw new Error("startup fixture failure");')
         Path(cls.kernel.dir, 'startup-error.html').write_text(original)
+        event_rows = [
+            ' 3)               |    /* sched_wakeup: pid=42 payload=' + ('宽🙂\t' * 400 if index == 1800 else str(index)) + ' */\n'
+            if index % 3 == 0 else ' 3)   0.050 us    |    leaf(value=' + (cls.argument if index == 3001 else str(index)) + '); /* <-root+0x4/0x80 */\n'
+            for index in range(4200)
+        ]
+        event_trace = Path(cls.kernel.dir, 'event-widths.txt')
+        event_trace.write_text('# tracer: function_graph\n 3)               |  root() { /* <-main+0x4/0x80 */\n' + ''.join(event_rows) + ' 3) 300.000 us    |  } /* root */\n')
+        cls.kernel.run(str(event_trace), '--timeline', '--enable-fold', '--filter', '--func-links', out='event-widths.html')
         cls.server = create_server(Path(cls.kernel.dir))
         cls.addClassCleanup(cls.server.server_close)
         cls.thread = threading.Thread(target=cls.server.serve_forever, kwargs={'poll_interval': 0.02}, daemon=True)
@@ -65,8 +73,8 @@ class InlineTextLayoutTest(unittest.TestCase):
             raise unittest.SkipTest(str(error))
         cls.addClassCleanup(cls.browser.close)
 
-    def open_report(self, width=1500, theme='light', filename='index.html', unsupported=None):
-        context = self.browser.new_context(viewport={'width': width, 'height': 900})
+    def open_report(self, width=1500, theme='light', filename='index.html', unsupported=None, touch=False):
+        context = self.browser.new_context(viewport={'width': width, 'height': 900}, has_touch=touch, is_mobile=touch)
         self.addCleanup(context.close)
         page = context.new_page()
         errors = []
@@ -210,6 +218,94 @@ class InlineTextLayoutTest(unittest.TestCase):
                 self.assertIn('root', result['last'])
                 self.assertIn(self.argument, result['argument'])
                 page.close()
+
+    def check_event_widths(self, page):
+        facts = page.evaluate('''() => {
+            const chunks = Array.from(document.querySelectorAll('#content > .text-chunk'));
+            const cached = chunks.map(chunk => parseFloat(chunk.style.getPropertyValue('--fg-text-inline-size')));
+            for (const chunk of chunks) chunk.classList.add('text-layout-measure');
+            try { return chunks.map((chunk, index) => ({cached:cached[index],native:chunk.getBoundingClientRect().width})); }
+            finally { for (const chunk of chunks) chunk.classList.remove('text-layout-measure'); }
+        }''')
+        self.assertTrue(facts)
+        for fact in facts:
+            self.assertAlmostEqual(fact['cached'], fact['native'], delta=1 / 64)
+        self.compare_layout(page, 'event width and complete extent')
+
+    def observe_width_reads(self, page):
+        page.evaluate('''() => {
+            window.measuredChunkReads = 0;
+            const original = Element.prototype.getBoundingClientRect;
+            Element.prototype.getBoundingClientRect = function(...parameters) {
+                if (this.classList.contains('text-layout-measure')) measuredChunkReads++;
+                return original.apply(this, parameters);
+            };
+        }''')
+
+    def test_event_toggles_reuse_exact_native_widths_without_preparing_a_model(self):
+        for width, theme, touch in ((1500, 'light', False), (390, 'dark', True)):
+            with self.subTest(width=width, theme=theme):
+                page = self.open_report(width, theme, 'event-widths.html', touch=touch)
+                page.evaluate('toggleExpand(document.getElementById("L4").dataset.lineId)')
+                page.wait_for_function('document.getElementById("L4").nextElementSibling.querySelector(".source-line")')
+                page.evaluate('''() => {
+                    window.eventSourceNode = document.getElementById('L4').nextElementSibling;
+                    window.eventSourceChild = eventSourceNode.firstElementChild;
+                    window.eventExpandedState = JSON.stringify(expandedLines);
+                }''')
+                self.observe_width_reads(page)
+                original = page.evaluate('''JSON.stringify(Array.from(document.querySelectorAll('#content .line-container'),
+                    row => [row.id,row.querySelector('.line-content').textContent,row.dataset.traceEvent]))''')
+                for visible in (False, True, False, True):
+                    page.evaluate('''visible => { measuredChunkReads=0; fgSetTextEventsVisible(visible); }''', visible)
+                    self.assertEqual(page.evaluate('measuredChunkReads'), 0)
+                    self.assertEqual(page.locator('[data-trace-event="1"]').count(), 1400)
+                    self.assertFalse(page.evaluate('fgDomTextModels.has(document.getElementById("content"))'))
+                    self.check_event_widths(page)
+                    self.assertTrue(page.evaluate('''() => eventSourceNode.isConnected && eventSourceNode.firstElementChild === eventSourceChild &&
+                        eventSourceNode.style.display === 'block' && JSON.stringify(expandedLines) === eventExpandedState'''))
+                    self.assertEqual(page.evaluate('''JSON.stringify(Array.from(document.querySelectorAll('#content .line-container'),
+                        row => [row.id,row.querySelector('.line-content').textContent,row.dataset.traceEvent]))'''), original)
+                page.close()
+
+    def test_event_widths_refresh_after_filter_fold_order_and_hidden_resize(self):
+        page = self.open_report(filename='event-widths.html')
+        self.observe_width_reads(page)
+        page.evaluate('fgSetTextEventsVisible(false)')
+        page.evaluate('''async () => { document.getElementById('filterInput').value='cpu:3'; await applyFilter();
+            measuredChunkReads=0; fgSetTextEventsVisible(true); }''')
+        self.assertGreater(page.evaluate('measuredChunkReads'), 0)
+        self.check_event_widths(page)
+        for operation in ('''const entry=document.querySelector('.fold-entry'); toggleFold(entry.dataset.foldId);''',
+                          '''const entry=document.querySelector('.fold-entry'); toggleFold(entry.dataset.foldId);''',
+                          'clearFilter(); fgToggleTextOrder();', 'fgToggleTextOrder();'):
+            page.evaluate('() => { ' + operation + ' }')
+            for visible in (False, True):
+                page.evaluate('visible => fgSetTextEventsVisible(visible)', visible)
+                self.check_event_widths(page)
+        page.evaluate('''async () => { await fgSwitchView('timeline'); fgSetTextEventsVisible(false); }''')
+        page.set_viewport_size({'width':390,'height':900})
+        page.evaluate('''async () => { await fgSwitchView('text'); fgSetTextEventsVisible(true); }''')
+        self.check_event_widths(page)
+
+    def test_event_widths_fall_back_for_unknown_children_and_changed_font_context(self):
+        page = self.open_report(filename='event-widths.html')
+        self.observe_width_reads(page)
+        page.add_style_tag(content='#content { --fg-text-font-size: 17px; }')
+        page.evaluate('''() => {
+            measuredChunkReads=0; fgSetTextEventsVisible(false);
+        }''')
+        self.assertGreater(page.evaluate('measuredChunkReads'), 0)
+        self.check_event_widths(page)
+        page.evaluate('''() => {
+            fgSetTextEventsVisible(true);
+            const chunk=document.querySelector('#content > .text-chunk');
+            const note=document.createElement('div'); note.textContent='custom context '.repeat(100);
+            chunk.appendChild(note); fgRefreshTextLayout([chunk]);
+            measuredChunkReads=0; fgSetTextEventsVisible(false);
+        }''')
+        self.assertGreater(page.evaluate('measuredChunkReads'), 0)
+        self.check_event_widths(page)
 
     def test_only_large_supported_inline_reports_enable_native_layout(self):
         for count in (4095, 4096):

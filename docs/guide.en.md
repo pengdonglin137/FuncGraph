@@ -23,6 +23,10 @@ Focused buttons retain native Enter/Space activation; links, form controls and
 editable content keep their normal keyboard behavior rather than running Text
 row-navigation shortcuts. Regenerate older reports to receive these fixes.
 See [event visibility verification and performance limits](performance-text-events.md).
+Large single-file Text reuses exact browser-measured shown/hidden widths instead
+of measuring every chunk again on each toggle. Filter, fold or layout changes
+still require fresh measurements; long content is not clipped. See
+[native-width measurements and limits](performance-text-event-widths.md).
 
 Single-file reports with at least 4,096 rows briefly show **Preparing trace text…**
 on initial Text startup instead of repeatedly painting partial Text during parsing.
