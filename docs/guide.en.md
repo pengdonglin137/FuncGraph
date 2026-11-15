@@ -471,10 +471,18 @@ In narrow windows, heatmap keys wrap as color/threshold pairs. Filter fields can
 | Filter | show / hide the filter box |
 | Top | back to the top |
 | Expand All / Collapse All | open / close all source blocks |
-| Copy | copy the visible lines as plain text |
+| Copy | copy non-hidden trace rows as plain text, excluding line numbers and expanded source; respects filters, call folding and Events |
 | Heatmap | duration coloring on / off, legend on the right |
 | Order: time / by task | line order: as captured (all CPUs interleaved by time) or grouped by task, see 5.6 |
 | Source: chain / flat | layout of source blocks, see 5.5 |
+
+For Copy, “visible” includes offscreen records that are not hidden. Windowed Text
+also copies the complete visible result without mounting all rows. Success shows
+the copied line count; denied or unavailable copying shows `Copy failed`, and an
+empty result does not overwrite the clipboard. The compatibility path preserves
+focus, text selection and scroll position. Repeated clicks still restore the
+`Copy` label. Regenerate older HTML reports to receive these changes.
+[Implementation and regression evidence](text-copy.md).
 
 ### 5.2 Columns of a trace line
 

@@ -428,10 +428,15 @@ python3 funcgraph.py --preset pi4 --output r.html ftrace.txt
 | Filter | 显示或隐藏过滤框 |
 | Top | 回到页面顶部 |
 | Expand All / Collapse All | 展开或收起所有源码块 |
-| Copy | 把当前可见的行复制为纯文本 |
+| Copy | 复制当前未隐藏的 trace 行为纯文本，不含行号和展开的源码；尊重筛选、调用折叠及 Events 开关 |
 | Heatmap | 打开或关闭耗时热力着色，右侧显示图例 |
 | Order: time / by task | 行的顺序：按时间（原样，所有 CPU 的行交错）或按任务分组，见 5.6 节 |
 | Source: chain / flat | 源码块的排列方式，见 5.5 节 |
+
+Copy 的「可见」指没有被隐藏的记录，包括滚动区外的行；窗口化 Text 也复制完整可见结果，
+不会为复制而加载全部正文。成功后显示实际复制行数，权限或浏览器限制导致失败时显示
+`Copy failed`，空结果不会覆盖剪贴板。兼容复制保留焦点、已选文字和滚动位置；连续点击后
+按钮仍会恢复为 `Copy`。旧 HTML 需要重新生成。[实现与回归记录](text-copy.md)。
 
 ### 5.2 一行 trace 的各列
 

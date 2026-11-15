@@ -2510,82 +2510,86 @@
             }
         }
         
-        // 复制可见内容（纯文本模式，只复制 trace 内容）
-        function copyVisibleContent(event) {
-            // 获取所有可见的行（未被过滤器隐藏的）
-            const allLines = fgTextWindow ? fgTextWindow.visibleNumbers.map(number => fgTextModel.locate(fgTextWindow.model, number).record) : document.querySelectorAll('.line-container');
-            const visibleLines = Array.from(allLines).filter(line => {
-                return fgTextWindow || line.style.display !== 'none' && !line.classList.contains('hidden');
-            });
-
-            // 构建文本，只复制 trace 内容（不包含行号）
-            const textLines = [];
-            visibleLines.forEach(line => {
-                const lineContent = line.querySelector('.line-content').textContent;
-                textLines.push(lineContent);
-            });
-            const textToCopy = textLines.join('\n');
-
-            // 如果没有可见行，显示提示
-            if (textLines.length === 0) {
-                const originalText = event.target.textContent;
-                event.target.textContent = 'No visible lines';
-                event.target.style.background = 'rgba(239, 68, 68, 0.8)';
-                setTimeout(() => {
-                    event.target.textContent = originalText;
-                    event.target.style.background = '';
+        const fgTextCopyStates = new WeakMap();
+        async function copyVisibleContent(event) {
+            const button = event.currentTarget || event.target;
+            let state = fgTextCopyStates.get(button);
+            if (!state) {
+                state = {label:button.textContent, background:button.style.background, generation:0, timer:null};
+                fgTextCopyStates.set(button, state);
+            }
+            clearTimeout(state.timer);
+            const generation = ++state.generation;
+            const current = () => fgTextCopyStates.get(button) === state && state.generation === generation;
+            const feedback = (message, success) => {
+                if (!current()) return;
+                button.textContent = message;
+                button.style.background = success ? 'rgba(34, 197, 94, 0.8)' : 'rgba(239, 68, 68, 0.8)';
+                state.timer = setTimeout(() => {
+                    button.textContent = state.label;
+                    button.style.background = state.background;
+                    fgTextCopyStates.delete(button);
                 }, 1000);
-                return;
+            };
+            const allLines = fgTextWindow ? fgTextWindow.visibleNumbers.map(number => fgTextModel.locate(fgTextWindow.model, number).record) : document.querySelectorAll('.line-container');
+            const textLines = [];
+            for (const line of allLines) {
+                if (fgTextWindow || line.style.display !== 'none' && !line.classList.contains('hidden')) {
+                    textLines.push(line.querySelector('.line-content').textContent);
+                }
             }
-
-            // 复制到剪贴板
-            if (navigator.clipboard) {
-                navigator.clipboard.writeText(textToCopy).then(() => {
-                    // 显示成功提示
-                    const originalText = event.target.textContent;
-                    event.target.textContent = `Copied ${textLines.length} lines`;
-                    event.target.style.background = 'rgba(34, 197, 94, 0.8)';
-                    setTimeout(() => {
-                        event.target.textContent = originalText;
-                        event.target.style.background = '';
-                    }, 1000);
-                }).catch(err => {
-                    console.error('Failed to copy: ', err);
-                    // 降级方案
-                    fallbackCopy(textToCopy, event.target, textLines.length);
-                });
-            } else {
-                // 老浏览器降级
-                fallbackCopy(textToCopy, event.target, textLines.length);
+            const textToCopy = textLines.join('\n');
+            if (textLines.length === 0) {
+                feedback('No visible lines', false);
+                return false;
             }
+            button.textContent = 'Copying…';
+            try {
+                if (typeof navigator.clipboard?.writeText === 'function') {
+                    await navigator.clipboard.writeText(textToCopy);
+                    feedback(`Copied ${textLines.length} lines`, true);
+                    return true;
+                }
+            } catch {}
+            if (!current()) return false;
+            const copied = fallbackCopy(textToCopy);
+            feedback(copied ? `Copied ${textLines.length} lines` : 'Copy failed', copied);
+            return copied;
         }
 
-        // 降级复制方案
-        function fallbackCopy(text, button, lineCount) {
+        function fallbackCopy(text) {
+            const active = document.activeElement;
+            const inputSelection = typeof active?.selectionStart === 'number' ?
+                [active.selectionStart, active.selectionEnd, active.selectionDirection] : null;
+            const selection = window.getSelection();
+            const ranges = selection ? Array.from({length:selection.rangeCount}, (unused, index) => selection.getRangeAt(index).cloneRange()) : [];
+            const anchor = selection?.anchorNode, anchorOffset = selection?.anchorOffset;
+            const focus = selection?.focusNode, focusOffset = selection?.focusOffset;
             const textArea = document.createElement('textarea');
             textArea.value = text;
-            textArea.style.position = 'fixed';
-            textArea.style.top = '-1000px';
+            textArea.tabIndex = -1;
+            textArea.setAttribute('aria-hidden', 'true');
+            textArea.style.cssText = 'position:fixed;top:0;left:0;width:1px;height:1px;opacity:0;pointer-events:none';
             document.body.appendChild(textArea);
-            textArea.select();
             try {
-                document.execCommand('copy');
-                // 显示成功提示
-                const originalText = button.textContent;
-                button.textContent = `Copied ${lineCount} lines`;
-                button.style.background = 'rgba(34, 197, 94, 0.8)';
-                setTimeout(() => {
-                    button.textContent = originalText;
-                    button.style.background = '';
-                }, 1000);
-            } catch (err) {
-                console.error('Fallback copy failed: ', err);
-                button.textContent = 'Failed';
-                setTimeout(() => {
-                    button.textContent = 'Copy';
-                }, 1000);
+                textArea.select();
+                return document.execCommand('copy') === true;
+            } catch {
+                return false;
+            } finally {
+                textArea.remove();
+                if (active?.isConnected) active.focus({preventScroll:true});
+                if (selection) {
+                    selection.removeAllRanges();
+                    for (const range of ranges) {
+                        if (range.commonAncestorContainer.isConnected) selection.addRange(range);
+                    }
+                    if (ranges.length === 1 && anchor?.isConnected && focus?.isConnected && selection.setBaseAndExtent) {
+                        selection.setBaseAndExtent(anchor, anchorOffset, focus, focusOffset);
+                    }
+                }
+                if (inputSelection && active.isConnected) active.setSelectionRange(...inputSelection);
             }
-            document.body.removeChild(textArea);
         }
         
         // 滚动到顶部
