@@ -171,7 +171,7 @@
             if (fgTextDeferred()) return;
             if (fgTextWindow) return fgRefreshTextWindow();
             const folding = fgGetTextFolding();
-            fgProjectFoldRecords(folding, folding.records);
+            fgProjectFoldRecords(folding, folding.eventRecords);
             fgUpdateTextControlHeight();
         }
         function fgRevealTextEvent(number) {
@@ -2506,7 +2506,8 @@
                 event.target.closest('.fold-icon, .fold-brace, #foldGuidesBtn, #viewHelpBtn, .keyboard-hint-close')) return;
             
             // 检查是否在输入框中
-            if (event.target.matches('input, textarea, select')) {
+            if (event.defaultPrevented || event.target.isContentEditable ||
+                event.target.closest('button, input, textarea, select, summary, a, [role="button"]')) {
                 return;
             }
             

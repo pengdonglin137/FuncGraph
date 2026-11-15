@@ -13,6 +13,15 @@ Text is hidden and restored on return. Empty native caret ranges are cleared to
 avoid repeated browser scans of hidden Text delaying slice highlights and tooltips;
 editable controls retain their editing selection.
 
+When trace events are present, **Events: shown / hidden** beside **Top** hides
+tracepoint and task-switch hint rows, not calls, loss warnings or recorded data.
+The choice persists; explicitly jumping to a hidden event shows events again.
+Full Text updates event rows without reprocessing unrelated open source panels.
+Focused buttons retain native Enter/Space activation; links, form controls and
+editable content keep their normal keyboard behavior rather than running Text
+row-navigation shortcuts. Regenerate older reports to receive these fixes.
+See [event visibility verification and performance limits](performance-text-events.md).
+
 Text keyboard navigation, `#L<n>` anchors and Timeline → Text jumps now share a
 latest-request-wins path. Leaving Text or pressing Escape cancels a pending jump;
 late loads and delayed scrolling cannot pull focus back. Mounted rows still

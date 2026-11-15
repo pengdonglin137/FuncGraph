@@ -217,6 +217,8 @@ calls, loss warnings and original line numbers, without changing the filter,
 Timeline or exported evidence. The preference persists. Explicit navigation from
 Timeline to a hidden event restores event visibility so the original evidence
 remains reachable. Single-file, sidecar and experimental Windowed Text agree.
+The button supports Enter and Space. In full Text, switching events updates only
+event rows; unrelated open source panels and pending source work stay untouched.
 
 ## Defaults and controls
 

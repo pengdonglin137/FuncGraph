@@ -33,7 +33,7 @@
             throw new Error('Unsupported Text filter index');
         }
         if (!models.has(data)) {
-            const records = [];
+            const records = [], eventRecords = [];
             const events = data.events === undefined ? [] : data.events;
             if (!Array.isArray(events) || events.some((number, index) => !Number.isSafeInteger(number) || number <= 0 ||
                 index && number <= events[index - 1])) throw new Error('Invalid Text event index');
@@ -49,11 +49,13 @@
                     throw new Error('Invalid Text filter index row ' + (index + 1));
                 }
                 previous = row[0];
-                records.push(new TextRecord(row, data.version, eventNumbers.delete(row[0])));
+                const record = new TextRecord(row, data.version, eventNumbers.delete(row[0]));
+                records.push(record);
+                if (record.event) eventRecords.push(record);
                 if (index % 1024 === 0) yield 'Checking full-trace filter index…';
             }
             if (eventNumbers.size) throw new Error('Text event index references missing rows');
-            models.set(data, { records, version: data.version });
+            models.set(data, { records, eventRecords, version: data.version });
         }
         return models.get(data);
     }
@@ -148,6 +150,7 @@
         }
         const result = {
             records: model.records,
+            eventRecords: model.eventRecords,
             blocks,
             *members(id) {
                 const position = memberRanges.get(id);

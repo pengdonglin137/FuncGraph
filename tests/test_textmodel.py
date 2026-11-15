@@ -42,6 +42,9 @@ class TextModelTest(unittest.TestCase):
                 const model=drain(fgTextModel.prepare(input));
                 assert.equal(model.records[1].getAttribute('data-trace-event'),'1');
                 assert.equal(model.records[0].getAttribute('data-trace-event'),null);
+                assert.deepEqual(model.eventRecords,[model.records[1]]);
+                assert.equal(fgTextModel.folding(model).eventRecords,model.eventRecords);
+                assert.deepEqual(drain(fgTextModel.prepare({...input,events:undefined})).eventRecords,[]);
                 for(const events of [[1],[5,5],[9,5],[0],[5.5],null,'5'])
                     assert.throws(()=>drain(fgTextModel.prepare({...input,events})),/event index/);
             }

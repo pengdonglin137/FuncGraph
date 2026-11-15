@@ -107,6 +107,93 @@ class TextEventBrowserTest(unittest.TestCase):
         self.assertEqual(self.page.locator('[data-trace-event="1"]:visible').count(), 2)
         self.assertEqual(self.page.evaluate("JSON.stringify(fgData.read('tlData'))"), before)
 
+    def test_toggle_projects_only_event_rows(self):
+        self.open_report()
+        self.page.evaluate('''() => {
+            window.eventProjections = [];
+            const project = fgProjectFoldLine;
+            fgProjectFoldLine = (line, visible) => {
+                eventProjections.push(line.getAttribute('data-trace-event'));
+                return project(line, visible);
+            };
+        }''')
+        for expected in ('Events: hidden', 'Events: shown'):
+            self.page.evaluate('eventProjections.length = 0')
+            self.page.locator('#textEventsBtn').click()
+            self.assertEqual(self.page.locator('#textEventsBtn').inner_text(), expected)
+            self.assertEqual(self.page.evaluate('eventProjections'), ['1', '1'])
+
+    def test_event_button_uses_native_keyboard_activation_without_row_navigation(self):
+        self.open_report()
+        self.page.evaluate('''() => {
+            keyboardSelectedLine = document.querySelector('#content .line-container[data-func]');
+            keyboardSelectedLine.classList.add('keyboard-selected');
+            window.eventKeyboardSelection = keyboardSelectedLine;
+            window.eventKeyboardBlocked = [];
+            document.addEventListener('keydown', event => eventKeyboardBlocked.push(event.defaultPrevented));
+        }''')
+        button = self.page.locator('#textEventsBtn')
+        button.focus()
+        button.press('Space')
+        self.assertEqual(button.inner_text(), 'Events: hidden')
+        button.press('Enter')
+        self.assertEqual(button.inner_text(), 'Events: shown')
+        button.press('ArrowDown')
+        self.assertTrue(self.page.evaluate('keyboardSelectedLine === eventKeyboardSelection'))
+        self.assertTrue(button.evaluate('button => button === document.activeElement'))
+        self.assertEqual(self.page.evaluate('eventKeyboardBlocked'), [False, False, False])
+
+    def test_toggle_keeps_open_source_nodes_and_pending_source_work_untouched(self):
+        trace = Path(self.kernel.dir, 'source-events.txt')
+        trace.write_text('# tracer: function_graph\n'
+                         '0) task-42 | root() { /* <-main+0x4/0x80 */\n'
+                         '0) task-42 | /* sched_wakeup: comm=other pid=43 */\n'
+                         '0) task-42 | leaf(); /* <-root+0x4/0x80 */\n'
+                         '0) task-42 | } /* root */\n')
+        self.kernel.run(str(trace), '--no-config', '--enable-fold', '--filter', '--func-links', out='source-events.html')
+        self.page.goto(Path(self.kernel.dir, 'source-events.html').as_uri())
+        self.page.locator('.expand-btn').first.click()
+        self.page.locator('.expanded-content:visible').wait_for()
+        self.page.evaluate('''() => {
+            window.eventSourceNode = document.querySelector('.expanded-content[style*="block"]');
+            window.eventSourceChild = eventSourceNode.firstElementChild;
+            window.eventExpandedState = JSON.stringify(expandedLines);
+            window.eventSourceWork = [];
+            const fill = fgFill, cancel = fgCancelSource;
+            fgFill = (...args) => { eventSourceWork.push('fill'); return fill(...args); };
+            fgCancelSource = (...args) => { eventSourceWork.push('cancel'); return cancel(...args); };
+        }''')
+        self.page.locator('#textEventsBtn').click()
+        self.page.locator('#textEventsBtn').click()
+        self.assertTrue(self.page.evaluate('''() => eventSourceNode.isConnected && eventSourceNode.firstElementChild === eventSourceChild &&
+            eventSourceNode.style.display === 'block' && JSON.stringify(expandedLines) === eventExpandedState'''))
+        self.assertEqual(self.page.evaluate('eventSourceWork'), [])
+
+    def test_reading_shortcuts_do_not_override_controls_or_editable_content(self):
+        self.open_report()
+        self.page.evaluate('''() => {
+            window.controlNavigations = [];
+            navigateToExpandableLine = direction => controlNavigations.push(['step',direction]);
+            navigateToTextBoundary = last => controlNavigations.push(['edge',last]);
+            const widgets = document.createElement('div');
+            widgets.innerHTML = '<a href="#L1">link</a><span role="button" tabindex="0">action</span>' +
+                '<details><summary>summary</summary>details</details>' +
+                '<div contenteditable="true"><span>editable</span></div>';
+            document.querySelector('.controls').append(widgets);
+            widgets.id = 'eventControlWidgets';
+        }''')
+        for selector in ('#textEventsBtn', '#eventControlWidgets a', '#eventControlWidgets [role="button"]',
+                         '#eventControlWidgets summary', '#eventControlWidgets [contenteditable]'):
+            with self.subTest(selector=selector):
+                self.page.locator(selector).focus()
+                self.page.keyboard.press('j')
+                self.page.keyboard.press('Home')
+        self.assertEqual(self.page.evaluate('controlNavigations'), [])
+        self.page.evaluate('document.activeElement.blur()')
+        self.page.keyboard.press('j')
+        self.page.keyboard.press('Home')
+        self.assertEqual(self.page.evaluate('controlNavigations'), [['step', 1], ['edge', False]])
+
     def test_hidden_events_stay_hidden_after_filter_reset_folding_and_reload(self):
         self.open_report()
         self.page.locator('#textEventsBtn').click()
