@@ -1427,7 +1427,7 @@ class HtmlGenerator:
             if is_expandable:
                 content_parts.append(' tabindex="0"')
             content_parts.append('>')
-            content_parts.append(f'<span class="line-number" title="Click to copy anchor link">{line_number}</span>')
+            content_parts.append(f'<a class="line-number" href="#{line_anchor_id}" title="Copy line link">{line_number}</a>')
 
             content_parts.append(f'<span class="line-content">{escaped_line}</span>')
 

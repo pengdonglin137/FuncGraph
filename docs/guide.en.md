@@ -484,6 +484,18 @@ focus, text selection and scroll position. Repeated clicks still restore the
 `Copy` label. Regenerate older HTML reports to receive these changes.
 [Implementation and regression evidence](text-copy.md).
 
+Line numbers are native links to their original `#L<n>` anchors. Click, or focus
+with Tab and press Enter, to locate the row and attempt to copy its complete URL
+without expanding source; double-clicking the number also leaves source closed.
+Ctrl/Cmd-click, middle-click and the link menu retain browser behavior; Alt-click
+still opens Timeline. When clipboard access is blocked, the URL remains usable
+and can be copied from the address bar or link menu. Compatibility copying keeps
+selection/focus. A newer line-link or toolbar Copy request prevents an older
+denied request from initiating a stale fallback over the newer content.
+Recipients of local file links still need access to that report; see the
+[fgview guide](viewer.md) for sharing. Regenerate older HTML reports.
+[Line-link validation record](text-anchors.md).
+
 ### 5.2 Columns of a trace line
 
 A line with all options enabled:

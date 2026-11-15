@@ -2510,8 +2510,10 @@
             }
         }
         
+        let fgClipboardGeneration = 0;
         const fgTextCopyStates = new WeakMap();
         async function copyVisibleContent(event) {
+            const clipboardGeneration = ++fgClipboardGeneration;
             const button = event.currentTarget || event.target;
             let state = fgTextCopyStates.get(button);
             if (!state) {
@@ -2552,6 +2554,10 @@
                 }
             } catch {}
             if (!current()) return false;
+            if (clipboardGeneration !== fgClipboardGeneration) {
+                feedback('Copy failed', false);
+                return false;
+            }
             const copied = fallbackCopy(textToCopy);
             feedback(copied ? `Copied ${textLines.length} lines` : 'Copy failed', copied);
             return copied;
@@ -3164,26 +3170,22 @@
             requestAnimationFrame(processBatch);
         }
         
-        // 更新锚点并复制到剪贴板
-        function updateAnchor(anchorId, event) {
+        async function updateAnchor(anchorId, event) {
             event.stopPropagation();
-            
-            // 更新URL hash
+            if (event.defaultPrevented || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey ||
+                event.button && event.button !== 0) return false;
+            event.preventDefault();
+            const generation = ++fgClipboardGeneration;
             window.location.hash = anchorId;
-            
-            // 获取当前完整URL
             const fullUrl = window.location.href;
-            
-            // 尝试复制到剪贴板（静默操作，不显示任何反馈）
-            navigator.clipboard.writeText(fullUrl).catch(() => {
-                // 降级方案
-                const textArea = document.createElement('textarea');
-                textArea.value = fullUrl;
-                document.body.appendChild(textArea);
-                textArea.select();
-                document.execCommand('copy');
-                document.body.removeChild(textArea);
-            });
+            try {
+                if (typeof navigator.clipboard?.writeText === 'function') {
+                    await navigator.clipboard.writeText(fullUrl);
+                    return true;
+                }
+            } catch {}
+            if (generation !== fgClipboardGeneration || window.location.href !== fullUrl) return false;
+            return fallbackCopy(fullUrl);
         }
         
         // 处理锚点导航
@@ -3373,8 +3375,8 @@
             const row = event.target.closest('.line-container');
             if (!row || !event.currentTarget.contains(row)) return;
             const number = event.target.closest('.line-number');
-            if (event.type === 'click' && number?.parentElement === row) {
-                if (!number.hasAttribute('onclick')) updateAnchor(row.id, event);
+            if (number?.parentElement === row) {
+                if (event.type === 'click' && !number.hasAttribute('onclick')) updateAnchor(row.id, event);
                 return;
             }
             const attribute = event.type === 'dblclick' ? 'ondblclick' : 'onclick';

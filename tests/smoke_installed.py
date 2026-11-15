@@ -182,6 +182,8 @@ class InstalledPackageTest(unittest.TestCase):
         self.assertIn('const strokePixels = Math.max(1, Math.round(scale));', report)
         self.assertIn('data-fold-end="L4"', report)
         self.assertIn('data-fold-start="L2"', report)
+        self.assertIn('<a class="line-number" href="#L1" title="Copy line link">1</a>', report)
+        self.assertNotIn('<span class="line-number"', report)
         names = re.search(r'<script type="application/json" id="fgErrnoNames">(.*?)</script>', report, re.S)
         self.assertIsNotNone(names)
         self.assertEqual(json.loads(names.group(1))['-2'], 'ENOENT')
