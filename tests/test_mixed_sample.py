@@ -310,6 +310,35 @@ class MixedSampleBrowserTest(unittest.TestCase):
         page.goto(url)
         return page, errors, requests
 
+    def test_published_samples_toggle_events_without_changing_calls_or_evidence(self):
+        for report, rows, events in ((ROOT / 'sample.html', 739, 10), (REPORT, 1504, 74)):
+            with self.subTest(report=report.name):
+                page, errors, _ = self.open_page(report.as_uri())
+                page.evaluate("async () => { await fgSwitchView('text'); }")
+                before = page.evaluate('''() => ({
+                    data:JSON.stringify(fgData.read('tlData')),
+                    functions:Array.from(document.querySelectorAll('#content .line-container[data-func]'))
+                        .filter(row => row.style.display !== 'none').map(row => row.dataset.lineNumber)
+                })''')
+                self.assertEqual(page.locator('#content .line-container').count(), rows)
+                self.assertEqual(page.locator('[data-trace-event="1"]:visible').count(), events)
+                button = page.locator('#textEventsBtn')
+                button.focus()
+                button.press('Space')
+                self.assertEqual(button.inner_text(), 'Events: hidden')
+                self.assertEqual(page.locator('[data-trace-event="1"]:visible').count(), 0)
+                after = page.evaluate('''() => ({
+                    data:JSON.stringify(fgData.read('tlData')),
+                    functions:Array.from(document.querySelectorAll('#content .line-container[data-func]'))
+                        .filter(row => row.style.display !== 'none').map(row => row.dataset.lineNumber)
+                })''')
+                self.assertEqual(before, after)
+                self.assertEqual(page.locator('#content .line-container').count(), rows)
+                button.press('Enter')
+                self.assertEqual(button.inner_text(), 'Events: shown')
+                self.assertEqual(page.locator('[data-trace-event="1"]:visible').count(), events)
+                self.assertEqual(errors, [])
+
     def test_offline_report_timeline_text_filter_fold_and_source(self):
         page, errors, requests = self.open_page(REPORT.as_uri(), dpr=1.25)
         page.get_by_role('button', name='Timeline', exact=True).click()
