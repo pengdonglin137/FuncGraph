@@ -2,6 +2,15 @@
 
 ## Find or filter?
 
+Tools and compact Notes stay inside short or landscape viewports, opening upward
+when needed and scrolling internally. No controls are removed or reduced to make
+them fit. Placement, keyboard behavior and validation boundaries are documented
+in [Timeline menus](toolbar-overlays.md).
+
+Tools 与紧凑布局的 Notes 会根据可见空间限高或向上展开，内容在面板内滚动，避免横屏
+或查找计数换行后，滚到底仍有按钮在屏幕外；不会为此删除控件或改写数据。
+实现及验证边界见[菜单定位说明](toolbar-overlays.md)。
+
 Full screen hides the top-level User / Kernel / User → kernel legend to give
 the timeline more vertical space. It returns on exit; call-stack address-space
 labels and user/kernel boundary markers remain available in either mode.

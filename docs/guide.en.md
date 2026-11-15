@@ -1,5 +1,11 @@
 # FuncGraph User Guide
 
+Timeline's Tools and compact Notes panels adapt to short windows, opening upward
+when needed and scrolling internally so the final actions remain reachable.
+They paint above sticky view tabs without adding controls or changing trace
+data. Regenerate old HTML to use this behavior; see
+[menu placement and validation boundaries](toolbar-overlays.md).
+
 The Text / Timeline tabs (and Compare when enabled) stay at the top while
 scrolling, with Text controls directly below them. Switching views retains
 Text's vertical/horizontal reading position and Timeline's selection, time

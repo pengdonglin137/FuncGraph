@@ -806,10 +806,53 @@ function updateNotes(on) {
     elNotesButton.classList.toggle('on', on);
     elNotesButton.setAttribute('aria-pressed', String(on));
 }
+function toolbarOverlayPlacement(bounds) {
+    const start = bounds.viewportTop + 8, end = Math.max(start, bounds.viewportBottom - 8);
+    const belowTop = Math.max(start, bounds.belowTop), aboveBottom = Math.min(end, bounds.aboveBottom);
+    const below = Math.max(0, end - belowTop), above = Math.max(0, aboveBottom - start);
+    const preferred = Math.min(bounds.preferredHeight, end - start);
+    const minimum = Math.min(preferred, bounds.minimumHeight);
+    if (below >= preferred || (below >= above && below >= minimum)) return { top: belowTop, height: below };
+    if (above >= minimum) return { top: aboveBottom - Math.min(preferred, above), height: above };
+    return { top: start, height: end - start };
+}
+function fitToolbarOverlay(element, opener) {
+    const scrollTop = element.scrollTop;
+    element.style.removeProperty('--tl-overlay-top');
+    element.style.removeProperty('--tl-overlay-room');
+    const parent = element.offsetParent;
+    if (!parent) return;
+    const viewport = window.visualViewport, viewportTop = viewport?.offsetTop ?? 0;
+    const style = getComputedStyle(element), opening = opener.getBoundingClientRect();
+    const padding = parseFloat(style.paddingTop) + parseFloat(style.paddingBottom) +
+        parseFloat(style.borderTopWidth) + parseFloat(style.borderBottomWidth);
+    const placement = toolbarOverlayPlacement({
+        viewportTop, viewportBottom: viewportTop + (viewport?.height ?? window.innerHeight),
+        belowTop: elToolbar.getBoundingClientRect().bottom, aboveBottom: opening.top - 6,
+        preferredHeight: element.getBoundingClientRect().height, minimumHeight: padding + opening.height,
+    });
+    element.style.setProperty('--tl-overlay-top', placement.top - parent.getBoundingClientRect().top - parent.clientTop + 'px');
+    element.style.setProperty('--tl-overlay-room', placement.height + 'px');
+    element.scrollTop = scrollTop;
+}
+function fitToolbarOverlays() {
+    if (elOptions.classList.contains('open')) fitToolbarOverlay(elOptions, elMore);
+    if (compactToolbar.matches && !elNotes.classList.contains('hide')) fitToolbarOverlay(elNotes, elNotesButton);
+}
+let toolbarOverlayFrame = 0;
+function scheduleToolbarOverlays() {
+    if (toolbarOverlayFrame || window.fgCurrentView() !== 'timeline') return;
+    if (!elOptions.classList.contains('open') && (!compactToolbar.matches || elNotes.classList.contains('hide'))) return;
+    toolbarOverlayFrame = requestAnimationFrame(() => {
+        toolbarOverlayFrame = 0;
+        if (window.fgCurrentView() === 'timeline') fitToolbarOverlays();
+    });
+}
 function setNotes(on) {
     updateNotes(on);
     prefSet(compactToolbar.matches ? 'notesCompact' : 'notes', on ? '1' : '0');
     if (!compactToolbar.matches) resize();
+    else fitToolbarOverlays();
 }
 function setToolbarOptions(on, restoreFocus = false) {
     const open = !!on;
@@ -817,6 +860,7 @@ function setToolbarOptions(on, restoreFocus = false) {
     if (open && compactToolbar.matches && !elNotes.classList.contains('hide')) setNotes(false);
     elOptions.classList.toggle('open', open);
     elMore.setAttribute('aria-expanded', String(open));
+    if (open) fitToolbarOverlays();
     if (open) Array.from(elOptions.querySelectorAll('button:not([disabled]), input:not([disabled])'))
         .find(control => control.getClientRects().length)?.focus({ preventScroll: true });
     if (restoreFocus) elMore.focus({ preventScroll: true });
@@ -1559,10 +1603,14 @@ if (!D.caps.retval) tlRoot.querySelector('[data-ov=err]').classList.add('na');
 new MutationObserver(() => { palette(); ovDirty = true; draw(); scheduleDistHistogram(); })
     .observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
 window.addEventListener('resize', () => { if (window.fgCurrentView() === 'timeline') { resize(); sizeDetailHead(); } });
+window.addEventListener('scroll', scheduleToolbarOverlays, { passive: true });
+window.visualViewport?.addEventListener('resize', scheduleToolbarOverlays);
+window.visualViewport?.addEventListener('scroll', scheduleToolbarOverlays);
 if (typeof ResizeObserver !== 'undefined') {
     let controlsFrame = 0;
     const controlsObserver = new ResizeObserver(entries => {
-        if (compactToolbar.matches && !entries.some(entry => entry.target === elToolbar)) return;
+        if (entries.some(entry => entry.target === elOptions || (compactToolbar.matches && entry.target === elNotes))) scheduleToolbarOverlays();
+        if (!entries.some(entry => entry.target === elToolbar || (!compactToolbar.matches && entry.target === elNotes))) return;
         if (controlsFrame || window.fgCurrentView() !== 'timeline') return;
         controlsFrame = requestAnimationFrame(() => {
             controlsFrame = 0;
@@ -1571,6 +1619,7 @@ if (typeof ResizeObserver !== 'undefined') {
     });
     controlsObserver.observe(elToolbar);
     controlsObserver.observe(elNotes);
+    controlsObserver.observe(elOptions);
 }
 
 // probe: read access to the model and a few actions, for tests and the browser console

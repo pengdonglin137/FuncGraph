@@ -227,6 +227,7 @@ function resize() {
     const fullscreen = tlRoot.classList.contains('tl-fullscreen');
     tlRoot.style.height = Math.max(fullscreen ? 0 : detailExpanded ? 60 : 288, window.innerHeight - top - (fullscreen ? 0 : 12)) + 'px';
     if (compactToolbar.matches) tlRoot.style.setProperty('--tl-toolbar-height', elToolbar.offsetHeight + 'px');
+    fitToolbarOverlays();
     if (detailExpanded) {
         elDetail.classList.toggle('tl-detail-short', elDetail.clientHeight < 140);
         scheduleDistHistogram();

@@ -140,7 +140,7 @@
 .tl-more[aria-expanded=true]::after { content: '▴'; }
 .tl-more-filter { color: var(--link-color); font-weight: 600; }
 .tl-options { display: none; }
-.tl-options.open { position: absolute; z-index: 5; inset: 100% 0 auto auto; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; gap: 12px 18px; box-sizing: border-box; width: min(780px, 100%); max-height: min(65vh, 480px); padding: 14px; overflow: auto; overscroll-behavior: contain; border: 1px solid var(--border-color); border-radius: 8px; background: var(--container-bg); box-shadow: 0 8px 20px rgba(0, 0, 0, .18); }
+.tl-options.open { position: absolute; z-index: 1002; inset: var(--tl-overlay-top, 100%) 0 auto auto; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; gap: 12px 18px; box-sizing: border-box; width: min(780px, 100%); max-height: min(65vh, 480px, var(--tl-overlay-room, 100vh)); padding: 14px; overflow: auto; overscroll-behavior: contain; border: 1px solid var(--border-color); border-radius: 8px; background: var(--container-bg); box-shadow: 0 8px 20px rgba(0, 0, 0, .18); }
 .tl-options .tl-group { width: 100%; }
 .tl-options .tl-menu-heading { flex: 0 0 100%; }
 .tl-options .tl-menu-wide, .tl-options .tl-filterbar { grid-column: 1 / -1; }
@@ -658,12 +658,12 @@ table.tl-sum td.err { color: #c62828; }
 .tl-compact .tl-options:not(.open) { display: none; }
 .tl-compact .tl-options.open, .tl-compact .tl-notes:not(.hide) {
     position: absolute;
-    z-index: 5;
+    z-index: 1002;
     box-sizing: border-box;
     flex-wrap: wrap;
     align-items: start;
     gap: 8px 14px;
-    max-height: min(48vh, 350px);
+    max-height: min(48vh, 350px, var(--tl-overlay-room, 100vh));
     padding: 10px;
     overflow: auto;
     overscroll-behavior: contain;
@@ -672,8 +672,8 @@ table.tl-sum td.err { color: #c62828; }
     background: var(--container-bg);
     box-shadow: 0 8px 20px rgba(0, 0, 0, .20);
 }
-.tl-compact .tl-options.open { display: flex; inset: 100% 0 auto; }
-.tl-compact .tl-notes:not(.hide) { inset: var(--tl-toolbar-height, 100px) 0 auto; }
+.tl-compact .tl-options.open { display: flex; inset: var(--tl-overlay-top, 100%) 0 auto; }
+.tl-compact .tl-notes:not(.hide) { inset: var(--tl-overlay-top, var(--tl-toolbar-height, 100px)) 0 auto; }
 .tl-compact .tl-options :is(button, input) { min-height: 36px; }
 .tl-compact .tl-options [data-act=fitcalls] { min-height: 44px; }
 .tl-compact .tl-options input { font-size: 16px; }
