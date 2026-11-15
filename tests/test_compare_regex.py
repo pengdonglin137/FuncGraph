@@ -387,6 +387,18 @@ class CompareRegexTest(unittest.TestCase):
         self.assertEqual(self.page.locator('.cmp-count').inner_text(), '0 of 1 functions')
         self.unchanged()
 
+    def test_leaving_during_composition_does_not_disable_future_filter_input(self):
+        self.open_report()
+        self.page.evaluate('''() => {
+            document.querySelector('.cmp-q').dispatchEvent(new CompositionEvent('compositionstart',{bubbles:true}));
+            fgSwitchView('text');
+            fgSwitchView('compare');
+        }''')
+        self.page.locator('.cmp-q').fill('^root$')
+        self.page.locator('.cmp-q').press('Enter')
+        self.assertEqual(self.page.locator('.cmp-count').inner_text(), '1 of 661 functions')
+        self.unchanged()
+
     def test_http_sidecar_touch_cancel_is_reachable_in_both_themes(self):
         self.page.close()
         self.page = self.browser.new_page(viewport={'width': 390, 'height': 844}, is_mobile=True, has_touch=True)
@@ -404,6 +416,7 @@ class CompareRegexTest(unittest.TestCase):
             self.assertLessEqual(bounds['x'] + bounds['width'], 390)
             self.assertLessEqual(bounds['y'] + bounds['height'], 844)
             self.page.touchscreen.tap(bounds['x'] + bounds['width'] / 2, bounds['y'] + bounds['height'] / 2)
+            self.page.locator('.cmp-filter-status').wait_for(state='hidden')
             self.assertFalse(self.page.locator('.cmp-filter-status').is_visible())
             self.assertTrue(self.page.evaluate('compareWorkers.at(-1).terminated'))
             self.unchanged()

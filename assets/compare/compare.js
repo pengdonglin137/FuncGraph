@@ -329,5 +329,5 @@ window.fgViews.compare = { el: 'compareView', data: ['cmpData'], init: function 
     exportButton.addEventListener('click', exportCsv);
     window.addEventListener('resize', () => { if (window.fgCurrentView() === 'compare') resize(); });
     updateRows();
-    return { resize: resize, suspend: () => stopFilter(true) };
+    return { resize: resize, suspend: () => { composing = false; stopFilter(true); } };
 } };

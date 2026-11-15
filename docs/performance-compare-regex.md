@@ -32,7 +32,9 @@ still shown. **Cancel** or Escape restores the last completed expression and
 table; editing, composition and leaving Compare also cancel outstanding work.
 Workers terminate and their Blob URLs are released. Old/partial results cannot
 replace the table, alter counts or trigger a queued CSV download. IME Enter is
-left to the input method; filtering resumes after composition ends.
+left to the input method; filtering resumes after composition ends. Suspending
+Compare also clears its composition state, so a missing composition-end event
+on a hidden input cannot suppress ordinary filtering when the view is reopened.
 
 CSV is disabled while a filter runs. Clicking Export during the input debounce
 flushes that input and waits for the entire match, then exports all matching
