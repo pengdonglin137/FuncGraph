@@ -17,6 +17,8 @@ When trace events are present, **Events: shown / hidden** beside **Top** hides
 tracepoint and task-switch hint rows, not calls, loss warnings or recorded data.
 The choice persists; explicitly jumping to a hidden event shows events again.
 Full Text updates event rows without reprocessing unrelated open source panels.
+In single-file reports, toggling events does not construct the complete
+analysis/folding model if it has not been prepared yet.
 Focused buttons retain native Enter/Space activation; links, form controls and
 editable content keep their normal keyboard behavior rather than running Text
 row-navigation shortcuts. Regenerate older reports to receive these fixes.

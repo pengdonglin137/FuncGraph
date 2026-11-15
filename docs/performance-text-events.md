@@ -14,10 +14,17 @@ complete record array and record identities remain intact. Wire index versions,
 row columns, line numbers, filters, Timeline evidence and source state are unchanged.
 Legacy indexes without event metadata retain an empty event list.
 
-This does not remove full-model preparation, event DOM writes or the affected
-layout work. A single-file report can still prepare its model on first use.
-Windowed Text still rebuilds its complete visibility sequence and mounts its
-bounded window; this change is not a new windowing algorithm or memory limit.
+Single-file Text can initially render without a complete analysis/folding model.
+The event button now uses its existing event DOM rows in that case, rather than
+constructing the complete model on first click. Both paths share the same
+fold/filter predicate; prepared folding models retain their ancestry cache.
+Explicit navigation can also find a hidden event in the existing DOM and restore
+it without preparing the complete model. A saved hidden preference follows the
+same path on reload.
+
+Event DOM writes and affected layout work remain. Sidecar data loading is not
+changed. Windowed Text still rebuilds its complete visibility sequence and mounts
+its bounded window; this change is not a new windowing algorithm or memory limit.
 
 The same review found that Text's global keyboard handler intercepted Space on
 toolbar buttons and could use Enter to expand the selected row instead of
@@ -39,6 +46,12 @@ Space activation on the previous runtime. They now assert:
   explicit event navigation and single/sidecar/windowed behavior are preserved.
 - Optional event metadata in index versions 1–5 retains exact record references;
   missing metadata and malformed references keep their existing behavior.
+- A first toggle, explicit hidden-event navigation and restoring a saved choice
+  leave initially unprepared single-file Text models unprepared.
+- The shared visibility predicate agrees for DOM rows and prepared records,
+  including nested folds, filtered subsets and large original line numbers.
+- At a 320px mobile viewport with coarse-pointer/touch behavior, active filtering
+  and either theme, visible primary controls stay in view with 44px touch targets.
 
 The runtime and UI assertions are in `tests/test_text_events.py` and
 `tests/test_textmodel.py`. Timing is not a pass/fail unit-test threshold.
@@ -46,22 +59,30 @@ The runtime and UI assertions are in `tests/test_text_events.py` and
 ## Performance method
 
 `tests/benchmark_text_events.py` compares full mounted reports over the real
-loopback-only `fgview` server. Text and its complete folding model are ready
-before timing. Each fresh Chromium run measures hide/show/hide/show, preserving
-all records. It checks every visible original line against the full fold/filter
-model, hashes the complete authored records and each visibility result, and
-rejects any difference between before/after reports. No trace is recaptured or
-pre-filtered for the comparison. Source nodes are covered separately by browser
-regressions; the real Host report has no resolved source panels.
+loopback-only `fgview` server. By default, Text and its complete folding model are
+ready before timing. `--cold-model` instead requires initially unprepared,
+unfolded and unfiltered full Text; it records whether each toggle prepares the
+model and validates original DOM records without preparing it during validation.
+This means an old runtime's first-toggle model preparation is included in that
+first API interval. Each fresh Chromium run measures hide/show/hide/show,
+preserving all records. It checks every visible original line, hashes the complete
+authored records and each visibility result, and rejects differences between
+before/after reports. No trace is recaptured or pre-filtered for comparison.
+Source nodes are covered separately by browser regressions; the real Host report
+has no resolved source panels.
 
 The API duration includes synchronous projection and its Promise completion.
 Two `requestAnimationFrame` callbacks provide a separate feedback proxy, not
 physical presentation, frame rate or worst-case input latency. Initial download,
-full mount, model construction and validation hashes are outside those intervals.
+full mount and validation hashes are outside those intervals. Model preparation
+is excluded in default mode but included if a cold-mode toggle causes it.
 Browser/server caches are not forced cold. No tests or builds run concurrently
 with the paired timing experiment.
 
-## Real-report results
+## Prepared-model real-report results
+
+These measurements describe the earlier event-only projection optimization
+(`4e99a6bd0fe7`), not the subsequent removal of first-toggle model preparation.
 
 The 2026-11-15 Host QEMU capture contains **372,673 Text rows**, of which **88,199**
 are tracepoint or task-switch hint rows. It retains 142,240 function calls.
@@ -89,6 +110,26 @@ First-hide API samples are 812.1 / 933.0 / 846.2 ms before and
 414.2 / 404.7 / 430.6 ms after. All samples, feedback times, report SHA-256s,
 record counts and visibility hashes remain in the JSON, not only the best run.
 
+## First-toggle measurement limit
+
+A separate `--cold-model` attempt used the same complete 372,673-row capture
+rendered as a forced single-file report (360,581,275 bytes, about 344 MiB).
+Chromium navigation exceeded the benchmark's 240-second `load` timeout before
+any toggle was measured. This is a report-startup failure, not a measured slow
+toggle or a successful first-use comparison. Its local diagnostic is retained
+in `build/events-lazy-model/initial.log`; no full-report cold-model speedup is
+claimed. The lazy-model regressions verify the removed model construction, not
+that large single-file startup or layout costs have disappeared.
+
+The cold-mode harness was also exercised on the separate published mixed sample
+(1,504 rows, 74 events), using three alternating before/after browser pairs.
+Every old-runtime toggle reported a prepared model; every new-runtime toggle
+left it unprepared. Complete row and visibility signatures matched across all
+six runs. A prepared-model pair passed as well. These are harness/behavior smoke
+checks on a smaller input, not substitutes for the failed full-capture run;
+the local results are `build/events-lazy-model/sample-cold.json` and
+`build/events-lazy-model/sample-prepared.json`.
+
 ## Reproduce
 
 For matching old/new reports, retaining identical data and replacing only the
@@ -98,6 +139,9 @@ changed frontend assets:
 python3 tests/benchmark_text_events.py \
   /path/to/report/events-before.html /path/to/report/events-after.html \
   --rounds 3 --output /path/to/event-toggles.json
+python3 tests/benchmark_text_events.py \
+  /path/to/single-before.html /path/to/single-after.html \
+  --cold-model --rounds 3 --output /path/to/first-event-toggles.json
 PYTHONPATH=tests python3 -m unittest test_text_events test_textmodel -q
 ```
 

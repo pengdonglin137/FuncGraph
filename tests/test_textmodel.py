@@ -828,6 +828,28 @@ class TextModelTest(unittest.TestCase):
             assert.deepEqual(Array.from(mask.slice(1999,2005)),[0,0,1,1,1,0]);
         ''')
 
+    def test_visibility_factory_supports_dom_rows_without_a_prepared_fold_index(self):
+        self.run_model('''
+            const rows = [[2**40+2,'root',{'fold-id':'root','fold-type':'entry'}],
+                [2**40+5,'child',{'fold-id':'child','fold-type':'entry','fold-ancestors':'root'}],
+                [2**40+8,'event',{'fold-id':'child','fold-type':'inner','fold-ancestors':'root  child\\tchild'}],
+                [2**40+11,'exit',{'fold-id':'root','fold-type':'exit'}],
+                [2**40+14,'outside',{}],
+                [2**40+17,'empty',{'fold-id':'','fold-type':'inner','fold-ancestors':''}]];
+            const model = drain(fgTextModel.prepare(data(rows))), folding = fgTextModel.folding(model);
+            for (const folds of [{},{root:true},{child:true},{root:true,child:true},{null:true},{'':true}]) {
+                for (const matches of [null,new Set(),new Set([2**40+2,2**40+8,2**40+14])]) {
+                    const visible = fgTextModel.visibility(folds,matches);
+                    for (const record of model.records) {
+                        const dom = {getAttribute:name=>record.getAttribute(name)};
+                        const expected = folding.visible(record,folds,matches);
+                        assert.equal(visible(record),expected);
+                        assert.equal(visible(dom),expected);
+                    }
+                }
+            }
+        ''')
+
     def test_operation_visibility_matches_reference_for_nested_filtered_and_unusual_fold_ids(self):
         self.run_model('''
             const rows = [[2,'A',{'fold-id':'root','fold-type':'entry'}],

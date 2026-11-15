@@ -123,6 +123,27 @@ class TextEventBrowserTest(unittest.TestCase):
             self.assertEqual(self.page.locator('#textEventsBtn').inner_text(), expected)
             self.assertEqual(self.page.evaluate('eventProjections'), ['1', '1'])
 
+    def test_first_toggle_keeps_the_complete_text_model_lazy_and_event_navigation_works(self):
+        self.open_report()
+        root = "document.getElementById('content')"
+        self.assertFalse(self.page.evaluate('fgDomTextModels.has(' + root + ')'))
+        number = int(self.page.locator('[data-trace-event="1"]').first.get_attribute('data-line-number'))
+        before = self.page.locator('#content .line-container').count()
+        self.page.locator('#textEventsBtn').click()
+        self.assertFalse(self.page.evaluate('fgDomTextModels.has(' + root + ')'))
+        self.assertEqual(self.page.locator('[data-trace-event="1"]:visible').count(), 0)
+        self.page.evaluate('async number => { await fgEnsureTextLine(number); }', number)
+        self.assertEqual(self.page.locator('#textEventsBtn').inner_text(), 'Events: shown')
+        self.assertTrue(self.page.locator('#L' + str(number)).is_visible())
+        self.assertFalse(self.page.evaluate('fgDomTextModels.has(' + root + ')'))
+        self.assertEqual(self.page.locator('#content .line-container').count(), before)
+        self.page.locator('#textEventsBtn').click()
+        self.page.reload()
+        self.page.evaluate("async () => { await fgSwitchView('text'); }")
+        self.assertEqual(self.page.locator('#textEventsBtn').inner_text(), 'Events: hidden')
+        self.assertEqual(self.page.locator('[data-trace-event="1"]:visible').count(), 0)
+        self.assertFalse(self.page.evaluate('fgDomTextModels.has(' + root + ')'))
+
     def test_event_button_uses_native_keyboard_activation_without_row_navigation(self):
         self.open_report()
         self.page.evaluate('''() => {
@@ -221,8 +242,13 @@ class TextEventBrowserTest(unittest.TestCase):
                 self.assertTrue(self.page.locator('#L' + number).is_visible())
 
     def test_event_only_and_mobile_both_themes_retain_an_obvious_restore_button(self):
+        self.page.close()
+        self.page = self.browser.new_page(viewport={'width': 320, 'height': 844}, has_touch=True, is_mobile=True)
+        self.addCleanup(self.page.close)
+        self.page.on('pageerror', lambda error: self.errors.append(str(error)))
         self.open_report(records=[event('kvm_entry', 10), event('kvm_exit', 20)])
-        self.page.set_viewport_size({'width': 390, 'height': 844})
+        self.assertTrue(self.page.evaluate('fgTextCompactMedia.matches'))
+        self.page.evaluate("document.getElementById('filterInput').value='cpu:4'; applyFilter()")
         for theme in ('light', 'dark'):
             self.page.evaluate("theme => document.documentElement.setAttribute('data-theme',theme)", theme)
             self.page.locator('#textEventsBtn').click()
@@ -230,6 +256,11 @@ class TextEventBrowserTest(unittest.TestCase):
             self.assertEqual(self.page.locator('[data-trace-event="1"]:visible').count(), 0)
             self.page.locator('#textEventsBtn').click()
             self.assertEqual(self.page.locator('[data-trace-event="1"]:visible').count(), 2)
+            self.assertTrue(self.page.evaluate('''() => Array.from(document.querySelector('.toolbar > .btn-group').children)
+                .filter(button => button.getClientRects().length).every(button => {
+                    const rect = button.getBoundingClientRect();
+                    return rect.left >= 0 && rect.right <= innerWidth && rect.width >= 44 && rect.height >= 44;
+                }) && document.documentElement.scrollWidth === document.documentElement.clientWidth'''))
 
     def test_plain_function_graph_text_hides_only_event_and_switch_rows(self):
         trace = Path(self.kernel.dir, 'plain.txt')

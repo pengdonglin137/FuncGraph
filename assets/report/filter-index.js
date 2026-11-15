@@ -97,6 +97,23 @@
         const { graphSets, ...result } = yield* filter(model, text);
         return result;
     }
+    function visibility(folds, matches, parentNames = null) {
+        const hasFolds = Object.keys(folds).some(id => folds[id] === true), ancestryVisible = new Map();
+        return record => {
+            if (matches !== null && !matches.has(record.row?.[0] ?? +record.getAttribute('data-line-number'))) return false;
+            if (!hasFolds) return true;
+            const own = record.getAttribute('data-fold-id');
+            if (record.getAttribute('data-fold-type') !== 'entry' && folds[own] === true) return false;
+            const key = record.getAttribute('data-fold-ancestors') || '';
+            let visible = ancestryVisible.get(key);
+            if (visible === undefined) {
+                const parents = parentNames ? parentNames(record) : key.split(/\s+/).filter(Boolean);
+                visible = !parents.some(ancestor => folds[ancestor] === true);
+                ancestryVisible.set(key, visible);
+            }
+            return visible;
+        };
+    }
     function* prepareFolding(model) {
         if (foldModels.has(model)) return foldModels.get(model);
         const blocks = new Map();
@@ -204,22 +221,7 @@
                 }
                 return hidden;
             },
-            visibility(folds, matches) {
-                const hasFolds = Object.keys(folds).some(id => folds[id] === true), ancestryVisible = new Map();
-                return record => {
-                    if (matches !== null && !matches.has(record.row[0])) return false;
-                    if (!hasFolds) return true;
-                    const own = record.getAttribute('data-fold-id');
-                    if (record.getAttribute('data-fold-type') !== 'entry' && folds[own] === true) return false;
-                    const key = record.getAttribute('data-fold-ancestors') || '';
-                    let visible = ancestryVisible.get(key);
-                    if (visible === undefined) {
-                        visible = !ancestors(record).some(ancestor => folds[ancestor] === true);
-                        ancestryVisible.set(key, visible);
-                    }
-                    return visible;
-                };
-            },
+            visibility(folds, matches) { return visibility(folds, matches, ancestors); },
             visibleLines(folds, matches) {
                 const lines = new Set();
                 for (const record of model.records) {
@@ -586,7 +588,7 @@
         }
         return navigation(order, expandable);
     }
-    window.fgTextModel = { fields, presentationFields, symbolFields, prepare, locate, filter, folding, prepareFolding, order, prepareOrder, rankDuration, prepareDuration, rankDurationAsync, navigation, prepareNavigation };
+    window.fgTextModel = { fields, presentationFields, symbolFields, prepare, locate, filter, folding, visibility, prepareFolding, order, prepareOrder, rankDuration, prepareDuration, rankDurationAsync, navigation, prepareNavigation };
     window.fgIndexedFilter = async function (data, text, signal, progress) {
         const iterator = steps(data, text);
         try {

@@ -170,14 +170,15 @@
             fgUpdateTextEventsButton();
             if (fgTextDeferred()) return;
             if (fgTextWindow) return fgRefreshTextWindow();
-            const folding = fgGetTextFolding();
-            fgProjectFoldRecords(folding, folding.eventRecords);
+            const root = document.getElementById('content'), model = fgDomTextModels.get(root);
+            const events = model ? model.eventRecords : root.querySelectorAll('.line-container[data-trace-event="1"]');
+            fgProjectTextRecords(events, fgTextModel.visibility(foldedBlocks, window.fgFilterState.lines));
             fgUpdateTextControlHeight();
         }
         function fgRevealTextEvent(number) {
             if (fgTextEventsVisible) return;
             const model = fgDomTextModels.get(document.getElementById('content'));
-            const record = model && fgTextModel.locate(model, number)?.record;
+            const record = model ? fgTextModel.locate(model, number)?.record : document.getElementById('L' + number);
             if (record?.getAttribute('data-trace-event') === '1') return fgSetTextEventsVisible(true);
         }
         let fgTextSort = '';
@@ -2084,10 +2085,14 @@
 
         function fgProjectFoldRecords(folding, records) {
             if (fgTextWindow) { fgRefreshTextWindow(); return; }
+            fgProjectTextRecords(records, record => folding.visible(record, foldedBlocks, window.fgFilterState.lines));
+        }
+
+        function fgProjectTextRecords(records, visible) {
             const chunks = document.getElementById('content').classList.contains('text-layout-auto') ? new Set() : null;
             for (const record of records) {
-                const line = document.getElementById('L' + record.row[0]);
-                fgProjectFoldLine(line, folding.visible(record, foldedBlocks, window.fgFilterState.lines));
+                const line = record.row ? document.getElementById('L' + record.row[0]) : record;
+                fgProjectFoldLine(line, visible(record));
                 if (chunks && line) chunks.add(line.parentElement);
             }
             if (chunks) fgRefreshTextLayout(chunks);
