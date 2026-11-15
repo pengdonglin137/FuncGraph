@@ -140,7 +140,7 @@ class FilterControlsTest(unittest.TestCase):
         for index in range(len(chosen)):
             checkboxes.nth(index).check()
         popup.get_by_role('button', name='OK', exact=True).press('Enter')
-        expected = 'cpu:' + chosen[0] if len(chosen) == 1 else '(' + ' OR '.join('cpu:' + value for value in chosen) + ')'
+        expected = 'cpu:=' + json.dumps(chosen[0]) if len(chosen) == 1 else '(' + ' OR '.join('cpu:=' + json.dumps(value) for value in chosen) + ')'
         self.assertEqual(page.locator('#filterInput').input_value(), 'duration:>0 AND ' + expected)
         self.assert_owner_focused(owner)
 

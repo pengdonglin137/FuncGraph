@@ -638,6 +638,14 @@ Compact touch layouts use 44px option/action targets and 16px input text;
 desktop dimensions stay unchanged.
 Regenerate older HTML; see [field-filter interaction checks](filter-field-interaction.md).
 
+**Dropdown choices are exact; handwritten expressions still support regex.**
+Choosing CPU `1` generates `cpu:="1"`, not a match for CPU `10`; choosing flag
+`.` does not match `d`. Case-sensitive `field:="…"` literals support
+`cpu/pid/comm/ret/irqs/resched/hirq/preempt` and `func`, with JSON string escaping
+inside the quotes. Task names retain commas, parentheses, quotes, spaces and
+`@`. Multiple choices use OR; **ret → all** still generates `ret:all`.
+Existing handwritten regex and numeric comparisons keep their semantics.
+
 | Field | Matches | Examples |
 |---|---|---|
 | `cpu` | CPU number (regex) | `cpu:0`, `cpu:0\|1` |

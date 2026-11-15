@@ -594,17 +594,7 @@ class HtmlGenerator:
                         unique_pids.add(pid_str)
 
                 if comm:
-                    comm_str = str(comm).strip()
-                    if comm_str:
-                        cleaned_comm = comm_str
-                        if cleaned_comm.startswith('<') and cleaned_comm.endswith('>'):
-                            cleaned_comm = cleaned_comm[1:-1]
-                        if cleaned_comm.startswith('(') and cleaned_comm.endswith(')'):
-                            cleaned_comm = cleaned_comm[1:-1]
-                        if '@' in cleaned_comm:
-                            cleaned_comm = cleaned_comm.split('@')[0]
-                        if cleaned_comm:
-                            unique_comms.add(cleaned_comm)
+                    unique_comms.add(str(comm))
 
                 if ret_value:
                     try:
@@ -641,17 +631,20 @@ class HtmlGenerator:
             # 构建字段按钮 HTML
             field_buttons = []
 
+            def field_values(values):
+                return html.escape(json.dumps(values, ensure_ascii=False, separators=(',', ':')), quote=True)
+
             if unique_cpus:
-                vals = ','.join(sorted(unique_cpus, key=lambda x: int(x)))
+                vals = field_values(sorted(unique_cpus, key=lambda x: int(x)))
                 field_buttons.append(f'<button class="field-btn" data-field="cpu" data-values="{vals}">cpu</button>')
 
             if unique_pids:
                 sorted_pids = sorted(unique_pids, key=lambda x: int(x))
-                vals = ','.join(sorted_pids)
+                vals = field_values(sorted_pids)
                 field_buttons.append(f'<button class="field-btn" data-field="pid" data-values="{vals}">pid</button>')
 
             if unique_comms:
-                vals = ','.join(sorted(unique_comms))
+                vals = field_values(sorted(unique_comms))
                 field_buttons.append(f'<button class="field-btn" data-field="comm" data-values="{vals}">comm</button>')
 
             if unique_error_codes:
@@ -663,9 +656,9 @@ class HtmlGenerator:
                     error_name = ERROR_CODE_MAP.get(ret_int, '')
                     if error_name:
                         error_hints.append(f"{ret_int}={error_name}")
-                vals = ','.join(error_vals)
+                vals = field_values(['all', *error_vals])
                 hints = ','.join(error_hints)
-                field_buttons.append(f'<button class="field-btn" data-field="ret" data-values="all,{vals}" data-hints="{hints}">ret</button>')
+                field_buttons.append(f'<button class="field-btn" data-field="ret" data-values="{vals}" data-hints="{hints}">ret</button>')
 
             if has_params:
                 field_buttons.append('<button class="field-btn" data-field="params" data-values="">params</button>')
@@ -675,19 +668,19 @@ class HtmlGenerator:
 
             # latency 字段按钮（仅在 latency trace 时出现）
             if unique_irqs:
-                vals = ','.join(sorted(unique_irqs))
+                vals = field_values(sorted(unique_irqs))
                 field_buttons.append(f'<button class="field-btn" data-field="irqs" data-values="{vals}" data-hints="d=disabled,.=enabled">irqs</button>')
 
             if unique_resched:
-                vals = ','.join(sorted(unique_resched))
+                vals = field_values(sorted(unique_resched))
                 field_buttons.append(f'<button class="field-btn" data-field="resched" data-values="{vals}" data-hints="B=NEED_RESCHED+LAZY,N=NEED_RESCHED,n=NEED_RESCHED_LAZY,p=PREEMPT_NEED,.=none">resched</button>')
 
             if unique_hirq:
-                vals = ','.join(sorted(unique_hirq))
+                vals = field_values(sorted(unique_hirq))
                 field_buttons.append(f'<button class="field-btn" data-field="hirq" data-values="{vals}" data-hints="H=hardirq,h=hardirq(idle),s=softirq,Z=NMI,z=NMI(idle),.=none">hirq</button>')
 
             if unique_preempt:
-                vals = ','.join(sorted(unique_preempt))
+                vals = field_values(sorted(unique_preempt))
                 field_buttons.append(f'<button class="field-btn" data-field="preempt" data-values="{vals}">preempt</button>')
 
             # func/graph/notrace 字段按钮（文本输入模式，不带 data-values）
@@ -724,6 +717,7 @@ class HtmlGenerator:
                             <div class="syntax-title">Basic</div>
                             <div class="syntax-example">field:value</div>
                             <div class="syntax-desc">e.g. <code>cpu:3</code> <code>comm:bash</code> <code>pid:1234</code></div>
+                            <div class="syntax-desc">Dropdowns choose exact, case-sensitive values: <code>cpu:="3"</code> <code>comm:="worker[0]"</code>. Plain <code>field:value</code> keeps regex matching.</div>
                         </div>
                         <div class="syntax-section">
                             <div class="syntax-title">Logic</div>

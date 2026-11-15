@@ -1009,13 +1009,14 @@
                     i += sortMatch[0].length;
                     continue;
                 }
-                if (/^func:="/i.test(text.slice(i))) {
-                    const literal = text.slice(i).match(/^func:=("(?:[^"\\]|\\.)*")(?=$|[\s()])/i);
+                const literalField = text.slice(i).match(/^(func|cpu|pid|comm|ret|irqs|resched|hirq|preempt):="/i);
+                if (literalField) {
+                    const literal = text.slice(i).match(/^[a-z]+:=("(?:[^"\\]|\\.)*")(?=$|[\s()])/i);
                     let value = null;
                     if (literal) {
                         try { value = JSON.parse(literal[1]); } catch (error) { }
                     }
-                    tokens.push({ type: 'COND', field: 'func', op: '=', value: value || '', literal: true, invalid: value === null });
+                    tokens.push({ type: 'COND', field: literalField[1].toLowerCase(), op: '=', value: value || '', literal: true, invalid: value === null });
                     i += literal ? literal[0].length : text.length - i;
                     continue;
                 }
@@ -1178,6 +1179,10 @@
 
             const attrName = fieldAttrMap[field];
             if (!attrName) return true; // Unknown field, pass through
+            if (cond.literal) {
+                const attribute = line.getAttribute(attrName);
+                return !cond.invalid && attribute !== null && attribute !== '' && attribute === value;
+            }
 
             // Special handling for ret:all
             if (field === 'ret' && value.toLowerCase() === 'all') {
@@ -1286,7 +1291,7 @@
                 case 'NOT':
                     return 'NOT ' + astToText(ast.operand, 3);
                 case 'COND':
-                    if (ast.literal) return 'func:=' + JSON.stringify(ast.value);
+                    if (ast.literal) return ast.field + ':=' + JSON.stringify(ast.value);
                     return ast.field + ':' + (ast.op !== '=' ? ast.op : '') + ast.value;
                 default:
                     return '';
@@ -1768,8 +1773,11 @@
                     e.stopPropagation();
                     const wasOpen = fgFieldDropdown?.owner === this;
                     const field = this.dataset.field;
-                    const values = this.dataset.values ? this.dataset.values.split(',').filter(Boolean) : [];
-                    const hints = {};
+                    const encoded = this.dataset.values || '';
+                    let values;
+                    try { values = JSON.parse(encoded); } catch (error) { values = encoded.split(','); }
+                    values = (Array.isArray(values) ? values : encoded.split(',')).filter(value => typeof value === 'string' && value !== '');
+                    const hints = Object.create(null);
                     if (this.dataset.hints) {
                         this.dataset.hints.split(',').forEach(h => {
                             const [k, v] = h.split('=');
@@ -1835,9 +1843,18 @@
                         values.forEach(val => {
                             const item = document.createElement('label');
                             item.className = 'field-dropdown-item';
-                            const hintText = hints[val] ? '<span class="hint-text">' + hints[val] + '</span>' : '';
-                            const displayVal = val.replace(/</g, '&lt;').replace(/>/g, '&gt;');
-                            item.innerHTML = '<input type="checkbox" value="' + displayVal + '"> <span>' + displayVal + '</span>' + hintText;
+                            const checkbox = document.createElement('input');
+                            checkbox.type = 'checkbox';
+                            checkbox.value = val;
+                            const label = document.createElement('span');
+                            label.textContent = val;
+                            item.append(checkbox, label);
+                            if (hints[val]) {
+                                const hint = document.createElement('span');
+                                hint.className = 'hint-text';
+                                hint.textContent = hints[val];
+                                item.appendChild(hint);
+                            }
                             dropdown.appendChild(item);
                         });
 
@@ -1853,11 +1870,12 @@
                         actionsDiv.querySelector('button:last-child').addEventListener('click', () => {
                             const checked = Array.from(dropdown.querySelectorAll('input[type="checkbox"]:checked'))
                                 .map(cb => cb.value);
+                            const condition = value => field === 'ret' && value === 'all' ? 'ret:all' : field + ':=' + JSON.stringify(value);
                             if (checked.length > 0) {
                                 if (checked.length === 1) {
-                                    appendToFilter(field + ':' + checked[0]);
+                                    appendToFilter(condition(checked[0]));
                                 } else {
-                                    const expr = '(' + checked.map(v => field + ':' + v).join(' OR ') + ')';
+                                    const expr = '(' + checked.map(condition).join(' OR ') + ')';
                                     appendToFilter(expr);
                                 }
                             }

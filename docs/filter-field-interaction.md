@@ -39,6 +39,66 @@ no-popup path returns immediately. No per-row handlers or indexes are added.
 
 ## Evidence and tests
 
+### Exact values and safe task names
+
+Dropdown choices now produce case-sensitive complete-value literals, e.g.
+`cpu:="1"`, `pid:="7"`, `irqs:="."` and `comm:="worker[0]"`. Multiple choices
+use OR. The `ret` choice `all` retains `ret:all`; quoted `ret:="-1"` does not
+also match `-11`. Handwritten `field:value` regex and numeric comparisons are
+unchanged. Literal JSON string escaping and Boolean/tag serialization use the
+same parser in Text, Timeline, sidecar and experimental windowed Text.
+Exact predicates compare the stored string directly instead of constructing a
+regular expression for each record. A constructor-count test checks this path;
+it is not an end-to-end timing or bounded-memory claim.
+
+An end-to-end mixed-record reproducer previously showed CPU `1` selecting
+`1/10/11`, PID `7` selecting `7/70/700`, flag `.` selecting both `.` and `d`,
+and task `worker[0]` selecting `worker0` instead. Its observations are retained
+in `build/exact-field-filters/baseline.json`.
+
+Field values use HTML-escaped JSON arrays rather than comma-joined attributes.
+Quotes cannot create additional button attributes, and comma-containing names
+remain single choices. Task names keep their original display value, including
+wrappers, `@`, whitespace, case, Unicode and quotes. Popup values and hints use
+DOM properties/text nodes rather than markup; built-in names such as
+`constructor` are not inherited hint entries. A legacy CSV attribute reader
+remains, but cannot reconstruct names already truncated by an old report:
+regenerate older reports to get their complete options.
+
+`tests/test_field_filters.py` checks exact numeric/flag/task choices, malformed
+literals, Boolean/sort/tag round trips, unchanged regex/comparison/`ret:all`
+behavior, unsafe names and hints as data, and cross-renderer Timeline scope.
+It supplements the interaction/lifecycle tests below. This is a correctness
+fix, not a large-trace speedup claim.
+
+#### Exact-value validation
+
+The browser/Text/source/Timeline/report/sidecar/prefilter/uftrace regression run
+passes **798 tests**.
+The final field/lifecycle/Timeline-focus run passes **43 tests**, including
+all **14 exact-field tests**. The regenerated sample/source/BTF/name/inline/usage
+run passes **60 tests**. Wheel and sdist builds succeed; installed-wheel smoke
+runs **14 tests**, with **4 optional native/extras checks skipped**.
+
+The complete retained real report contains **372,673 Text rows / 88,199 events**.
+Choosing CPU `0` matches exactly its **3,945 recorded rows**; clearing the filter
+restores the unfiltered scope. Runtime filtering and a view round trip preserve
+the row count, folding/source-expansion/event-visibility state and Timeline data.
+This check rebases the frontend runtime onto the retained report, preserving its
+original 346,786,834-byte Text subtree, source payloads and CSV metadata; it is
+not a full large-report CLI regeneration or validation of JSON transport at that
+size. Applying the filter prepares the complete Text model; opening the popup
+alone does not. Results are retained in
+`build/exact-field-filters/real-report.json` and `after.json`.
+
+Freshly generated standalone and sidecar fixtures, plus both published samples,
+verify the new JSON transport separately. Samples retain **739 kernel rows /
+10 events** and **1,504 mixed rows / 74 events**, with unchanged recorded
+attributes, source pools/maps and Timeline data except `stats.build_time`.
+Default sample, Text, Timeline detail and help screenshots remain byte-identical.
+
+### Focus, touch and lifecycle
+
 The previous real `sample.html` reproduced four issues: enum popup focus stayed
 on its field button, Tab moved to the next field instead of popup choices,
 desktop Escape left the enum popup open, and free-form Escape dropped focus to
