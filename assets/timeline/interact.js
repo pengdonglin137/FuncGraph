@@ -535,7 +535,7 @@ let searchQuery = '', searchError = '', searchErrorKind = '', searchTimer = 0;
 let searchPostingIndex = null, searchMatchQuery = null, searchNameHits = null;
 let searchMatches = new Uint32Array(0), searchVisibleMatches = searchMatches;
 let searchFilterBasis = null, searchWork = null, searchProgress = '', searchPaused = false;
-let searchReadyQuery = '';
+let searchReadyQuery = '', searchComposing = false;
 const searchDefaultTitle = 'Case-insensitive regular expression; highlights and navigates recorded function names. ' +
     (document.getElementById('filterInput') ? 'Search is limited by the shared filter; it does not change that filter.' :
         'Shared filtering is not enabled for this report.');
@@ -549,16 +549,17 @@ function searchIndex(target) {
     return low;
 }
 function updateSearchLabel() {
-    const busy = !!searchTimer || !!searchWork;
+    const busy = searchComposing || !!searchTimer || !!searchWork;
     const invalid = !busy && searchErrorKind === 'regex';
     elSearch.classList.toggle('bad', invalid);
     elSearch.setAttribute('aria-invalid', String(invalid));
     elSearch.title = !busy && searchError ? searchError : searchDefaultTitle;
     elCount.setAttribute('aria-busy', String(busy));
-    elCount.title = busy ? searchProgress : searchError;
+    elCount.title = searchComposing ? 'Finish text composition to search.' : busy ? searchProgress : searchError;
     const count = searchVisibleMatches.length;
     elSearchPrev.disabled = elSearchNext.disabled = busy || searchPaused || !!searchError || !count;
-    if (busy) elCount.textContent = searchProgress || 'Searching…';
+    if (searchComposing) elCount.textContent = 'Composing…';
+    else if (busy) elCount.textContent = searchProgress || 'Searching…';
     else if (searchPaused) elCount.textContent = 'Search paused';
     else if (invalid) elCount.textContent = 'Invalid regex';
     else if (searchError) elCount.textContent = 'Search unavailable';
@@ -639,7 +640,7 @@ function startSearchWork(query, matcher, dir) {
     advance();
 }
 function rebuildSearchMatches() {
-    if (searchTimer || searchPaused || !searchQuery || searchErrorKind === 'regex') { updateSearchLabel(); return; }
+    if (searchComposing || searchTimer || searchPaused || !searchQuery || searchErrorKind === 'regex') { updateSearchLabel(); return; }
     applySearch(searchQuery, searchWork?.direction || 0);
 }
 function suspendSearch() {
@@ -655,6 +656,7 @@ function resumeSearch() {
     applySearch(elSearch.value);
 }
 function applySearch(query, dir = 0) {
+    if (searchComposing) { updateSearchLabel(); return false; }
     clearTimeout(searchTimer);
     searchTimer = 0;
     query = query.trim();
@@ -691,16 +693,32 @@ function applySearch(query, dir = 0) {
     return !searchWork && !searchError;
 }
 function searchNext(dir) { applySearch(elSearch.value, dir); }
-elSearch.addEventListener('input', () => {
+function scheduleSearchInput(event) {
     clearTimeout(searchTimer);
+    searchTimer = 0;
     cancelSearchWork();
-    searchPaused = false;
+    searchPaused = window.fgCurrentView() !== 'timeline';
+    if (searchComposing || event?.isComposing || searchPaused) { updateSearchLabel(); return; }
     if (!elSearch.value.trim()) { applySearch(''); return; }
     searchTimer = setTimeout(() => applySearch(elSearch.value), 150);
     updateSearchLabel();
+}
+elSearch.addEventListener('input', scheduleSearchInput);
+elSearch.addEventListener('compositionstart', () => {
+    searchComposing = true;
+    scheduleSearchInput();
 });
+elSearch.addEventListener('compositionend', () => {
+    searchComposing = false;
+    scheduleSearchInput();
+});
+function timelineShortcutBlocked(event) {
+    return event.defaultPrevented || event.isComposing || event.keyCode === 229 ||
+        event.ctrlKey || event.metaKey || event.altKey || event.target === elSearch && searchComposing;
+}
 elSearch.addEventListener('keydown', ev => {
-    if (ev.key === 'Enter' && !ev.isComposing) { searchNext(ev.shiftKey ? -1 : 1); ev.preventDefault(); }
+    if (timelineShortcutBlocked(ev)) return;
+    if (ev.key === 'Enter') { searchNext(ev.shiftKey ? -1 : 1); ev.preventDefault(); }
     else if (ev.key === 'Escape') { elSearch.value = ''; applySearch(''); elSearch.blur(); }
     ev.stopPropagation();
 });
@@ -817,7 +835,7 @@ elPosition.addEventListener('close', () => {
 
 // ---- keyboard (capture phase: keeps the text view's shortcuts from firing) ----
 window.addEventListener('keydown', ev => {
-    if (window.fgCurrentView() !== 'timeline') return;
+    if (window.fgCurrentView() !== 'timeline' || timelineShortcutBlocked(ev)) return;
     if (elHelp.classList.contains('show') && elHelp.contains(ev.target instanceof Node ? ev.target : document.activeElement)) return;
     if (savedViewsDialog?.open) { ev.stopPropagation(); return; }
     if (callActionsKey(ev)) { ev.stopPropagation(); return; }
@@ -849,7 +867,6 @@ window.addEventListener('keydown', ev => {
     if (ev.target.matches && ev.target.matches('input, textarea, select')) return;
     ev.stopPropagation();
     if ((ev.key === 'Enter' || ev.key === ' ') && ev.target.closest && ev.target.closest('button, a[href], summary')) return;
-    if (ev.ctrlKey || ev.metaKey || ev.altKey) return;
     const span = view.e - view.s, cx = cursorX >= 0 ? cursorX : W / 2;
     let handled = true;
     switch (ev.key) {

@@ -1298,6 +1298,7 @@ function restoreTimelineFilterDraft() {
     renderFilterControls();
 }
 elFtext.addEventListener('keydown', ev => {
+    if (timelineShortcutBlocked(ev)) return;
     ev.stopPropagation();
     if (ev.key === 'Enter') {
         ev.preventDefault();

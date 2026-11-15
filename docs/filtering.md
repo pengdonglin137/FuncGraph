@@ -52,6 +52,19 @@ parameter names still use `slotN`, and missing symbol offsets are not invented.
 
 ## Draft, apply and clear
 
+Input-method confirmation is not a viewer command: composing Enter/Escape,
+legacy IME key code 229, Ctrl/Cmd/Alt combinations and already-consumed keys
+do not navigate Find, apply or discard a filter draft, or close Tools/full screen.
+Find shows **Composing…** and pauses pending search work until composition ends;
+it then searches the committed text without moving the selection. Normal Enter,
+Shift+Enter and Escape keep their documented behavior. This does not change
+regex syntax, recorded names, shared-filter scope or trace data.
+
+输入法组合输入期间，确认/取消候选不会误跳转、应用/丢弃筛选草稿，或关闭 Tools/全屏。
+Find 显示 **Composing…**，暂停未完成查找，文字确认后再搜索，不自动改变所选调用；
+普通 Enter、Shift+Enter、Escape 的行为不变。Ctrl/Cmd/Alt 组合及已经处理过的按键保留原有操作。
+详见 [Timeline 输入与键盘验证](timeline-input.md)。旧 HTML 需要重新生成，无需重新采集。
+
 1. Edit the expression. **Unapplied changes** means these edits are only a draft;
    counts, analysis and the **Applied** expression still describe the active result.
 2. Choose **Apply** or press Enter to submit. Typing alone does not start a
