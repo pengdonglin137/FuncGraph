@@ -198,6 +198,9 @@ class HtmlGenerator:
             tree_css = '    <style id="fgTreeGuides">\n' + read_asset(REPORT_TREE_CSS) + '    </style>\n'
             tree_button = ('<button type="button" class="control-btn btn-guides" id="foldGuidesBtn" '
                            'aria-pressed="true" title="Show or hide call hierarchy guides; folding remains available">Tree guides: on</button>')
+        startup_status = ('<div id="textStartupStatus" class="text-startup-status" role="status" '
+                          'aria-live="polite" hidden>Preparing trace text…</div>') if self._inline_text_startup() else ''
+        startup_script = ('<script>window.fgInlineTextStartup?.start();</script>') if self._inline_text_startup() else ''
         html_str = f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -267,7 +270,9 @@ class HtmlGenerator:
             </div>
         </div>
 
+        {startup_status}
         <div id="textViewport" role="region" aria-label="Trace text">
+        {startup_script}
         <div id="content">
 """
 
@@ -360,8 +365,12 @@ class HtmlGenerator:
     def _early_view_script(self):
         names = ' '.join(view[0] for view in self._views())
         default = 'timeline' if self.timeline_json and self.timeline_json.get('no_text') else 'text'
-        return (f'    <script data-views="{names}" data-default-view="{default}">\n'
+        startup = ' data-inline-text="true"' if self._inline_text_startup() else ''
+        return (f'    <script data-views="{names}" data-default-view="{default}"{startup}>\n'
                 + read_asset(VIEWS_EARLY_JS) + '    </script>\n')
+
+    def _inline_text_startup(self):
+        return not self.omit_text and len(self.parsed_lines) >= 4096
 
     def _views(self):
         """[(name, label, badge, container_id, css, data_id, data, js)] for the enabled views."""

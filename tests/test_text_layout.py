@@ -36,6 +36,21 @@ class InlineTextLayoutTest(unittest.TestCase):
             boundary = Path(cls.kernel.dir) / ('boundary-' + str(count) + '.txt')
             boundary.write_text('# tracer: function_graph\n' + leaves[0] * (count - 1))
             cls.kernel.run(str(boundary), '--timeline', out='boundary-' + str(count) + '.html')
+        cls.kernel.run(str(trace), '--timeline', '--enable-fold', '--filter', '--func-links',
+                       '--report-mode', 'sidecar', out='sidecar')
+        for filename in ('index.html', 'text-only.html'):
+            original = Path(cls.kernel.dir, filename).read_text()
+            marker = '<div class="text-chunk"'
+            boundary = original.index(marker, original.index(marker) + len(marker))
+            paused = original[:boundary] + '<script src="startup-pause.js"></script>' + original[boundary:]
+            Path(cls.kernel.dir, 'paused-' + filename).write_text(paused)
+        original = Path(cls.kernel.dir, 'index.html').read_text()
+        original = original.replace('function fgInitText(mounted = false, model = null, navigation = null, renderer = null) {',
+                                    'function fgInitText(mounted = false, model = null, navigation = null, renderer = null) { return;')
+        Path(cls.kernel.dir, 'startup-fallback.html').write_text(original)
+        original = original.replace('renderer = null) { return;',
+                                    'renderer = null) { throw new Error("startup fixture failure");')
+        Path(cls.kernel.dir, 'startup-error.html').write_text(original)
         cls.server = create_server(Path(cls.kernel.dir))
         cls.addClassCleanup(cls.server.server_close)
         cls.thread = threading.Thread(target=cls.server.serve_forever, kwargs={'poll_interval': 0.02}, daemon=True)
@@ -85,6 +100,92 @@ class InlineTextLayoutTest(unittest.TestCase):
             self.assertAlmostEqual(result['optimized'][dimension], result['full'][dimension], delta=1,
                                    msg=label + ': ' + dimension)
 
+    def test_large_inline_startup_defers_partial_paint_then_restores_every_row(self):
+        for filename, theme, width in (('index.html', 'light', 1500), ('text-only.html', 'dark', 390)):
+            with self.subTest(filename=filename, theme=theme):
+                context = self.browser.new_context(viewport={'width': width, 'height': 900})
+                self.addCleanup(context.close)
+                page = context.new_page()
+                errors, pending = [], []
+                page.on('pageerror', lambda error: errors.append(str(error)))
+                page.add_init_script('localStorage.setItem("theme", ' + repr(theme) + ')')
+                page.route('**/startup-pause.js', lambda route: pending.append(route))
+                page.goto(urljoin(self.server.url, 'paused-' + filename), wait_until='commit')
+                page.wait_for_function('document.querySelectorAll("#content .line-container").length === 512')
+                self.assertEqual(len(pending), 1)
+                self.assertTrue(page.locator('#textStartupStatus').is_visible())
+                self.assertEqual(page.locator('#textViewport').get_attribute('aria-busy'), 'true')
+                self.assertEqual(page.evaluate('getComputedStyle(document.getElementById("content")).contentVisibility'), 'hidden')
+                self.assertIn('root', page.locator('#content .line-container').nth(1).text_content())
+                pending[0].fulfill(status=200, body='')
+                page.wait_for_load_state('load')
+                self.assertEqual(page.locator('#textStartupStatus').count(), 0)
+                self.assertIsNone(page.locator('#textViewport').get_attribute('aria-busy'))
+                self.assertEqual(page.evaluate('typeof fgInlineTextStartup'), 'undefined')
+                self.assertEqual(page.locator('#content .line-container').count(), 4203)
+                self.assertIn(self.argument, page.locator('#L3003').text_content())
+                self.assertIn('root', page.locator('#L4203').text_content())
+                self.compare_layout(page, 'startup complete ' + filename)
+                self.assertEqual(errors, [])
+                context.close()
+
+    def test_startup_fallback_reveals_text_if_initialization_returns_early(self):
+        page = self.open_report(filename='startup-fallback.html')
+        page.wait_for_function('typeof fgInlineTextStartup === "undefined"')
+        self.assertEqual(page.locator('#textStartupStatus').count(), 0)
+        self.assertIsNone(page.locator('#textViewport').get_attribute('aria-busy'))
+        self.assertEqual(page.evaluate('getComputedStyle(document.getElementById("content")).contentVisibility'), 'visible')
+        self.assertEqual(page.locator('#content .line-container').count(), 4203)
+        self.assertTrue(page.locator('#L2').is_visible())
+        self.assertFalse(page.evaluate('fgTextInitialized'))
+
+    def test_startup_keeps_no_javascript_and_unsupported_browser_text_readable(self):
+        context = self.browser.new_context(java_script_enabled=False)
+        self.addCleanup(context.close)
+        page = context.new_page()
+        page.goto(urljoin(self.server.url, 'index.html'), wait_until='load')
+        self.assertFalse(page.locator('#textStartupStatus').is_visible())
+        self.assertTrue(page.locator('#L2').is_visible())
+        self.assertEqual(page.locator('#content .line-container').count(), 4203)
+        page = self.open_report(unsupported='content-visibility: hidden')
+        self.assertEqual(page.evaluate('typeof fgInlineTextStartup'), 'undefined')
+        self.assertFalse(page.locator('#textStartupStatus').is_visible())
+        self.assertTrue(page.locator('#L2').is_visible())
+
+    def test_startup_fallback_reveals_text_after_initializer_error(self):
+        context = self.browser.new_context()
+        self.addCleanup(context.close)
+        page = context.new_page()
+        errors = []
+        page.on('pageerror', lambda error: errors.append(str(error)))
+        page.goto(urljoin(self.server.url, 'startup-error.html'), wait_until='load')
+        page.wait_for_function('typeof fgInlineTextStartup === "undefined"')
+        self.assertEqual(errors, ['startup fixture failure'])
+        self.assertEqual(page.locator('#textStartupStatus').count(), 0)
+        self.assertIsNone(page.locator('#textViewport').get_attribute('aria-busy'))
+        self.assertEqual(page.locator('#content .line-container').count(), 4203)
+        self.assertTrue(page.locator('#L2').is_visible())
+
+    def test_deferred_sidecar_startup_does_not_activate_inline_staging(self):
+        page = self.open_report(filename='sidecar/index.html')
+        self.assertEqual(page.evaluate('typeof fgInlineTextStartup'), 'undefined')
+        self.assertFalse(page.locator('#textStartupStatus').is_visible())
+        page.evaluate('async () => { await fgSwitchView("text"); }')
+        self.assertEqual(page.locator('#content .line-container').count(), 4203)
+        self.assertTrue(page.locator('#L2').is_visible())
+        self.assertEqual(page.evaluate('fgDomTextModels.get(document.getElementById("content")).records.length'), 4203)
+
+    def test_initial_far_anchor_uses_final_geometry_after_startup_staging(self):
+        page = self.open_report(filename='index.html#L3003')
+        page.wait_for_function('highlightedLine?.id === "L3003"')
+        self.assertEqual(page.evaluate('typeof fgInlineTextStartup'), 'undefined')
+        self.assertEqual(page.locator('#textStartupStatus').count(), 0)
+        self.assertTrue(page.evaluate('''() => {
+            const row = document.getElementById('L3003').getBoundingClientRect();
+            return row.top >= document.querySelector('.controls').getBoundingClientRect().bottom && row.bottom <= innerHeight;
+        }'''))
+        self.assertIn(self.argument, page.locator('#L3003').text_content())
+
     def test_large_inline_text_skips_paint_without_dropping_dom_or_model(self):
         for filename in ('index.html', 'text-only.html'):
             with self.subTest(filename=filename):
@@ -114,6 +215,7 @@ class InlineTextLayoutTest(unittest.TestCase):
         for count in (4095, 4096):
             with self.subTest(count=count):
                 page = self.open_report(filename='boundary-' + str(count) + '.html')
+                self.assertEqual(page.locator('script[data-inline-text="true"]').count(), int(count >= 4096))
                 self.assertEqual(page.evaluate('document.getElementById("content").classList.contains("text-layout-auto")'), count >= 4096)
                 self.assertEqual(page.locator('#content .line-container').count(), count)
                 page.close()
@@ -252,6 +354,8 @@ class InlineTextLayoutTest(unittest.TestCase):
         page = self.open_report()
         page.evaluate('lsSet("view", "timeline")')
         page.reload(wait_until='load')
+        self.assertEqual(page.evaluate('typeof fgInlineTextStartup'), 'undefined')
+        self.assertFalse(page.locator('#textStartupStatus').is_visible())
         self.assertEqual(page.evaluate('fgCurrentView()'), 'timeline')
         self.assertGreater(page.evaluate('fgTextLayoutPending.size'), 0)
         self.assertTrue(page.evaluate('''Array.from(document.querySelectorAll('#content > .text-chunk')).every(chunk =>

@@ -664,6 +664,7 @@
             padding-left: 6px;
             border-left: 1px solid var(--border-color);
         }
+        .text-startup-status { padding: 24px 10px; color: var(--text-muted); font-size: 13px; }
         .text-more, #textFilterStatus { display: none; }
         .text-toolbar-options { display: contents; }
         .text-compact .text-more, .text-compact #textFilterStatus:not([hidden]) { display: inline-block; }

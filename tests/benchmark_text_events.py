@@ -9,6 +9,7 @@ import argparse
 import json
 from pathlib import Path
 import threading
+import time
 from urllib.parse import quote, urljoin
 
 from playwright.sync_api import sync_playwright
@@ -31,7 +32,9 @@ def measure(browser, report, timeout, cold_model=False):
         errors = []
         page.on('pageerror', lambda error: errors.append(str(error)))
         page.add_init_script('localStorage.clear()')
+        started = time.monotonic()
         page.goto(urljoin(server.url, quote(path.name)), wait_until='load', timeout=timeout)
+        startup_ms = (time.monotonic() - started) * 1000
         page.evaluate("async () => { await fgSwitchView('text'); }")
         settle(page)
         facts = page.evaluate('''async cold => {
@@ -79,7 +82,8 @@ def measure(browser, report, timeout, cold_model=False):
             }''', dict(visible=visible,cold=cold_model)))
         if errors:
             raise RuntimeError('; '.join(errors))
-        return dict(facts=facts, samples=samples)
+        return dict(facts=facts, samples=samples, startup_ms=startup_ms,
+                    navigation=page.evaluate('performance.getEntriesByType("navigation")[0].toJSON()'))
     finally:
         context.close()
         server.shutdown()

@@ -24,6 +24,11 @@ editable content keep their normal keyboard behavior rather than running Text
 row-navigation shortcuts. Regenerate older reports to receive these fixes.
 See [event visibility verification and performance limits](performance-text-events.md).
 
+Single-file reports with at least 4,096 rows briefly show **Preparing trace text…**
+on initial Text startup instead of repeatedly painting partial Text during parsing.
+All original rows remain; this does not automatically enable windowing or bound
+memory. See [large single-file startup behavior and limits](performance-text-startup.md).
+
 Text keyboard navigation, `#L<n>` anchors and Timeline → Text jumps now share a
 latest-request-wins path. Leaving Text or pressing Escape cancels a pending jump;
 late loads and delayed scrolling cannot pull focus back. Mounted rows still

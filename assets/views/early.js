@@ -28,3 +28,29 @@ document.documentElement.setAttribute('data-theme', currentTheme);
     document.head.appendChild(style);
     initial.style = style;
 })();
+(function () {
+    const script = document.currentScript;
+    if (!script.dataset.inlineText || script.dataset.deferredText ||
+        (window.fgInitialView && window.fgInitialView.name !== 'text') ||
+        !window.CSS?.supports('content-visibility: hidden')) return;
+    const style = document.createElement('style');
+    style.textContent = '#content { content-visibility: hidden; }';
+    document.head.appendChild(style);
+    const startup = window.fgInlineTextStartup = {
+        start() {
+            document.getElementById('textStartupStatus').hidden = false;
+            document.getElementById('textViewport').setAttribute('aria-busy', 'true');
+        },
+        reveal() {
+            style.remove();
+            document.getElementById('textStartupStatus')?.remove();
+        },
+        finish() {
+            style.remove();
+            document.getElementById('textStartupStatus')?.remove();
+            document.getElementById('textViewport')?.removeAttribute('aria-busy');
+            delete window.fgInlineTextStartup;
+        }
+    };
+    window.addEventListener('load', () => { setTimeout(() => startup.finish(), 0); }, { once: true });
+})();

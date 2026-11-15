@@ -121,6 +121,10 @@ in `build/events-lazy-model/initial.log`; no full-report cold-model speedup is
 claimed. The lazy-model regressions verify the removed model construction, not
 that large single-file startup or layout costs have disappeared.
 
+These timeout observations precede the subsequent [staged inline-startup
+change](performance-text-startup.md); they are retained as historical evidence,
+not a claim that the new startup path has the same timeout.
+
 The cold-mode harness was also exercised on the separate published mixed sample
 (1,504 rows, 74 events), using three alternating before/after browser pairs.
 Every old-runtime toggle reported a prepared model; every new-runtime toggle

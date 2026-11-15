@@ -3254,6 +3254,7 @@
             if (!mounted && !renderer && total_lines >= 4096 && window.CSS?.supports('content-visibility: auto') &&
                 CSS.supports('contain-intrinsic-block-size: calc(2 * (max(13px * 1.5 + 4px, 21px) + 2px))') &&
                 CSS.supports('selector(:has(*))')) root.classList.add('text-layout-auto', 'text-layout-measured');
+            window.fgInlineTextStartup?.reveal();
             fgRefreshTextLayout();
             if (renderer && (renderer.model !== model || renderer.navigation !== navigation || renderer.root !== root ||
                 ![4, 5].includes(model.version) || fgData.textChunks()?.count !== total_lines)) throw new Error('Incomplete Text window model');
@@ -3311,6 +3312,7 @@
             Object.keys(foldedBlocks).forEach(foldId => {
                 addFoldSummary(foldId);
             });
+            window.fgInlineTextStartup?.finish();
         }
 
         window.addEventListener('load', function() {
