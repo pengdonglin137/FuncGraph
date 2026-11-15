@@ -301,6 +301,31 @@ class TimelineKeyboardTest(unittest.TestCase):
         self.page.locator('.tl-search').press('Enter')
         self.assertEqual(self.page.evaluate("fgView('timeline').probe().nameOf(fgView('timeline').probe().sel())"), 'mutex_unlock')
 
+    def test_chromium_native_filter_confirmation_keeps_draft_until_explicit_apply(self):
+        helpers.open_timeline_tools(self.page)
+        field = self.page.locator('.tl-ftext')
+        field.focus()
+        self.page.evaluate('''() => {
+            window.nativeFilterKeys = [];
+            document.querySelector('.tl-ftext').addEventListener('keydown', event => {
+                nativeFilterKeys.push({key:event.key,trusted:event.isTrusted,composing:event.isComposing});
+            });
+        }''')
+        session = self.context.new_cdp_session(self.page)
+        self.addCleanup(session.detach)
+        draft = 'func:mutex'
+        session.send('Input.imeSetComposition', dict(text=draft, selectionStart=len(draft), selectionEnd=len(draft)))
+        self.page.keyboard.press('Enter')
+        self.assertEqual(self.page.evaluate('fgFilterState.text'), '')
+        self.assertTrue(self.page.locator('.tl-options').is_visible())
+        self.assertTrue(field.evaluate('field => field === document.activeElement'))
+        self.assertTrue(any(event == dict(key='Enter', trusted=True, composing=True)
+                            for event in self.page.evaluate('nativeFilterKeys')))
+        session.send('Input.insertText', dict(text=draft))
+        self.assertEqual(self.page.evaluate('fgFilterState.text'), '')
+        field.press('Enter')
+        self.page.wait_for_function("() => fgFilterState.text === 'func:mutex' && !fgFilterProgress")
+
     def test_unmodified_find_filter_and_native_buttons_keep_existing_behavior(self):
         self.prepare_find()
         total = self.page.evaluate("fgView('timeline').probe().N")
