@@ -25,6 +25,24 @@ from .util import build_source_url, clean_file_path, escape_html_preserve_spaces
 
 
 TEXT_CHUNK_ROWS = 512
+_UNCLASSIFIED_RETURN = object()
+
+
+def _return_error(line):
+    classified = line.get('ret_errno', _UNCLASSIFIED_RETURN)
+    if classified is not _UNCLASSIFIED_RETURN:
+        return classified if classified in ERROR_CODE_MAP else None
+    value = line.get('ret_value')
+    if not value:
+        return None
+    try:
+        hexadecimal = value.lower().startswith('0x')
+        number = int(value, 16 if hexadecimal else 10)
+        if hexadecimal and number >= 0x8000000000000000:
+            number -= 0x10000000000000000
+        return number if number in ERROR_CODE_MAP else None
+    except ValueError:
+        return None
 
 
 class _Background:
@@ -581,7 +599,6 @@ class HtmlGenerator:
                 cpu = line_data.get('cpu')
                 pid = line_data.get('pid')
                 comm = line_data.get('comm')
-                ret_value = line_data.get('ret_value')
 
                 if cpu is not None:
                     cpu_str = str(cpu)
@@ -596,20 +613,9 @@ class HtmlGenerator:
                 if comm:
                     unique_comms.add(str(comm))
 
-                if ret_value:
-                    try:
-                        if ret_value.startswith('0x') or ret_value.startswith('0X'):
-                            ret_int = int(ret_value, 16)
-                            if ret_int >= 0x8000000000000000:
-                                converted = ret_int - 0x10000000000000000
-                                if converted < 0:
-                                    ret_int = converted
-                        else:
-                            ret_int = int(ret_value)
-                        if ret_int in ERROR_CODE_MAP:
-                            unique_error_codes.add(ret_int)
-                    except ValueError:
-                        pass
+                ret_errno = _return_error(line_data)
+                if ret_errno is not None:
+                    unique_error_codes.add(ret_errno)
 
                 if not has_params and line_data.get('params'):
                     has_params = True
@@ -1475,19 +1481,11 @@ class HtmlGenerator:
                 attributes['duration-raw'] = duration_raw
                 prefix = duration_raw.lstrip()[:1]
                 attributes['heat'] = {'$': '7', '@': '6', '*': '5', '#': '4', '!': '3', '+': '2'}.get(prefix, '1')
-        if ret_value:
-            try:
-                if ret_value.lower() in ('true', 'false'):
-                    attributes['ret-bool'] = ret_value.lower()
-                else:
-                    hexadecimal = ret_value.lower().startswith('0x')
-                    number = int(ret_value, 16 if hexadecimal else 10)
-                    if hexadecimal and number >= 0x8000000000000000:
-                        number -= 0x10000000000000000
-                    if number in ERROR_CODE_MAP:
-                        attributes['ret'] = str(number)
-            except ValueError:
-                pass
+        if ret_value and ret_value.lower() in ('true', 'false'):
+            attributes['ret-bool'] = ret_value.lower()
+        ret_errno = _return_error(line)
+        if ret_errno is not None:
+            attributes['ret'] = str(ret_errno)
         for field, attribute in [('irqs_off', 'irqs'), ('need_resched', 'resched'),
                                  ('hardirq_softirq', 'hirq'), ('preempt_depth', 'preempt')]:
             if line.get(field) is not None:

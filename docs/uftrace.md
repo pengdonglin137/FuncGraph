@@ -368,6 +368,13 @@ kernel names separately, even when their symbols have identical spelling.
 - **Filtering:** with `--filter`, use `space:user` or `space:kernel` in Text
   or Timeline's shared Filter. Sidecar reports can apply this filter before
   Text loads. CLI tree pre-filters are not supported on uftrace streams yet.
+  `ret:all` or `ret:="-22"` uses Timeline's known kernel errno classification,
+  requiring matching BTF; user negatives, untyped raw bits and unsigned returns
+  are not guessed to be kernel errors. Text fold summaries retain recorded scalar
+  returns, including `0` and `false`, with BTF width correction for kernel values.
+  Void returns and raw-byte-only payloads do not invent scalars. If return records
+  were saved, regenerating older HTML is sufficient; rebuilding cannot recover
+  returns that were never recorded.
 - **Uncertainty:** missing entries/exits and losses are marked, not filled in
   as measured calls. CPU for user calls remains unknown. User values appear
   when uftrace recorded supported scalar argument/return specifications;

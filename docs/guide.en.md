@@ -646,6 +646,11 @@ inside the quotes. Task names retain commas, parentheses, quotes, spaces and
 `@`. Multiple choices use OR; **ret → all** still generates `ret:all`.
 Existing handwritten regex and numeric comparisons keep their semantics.
 
+For mixed and single-space uftrace reports, `ret` uses Timeline's known kernel
+errno classification and requires matching BTF; user negatives are not kernel
+errors. Fold summaries still retain recorded scalars, including `0` and `false`,
+without inventing values from raw return bytes or void returns. See [uftrace](uftrace.md).
+
 | Field | Matches | Examples |
 |---|---|---|
 | `cpu` | CPU number (regex) | `cpu:0`, `cpu:0\|1` |

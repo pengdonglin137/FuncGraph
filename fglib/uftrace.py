@@ -30,15 +30,16 @@ class UftraceInputError(ValueError):
 
 
 class UftraceLine(FtraceLine):
-    __slots__ = ('space', 'boundary', 'source', 'source_kind', 'record_type')
+    __slots__ = ('space', 'boundary', 'source', 'source_kind', 'record_type', 'ret_errno')
 
-    def __init__(self, *, record_type, space=None, boundary=False, source=None, source_kind=None, **kwargs):
+    def __init__(self, *, record_type, space=None, boundary=False, source=None, source_kind=None, ret_errno=None, **kwargs):
         super().__init__(**kwargs)
         self.space = space
         self.boundary = boundary
         self.source = source
         self.source_kind = source_kind
         self.record_type = record_type
+        self.ret_errno = ret_errno
 
 
 def _uint(value, maximum=(1 << 64) - 1):
@@ -575,6 +576,7 @@ class UftraceTimeline(TimelineBuilder):
         lines = [UftraceLine(raw_line=header, record_type='metadata'), FtraceLine(raw_line='# timestamp | CPU | task | space | call / event')]
         if not include_text:
             return lines
+        return_errors = {row[0]: row[1] for row in self.err_rows}
         fold_ids, ancestors, active_calls = {}, {}, {}
         positions = tuple(self.position_ids)
         for lineno, record in enumerate(self.records, 3):
@@ -585,7 +587,7 @@ class UftraceTimeline(TimelineBuilder):
             prefix = f'{seconds:>7}.{nanos:09d} | {str(cpu) if cpu is not None else "–":>3} | {str(tid) if tid is not None else "–":>7} | {tag} |  '
             stack_key = (space, tid)
             index = self.record_slices.get(lineno)
-            name = args = fold_id = fold_type = depth = duration = source = source_kind = comm = func_info = None
+            name = args = fold_id = fold_type = depth = duration = source = source_kind = comm = func_info = retval = None
             path = ''
             boundary = False
             if index is not None:
@@ -629,7 +631,8 @@ class UftraceTimeline(TimelineBuilder):
                     if space == 'user':
                         detail = self.user_details[self.s_line[index]]
                         if 'retval' in detail:
-                            returned = ' · return ' + detail['retval']
+                            retval = detail['retval']
+                            returned = ' · return ' + retval
                         elif 'return_payload' in detail:
                             returned = ' · raw return bytes: ' + detail['return_payload']
                     body = '} /* ' + name + elapsed + returned + ' */'
@@ -671,6 +674,7 @@ class UftraceTimeline(TimelineBuilder):
             lines.append(UftraceLine(raw_line=prefix + body, raw_func_name=name if kind == 'entry' else None,
                                      expandable=bool(func_info), func_info=func_info,
                                      display_func_name=name, cpu=cpu, pid=tid, comm=comm, params=args,
+                                     ret_value=retval, ret_errno=return_errors.get(index) if kind == 'exit' else None,
                                      duration=duration, sort_duration=duration, fold_id=fold_id, fold_type=fold_type,
                                      fold_ancestors=path, call_depth=depth, space=space, boundary=boundary, source=source,
                                      source_kind=source_kind, record_type=kind,
