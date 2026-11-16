@@ -99,3 +99,43 @@ results plus unchanged payloads. Its default Timeline may already be initialized
 before Compare opens; the no-Timeline-initialization assertion belongs to the
 Compare-only fixture, not that asynchronous default-view race. Polling uses
 function predicates under the viewer's existing CSP without adding `unsafe-eval`.
+
+The expanded contextual Compare help also exposes a short-window stacking
+boundary: at 1500 × 400 and 844 × 390, its close button can overlap the sticky
+tab bar. The shared Text/Compare help now uses the existing foreground-overlay
+layer above the tabs, preserving its size, scroll behavior, colors and focus
+return. `tests/test_help.py` verifies actual hit targets after scrolling in all
+three views, both themes and desktop/touch orientations; no content is removed
+to make the dialog fit.
+
+## Final verification
+
+The final source runs pass **609 distinct cases without skips**: 458 broad
+report/browser/search cases, 69 filter/saved-view cases and 82 help, keyboard,
+detail, overlay and resize cases. The 21-case focused Compare/script run overlaps
+those totals and is not additive. These are scoped UI/report regressions, not
+a rerun of every unrelated parser or native backend suite.
+
+The kernel and mixed public HTML examples reuse their saved captures and the
+matching source/image at `7475ea8b58616b33c04afb976cf0fbaad9dd63fb` (`v7.4-rc2`).
+They retain all **739 / 1,504 Text rows**, **485 / 714 calls** and **10 / 74 event
+rows**, including complete original row attributes/text, source pools/maps,
+Timeline identity and Timeline payloads. Only regenerated `stats.build_time` is
+excluded from the equality comparison. No recapture or evidence removal is used.
+All seven regenerated public/guide PNGs remain byte-identical; the new temporary
+Compare progress and help states are reviewed separately in both themes.
+
+The portable wheel and source archive build successfully. Isolated installed
+smoke runs 14 cases: **10 pass, 4 optional native/raw/extras cases are skipped**;
+this does not certify a native-enabled release build. The actual installed CLI
+report also passes complete Compare regex/CSV, composition reentry, Timeline
+query and Text event hide/restore checks without payload mutation or page errors.
+Exact archive-byte checks cover the shared matcher, view/CSS/Python sources,
+guides and new tests. The extracted Timeline worker matches its original source.
+
+Logs, raw observations and exact artifact checks are retained locally under
+`build/compare-regex/`: `regressions-verified.log`, `filter-regressions.log`,
+`interaction-regressions-final.log`, `focused-final.log`, `test-inventory.json`,
+`sample-fidelity.json`, `screenshot-fidelity.json`, `package-content.json`,
+`installed-smoke.log`, `rendered-reports.json` and `help-before/after.json`.
+Earlier failed/aborted probes are retained too; they are not the final pass logs.

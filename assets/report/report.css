@@ -1109,7 +1109,7 @@
             padding: 8px 12px;
             font-size: 12px;
             color: var(--text-color);
-            z-index: 1000;
+            z-index: 3000;
             max-width: 300px;
             max-height: calc(100vh - 40px);
             box-sizing: border-box;

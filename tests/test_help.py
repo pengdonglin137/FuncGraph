@@ -95,6 +95,7 @@ class HelpLifecycleTest(unittest.TestCase):
                         return {bounds:[bounds.left,bounds.right,bounds.top,bounds.bottom],
                             closeInside:close.left>=bounds.left && close.right<=bounds.right && close.top>=bounds.top && close.bottom<=bounds.bottom,
                             reachable:!!hit?.closest('[aria-label="Close help"]'),
+                            hit:hit?.className,
                             opacity:getComputedStyle(panel).opacity};
                     }''')
                     self.assertTrue(facts['closeInside'], facts)
