@@ -1059,6 +1059,7 @@ class TextWindowTest(unittest.TestCase):
             window.pendingRemoteFilter=applyFilter();
         }''')
         self.page.wait_for_function('() => windowPaintGates.length === 1')
+        self.assertIn('Preparing filtered Text rows', self.page.locator('.fg-window-notice [role=status]').inner_text())
         facts = self.page.evaluate('''async () => {
             const before={sameState:fgFilterState===previousWindowFilter,
                 sameNumbers:JSON.stringify(fgTextWindow.visibleNumbers)===JSON.stringify(previousWindowNumbers),
@@ -1078,6 +1079,59 @@ class TextWindowTest(unittest.TestCase):
         self.assertEqual(facts, dict(sameState=True, sameNumbers=True, sameCount=True, sameRows=True,
                                     pending=True, result=None, aborted=True, retained=True,
                                     navigated=True, pendingAfter=None))
+        self.assertNotIn('Preparing', self.page.locator('.fg-window-notice [role=status]').inner_text())
+
+    def test_matching_progress_is_visible_and_cancel_restores_the_previous_notice(self):
+        self.open_report()
+        self.page.evaluate('''() => {
+            window.previousWindowFilter=fgFilterState;
+            window.matchingFilterGates=[];
+            const original=fgIndexedFilter;
+            window.restoreIndexedWindowFilter=()=>{window.fgIndexedFilter=original};
+            window.fgIndexedFilter=(data,text,signal,progress)=>new Promise((resolve,reject)=>{
+                signal.addEventListener('abort',()=>reject(new DOMException('Test matching cancelled','AbortError')),{once:true});
+                matchingFilterGates.push({signal,progress});
+            });
+            document.getElementById('filterInput').value='func:leaf';
+            window.pendingMatchingFilter=applyFilter();
+        }''')
+        self.page.wait_for_function('() => matchingFilterGates.length === 1')
+        self.assertIn('Preparing full-trace filter', self.page.locator('.fg-window-notice [role=status]').inner_text())
+        facts = self.page.evaluate('''async () => {
+            fgCancelPendingFilter();const result=await pendingMatchingFilter;
+            matchingFilterGates[0].progress('STALE MATCHING');restoreIndexedWindowFilter();
+            return {result,aborted:matchingFilterGates[0].signal.aborted,
+                retained:fgFilterState===previousWindowFilter,pending:fgFilterProgress,
+                notice:document.querySelector('.fg-window-notice [role=status]').textContent};
+        }''')
+        self.assertIsNone(facts['result'])
+        self.assertTrue(facts['aborted'])
+        self.assertTrue(facts['retained'])
+        self.assertIsNone(facts['pending'])
+        self.assertNotIn('Preparing', facts['notice'])
+        self.assertNotIn('STALE', facts['notice'])
+
+    def test_same_generation_filter_handoff_aborts_the_previous_controller(self):
+        self.open_gated_duration_report()
+        self.page.evaluate('''() => {
+            window.previousWindowFilter=fgFilterState;
+            window.previousInternalFilter=fgApplyWindowFilter('func:leaf sort:desc',fgFilterGeneration);
+        }''')
+        self.page.wait_for_function('() => durationGates.length === 1')
+        self.page.evaluate('''() => {
+            window.nextInternalFilter=fgApplyWindowFilter('params:^arg=24000$ sort:asc',fgFilterGeneration);
+        }''')
+        self.page.wait_for_function('() => durationGates.length === 2')
+        facts = self.page.evaluate('''async () => {
+            const aborted=durationGates[0].signal.aborted,retained=fgFilterState===previousWindowFilter;
+            await durationGates[0].release();const old=await previousInternalFilter;
+            const pending=fgFilterProgress?.text==='params:^arg=24000$ sort:asc' && !fgFilterProgress.error;
+            await durationGates[1].release();const applied=await nextInternalFilter;
+            return {aborted,retained,old,pending,applied,query:fgFilterState.text,
+                matches:fgFilterState.lines.size,sort:fgTextSort,finished:fgFilterProgress===null};
+        }''')
+        self.assertEqual(facts, dict(aborted=True, retained=True, old=None, pending=True, applied=True,
+                                    query='params:^arg=24000$ sort:asc', matches=1, sort='asc', finished=True))
 
     def test_remote_filter_failure_retains_exact_state_and_retry_commits_once(self):
         self.open_gated_duration_report()
@@ -1158,6 +1212,41 @@ class TextWindowTest(unittest.TestCase):
         }''')
         self.assertEqual(facts, dict(aborted=True, result=None, retained=True, sort='',
                                     pending=None, navigated=True))
+
+    def test_unchanged_window_geometry_reuses_positions_without_a_full_map_copy(self):
+        self.open_gated_duration_report()
+        facts = self.page.evaluate('''async () => {
+            const NativeMap=Map, maps=[], numbers=fgTextWindow.visibleNumbers.slice();
+            window.Map=new Proxy(NativeMap,{construct(target,parameters){
+                const instance=Reflect.construct(target,parameters);maps.push(instance);return instance;
+            }});
+            try {
+                await fgTextWindow.rebuild();await fgTextWindow.rebuild();
+                return {complete:JSON.stringify(fgTextWindow.visibleNumbers)===JSON.stringify(numbers),
+                    copied:maps.some(instance=>instance.size===fgTextWindow.model.records.length),
+                    count:fgTextNavigation.visibleCount===numbers.length,
+                    navigated:(await fgTextWindow.ensureLine(20000)).id==='L20000'};
+            } finally {window.Map=NativeMap}
+        }''')
+        self.assertEqual(facts, dict(complete=True, copied=False, count=True, navigated=True))
+
+    def test_equal_sized_filters_with_different_lines_invalidate_staged_positions(self):
+        self.open_gated_duration_report()
+        facts = self.page.evaluate('''async () => {
+            const results=[];
+            for (const argument of [24000,23000,24000]) {
+                document.getElementById('filterInput').value='params:^arg='+argument+'$';
+                await applyFilter();
+                const [number]=fgFilterState.lines;
+                const row=await fgTextWindow.ensureLine(number);
+                results.push(fgFilterState.lines.size===1 && fgTextNavigation.visibleCount===1 &&
+                    fgTextWindow.visibleNumbers.length===1 && fgTextWindow.visibleNumbers[0]===number &&
+                    row.isConnected && row.dataset.params==='arg='+argument);
+            }
+            await clearFilter();
+            return {results,restored:fgTextNavigation.visibleCount===fgTextWindow.model.records.length};
+        }''')
+        self.assertEqual(facts, dict(results=[True, True, True], restored=True))
 
     def test_cooperative_duration_filter_failure_rolls_back_previous_complete_result(self):
         self.open_gated_duration_report()

@@ -30,6 +30,9 @@ publication and explicit cancellation coherent.
 - Keep the last complete applied expression, matching line set, navigation,
   visible-row sequence and mounted rows while the new result is prepared.
   Existing pending feedback remains active through sorting and block loading.
+  The existing Text status notice reports matching and row preparation as well,
+  not only a callback in Timeline. Cancelling clears that operation's notice;
+  late progress cannot restore it or clear a newer operation's feedback.
 - Prepare candidate geometry separately. Load and validate every required
   block before synchronously replacing the visible window and its navigation.
   Only then publish the complete shared filter/counts. Source suppression and
@@ -38,12 +41,16 @@ publication and explicit cancellation coherent.
   filter, explicit cancellation, or leaving Text cannot let a late candidate
   overwrite the last complete result. Cancellation leaves the old window
   usable for scrolling/navigation; it is not reported as zero matches.
+  Internal handoffs also abort the previous controller, even when they share
+  a generation. Only the current controller may publish progress or completion.
 - Preparation failure retains the same applied-state object and old row nodes,
   shows the existing error feedback, and permits **Apply** to retry. A retry
   publishes its complete result once. A previously empty result remains empty
   after cancellation, rather than revealing unfiltered rows.
 
 继续使用已有的等待 / 错误反馈，不增加整排按钮。准备期间仍展示上一份完整结果；
+匹配和行准备进度直接显示在 Text 现有提示区。取消后清除旧提示，迟到进度不会
+重新显示，也不会清除后续操作的状态；内部同代请求交接也取消前一个控制器。
 全部排序、块加载及校验完成后，才统一切换窗口、导航和共享筛选状态。取消会传给
 后续工作，失败不会清空旧结果；可重新 Apply。离开 Text 时未完成的筛选不会被
 误当成已经应用，返回后仍可阅读上一份完整结果。
@@ -62,8 +69,12 @@ matching, stable duration ordering and resource cache policies remain.
 
 Staging temporarily retains both old and candidate geometry: maps, sequences,
 visibility/height arrays and navigation state still consume memory in addition
-to the full trace model. This is not a bounded-memory implementation. Candidate
-construction, navigation validation, final DOM projection and individual native
+to the full trace model. An unchanged complete sequence reuses its read-only
+line-position map after comparing every item and the length. Equal-sized
+sequences with different original line IDs never share that map. Matching and
+visibility results are not cached by this shortcut. This is not a bounded-memory
+implementation. Candidate construction, navigation validation, final DOM
+projection and individual native
 regex tests still have synchronous costs. Cancellation uses cooperative/native
 abort handling; it does not interrupt arbitrary synchronous JavaScript or
 promise a hard per-frame deadline. No universal throughput or startup speedup
@@ -80,6 +91,51 @@ to ranking, late completion/progress, delayed remote blocks, failure/retry,
 zero-match cancellation and Text/Timeline re-entry. Checks include strict
 applied-state identity, complete navigation/visible-number sequences, original
 mounted-node retention, pending/error state and usable subsequent navigation.
+Additional checks ensure identical rebuilds do not copy a full position map,
+while equally sized filters selecting different lines invalidate it correctly.
+Matching/remote-load notices, cancellation cleanup, stale progress and
+same-generation controller handoffs have separate browser checks.
 The existing mixed/source/folding/task-order/Full Text/copy/theme/touch tests
 remain in that suite. A baseline failing reproduction and final verification
 artifacts are retained locally in `build/windowed-filter-atomic/`.
+
+## Complete real-trace check
+
+The 2026-11-16 check uses the existing complete Pi4 recording: **371,997 records**,
+53,711,530 input bytes, SHA-256
+`b2375370c5bafba8de3bea2cf6bd8fff67e2435a71be2505a35cc9be72411ae7`.
+No DWARF/source binary was supplied, so this report has no expandable source
+panels; source-rich behavior is covered separately by browser regressions.
+Its version-5 Text index is **177,057,621 bytes**, SHA-256
+`2ec5cd334585dc551792d4c2f285d13af8eb0d87b2831a9aa96f07ddc595285b`.
+
+Three alternating before/after pairs use fresh Chromium 145.0.7632.6 contexts,
+a 1440 × 900 viewport, HTTP `fgview` and explicit `?text=windowed`. Each pair
+differs only in `window.js`; the baseline is `740c110dd18a`. All **94** data
+resources are exact hard-linked files, not truncated copies. The test performs
+a warm complete rebuild, applies `func:mutex` over the full model and clears
+the filter. The result contains **772** matching rows; at most 160 units mount.
+
+| Warm operation, median of three | Before | After |
+| --- | ---: | ---: |
+| Complete unchanged window rebuild | 47.0 ms | 36.0 ms |
+| Full-index filter through row commit | 619.5 ms | 599.3 ms |
+
+These are warm API intervals, not cold startup, physical presentation or an
+input-latency guarantee. Initial download/model preparation and full-result
+hashing are outside timing; browser/server caches are not forced cold. No
+tests or builds run concurrently. An earlier staging-only implementation
+raised warm rebuild from 47.7 to 52.8 ms; complete-sequence position-map reuse
+removed that observed overhead. A separate intermediate run measured total
+filter time increasing from 617.8 to 632.3 ms, so the final small improvement
+must not be generalized into a universal filter speedup.
+
+Every complete original and filtered navigation/result signature agrees across
+all six contexts. Full model-row hashes, including every retained field, agree
+before and after cancellation exercises. Gated ranking and remote-block checks
+reproduce premature publication and late completion in the baseline; the final
+runtime retains the previous state/rows, keeps pending feedback, forwards abort
+and returns no applied result after cancellation. Full raw observations,
+resource hashes and source identities are in `paired.json` and
+`resource-identities.json` under the local artifact directory above. These are
+correctness and local timing evidence, not native capture/release certification.

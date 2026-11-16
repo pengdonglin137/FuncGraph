@@ -53,6 +53,8 @@ New chunked sidecar reports now offer **experimental windowed Text**: use the
 Windowed filters keep the last complete result and pending feedback through
 sorting and remote-block validation. Cancellation stops subsequent rebuilding;
 late replies cannot replace the old window, and failure permits Apply to retry.
+Matching and row-preparation progress appear in the existing Text status notice;
+cancellation clears stale feedback without adding toolbar controls.
 See [filter preparation and cancellation](windowed-filter-transactions.md).
 It mounts at most 160 trace rows while retaining complete filter/fold/order metadata.
 In task order, a caption below the toolbar preserves the viewport's current task

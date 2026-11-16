@@ -15,19 +15,27 @@ function fgRefreshTextWindow() {
 
 async function fgApplyWindowFilter(text, generation) {
     const renderer = fgTextWindow;
+    fgFilterController?.abort();
     const controller = fgFilterController = new AbortController();
     const previous = { state: window.fgFilterState, sort: fgTextSort, graph: _graphFoldIds,
         anchor: renderer.anchor(), suppressed: new Set(renderer.suppressedSources) };
     let committed = false;
+    const progress = message => {
+        if (generation !== fgFilterGeneration || fgFilterController !== controller || controller.signal.aborted) return;
+        fgSetFilterProgress({ text, message, error: false });
+        renderer.reportFilterProgress(message);
+    };
+    const cancelled = () => {
+        if (renderer === fgTextWindow && fgFilterController === controller) renderer.reportFilterProgress('');
+    };
+    controller.signal.addEventListener('abort', cancelled, { once: true });
     renderer.reportFilterError('');
     updateFilterTags(text);
-    fgSetFilterProgress({ text, error: false, message: 'Preparing full-trace filter… Previous result retained.' });
+    progress('Preparing full-trace filter… Previous result retained.');
     try {
-        const result = await fgIndexedFilter(fgData.read('fgTextIndex'), text, controller.signal, message => {
-            if (generation === fgFilterGeneration) fgSetFilterProgress({ text, message, error: false });
-        });
-        if (controller.signal.aborted || generation !== fgFilterGeneration || renderer !== fgTextWindow) return null;
-        fgSetFilterProgress({ text, error: false, message: 'Preparing filtered Text rows… Previous result retained.' });
+        const result = await fgIndexedFilter(fgData.read('fgTextIndex'), text, controller.signal, progress);
+        if (controller.signal.aborted || generation !== fgFilterGeneration || fgFilterController !== controller || renderer !== fgTextWindow) return null;
+        progress('Preparing filtered Text rows… Previous result retained.');
         await renderer.rebuild(previous.anchor, {
             signal: controller.signal, filter: result, resetHeights: true,
             commit() {
@@ -40,14 +48,14 @@ async function fgApplyWindowFilter(text, generation) {
                 committed = true;
             }
         });
-        if (controller.signal.aborted || generation !== fgFilterGeneration || renderer !== fgTextWindow) return null;
+        if (controller.signal.aborted || generation !== fgFilterGeneration || fgFilterController !== controller || renderer !== fgTextWindow) return null;
         window.fgFilterProgress = null;
         fgNotifyFilter(result.text, result.lines);
         fgShowFilterCount(result.visible, result.total);
         return true;
     } catch (error) {
-        if (generation !== fgFilterGeneration) return null;
-        if (error.name === 'AbortError') { fgSetFilterProgress(null); return null; }
+        if (generation !== fgFilterGeneration || fgFilterController !== controller) return null;
+        if (error.name === 'AbortError') { renderer.reportFilterProgress(''); fgSetFilterProgress(null); return null; }
         if (committed) {
             fgTextSort = previous.sort; _graphFoldIds = previous.graph;
             fgNotifyFilter(previous.state.text, previous.state.lines);
@@ -60,7 +68,10 @@ async function fgApplyWindowFilter(text, generation) {
         fgSetFilterProgress({ text, error: true, message: 'Filter not applied: ' + error.message });
         renderer.reportFilterError('Filter not applied: ' + error.message + '. Previous result retained; Apply again to retry.');
         return false;
-    } finally { if (fgFilterController === controller) fgFilterController = null; }
+    } finally {
+        controller.signal.removeEventListener('abort', cancelled);
+        if (fgFilterController === controller) fgFilterController = null;
+    }
 }
 
 function* fgWindowedTextSteps() {
@@ -383,7 +394,7 @@ function fgCreateTextWindow(model, navigation, root) {
             const style = getComputedStyle(root);
             const estimate = Math.max(21, parseFloat(style.getPropertyValue('--fg-text-font-size')) * 1.5 +
                 2 * parseFloat(style.getPropertyValue('--fg-text-pad-y')));
-            const prepared = { positions: new Map(), sequence: [], taskGroups: [], sizes: [],
+            const prepared = { sequence: [], taskGroups: [], sizes: [],
                 plan: candidate, rankedOrder: ranked, order, visibility, mode, direction,
                 resetHeights: options.resetHeights };
             const boundaries = direction ? [] : candidate.boundaries;
@@ -409,8 +420,15 @@ function fgCreateTextWindow(model, navigation, root) {
                     }
                     pendingBoundaries.length = 0;
                 }
-                prepared.positions.set(number, prepared.sequence.length); prepared.sequence.push(number);
+                prepared.sequence.push(number);
                 prepared.sizes.push(options.resetHeights ? estimate : heights[ordinal] || estimate);
+            }
+            const sameSequence = prepared.sequence.length === sequence.length &&
+                prepared.sequence.every((item, index) => item === sequence[index]);
+            prepared.positions = sameSequence ? positions : new Map();
+            if (!sameSequence) for (let index = 0; index < prepared.sequence.length; index++) {
+                const number = prepared.sequence[index];
+                if (typeof number === 'number') prepared.positions.set(number, index);
             }
             prepared.tree = new Float64Array(prepared.sequence.length + 1);
             for (let index = 1; index < prepared.tree.length; index++) {
@@ -574,6 +592,7 @@ function fgCreateTextWindow(model, navigation, root) {
     showStatus();
     return { model, navigation, root, rebuild, ensureLine, fullText, resize, dispose, anchor, suppressedSources,
         reportFilterError(message) { filterError = message; showStatus(); },
+        reportFilterProgress(message) { showStatus(message); },
         invalidateHeights() { heights.fill(0); },
         suspend() { suspended = true; context.hidden = true; controller?.abort(); rebuildController?.abort(); fullController?.abort(); },
         get visibleNumbers() { return sequence.filter(item => typeof item === 'number'); },
