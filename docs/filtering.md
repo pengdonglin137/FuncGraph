@@ -2,6 +2,15 @@
 
 ## Find or filter?
 
+The shared expression filter reuses each condition's compiled native regex,
+including its existing invalid-pattern fallback. It still tests every complete
+record and preserves literal/numeric semantics; it does not gain Find's Worker
+isolation. See [full-index measurements and limits](performance-filter-matchers.md).
+
+共享表达式筛选按条件复用正则编译及原有的非法表达式回退，仍逐条匹配完整记录，
+字面值和数值比较不变；这不等于具备 Find 的 Worker 隔离。
+见[完整索引实测及边界](performance-filter-matchers.md)。
+
 Tools and compact Notes stay inside short or landscape viewports, opening upward
 when needed and scrolling internally. No controls are removed or reduced to make
 them fit. Placement, keyboard behavior and validation boundaries are documented

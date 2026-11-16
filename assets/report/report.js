@@ -1110,6 +1110,17 @@
             return { ast, sortDir };
         }
 
+        const fgFilterMatchers = new WeakMap();
+        function fgFilterRegex(condition) {
+            const cached = fgFilterMatchers.get(condition);
+            if (cached && cached.pattern === condition.value) return cached.regex;
+            let regex = null;
+            try { regex = new RegExp(condition.value, 'i'); }
+            catch (error) {}
+            fgFilterMatchers.set(condition, { pattern: condition.value, regex });
+            return regex;
+        }
+
         // Evaluate a single condition against a line element
         function evalCondition(line, cond, graphSets = _graphFoldIds) {
             if (!cond || cond.type !== 'COND') return true;
@@ -1134,7 +1145,10 @@
                 const funcAttr = line.getAttribute('data-func');
                 if (!funcAttr) return false;
                 if (cond.literal) return !cond.invalid && (line.getAttribute('data-raw-func') || funcAttr) === value;
-                try { return new RegExp(value, 'i').test(funcAttr); }
+                try {
+                    const regex = fgFilterRegex(cond);
+                    return regex ? regex.test(funcAttr) : funcAttr.includes(value);
+                }
                 catch(e) { return funcAttr.includes(value); }
             }
 
@@ -1231,7 +1245,8 @@
             if (field === 'ret') {
                 // Try matching numeric value
                 try {
-                    const regex = new RegExp(value, 'i');
+                    const regex = fgFilterRegex(cond);
+                    if (!regex) return attrVal === value;
                     if (regex.test(attrVal)) return true;
                     // Also try matching error code name from raw line
                     const rawLine = line.querySelector('.line-content')?.textContent || '';
@@ -1249,7 +1264,8 @@
                 const paramsMatch = rawLine.match(/\(([^)]*)\)/);
                 if (paramsMatch) {
                     try {
-                        return new RegExp(value, 'i').test(paramsMatch[1]);
+                        const regex = fgFilterRegex(cond);
+                        return regex ? regex.test(paramsMatch[1]) : paramsMatch[1].includes(value);
                     } catch (e) {
                         return paramsMatch[1].includes(value);
                     }
@@ -1259,7 +1275,8 @@
 
             // General regex match
             try {
-                return new RegExp(value, 'i').test(attrVal);
+                const regex = fgFilterRegex(cond);
+                return regex ? regex.test(attrVal) : attrVal === value;
             } catch (e) {
                 return attrVal === value;
             }

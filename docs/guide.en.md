@@ -683,6 +683,12 @@ inside the quotes. Task names retain commas, parentheses, quotes, spaces and
 `@`. Multiple choices use OR; **ret → all** still generates `ret:all`.
 Existing handwritten regex and numeric comparisons keep their semantics.
 
+Shared Text/Timeline expressions compile each reached regex condition once,
+including invalid-pattern fallback, rather than once per record. Complete
+matches and existing literal/numeric behavior stay unchanged; one slow native
+regex can still block. Regenerate old HTML; see
+[full-index measurements and limits](performance-filter-matchers.md).
+
 For mixed and single-space uftrace reports, `ret` uses Timeline's known kernel
 errno classification and requires matching BTF; user negatives are not kernel
 errors. Fold summaries still retain recorded scalars, including `0` and `false`,

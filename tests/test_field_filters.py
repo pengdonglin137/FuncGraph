@@ -117,7 +117,7 @@ class LiteralFieldFilterTest(unittest.TestCase):
                 for (let index=0; index<1000; index++) assert.equal(evalExpr(row, literal), true);
                 assert.equal(compiled, 0);
                 for (let index=0; index<1000; index++) assert.equal(evalExpr(row, regex), true);
-                assert.equal(compiled, 1000);
+                assert.equal(compiled, 1);
             } finally { globalThis.RegExp=original; }
         ''')
 
@@ -195,7 +195,7 @@ class ExactFieldBrowserTest(unittest.TestCase):
             raise unittest.SkipTest(str(error))
         cls.addClassCleanup(cls.browser.close)
 
-    def open_report(self, filename='index.html', touch=False, theme='light'):
+    def open_report(self, filename='index.html', touch=False, theme='light', view='text'):
         context = self.browser.new_context(viewport=dict(width=390 if touch else 1400, height=900),
                                            has_touch=touch, is_mobile=touch)
         self.addCleanup(context.close)
@@ -205,11 +205,11 @@ class ExactFieldBrowserTest(unittest.TestCase):
         page.on('pageerror', lambda error: errors.append(str(error)))
         self.addCleanup(self.assertEqual, errors, [])
         page.goto(urljoin(self.server.url, filename), wait_until='load')
-        page.evaluate('''async theme => {
+        page.evaluate('''async ({theme, view}) => {
             document.documentElement.dataset.theme = theme;
-            if (typeof fgSwitchView === 'function') await fgSwitchView('text');
-        }''', theme)
-        if not page.locator('#filterBox').is_visible():
+            if (typeof fgSwitchView === 'function') await fgSwitchView(view);
+        }''', dict(theme=theme, view=view))
+        if view == 'text' and not page.locator('#filterBox').is_visible():
             page.locator('#textFilterToggle').press('Enter')
         return page
 
@@ -296,6 +296,68 @@ class ExactFieldBrowserTest(unittest.TestCase):
                 self.assertTrue(pids)
                 self.assertEqual(set(pids), {7})
                 self.assertEqual(page.evaluate("JSON.stringify(fgData.read('tlData'))"), before)
+
+    def test_regex_reuse_keeps_complete_results_across_edits_and_text_modes(self):
+        for filename in ('plain.html', 'index.html', 'sidecar/index.html',
+                         'sidecar/index.html?text=windowed'):
+            with self.subTest(filename=filename):
+                page = self.open_report(filename)
+                original = page.evaluate('''() => Array.from(document.querySelectorAll(
+                    '#content .line-container'), row => [row.dataset.lineNumber, row.textContent])''')
+                for query, expected in [('comm:^worker', sorted(NAMES[:3])),
+                                        ('comm:[', []), ('comm:worker', sorted(NAMES[:3] + NAMES[4:6])),
+                                        ('comm:^中文', ['中文🙂'])]:
+                    page.evaluate('''query => {
+                        const NativeRegExp = RegExp;
+                        window.fieldRegexCompilations = [];
+                        window.RegExp = new Proxy(NativeRegExp, {
+                            construct(target, parameters) {
+                                fieldRegexCompilations.push(parameters[0]);
+                                return Reflect.construct(target, parameters);
+                            }
+                        });
+                        window.restoreFieldRegExp = () => { window.RegExp = NativeRegExp; };
+                        document.getElementById('filterInput').value = query;
+                        applyFilter();
+                    }''', query)
+                    page.wait_for_function('query => fgFilterState.text === query && !fgFilterProgress', arg=query)
+                    self.assertEqual(self.visible_values(page, 'comm'), expected)
+                    counts = page.evaluate('''pattern => fieldRegexCompilations.filter(value => value === pattern).length''',
+                                           query.removeprefix('comm:'))
+                    self.assertEqual(counts, 1)
+                    page.evaluate('restoreFieldRegExp()')
+                page.evaluate('clearFilter()')
+                page.wait_for_function('() => !fgFilterState.text && !fgFilterProgress')
+                self.assertEqual(page.evaluate('''() => Array.from(document.querySelectorAll(
+                    '#content .line-container'), row => [row.dataset.lineNumber, row.textContent])'''), original)
+
+    def test_deferred_timeline_filter_reuses_compilation_without_mounting_text(self):
+        page = self.open_report('sidecar/index.html', view='timeline')
+        self.assertEqual(page.locator('#content .line-container').count(), 0)
+        original = page.evaluate("async () => JSON.stringify(await fgData.load('tlData'))")
+        page.evaluate('''() => {
+            const NativeRegExp = RegExp;
+            window.fieldRegexCompilations = [];
+            window.RegExp = new Proxy(NativeRegExp, {
+                construct(target, parameters) {
+                    fieldRegexCompilations.push(parameters[0]);
+                    return Reflect.construct(target, parameters);
+                }
+            });
+            window.restoreFieldRegExp = () => { window.RegExp = NativeRegExp; };
+            document.getElementById('filterInput').value = 'comm:^worker';
+            applyFilter();
+        }''')
+        page.wait_for_function("() => fgFilterState.text === 'comm:^worker' && !fgFilterProgress")
+        self.assertEqual(page.evaluate("fieldRegexCompilations.filter(pattern => pattern === '^worker').length"), 1)
+        page.evaluate('restoreFieldRegExp()')
+        self.assertEqual(page.locator('#content .line-container').count(), 0)
+        lines = page.evaluate('Array.from(fgFilterState.lines)')
+        self.assertTrue(lines)
+        page.evaluate("async () => { await fgSwitchView('text'); }")
+        self.assertEqual(self.visible_values(page, 'comm'), sorted(NAMES[:3]))
+        self.assertEqual(page.evaluate('Array.from(fgFilterState.lines)'), lines)
+        self.assertEqual(page.evaluate("JSON.stringify(fgData.read('tlData'))"), original)
 
     def test_plain_and_touch_themes_use_the_same_literal_choice(self):
         for filename, touch, theme in [('plain.html',False,'light'), ('index.html',True,'light'), ('index.html',True,'dark')]:
