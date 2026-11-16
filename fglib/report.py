@@ -82,6 +82,7 @@ class HtmlGenerator:
         # Store all parameters as instance attributes
         self.parsed_lines = parsed_lines
         self.address_spaces = bool(parsed_lines and parsed_lines[0].get('record_type') == 'metadata')
+        self.has_user_errors = self.address_spaces and any(line.get('ret_failure') for line in parsed_lines)
         self.timeline_json = timeline_json
         self.compare_json = compare_json
         self.source_provider = source_provider
@@ -297,7 +298,8 @@ class HtmlGenerator:
         def section(name, fragment):
             fragment = fragment.replace('{INFO_CONTENT_PLACEHOLDER}', info_content_html)
             if self.address_spaces:
-                fragment = fragment.replace('<div id="content">', '<div id="content" data-address-spaces>')
+                attributes = ' data-address-spaces' + (' data-user-errors' if self.has_user_errors else '')
+                fragment = fragment.replace('<div id="content">', '<div id="content"' + attributes + '>')
             if self.filter_html:
                 fragment = fragment.replace('<div id="filterPlaceholder"></div>', self.filter_html)
             return name, fragment
@@ -743,13 +745,13 @@ class HtmlGenerator:
                         </div>
                         <div class="syntax-section">
                             <div class="syntax-title">Special</div>
-                            <div class="syntax-example">ret:all &nbsp; sort:desc &nbsp; sort:asc</div>
-                            <div class="syntax-desc"><code>ret:all</code> matches all error codes; <code>sort:desc/asc</code> sorts by duration</div>
+                            <div class="syntax-example">ret:all &nbsp; result:failure &nbsp; sort:desc &nbsp; sort:asc</div>
+                            <div class="syntax-desc"><code>ret:all</code> matches known kernel error codes; <code>result:failure</code> also includes user API failure hints; <code>sort:desc/asc</code> sorts by duration</div>
                         </div>
                         <div class="syntax-section">
                             <div class="syntax-title">Fields</div>
                             <div class="syntax-desc syntax-fields-list">
-                                <code>cpu</code> <code>pid</code> <code>comm</code> <code>ret</code> <code>params</code> <code>duration</code> <code>func</code> <code>graph</code> <code>notrace</code> <code>irqs</code> <code>resched</code> <code>hirq</code> <code>preempt</code>
+                                <code>cpu</code> <code>pid</code> <code>comm</code> <code>ret</code> <code>result</code> <code>params</code> <code>duration</code> <code>func</code> <code>graph</code> <code>notrace</code> <code>irqs</code> <code>resched</code> <code>hirq</code> <code>preempt</code>
                             </div>
                         </div>
                     </div>
@@ -1248,6 +1250,10 @@ class HtmlGenerator:
             body = '<span class="hl-symbol">}</span><span class="hl-comment">' + html.escape(body[1:]) + '</span>'
         else:
             body = html.escape(body)
+        failure = line.get('ret_failure')
+        if failure:
+            body += (' <span class="hl-ret-error" title="' + html.escape(failure['note'], quote=True) + '">' +
+                     html.escape(failure['summary']) + '</span>')
         return ' | '.join(head) + ' | ' + indent + body
 
     @staticmethod
@@ -1487,6 +1493,9 @@ class HtmlGenerator:
         ret_errno = _return_error(line)
         if ret_errno is not None:
             attributes['ret'] = str(ret_errno)
+        failure = line.get('ret_failure')
+        if failure:
+            attributes['user-error'] = failure['summary']
         for field, attribute in [('irqs_off', 'irqs'), ('need_resched', 'resched'),
                                  ('hardirq_softirq', 'hirq'), ('preempt_depth', 'preempt')]:
             if line.get(field) is not None:

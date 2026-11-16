@@ -649,6 +649,7 @@ uftrace 的混合/单地址空间报告中，`ret` 使用与 Timeline 一致的�
 | `graph` | 匹配函数的**整棵调用树**（类似 `set_graph_function`） | `graph:vfs_read` |
 | `notrace` | 隐藏匹配函数的整棵调用树（类似 `set_graph_notrace`） | `notrace:__schedule` |
 | `ret` | 返回值的数字（正则）；`ret:all` 匹配所有已知的错误码 | `ret:-22`、`ret:-2$`、`ret:all` |
+| `result` | `result:failure` 匹配已分类的内核错误和用户态 API 失败提示；不把其余结果宣称为成功 | `space:user AND result:failure` |
 | `params` | 参数文本（正则） | `params:folio` |
 | `duration` | 耗时（us），支持 `>` `<` `>=` `<=` | `duration:>10` |
 | `irqs` | flags 第 1 位 | `irqs:d` |
@@ -801,6 +802,7 @@ LLVM 的 `.llvm.<十六进制摘要>`，以及已解码的已知 `[clone ...]` �
 |---|---|---|
 | **Errors** | **深红实心**切片 | 错误源头，且错误一直返回到了用户态（调用链上有 `*_sys_*`） |
 | | **橙色实心**切片 | 错误源头，但被某个调用者处理掉了 |
+| | **橙色实心**用户态切片 | 按明确 API 符号约定识别的失败提示，不代表已经确认 errno 或处理结果 |
 | | **浅红底 + 红边框** | 错误传播：返回了和子调用相同的错误码 |
 | | **浅橙底 + 橙边框** | 被处理掉的错误的传播帧 |
 | | 小**三角**（红/橙） | 错误源头太窄、放不下标签时，在它上方画一个三角 |
@@ -1217,7 +1219,19 @@ CSV 的时间列在时间模式使用 `_ns`；count 模式使用 `_units`（调�
 
 **次要错误（minor）默认隐藏**：只有一帧、马上被调用者处理掉、并且这个函数的负返回值在整份 trace 里从来没有向上传播过的错误源头。这类通常是带符号但不是 errno 的数值（例如 `memcg_state_val_in_pages` 返回 -1 这样的页数增量），或者正常的探测路径（尝试各个 binfmt 处理器时 `load_script` 返回 -ENOEXEC）。它们不在切片上标记，不计入错误导航、概览条和对比。错误面板里勾选 *show N minor* 可以显示它们，`--export` 导出时标记为 `"minor": true`。
 
-**错误是怎么判定的**：
+**用户态失败提示**：已记录可读返回值时，`open/read/write` 等明确 API 返回 `-1`、
+`fopen/opendir` 返回 NULL，会在详情、悬浮提示和 Text 中显示失败提示；**不会把 `-1` 标成 EPERM**。
+`pthread_create/join/detach` 和 `posix_memalign` 直接返回正错误号时保留原值，并附上已知名称。
+这些是按符号名匹配的 API 约定，不是已经验证的库身份；同名自定义函数可能采用其他约定。
+未知函数、比较函数、分配器的 NULL、只有原始字节的返回值均不猜测。
+**Errors → User API failure hints** 按函数和提示分组，每页 200 组，保留全部出现位置，支持完整 CSV 导出。
+`result:failure` 筛选两种空间的已识别失败，`space:user AND result:failure` 只筛用户态；
+`ret:all` 和精确 `ret:` 仍只查询内核 errno。用户态失败不参与内核错误传播链，也不根据内核子调用推断用户态 errno。
+有用户态提示时错误导航默认 **all**；切到 **to user** 后只导航原有到达用户态的内核错误链。
+没有提示不等于调用成功。采集行为不变；已有返回值的 trace 只需重新生成 HTML，未记录的返回值需重新采集。
+详见[规则、限制与验证](user-api-failures.md)。
+
+**内核错误是怎么判定的**：
 
 1. 有 BTF（`--vmlinux` 的 `.BTF` 段、`--btf` 指定的文件，或者内核本身就按 BTF 格式化返回值）时，按函数的返回类型判断：
    - void、无符号、bool、枚举：不算错误；

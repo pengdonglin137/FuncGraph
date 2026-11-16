@@ -29,7 +29,7 @@ and its [source/error-path screenshot](sample.png). No installation required.
 | --- | --- |
 | Which functions ran, and in what order? | **Timeline** task and CPU tracks, nested slices, matched user/kernel boundaries, and recorded exec/exit events. |
 | Where did the time go? | Total/self-time colors, function statistics, slow calls, off-CPU intervals, wakeup paths and wait chains. Self time is not necessarily on-CPU time. |
-| Why did this call fail? | Recorded arguments and returns, BTF-aware kernel decoding, errno propagation and linked caller/source details. |
+| Why did this call fail? | Recorded arguments and returns, BTF-aware kernel errno paths, [user API failure hints](docs/user-api-failures.md), and linked caller/source details. |
 | Was execution delayed or in a critical section? | Recorded context flags, IRQ/preemption regions and scheduler latency. These need the corresponding trace fields/events. |
 | How do I read or compare the evidence? | **Text** with folding, filtering, source expansion and keyboard navigation; **Compare** for per-function differences; JSON/CSV export for scripts. |
 

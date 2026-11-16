@@ -1,5 +1,10 @@
 # Structured returns in Text
 
+User API failure hints now extend this model through a separate `ret_failure` /
+`data-user-error` channel. `ret_errno` and `ret:all` retain their kernel-only
+meaning; `result:failure` additionally matches explicit user API conventions.
+See [user API rules, compatibility and validation](user-api-failures.md).
+
 ## Reproduced gap
 
 The uftrace importer displayed an exit's return token in its Text row but left

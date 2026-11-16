@@ -139,6 +139,7 @@ function sliceStyle(i) {
     // returns [fill, textColor, borderColor|null]
     if (i >= N && !isGhost(i)) return [i === hov ? P.inlineHover : P.inlineFill, P.textDim, P.inlineEdge];
     if (i >= N) return [dark ? 'rgba(120,130,150,.22)' : 'rgba(110,120,140,.13)', P.textDim, dark ? 'rgba(170,180,200,.7)' : 'rgba(90,100,120,.6)'];
+    if (ov.err && USER_ERRORS.has(i)) return [P.errOh, '#ffffff', null];
     if (ov.err && eRole[i] >= 0 && (showMinor || eChain[i] < 0 || !CHAINS[eChain[i]][6])) {
         const handled = eFate[i] === 0;
         if (eRole[i] === 0) return [handled ? P.errOh : P.errO, '#ffffff', null];
@@ -485,6 +486,14 @@ function drawTrack(t, y, vs, ve, k) {
             if ((sEnd[i] - sStart[i]) * k >= 6) continue;
             ctx.fillStyle = ch[3] === 0 ? P.errOh : P.errO;
             ctx.beginPath(); ctx.moveTo(x, ry - 1); ctx.lineTo(x + 4.5, ry + 7); ctx.lineTo(x - 4.5, ry + 7); ctx.closePath(); ctx.fill();
+        }
+        if (!errFilter && t.userErrors?.length) for (let marker = lbStart(t.userErrors, vs - 6 / k, 0);
+            marker < t.userErrors.length && sStart[t.userErrors[marker]] <= ve + 6 / k; marker++) {
+            const index = t.userErrors[marker];
+            const position = (sStart[index] - vs) * k, row = top + rowOf(index) * ROW;
+            if (position < -6 || position > W + 6 || row < -ROW || row > H || (sEnd[index] - sStart[index]) * k >= 6) continue;
+            ctx.fillStyle = P.errOh;
+            ctx.beginPath(); ctx.moveTo(position, row - 1); ctx.lineTo(position + 4.5, row + 7); ctx.lineTo(position - 4.5, row + 7); ctx.closePath(); ctx.fill();
         }
     }
 }

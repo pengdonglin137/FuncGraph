@@ -283,6 +283,13 @@ Compare 与 `--export` 分开统计用户态、内核态的同名函数。
   Text 的折叠摘要保留已记录的标量返回值，包括 `0` 和 `false`，内核值按 BTF 位宽修正；
   `void` 或仅保存了原始返回字节时不补造标量。若采集已保存返回记录，重新生成旧 HTML 即可；
   未曾采集的返回值无法通过重建报告补回。
+- **用户态失败提示**：对明确的 API 符号约定进行保守匹配：`open/read/write` 等返回 `-1`、
+  `fopen/opendir` 返回 NULL 时提示失败，但不猜测 errno；`pthread_create/join/detach` 和
+  `posix_memalign` 直接返回正错误号时保留数值并附上已知名称。详情、悬浮提示、Text 和
+  **Errors → User API failure hints** 共用结果；`space:user AND result:failure` 可筛选。
+  未知函数、比较函数和分配器的 NULL 不猜测，用户态也不并入内核 errno 传播链。
+  这是符号名约定提示，不是已验证的库身份；同名自定义函数可能采用其他约定。
+  [规则与限制](user-api-failures.md)说明为何用户态 `-1` 不等于 EPERM，以及缺失返回值不能补造。
 - **数据缺口**：缺失进出记录或丢失事件会标记，不补造实测帧。用户态 CPU 未知，
   用户态仅在存在支持的标量参数规格时解码，否则保留原始字节；内核返回值在匹配 BTF 可用时展示类型修正值，并保留原始比特，只在 BTF 类型已知时做 errno
   分析。调度分析使用内核 tracepoint，不与 perf 事件重复计入。未投影到报告中的原生

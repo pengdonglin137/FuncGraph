@@ -719,6 +719,7 @@ without inventing values from raw return bytes or void returns. See [uftrace](uf
 | `graph` | the **whole call tree** of matching functions (like `set_graph_function`) | `graph:vfs_read` |
 | `notrace` | hides the whole call tree of matching functions (like `set_graph_notrace`) | `notrace:__schedule` |
 | `ret` | return value number (regex); `ret:all` matches every known error code | `ret:-22`, `ret:-2$`, `ret:all` |
+| `result` | `result:failure` matches classified kernel errors and user API failure hints; other outcomes are not claimed to be successes | `space:user AND result:failure` |
 | `params` | argument text (regex) | `params:folio` |
 | `duration` | duration in us, with `>` `<` `>=` `<=` | `duration:>10` |
 | `irqs` | flags position 1 | `irqs:d` |
@@ -879,6 +880,7 @@ Each overlay can be switched off; buttons of overlays without data are hidden.
 |---|---|---|
 | **Errors** | **solid dark red** slice | error origin, and the error reached user space (a `*_sys_*` in the chain) |
 | | **solid orange** slice | error origin, handled by some caller |
+| | **solid orange** user slice | symbol-matched API failure hint, not a verified errno or handling outcome |
 | | **light red with red outline** | error propagation: returns the same errno as a child |
 | | **light orange with orange outline** | propagation of a handled error |
 | | small **triangle** (red / orange) | an error origin too narrow for a label |
@@ -1324,7 +1326,24 @@ Touch paging, occurrence, sorting and export controls are at least 44px high; oc
 
 **Minor errors** are hidden by default: single-frame origins handled at once by the caller, from functions whose negative returns never propagate anywhere in the trace. These are usually signed values that are not errnos (e.g. `memcg_state_val_in_pages` returns page deltas like -1) or normal probing (`load_script` returning -ENOEXEC while the binfmt handlers are tried). They are not marked on slices, not counted in navigation, the overview or Compare; the checkbox *show N minor* in the Errors panel brings them back, and `--export` marks them with `"minor": true`.
 
-**How errors are decided**:
+**User API failure hints:** when a decoded return was recorded, explicit APIs such as
+`open/read/write` returning `-1`, or `fopen/opendir` returning NULL, receive hints in
+details, hover and Text. **A user `-1` is never labeled EPERM.**
+`pthread_create/join/detach` and `posix_memalign` return positive error numbers
+directly; their recorded values remain intact and known names are appended.
+These are symbol-name convention matches, not verified library identities; a custom
+same-named function can follow a different contract. Unknown APIs, comparisons,
+allocator NULLs and raw-byte-only returns stay unclassified.
+**Errors → User API failure hints** groups by function and hint, with 200 groups per
+page, complete occurrence navigation and full CSV export. Use `result:failure` for
+both spaces, or `space:user AND result:failure` for user hints only. `ret:all` and
+exact `ret:` remain kernel errno queries. User hints never join kernel propagation
+chains or borrow errno from a kernel child. Error navigation defaults to **all**
+when user hints exist; **to user** navigates the original kernel chains only.
+No hint does not mean success. Capture behavior is unchanged; regenerate HTML for
+saved returns, and re-record missing returns. See [rules and validation](user-api-failures.md).
+
+**How kernel errors are decided**:
 
 1. With BTF (the `.BTF` section of `--vmlinux`, files given with `--btf`, or a kernel that already formats return values by type), by the function's return type:
    - void, unsigned, bool, enum: never an error;

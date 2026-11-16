@@ -375,6 +375,16 @@ kernel names separately, even when their symbols have identical spelling.
   Void returns and raw-byte-only payloads do not invent scalars. If return records
   were saved, regenerating older HTML is sufficient; rebuilding cannot recover
   returns that were never recorded.
+- **User API failure hints:** conservative symbol-rule matches flag `-1` from
+  explicit APIs such as `open/read/write`, or NULL from `fopen/opendir`, without
+  guessing errno. `pthread_create/join/detach` and `posix_memalign` return positive
+  error numbers directly; recorded values stay intact and known names are appended.
+  Details, hover, Text and **Errors → User API failure hints** share these results.
+  Use `space:user AND result:failure`. Unknown APIs, comparisons and allocator NULLs
+  stay unclassified; user hints never join kernel errno chains. Symbols are not
+  verified library identities; a custom same-named function may differ. See
+  [rules and limitations](user-api-failures.md), including missing returns and why
+  a user `-1` is not EPERM.
 - **Uncertainty:** missing entries/exits and losses are marked, not filled in
   as measured calls. CPU for user calls remains unknown. User values appear
   when uftrace recorded supported scalar argument/return specifications;

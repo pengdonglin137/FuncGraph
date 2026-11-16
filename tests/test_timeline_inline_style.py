@@ -30,6 +30,7 @@ class InlineSliceDrawingTest(unittest.TestCase):
             const sFlags = [0, 0, 1 << 23, 1 << 24];
             const eRole = [-1, -1, -1, -1], eFate = [1, 1, 1, 1];
             const eChain = [-1, -1, -1, -1], eErr = [2, 2, 2, 2], CHAINS = [];
+            const USER_ERRORS = new Map();
             const ov = {err:false, irq:false, preempt:false, mk:false, rs:false};
             let showMinor = true, colorMode = 'ctx', sel = -1, hov = -1, dimmed = false;
             const charW = 6.5;
@@ -196,6 +197,23 @@ class InlineSliceDrawingTest(unittest.TestCase):
             const painted = paint(0);
             assert.equal(painted[0].color, P.errO);
             assert.equal(painted.find(operation => operation.kind === 'text').text, 'root = ENOENT');
+        ''')
+
+    def test_user_failure_overlay_is_optional_and_keeps_inline_frames_neutral(self):
+        self.check_drawing('''
+            USER_ERRORS.set(1, {rule:'minus_one'});
+            for (theme of ['light', 'dark']) {
+                palette();
+                for (colorMode of ['ctx', 'name', 'cpu', 'module', 'total', 'heat']) {
+                    ov.err = true;
+                    assert.equal(sliceStyle(1)[0], P.errOh);
+                    assert.equal(paint(1)[0].color, P.errOh);
+                    assert.equal(sliceStyle(2)[0], P.inlineFill);
+                    assert.notEqual(sliceStyle(3)[0], P.errOh);
+                    ov.err = false;
+                    assert.equal(sliceStyle(1)[0], 'recorded-' + colorMode);
+                }
+            }
         ''')
 
     def test_repeated_paint_avoids_per_slice_measurement_and_restores_state(self):

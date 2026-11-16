@@ -174,6 +174,11 @@ function tipSlice(i) {
     if (D.uftrace) h += row('space', f & FL.BOUNDARY ? 'Kernel · entered from user' : f & FL.USER ? 'User' : 'Kernel');
     if (!D.uftrace || f & FL.LAT) h += row('context', CTX_NAMES[f & FL.CTX] + (f & FL.CTXINF ? ' (inferred)' : '') + ctxFlagText(f));
     const r = retOf(i);
+    const userDetail = f & FL.USER ? D.uftrace?.user_details?.[sLine[i]] : null;
+    if (userDetail?.retval !== undefined) {
+        const failure = USER_ERRORS.get(i);
+        h += row('user return', esc(userDetail.retval) + (failure ? ' · ' + esc(failure.summary) : ''), failure ? 't-err' : '');
+    }
     if (r !== null) {
         const field = kernelTypesOf(i)?.ret ? 'return (BTF)' : D.uftrace ? 'raw return' : 'return';
         if (eRole[i] >= 0) h += row(field, esc(r) + ' ' + (errName(eErr[i]) || '') + ' — ' + errRoleText(i), 't-err');
@@ -503,10 +508,12 @@ elHead.addEventListener('wheel', ev => {
 
 // ---- error navigation ----
 let errList = [], errPos = -1;
+function errorSpan(code) { return code < 0 ? [-code - 1, -code - 1] : CHAINS[code]; }
 function rebuildErrList() {
     errList = [];
     for (let c = 0; c < CHAINS.length; c++) if (chainShown(c) && (!errFilter || CHAINS[c][3] === 1) && (!textHits || textHits[CHAINS[c][0]])) errList.push(c);
-    errList.sort((a, b) => sStart[CHAINS[a][0]] - sStart[CHAINS[b][0]]);
+    if (!errFilter) for (const index of USER_ERRORS.keys()) if (!textHits || textHits[index]) errList.push(-index - 1);
+    errList.sort((left, right) => sStart[errorSpan(left)[0]] - sStart[errorSpan(right)[0]]);
     errPos = -1;
     updateErrLabel();
 }
@@ -517,14 +524,21 @@ function updateErrLabel() {
     tlRoot.querySelectorAll('[data-act=errprev],[data-act=errnext]').forEach(b => b.disabled = !errList.length);
 }
 function gotoErr(dir) {
-    if (!errList.length) { toast(D.caps.retval ? 'No error paths found' : 'Error paths need options/funcgraph-retval'); return; }
+    if (!errList.length) {
+        const message = errFilter && USER_ERRORS.size ?
+            'No kernel error chains reach user space in the current filter. Use all to include user API failure hints.' :
+            !HAS_KERNEL ? 'No recognized user API failures in the current filter; returns or API conventions may be missing.' :
+            D.caps.retval ? 'No error paths found' : 'Error paths need options/funcgraph-retval';
+        toast(message);
+        return;
+    }
     if (errPos < 0) {
         const mid = sel >= 0 ? sStart[sel] : view.s;
-        errPos = dir > 0 ? errList.findIndex(c => sStart[CHAINS[c][0]] > mid) : -1;
-        if (dir < 0) for (let p = errList.length - 1; p >= 0; p--) if (sStart[CHAINS[errList[p]][0]] < mid) { errPos = p; break; }
+        errPos = dir > 0 ? errList.findIndex(code => sStart[errorSpan(code)[0]] > mid) : -1;
+        if (dir < 0) for (let position = errList.length - 1; position >= 0; position--) if (sStart[errorSpan(errList[position])[0]] < mid) { errPos = position; break; }
         if (errPos < 0) errPos = dir > 0 ? 0 : errList.length - 1;
     } else errPos = (errPos + dir + errList.length) % errList.length;
-    const ch = CHAINS[errList[errPos]];
+    const ch = errorSpan(errList[errPos]);
     // frame the whole chain, select the origin
     zoomTo(sStart[ch[1]], sEnd[ch[1]], ch[0]);
     select(ch[0], { reveal: true });

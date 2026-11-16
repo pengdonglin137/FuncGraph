@@ -6,6 +6,8 @@
     const presentationColumns = new Map(presentationFields.map((field, index) => ['data-' + field, index + 2]));
     const symbolFields = Object.freeze([...presentationFields, 'raw-func']);
     const symbolColumns = new Map(symbolFields.map((field, index) => ['data-' + field, index + 2]));
+    const outcomeFields = Object.freeze([...symbolFields, 'user-error']);
+    const outcomeColumns = new Map(outcomeFields.map((field, index) => ['data-' + field, index + 2]));
     const models = new WeakMap();
     const foldModels = new WeakMap();
     const orderModels = new WeakMap();
@@ -17,7 +19,7 @@
             if (name === 'data-line-number') return String(this.row[0]);
             if (name === 'data-trace-event') return this.event ? '1' : null;
             if (this.version >= 4) {
-                const position = (this.version === 5 ? symbolColumns : presentationColumns).get(name);
+                const position = (this.version === 6 ? outcomeColumns : this.version === 5 ? symbolColumns : presentationColumns).get(name);
                 return position === undefined ? null : this.row[position];
             }
             if (name === 'data-space') return this.version === 3 ? this.row[fields.length + 2] : null;
@@ -27,8 +29,8 @@
         querySelector(selector) { return selector === '.line-content' ? this : null; }
     }
     function* prepare(data) {
-        const expected = data?.version === 5 ? symbolFields : data?.version === 4 ? presentationFields : data?.version === 3 ? [...fields, 'space'] : fields;
-        if (!data || ![1, 2, 3, 4, 5].includes(data.version) || !Array.isArray(data.fields) || !Array.isArray(data.rows) ||
+        const expected = data?.version === 6 ? outcomeFields : data?.version === 5 ? symbolFields : data?.version === 4 ? presentationFields : data?.version === 3 ? [...fields, 'space'] : fields;
+        if (!data || ![1, 2, 3, 4, 5, 6].includes(data.version) || !Array.isArray(data.fields) || !Array.isArray(data.rows) ||
             data.fields.length !== expected.length || data.fields.some((field, index) => field !== expected[index])) {
             throw new Error('Unsupported Text filter index');
         }
@@ -588,7 +590,7 @@
         }
         return navigation(order, expandable);
     }
-    window.fgTextModel = { fields, presentationFields, symbolFields, prepare, locate, filter, folding, visibility, prepareFolding, order, prepareOrder, rankDuration, prepareDuration, rankDurationAsync, navigation, prepareNavigation };
+    window.fgTextModel = { fields, presentationFields, symbolFields, outcomeFields, prepare, locate, filter, folding, visibility, prepareFolding, order, prepareOrder, rankDuration, prepareDuration, rankDurationAsync, navigation, prepareNavigation };
     window.fgIndexedFilter = async function (data, text, signal, progress) {
         const iterator = steps(data, text);
         try {

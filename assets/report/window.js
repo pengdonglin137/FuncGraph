@@ -140,7 +140,7 @@ function* fgWindowedTextSteps() {
 }
 
 function fgCreateTextWindow(model, navigation, root) {
-    if (![4, 5].includes(model.version) || fgData.textChunks()?.count !== model.records.length) {
+    if (![4, 5, 6].includes(model.version) || fgData.textChunks()?.count !== model.records.length) {
         throw new Error('Windowed Text requires a complete presentation index');
     }
     const limit = 160, overscan = 32;
@@ -416,6 +416,11 @@ function fgCreateTextWindow(model, navigation, root) {
         const mode = fgTextOrder, direction = options.filter ? options.filter.sortDir : fgTextSort;
         const matches = options.filter ? options.filter.lines : window.fgFilterState.lines;
         const job = (async () => {
+            if (suspended && options.filter) {
+                if (own.signal.aborted || destroyed) throw new DOMException('Text window canceled', 'AbortError');
+                options.commit?.();
+                return;
+            }
             check(own.signal);
             const candidate = fgTextModel.order(model, mode);
             let ranked = null;

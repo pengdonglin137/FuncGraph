@@ -394,6 +394,8 @@ function showDetail(i) {
     if (pd > 0) pills += pill('warn', 'preempt off' + (pd > 1 ? ' ×' + pd : ''), 'preempt count ' + ((f >> FL.PR_SHIFT) & 15) + ', baseline for this record ' + preemptBase(f));
     if ((f >> FL.MG_SHIFT) & 15) pills += pill('warn', 'migrate off', 'migrate_disable() depth ' + ((f >> FL.MG_SHIFT) & 15));
     if (eRole[i] >= 0) pills += pill('err', eRole[i] === 0 ? 'error origin' : 'error propagated');
+    const userFailure = USER_ERRORS.get(i);
+    if (userFailure) pills += pill('err', 'API failure hint', userFailure.note);
     if (ATOMIC.has(i)) pills += pill('err', 'may sleep in atomic context');
     if (f & FL.TRUNC) pills += pill('mute', 'no exit');
     if (f & FL.ORPHAN) pills += pill('mute', 'no entry');
@@ -442,7 +444,9 @@ function showDetail(i) {
                     '</summary>' + provenance + (a ? detailToken('raw', a) : '') + '</details>' : ''), 'tl-arguments');
         }
         else if (a) h += kv('raw argument bytes', detailToken('raw', a));
-        if (userDetail.retval !== undefined) h += kv('user return', detailValueHtml(userDetail.retval));
+        if (userDetail.retval !== undefined) h += kv('user return', detailValueHtml(userDetail.retval) +
+            (userFailure ? ' · ' + esc(userFailure.summary) + '<div class="tl-context-note">' + esc(userFailure.note) + '</div>' : ''),
+            userFailure ? 'err' : '');
         else if (userDetail.return_payload) h += kv('raw return bytes', detailToken('raw', userDetail.return_payload));
     } else if (a) {
         const namedArgs = namedArgsOf(i);
@@ -1546,7 +1550,7 @@ ${N ? '' : '<p>No function calls were recorded. Search has no call matches; shar
 <li>Click an off-CPU segment: wait chain (who woke the task, wake latency, and who woke the waker)</li>
 <li><b>Tasks</b>: find recorded tasks by name / PID / CPU, including tasks without traced calls; browse 100 identities per page with Previous / Next and export all matching rows, not just this page</li>
 <li><kbd>G</kbd> or <b>Go to…</b>: center at an offset without changing zoom, or enter start/end to show an exact interval. Timestamped reports accept ns/us/ms/s; recorded timestamps require a known exact origin. Packed and call-order coordinates are explicitly not wall-clock time. Selection, filters and analysis stay unchanged.</li>
-<li><b>Errors</b>: independent pages of 200 error groups and 100 atomic groups. Previous / Next replaces rows without losing a group's occurrence position; all three CSV exports include the complete current scope, not just the page.</li>
+<li><b>Errors</b>: independent pages of 200 kernel error groups, 200 user API hint groups and 100 atomic groups. Previous / Next replaces rows without losing a group's occurrence position; CSV exports include the complete current scope, not just the page. User hints match explicit API symbol conventions, not captured errno or verified propagation. <code>result:failure</code> matches both spaces; <code>ret:all</code> remains kernel errno only.</li>
 <li><b>Duration distribution</b>: browse 50 slowest-first calls per page. Previous / Next do not change percentiles or histogram scope; CSV includes all calls in the selected function, call site and duration bucket, not just the page. Toggle <b>Histogram</b> to give calls more room while keeping all six statistics; this report-local choice does not change the saved panel split.</li>
 <li><b>Explore all children</b> in call details: complete parent-scoped groups/calls, longest-call navigation and full CSV</li>
 <li><kbd>I</kbd>: show / hide inlined functions as dashed frames (extent = first to last traced call inside)</li>
@@ -1566,6 +1570,7 @@ ${KVM ? '<i style="background:#d5e9e1"></i><span>KVM Guest boundary window (wall
 <i style="background:hsl(282,62%,70%)"></i><span>NMI</span>
 <i style="background:#d32f2f"></i><span>error origin (reaches user space)</span>
 <i style="background:#e8873a"></i><span>error origin (handled by caller)</span>
+${HAS_USER ? '<i style="background:#e8873a"></i><span>user API failure hint (symbol-matched convention; not a kernel error chain)</span>' : ''}
 <i style="background:#f6b8b8;outline:1.5px solid #c62828"></i><span>error propagation</span>
 <i style="background:repeating-linear-gradient(135deg,#888 0 2px,#ddd 2px 4px)"></i><span>irqs disabled when the call started</span>
 <i style="background:#4b5563;height:2px"></i><span>under the track header: irqs-off periods</span>
@@ -1587,7 +1592,7 @@ elHelp.querySelector('.tl-help-close').addEventListener('click', () => closeTime
 // ---- init ----
 palette();
 applyTextFilter();
-if (!CHAINS.length) tlRoot.querySelector('.tl-errnav').style.display = 'none';
+if (!CHAINS.length && !USER_ERRORS.size) tlRoot.querySelector('.tl-errnav').style.display = 'none';
 if (!D.caps.latency) { tlRoot.querySelector('[data-ov=irq]').classList.add('na'); tlRoot.querySelector('[data-ov=preempt]').classList.add('na'); }
 if (!D.resched.length && !D.caps.latency) tlRoot.querySelector('[data-ov=rs]').classList.add('na');
 if (!D.offcpu.length) tlRoot.querySelector('[data-ov=off]').classList.add('na');
@@ -1600,7 +1605,7 @@ if (noteCount) elNotesButton.textContent = 'Notes ' + noteCount;
 else elNotesButton.hidden = true;
 syncToolbar();
 if (!WAKES.length) tlRoot.querySelector('[data-ov=wk]').classList.add('na');
-if (!D.caps.retval) tlRoot.querySelector('[data-ov=err]').classList.add('na');
+if (!D.caps.retval && !USER_ERRORS.size) tlRoot.querySelector('[data-ov=err]').classList.add('na');
 new MutationObserver(() => { palette(); ovDirty = true; draw(); scheduleDistHistogram(); })
     .observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
 window.addEventListener('resize', () => { if (window.fgCurrentView() === 'timeline') { resize(); sizeDetailHead(); } });

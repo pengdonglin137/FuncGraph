@@ -224,6 +224,26 @@ const ERROR_FATES = ['handled', 'to_user', 'unknown'];
 const ERROR_ENTRIES = new Map();
 const SYSCALL_ENTRY = /^(?:__(?:arm64|x64|ia32|x32|riscv|s390x?|powerpc|loongarch|se)_)?(?:compat_)?sys_(\w+)$|^__do_sys_(\w+)$/;
 let errorCache = null, atomicCache = null, errorView = null;
+let userErrorCache = null;
+function userErrorData() {
+    if (userErrorCache?.hits === textHits) return userErrorCache;
+    const groups = [], grouped = new Map();
+    let total = 0;
+    for (const [index, failure] of USER_ERRORS) {
+        if (textHits && !textHits[index]) continue;
+        const key = JSON.stringify([sName[index], failure.rule, failure.summary]);
+        let group = grouped.get(key);
+        if (!group) {
+            group = { id: groups.length, name: sliceLabel(index), failure, first: index, ids: [], position: -1 };
+            grouped.set(key, group); groups.push(group);
+        }
+        group.ids.push(index); total++;
+    }
+    for (const group of groups) group.ids.sort((left, right) => sStart[left] - sStart[right] || left - right);
+    const rows = groups.slice().sort((left, right) => right.ids.length - left.ids.length || left.first - right.first);
+    userErrorCache = { hits: textHits, groups, rows, total, page: 0, pageSize: ERROR_PAGE };
+    return userErrorCache;
+}
 function errorEntry(index) {
     const path = [];
     let current = index, entry;
@@ -333,33 +353,38 @@ function atomicRows(rows) {
         '<td style="text-align:left">' + esc(group.name) + '</td><td style="text-align:left" class="err">' + esc(atomicText(group.bits)) + '</td>' +
         '<td style="text-align:left">' + esc(group.caller || 'top level') + '</td><td>' + group.ids.length + '</td>' + errorNavigation(group) + '</tr>').join('');
 }
-function errorFooter(atomic) {
-    const data = atomic ? atomicData() : errorOrder(), kind = atomic ? 'atomic' : 'errors';
+function userErrorRows(rows) {
+    return rows.map(group => '<tr data-user-error-group="' + group.id + '" data-slice="' + group.ids[Math.max(0, group.position)] + '">' +
+        '<td style="text-align:left">' + esc(group.name) + '</td><td style="text-align:left" class="err" title="' + esc(group.failure.note) + '">' +
+        esc(group.failure.summary) + '</td><td>' + group.ids.length + '</td>' + errorNavigation(group) + '</tr>').join('');
+}
+function errorFooter(atomic, user = false) {
+    const data = user ? userErrorData() : atomic ? atomicData() : errorOrder(), kind = user ? 'user-errors' : atomic ? 'atomic' : 'errors';
     return '<div class="an-error-footer" data-error-footer="' + kind + '"><span role="status" aria-live="polite" aria-atomic="true">' +
-        errorPageStatus(data, atomic) + '</span>' + (data.rows.length > data.pageSize ?
-        '<span class="an-error-pages" role="group" aria-label="' + (atomic ? 'Atomic' : 'Error') + ' group pages">' +
+        errorPageStatus(data, atomic, user) + '</span>' + (data.rows.length > data.pageSize ?
+        '<span class="an-error-pages" role="group" aria-label="' + (user ? 'User API' : atomic ? 'Atomic' : 'Error') + ' group pages">' +
         '<button class="tl-btn" type="button" data-act="' + kind + '-prev"' + (data.page ? '' : ' disabled') + '>Previous</button>' +
         '<button class="tl-btn" type="button" data-act="' + kind + '-next"' +
         ((data.page + 1) * data.pageSize >= data.rows.length ? ' disabled' : '') + '>Next</button></span>' : '') +
-        (atomic ? '' : '<button class="tl-btn" data-act="error-occurrences-csv">Export occurrences CSV</button>') + '</div>';
+        (atomic || user ? '' : '<button class="tl-btn" data-act="error-occurrences-csv">Export occurrences CSV</button>') + '</div>';
 }
-function errorPageStatus(data, atomic) {
+function errorPageStatus(data, atomic, user = false) {
     const start = data.page * data.pageSize, end = Math.min(start + data.pageSize, data.rows.length);
-    return 'Showing ' + (data.rows.length ? start + 1 + '–' + end : '0') + ' of ' + data.rows.length + (atomic ? ' atomic groups' : ' error groups');
+    return 'Showing ' + (data.rows.length ? start + 1 + '–' + end : '0') + ' of ' + data.rows.length + (user ? ' user API groups' : atomic ? ' atomic groups' : ' error groups');
 }
 function errorPageRows(data) {
     const start = data.page * data.pageSize;
     return data.rows.slice(start, start + data.pageSize);
 }
-function changeErrorPage(atomic, direction) {
-    const data = atomic ? atomicData() : errorOrder(), last = Math.max(0, Math.ceil(data.rows.length / data.pageSize) - 1);
+function changeErrorPage(atomic, direction, user = false) {
+    const data = user ? userErrorData() : atomic ? atomicData() : errorOrder(), last = Math.max(0, Math.ceil(data.rows.length / data.pageSize) - 1);
     data.page = Math.max(0, Math.min(last, data.page + direction));
-    const table = elDetail.querySelector(atomic ? '.an-atomic-table' : '.an-error-table'), head = elDetail.querySelector('.an-error-head');
+    const table = elDetail.querySelector(user ? '.an-user-error-table' : atomic ? '.an-atomic-table' : '.an-error-table'), head = elDetail.querySelector('.an-error-head');
     const style = getComputedStyle(head), pinned = style.position === 'sticky' && style.top !== 'auto' ? head.offsetHeight : 0;
     elDetail.scrollTop += table.getBoundingClientRect().top - elDetail.getBoundingClientRect().top - pinned;
-    table.querySelector('tbody').innerHTML = (atomic ? atomicRows : errorRows)(errorPageRows(data));
-    const kind = atomic ? 'atomic' : 'errors', footer = elDetail.querySelector('[data-error-footer="' + kind + '"]');
-    footer.querySelector('[role=status]').textContent = errorPageStatus(data, atomic);
+    table.querySelector('tbody').innerHTML = (user ? userErrorRows : atomic ? atomicRows : errorRows)(errorPageRows(data));
+    const kind = user ? 'user-errors' : atomic ? 'atomic' : 'errors', footer = elDetail.querySelector('[data-error-footer="' + kind + '"]');
+    footer.querySelector('[role=status]').textContent = errorPageStatus(data, atomic, user);
     const previous = footer.querySelector('[data-act="' + kind + '-prev"]'), next = footer.querySelector('[data-act="' + kind + '-next"]');
     const focused = document.activeElement;
     previous.disabled = data.page === 0;
@@ -369,18 +394,31 @@ function changeErrorPage(atomic, direction) {
 }
 function jumpErrorOccurrence(row, direction) {
     const atomic = row.hasAttribute('data-atomic-group');
-    const group = atomic ? atomicData().groups[+row.dataset.atomicGroup] : errorData().groups[+row.dataset.chains];
+    const user = row.hasAttribute('data-user-error-group'), single = atomic || user;
+    const group = user ? userErrorData().groups[+row.dataset.userErrorGroup] : atomic ? atomicData().groups[+row.dataset.atomicGroup] : errorData().groups[+row.dataset.chains];
     const count = group.ids.length;
     group.position = group.position < 0 ? (direction > 0 ? 0 : count - 1) : (group.position + direction + count) % count;
-    const occurrence = group.ids[group.position], chain = atomic ? null : CHAINS[occurrence];
-    const origin = atomic ? occurrence : chain[0], top = atomic ? origin : chain[1], track = TRACKS[sTask[origin]];
+    const occurrence = group.ids[group.position], chain = single ? null : CHAINS[occurrence];
+    const origin = single ? occurrence : chain[0], top = single ? origin : chain[1], track = TRACKS[sTask[origin]];
     if (track.hidden) { track.hidden = false; layout(); }
     zoomTo(sStart[top], sEnd[top], origin);
     setSelection(origin); revealRow(origin); draw();
     row.querySelector('[data-error-position]').textContent = group.position + 1 + ' / ' + count;
-    if (atomic) row.dataset.slice = origin;
+    if (single) row.dataset.slice = origin;
     else row.dataset.chain = occurrence;
     toast('occurrence ' + (group.position + 1) + ' / ' + count);
+}
+function exportUserErrorsCsv() {
+    const filter = (window.fgFilterState || {}).text || '';
+    function* rows() {
+        for (const group of userErrorData().rows) for (const index of group.ids) {
+            const task = TRACKS[sTask[index]], detail = D.uftrace.user_details[sLine[index]], failure = group.failure;
+            yield [group.id, index, nameOf(index), detail.retval, failure.rule, failure.errno ?? '', failure.summary, failure.note,
+                trackLabel(task), task.pid, sLine[index], sEline?.[index] || '', filter];
+        }
+    }
+    downloadTimelineCsv('funcgraph-user-api-failures.csv', ['group_id', 'slice_index', 'function', 'recorded_return', 'symbol_matched_rule',
+        'direct_error_number', 'summary', 'evidence_limitations', 'task', 'pid', 'entry_line', 'exit_line', 'filter'], rows());
 }
 function exportErrorsCsv(kind) {
     const filter = (window.fgFilterState || {}).text || '', includeMinor = showMinor ? 1 : 0;
@@ -423,27 +461,38 @@ function showErrors() {
     const wasOpen = AN.kind === 'errors' && elDetail.classList.contains('show');
     const focusedAction = wasOpen && elDetail.contains(document.activeElement) ? document.activeElement.dataset.act : null;
     AN.kind = 'errors';
-    const data = errorData(), order = errorOrder(), atomic = atomicData();
+    const data = errorData(), order = errorOrder(), atomic = atomicData(), user = userErrorData();
     const resetScroll = !wasOpen || !errorView || errorView.data !== data;
     const sorted = errorView && errorView.sort !== AN.errSort;
     let html = '<div class="tl-detail-head an-error-head"><span class="tl-detail-title">Errors</span>' +
-        pill('err', data.total + ' error chains') + pill('mute', data.groups.length + ' groups') +
+        (HAS_KERNEL ? pill('err', data.total + ' error chains') + pill('mute', data.groups.length + ' groups') : '') +
+        (user.total ? pill('warn', user.total + ' user API failure hints') : '') +
         (atomic.total ? pill('warn', atomic.total + ' atomic calls') : '') + (textHits ? pill('warn', 'filtered') : '') +
-        (D.btf || D.caps.retval_btf ? '' : pill('warn', 'no BTF: unverified')) +
+        (!HAS_KERNEL || D.btf || D.caps.retval_btf ? '' : pill('warn', 'no BTF: unverified')) +
         (data.minor || showMinor ? '<label class="an-minor" title="Handled at once; this function never propagated a negative return in the trace">' +
             '<input type="checkbox" data-act="minor"' + (showMinor ? ' checked' : '') + '>Show ' + data.minor + ' minor</label>' : '') +
-        '<span class="an-error-actions"><button class="tl-btn" data-act="errors-csv"' + (!data.groups.length ? ' disabled' : '') +
-        '>Export groups CSV</button><button class="tl-close" title="Close (Esc)">×</button></span></div>';
+        '<span class="an-error-actions">' + (HAS_KERNEL ? '<button class="tl-btn" data-act="errors-csv"' +
+        (!data.groups.length ? ' disabled' : '') + '>Export groups CSV</button>' : '') +
+        '<button class="tl-close" title="Close (Esc)">×</button></span></div>';
     if (atomic.total) {
         html += '<div class="an-error-section"><span class="tl-sec">Sleeping functions called in atomic context</span>' +
             '<button class="tl-btn" data-act="atomic-csv">Export atomic CSV</button></div>' +
             '<table class="tl-sum an-tbl an-atomic-table"><thead><tr><th>function</th><th>reason</th><th>caller</th><th>calls</th><th>occurrence</th></tr></thead><tbody>' +
             atomicRows(errorPageRows(atomic)) + '</tbody></table>' + errorFooter(true);
     }
-    if (!data.groups.length) {
+    if (user.total) {
+        html += '<div class="an-error-section"><span class="tl-sec">User API failure hints</span>' +
+            '<button class="tl-btn" data-act="user-errors-csv">Export user API CSV</button></div>' +
+            '<div class="an-hint">Symbol-matched API conventions, not captured errno or verified error propagation. ' +
+            'A return of -1 is not -EPERM. Use <code>space:user AND result:failure</code> in the shared filter.</div>' +
+            '<table class="tl-sum an-tbl an-user-error-table"><thead><tr><th>function</th><th>failure hint</th><th>calls</th><th>occurrence</th></tr></thead><tbody>' +
+            userErrorRows(errorPageRows(user)) + '</tbody></table>' + errorFooter(false, true);
+    }
+    if (!data.groups.length && !user.total) {
         html += '<div class="an-hint">' + (textHits ? 'No visible error chains match the current filter.' :
+            !HAS_KERNEL ? 'No recognized user API failures. Unknown API conventions and missing return values remain unclassified.' :
             D.caps.retval || CHAINS.length ? 'No visible error returns found.' : 'Error paths need <code>options/funcgraph-retval</code>.') + '</div>';
-    } else {
+    } else if (data.groups.length) {
         const columns = [['sys', 'syscall / entry', 1], ['origin', 'origin', 1], ['errno', 'errno'], ['count', 'count'],
             ['user', 'to user'], ['h', 'handled'], ['unknown', 'unknown'], ['t', 'tasks'], ['x', 'chain']];
         html += '<table class="tl-sum an-tbl an-error-table"><thead><tr>' + columns.map(([key, label, left]) => '<th data-esort="' + key +
@@ -453,7 +502,7 @@ function showErrors() {
     }
     html += '<div class="an-hint">Click a row for the next occurrence; Shift-click or use ◀ for the previous one. ' +
         'Every occurrence is accessible, not just the first 50. Unknown means the trace cannot establish the final outcome. ' +
-        'The shared filter matches error origins or atomic calls; exports include unloaded rows. Durations follow Overhead, positions stay as recorded.</div>';
+        'The shared filter matches error origins, user API hints or atomic calls; exports include unloaded rows. Durations follow Overhead, positions stay as recorded.</div>';
     openDetail(html);
     if (resetScroll) elDetail.scrollTop = 0;
     else if (sorted && order.rows.length) {
@@ -461,7 +510,7 @@ function showErrors() {
         const pinned = getComputedStyle(head).top !== 'auto' ? head.offsetHeight : 0;
         elDetail.scrollTop += table.getBoundingClientRect().top - elDetail.getBoundingClientRect().top - pinned;
     }
-    if (focusedAction && /^(?:(?:errors|atomic)-(?:prev|next|csv)|error-occurrences-csv)$/.test(focusedAction)) {
+    if (focusedAction && /^(?:(?:errors|atomic|user-errors)-(?:prev|next|csv)|error-occurrences-csv)$/.test(focusedAction)) {
         const control = elDetail.querySelector('[data-act="' + focusedAction + '"]');
         (control && !control.disabled ? control : elDetail.querySelector('.tl-close'))?.focus({ preventScroll: true });
     }
@@ -965,9 +1014,10 @@ elDetail.addEventListener('click', ev => {
     const action = ev.target.closest('[data-act]');
     if (action && AN.kind === 'errors') {
         const act = action.dataset.act;
-        if (/^(?:errors|atomic)-(?:prev|next)$/.test(act)) {
-            changeErrorPage(act.startsWith('atomic'), act.endsWith('next') ? 1 : -1); ev.stopImmediatePropagation(); return;
+        if (/^(?:errors|atomic|user-errors)-(?:prev|next)$/.test(act)) {
+            changeErrorPage(act.startsWith('atomic'), act.endsWith('next') ? 1 : -1, act.startsWith('user-errors')); ev.stopImmediatePropagation(); return;
         }
+        if (act === 'user-errors-csv') { exportUserErrorsCsv(); ev.stopImmediatePropagation(); return; }
         if (act === 'errors-csv' || act === 'error-occurrences-csv' || act === 'atomic-csv') {
             exportErrorsCsv(act === 'errors-csv' ? 'groups' : act === 'atomic-csv' ? 'atomic' : 'occurrences');
             ev.stopImmediatePropagation(); return;
@@ -991,7 +1041,7 @@ elDetail.addEventListener('click', ev => {
         }
         ev.stopImmediatePropagation(); return;
     }
-    const ec = ev.target.closest('tr[data-chains], tr[data-atomic-group]');
+    const ec = ev.target.closest('tr[data-chains], tr[data-atomic-group], tr[data-user-error-group]');
     if (ec) {
         const step = ev.target.closest('[data-error-step]');
         jumpErrorOccurrence(ec, step ? +step.dataset.errorStep : ev.shiftKey ? -1 : 1);

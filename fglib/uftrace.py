@@ -9,6 +9,7 @@ import time
 from .model import FtraceLine
 from .btf import format_scalar
 from .parser import _base36
+from .user_returns import classify_user_return
 from .timeline import (TimelineBuilder, _Frame, F_USER, F_BOUNDARY, F_ORPHAN, F_TRUNCATED,
                        F_HAS_LAT, F_IRQOFF, F_BHOFF, F_PREEMPT_SHIFT, RE_MAY_SLEEP,
                        RE_SCHED_SWITCH, RE_COMPARATOR, _strip_suffix, CTX_TASK)
@@ -30,9 +31,10 @@ class UftraceInputError(ValueError):
 
 
 class UftraceLine(FtraceLine):
-    __slots__ = ('space', 'boundary', 'source', 'source_kind', 'record_type', 'ret_errno')
+    __slots__ = ('space', 'boundary', 'source', 'source_kind', 'record_type', 'ret_errno', 'ret_failure')
 
-    def __init__(self, *, record_type, space=None, boundary=False, source=None, source_kind=None, ret_errno=None, **kwargs):
+    def __init__(self, *, record_type, space=None, boundary=False, source=None, source_kind=None, ret_errno=None,
+                 ret_failure=None, **kwargs):
         super().__init__(**kwargs)
         self.space = space
         self.boundary = boundary
@@ -40,6 +42,7 @@ class UftraceLine(FtraceLine):
         self.source_kind = source_kind
         self.record_type = record_type
         self.ret_errno = ret_errno
+        self.ret_failure = ret_failure
 
 
 def _uint(value, maximum=(1 << 64) - 1):
@@ -285,7 +288,7 @@ class UftraceTimeline(TimelineBuilder):
                 self.s_eline[index] = lineno
                 self.record_slices[lineno] = index
                 if user:
-                    self._user_exit(record, self.s_line[index])
+                    self._user_exit(record, self.s_line[index], self.strings[self.s_name[index]])
                 return
             self._close_frame(frame, timestamp)
         name = _display(record['name']) or record['address']
@@ -332,7 +335,7 @@ class UftraceTimeline(TimelineBuilder):
                     position = (_display(site['file']), site['line'], '')
                     self.callsite_positions[lineno] = self.position_ids.setdefault(position, len(self.position_ids))
             if is_exit:
-                self._user_exit(record, lineno)
+                self._user_exit(record, lineno, name)
             source = record.get('source')
             if source:
                 position = (_display(source['file']), source['line'], '')
@@ -349,10 +352,13 @@ class UftraceTimeline(TimelineBuilder):
         else:
             stack.append(_Frame(index, depth, name, context if context is not None else CTX_TASK))
 
-    def _user_exit(self, record, lineno):
+    def _user_exit(self, record, lineno, name):
         detail = self.user_details[lineno]
         if 'user_retval' in record:
             detail['retval'] = _display(record['user_retval'])
+            failure = classify_user_return(name, record['user_retval'], self.errno_map)
+            if failure is not None:
+                detail['failure'] = failure
         if 'payload_hex' in record:
             detail['return_payload'] = _display(record['payload_hex'])
 
@@ -589,7 +595,7 @@ class UftraceTimeline(TimelineBuilder):
             prefix = f'{seconds:>7}.{nanos:09d} | {str(cpu) if cpu is not None else "–":>3} | {str(tid) if tid is not None else "–":>7} | {tag} |  '
             stack_key = (space, tid)
             index = self.record_slices.get(lineno)
-            name = args = fold_id = fold_type = depth = duration = source = source_kind = comm = func_info = retval = None
+            name = args = fold_id = fold_type = depth = duration = source = source_kind = comm = func_info = retval = failure = None
             path = ''
             boundary = False
             if index is not None:
@@ -632,6 +638,7 @@ class UftraceTimeline(TimelineBuilder):
                     returned = (' · return ' if typed else ' · raw return ') + retval if retval is not None else ''
                     if space == 'user':
                         detail = self.user_details[self.s_line[index]]
+                        failure = detail.get('failure')
                         if 'retval' in detail:
                             retval = detail['retval']
                             returned = ' · return ' + retval
@@ -677,6 +684,7 @@ class UftraceTimeline(TimelineBuilder):
                                      expandable=bool(func_info), func_info=func_info,
                                      display_func_name=name, cpu=cpu, pid=tid, comm=comm, params=args,
                                      ret_value=retval, ret_errno=return_errors.get(index) if kind == 'exit' else None,
+                                     ret_failure=failure,
                                      duration=duration, sort_duration=duration, fold_id=fold_id, fold_type=fold_type,
                                      fold_ancestors=path, call_depth=depth, space=space, boundary=boundary, source=source,
                                      source_kind=source_kind, record_type=kind,

@@ -4,6 +4,7 @@ JSON layout (durations in ns, times relative to the first event):
     meta        trace, mode, caps, overhead
     functions   [{name, calls, total, self, max, p50, p90, p99, errors}]  (self/total: measured)
     errors      [{origin, top, entry, errno, name, fate, verified, frames, task, pid, start}]
+    user_api_failures optional symbol-matched user API hints, separate from kernel chains
     sections    [{kind, duration, task, pid, start, started_in, ended_in, max_depth}]
     sched_latency [{task, pid, start, duration, max_preempt, irqs_off}]
     atomic_sleep  [{function, reasons, parent, task, pid, start}]
@@ -97,6 +98,20 @@ def build(d, errno_map=None, trace_name=''):
     }
     if by_space:
         result['meta']['uftrace'] = d['uftrace']
+        user_failures = []
+        details = d['uftrace'].get('user_details', {})
+        for index, line in enumerate(c['line']):
+            detail = details.get(line, details.get(str(line), {}))
+            failure = detail.get('failure')
+            if not failure:
+                continue
+            comm, pid = task(c['task'][index])
+            user_failures.append(dict(failure, function=name(index), recorded_return=detail['retval'],
+                                      slice_index=index, entry_line=line,
+                                      exit_line=c['eline'][index] if c.get('eline') else None,
+                                      task=comm, pid=pid, start=start[index]))
+        if user_failures:
+            result['user_api_failures'] = user_failures
     if d.get('kvm'):
         kvm = d['kvm']
         result['kvm'] = {

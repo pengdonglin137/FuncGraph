@@ -1139,6 +1139,10 @@
                 const space = line.getAttribute('data-space');
                 return (space || (line.getAttribute('data-func') ? 'kernel' : '')) === value.toLowerCase();
             }
+            if (field === 'result') {
+                return !cond.invalid && op === '=' && value.toLowerCase() === 'failure' &&
+                    (line.getAttribute('data-ret') !== null || line.getAttribute('data-user-error') !== null);
+            }
 
             // func: simple function name match
             if (field === 'func') {
@@ -1503,7 +1507,8 @@
             if (fgData.ready('fgTextIndex')) data = fgData.read('fgTextIndex');
             else {
                 const rows = [], events = [];
-                const fields = fgTextModel.symbolFields;
+                const hasUserErrors = root.hasAttribute('data-user-errors');
+                const fields = hasUserErrors ? fgTextModel.outcomeFields : fgTextModel.symbolFields;
                 for (const line of lines) {
                     let source = null;
                     if (line.classList.contains('expandable')) {
@@ -1529,7 +1534,7 @@
                     if (rows.length % 512 === 0) yield 'Reading complete Text rows: ' + rows.length + ' / ' + lines.length + '…';
                 }
                 rows.sort((left, right) => left[0] - right[0]);
-                data = { version: 5, fields, rows, events: events.sort((left, right) => left - right) };
+                data = { version: hasUserErrors ? 6 : 5, fields, rows, events: events.sort((left, right) => left - right) };
             }
             const model = yield* fgTextModel.prepare(data);
             if (model.records.length !== lines.length) throw new Error('Text model does not cover mounted rows');
@@ -1573,7 +1578,7 @@
                     record.source !== null && row.nextElementSibling?.getAttribute('data-src') !== String(record.source))) {
                     throw new Error('Text paint block source identity mismatch');
                 }
-                const fields = model.version === 5 ? fgTextModel.symbolFields : fgTextModel.presentationFields;
+                const fields = model.version === 6 ? fgTextModel.outcomeFields : model.version === 5 ? fgTextModel.symbolFields : fgTextModel.presentationFields;
                 if (model.version >= 4 && (row.querySelector('.line-content')?.textContent !== record.textContent ||
                     fields.some(field => row.getAttribute('data-' + field) !== record.getAttribute('data-' + field)))) {
                     throw new Error('Text paint block presentation metadata mismatch');
@@ -3332,7 +3337,7 @@
             if (exitEl) {
                 const ret = exitEl.getAttribute('data-fold-ret') || exitEl.getAttribute('data-ret');
                 if (ret) retValue = ret;
-                hasErrorReturn = exitEl.getAttribute('data-ret') !== null;
+                hasErrorReturn = exitEl.getAttribute('data-ret') !== null || exitEl.getAttribute('data-user-error') !== null;
                 const dur = exitEl.getAttribute('data-sort-duration') || exitEl.getAttribute('data-duration');
                 if (dur) {
                     totalDuration = parseFloat(dur);
@@ -3366,6 +3371,8 @@
                 const errorCode = exitEl?.getAttribute('data-ret');
                 const errorName = hasErrorReturn && fgData.ready('fgErrnoNames') ? fgData.read('fgErrnoNames')?.[errorCode] : null;
                 if (typeof errorName === 'string' && errorName) retDisplay += ' (' + errorName + ')';
+                const userError = exitEl?.getAttribute('data-user-error');
+                if (userError) retDisplay += ' · ' + userError;
                 parts.push('<span class="summary-ret' + (hasErrorReturn ? ' summary-error' : '') + '">' + escapeHtml(retDisplay) + '</span>');
             }
 
@@ -3413,7 +3420,7 @@
             window.fgInlineTextStartup?.reveal();
             fgRefreshTextLayout();
             if (renderer && (renderer.model !== model || renderer.navigation !== navigation || renderer.root !== root ||
-                ![4, 5].includes(model.version) || fgData.textChunks()?.count !== total_lines)) throw new Error('Incomplete Text window model');
+                ![4, 5, 6].includes(model.version) || fgData.textChunks()?.count !== total_lines)) throw new Error('Incomplete Text window model');
             if (model) {
                 if (model.records.length !== total_lines) throw new Error('Text model does not cover mounted rows');
                 fgDomTextModels.set(root, model);

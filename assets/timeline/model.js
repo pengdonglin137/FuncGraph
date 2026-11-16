@@ -253,12 +253,18 @@ const CHAINS = D.chains;   // [origin, top, errno, fate, length, verified, minor
 let showMinor = false;     // minor: handled at once by a function whose negative returns never propagate
 function chainShown(c) { return showMinor || !CHAINS[c][6]; }
 function errName(e) { return D.errnames[String(e)] || ''; }
+const USER_ERRORS = new Map();
+if (D.uftrace?.user_details) for (let index = 0; index < N; index++) {
+    if (index && index % PREPARE_BATCH === 0) yield 'Indexing user API failures…';
+    const failure = sFlags[index] & FL.USER ? D.uftrace.user_details[sLine[index]]?.failure : null;
+    if (failure) USER_ERRORS.set(index, failure);
+}
 
 yield 'Indexing task tracks…';
 // ---- tracks ----
 const TRACKS = D.tasks.map((t, i) => ({
     id: i, pid: t.pid, comm: t.comm, comms: t.comms || [], kind: t.kind, cpu: t.cpu, runs: t.runs || [],
-    lo: -1, hi: -1, maxD: -1, rows: [], rowsT: [], rowsI: [], maxDT: -1, maxDI: -1, busy: 0, off: [], rs: [], io: [], errs: [], cpus: new Set(),
+    lo: -1, hi: -1, maxD: -1, rows: [], rowsT: [], rowsI: [], maxDT: -1, maxDI: -1, busy: 0, off: [], rs: [], io: [], errs: [], userErrors: [], cpus: new Set(),
     collapsed: false, hidden: false, hits: 0, y: 0, h: 0, kvm: [], kvmEvents: [], vcpus: new Set()
 }));
 const KVM = D.kvm?.v === 1 ? D.kvm : null;
@@ -407,6 +413,7 @@ applyView();
 for (const r of D.resched) TRACKS[r[0]].rs.push(r);   // [task, start, end, maxPreempt, irqoff, closedBy]
 for (const r of D.irqoff) TRACKS[r[0]].io.push(r);    // [task, start, end]
 for (let c = 0; c < CHAINS.length; c++) if (!CHAINS[c][6]) TRACKS[sTask[CHAINS[c][0]]].errs.push(c);
+for (const index of USER_ERRORS.keys()) TRACKS[sTask[index]].userErrors.push(index);
 
 let tMin = Infinity, tMax = -Infinity, callStart = Infinity, callEnd = -Infinity;
 function observeTime(value) {
@@ -592,6 +599,7 @@ function trackSub(t) {
     if (t.lo >= 0) parts.push((t.hi - t.lo) + ' calls');
     else parts.push('no traced calls' + (t.runs.length ? ' · ' + t.runs.length + ' recorded runs' : ''));
     if (t.errs.length) parts.push(t.errs.length + ' err');
+    if (t.userErrors?.length) parts.push(t.userErrors.length + ' API failures');
     if (textHits) parts.push(t.hits + ' matched');
     if (t.comms.length > 1) parts.push('was: ' + t.comms.slice(0, -1).join(', '));
     return parts.join('  ·  ');
@@ -711,7 +719,7 @@ let range = null;            // {s, e, track|null}
 let searchHits = null;       // Uint8Array per name index
 let textHits = null;         // Uint8Array per slice: passes the text-view filter
 let hideUnmatched = false;
-let errFilter = 1;           // 1: reaches user space, 0: all
+let errFilter = USER_ERRORS.size ? 0 : 1;
 let cursorX = -1;
 
 yield 'Drawing Timeline…';
@@ -767,6 +775,7 @@ tlRoot.innerHTML = `
         <option value="pid:1234">One task: PID 1234</option>
         ${HAS_KERNEL ? '<option value="graph:vfs_read">A complete call tree: vfs_read</option>' : '<option value="graph:main">A complete call tree: main</option>'}
         <option value="ret:all">Known error return codes</option>
+        <option value="result:failure">Kernel errors and user API failure hints</option>
         ${TIMED ? '<option value="duration:>10">Duration greater than 10 µs</option>' : ''}
         ${HAS_USER ? '<option value="space:user">User-space calls</option>' : ''}
         ${HAS_KERNEL ? '<option value="space:kernel">Kernel-space calls</option>' : ''}
@@ -799,7 +808,7 @@ tlRoot.innerHTML = `
   </span>
   <span class="tl-group tl-errnav">
     <button class="tl-btn" data-act="errprev" title="Previous error origin (Shift+E)">◀</button>
-    <button class="tl-btn" data-act="errmode" title="Toggle: user-visible errors only / all errors"><span class="err-label"></span></button>
+    <button class="tl-btn" data-act="errmode" title="Toggle: kernel error chains reaching user space / all error chains and user API hints"><span class="err-label"></span></button>
     <button class="tl-btn" data-act="errnext" title="Next error origin (E)">▶</button>
   </span>
   <span class="tl-group" role="group" aria-label="Timeline navigation">

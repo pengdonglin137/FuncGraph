@@ -60,6 +60,17 @@ their required blocks are ready. Their existing controls, retry and ordering
 preferences remain unchanged. This is distinct from saving or applying a new
 filter expression.
 
+A filter started **from Timeline after Windowed Text has been opened** still
+matches the complete Text index. The suspended renderer does not fetch or paint
+hidden rows: it accepts the complete filter and sort preferences and marks its
+projection for rebuilding when Text resumes. Clearing that filter works the same
+way. This is distinct from cancelling an unfinished Text-side request by leaving
+Text. `tests/test_user_returns.py` covers applying, sorting, clearing and returning
+with the complete result and the same mounted-row budget.
+
+窗口化 Text 暂停绘制不等于禁用共享筛选。在 Timeline 中发起的筛选和清除仍立即作用于
+完整索引；隐藏区不加载或重绘行，返回 Text 时才按最新已应用状态重建可见窗口。
+
 ## Event visibility while filtering
 
 An additional interaction check reproduced a separate issue: clicking **Events:
