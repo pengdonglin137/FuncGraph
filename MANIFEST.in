@@ -27,6 +27,7 @@ include docs/detail-layout.md
 include docs/toolbar-overlays.md docs/search-toolbar.md
 include docs/performance-timeline-regex.md docs/performance-compare-regex.md
 include docs/performance-filter-matchers.md
+include docs/windowed-filter-transactions.md
 include docs/timeline-colors.md
 include docs/releasing.md docs/releasing.cn.md
 include docs/cpu-coverage.md

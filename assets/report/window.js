@@ -18,31 +18,44 @@ async function fgApplyWindowFilter(text, generation) {
     const controller = fgFilterController = new AbortController();
     const previous = { state: window.fgFilterState, sort: fgTextSort, graph: _graphFoldIds,
         anchor: renderer.anchor(), suppressed: new Set(renderer.suppressedSources) };
+    let committed = false;
     renderer.reportFilterError('');
     updateFilterTags(text);
+    fgSetFilterProgress({ text, error: false, message: 'Preparing full-trace filter… Previous result retained.' });
     try {
         const result = await fgIndexedFilter(fgData.read('fgTextIndex'), text, controller.signal, message => {
             if (generation === fgFilterGeneration) fgSetFilterProgress({ text, message, error: false });
         });
         if (controller.signal.aborted || generation !== fgFilterGeneration || renderer !== fgTextWindow) return null;
-        _graphFoldIds = result.graphSets || {};
-        fgTextSort = result.sortDir || '';
+        fgSetFilterProgress({ text, error: false, message: 'Preparing filtered Text rows… Previous result retained.' });
+        await renderer.rebuild(previous.anchor, {
+            signal: controller.signal, filter: result, resetHeights: true,
+            commit() {
+                _graphFoldIds = result.graphSets || {};
+                fgTextSort = result.sortDir || '';
+                renderer.suppressedSources.clear();
+                if (result.lines) for (const [key, expanded] of Object.entries(expandedLines)) {
+                    if (expanded) renderer.suppressedSources.add(key);
+                }
+                committed = true;
+            }
+        });
+        if (controller.signal.aborted || generation !== fgFilterGeneration || renderer !== fgTextWindow) return null;
         window.fgFilterProgress = null;
         fgNotifyFilter(result.text, result.lines);
         fgShowFilterCount(result.visible, result.total);
-        renderer.suppressedSources.clear();
-        if (result.lines) for (const [key, expanded] of Object.entries(expandedLines)) if (expanded) renderer.suppressedSources.add(key);
-        renderer.invalidateHeights();
-        await renderer.rebuild();
         return true;
     } catch (error) {
-        if (error.name === 'AbortError' || generation !== fgFilterGeneration) return null;
-        fgTextSort = previous.sort; _graphFoldIds = previous.graph;
-        fgNotifyFilter(previous.state.text, previous.state.lines);
-        renderer.suppressedSources.clear();
-        for (const key of previous.suppressed) renderer.suppressedSources.add(key);
-        try { await renderer.rebuild(previous.anchor); } catch (restoreError) {
-            if (restoreError.name !== 'AbortError') console.warn('Previous Text window:', restoreError);
+        if (generation !== fgFilterGeneration) return null;
+        if (error.name === 'AbortError') { fgSetFilterProgress(null); return null; }
+        if (committed) {
+            fgTextSort = previous.sort; _graphFoldIds = previous.graph;
+            fgNotifyFilter(previous.state.text, previous.state.lines);
+            renderer.suppressedSources.clear();
+            for (const key of previous.suppressed) renderer.suppressedSources.add(key);
+            try { await renderer.rebuild(previous.anchor); } catch (restoreError) {
+                if (restoreError.name !== 'AbortError') console.warn('Previous Text window:', restoreError);
+            }
         }
         fgSetFilterProgress({ text, error: true, message: 'Filter not applied: ' + error.message });
         renderer.reportFilterError('Filter not applied: ' + error.message + '. Previous result retained; Apply again to retry.');
@@ -89,7 +102,7 @@ function fgCreateTextWindow(model, navigation, root) {
     }
     const limit = 160, overscan = 32;
     let heights = new Float64Array(model.records.length);
-    const positions = new Map();
+    let positions = new Map();
     const suppressedSources = new Set();
     let sequence = [], tree = new Float64Array(1), sizes = [], plan = null, taskGroups = [], rankedOrder = null;
     let first = 0, end = 0, generation = 0, controller = null, frame = null, pendingStart = null;
@@ -197,9 +210,10 @@ function fgCreateTextWindow(model, navigation, root) {
     const controlsObserver = new ResizeObserver(schedule);
     const controls = document.querySelector('.controls');
     if (controls) controlsObserver.observe(controls);
-    async function paint(start, signal) {
+    async function paint(start, signal, candidate = null, commit = null) {
         check(signal);
-        const stop = Math.min(sequence.length, start + limit);
+        const paintSequence = candidate ? candidate.sequence : sequence;
+        const stop = Math.min(paintSequence.length, start + limit);
         const id = ++generation;
         controller?.abort();
         const own = controller = new AbortController();
@@ -213,7 +227,7 @@ function fgCreateTextWindow(model, navigation, root) {
                 .map(element => [+element.dataset.windowLine, element]));
             const missing = new Map();
             const catalog = fgData.textChunks();
-            const required = new Set(sequence.slice(start, stop).filter(item => typeof item === 'number' && !retained.has(item)));
+            const required = new Set(paintSequence.slice(start, stop).filter(item => typeof item === 'number' && !retained.has(item)));
             for (const number of required) {
                 const ordinal = fgTextModel.locate(model, number).ordinal;
                 const chunk = Math.floor(ordinal / catalog.chunk_size);
@@ -249,9 +263,21 @@ function fgCreateTextWindow(model, navigation, root) {
             await Promise.all(Array.from({ length: Math.min(4, groups.length) }, collect));
             check(own.signal);
             if (id !== generation) throw new DOMException('Text window replaced', 'AbortError');
+            if (candidate) {
+                if (commit) commit();
+                navigation.reorder(candidate.order);
+                navigation.setVisibility(candidate.visibility);
+                ({ sequence, positions, taskGroups, sizes, tree, plan, rankedOrder } = candidate);
+                if (candidate.resetHeights) heights.fill(0);
+                root.classList.toggle('grouped', candidate.mode === 'task' && !candidate.direction);
+                const button = document.getElementById('textOrderBtn');
+                if (button) button.textContent = 'Order: ' + (candidate.direction ? 'duration ' +
+                    (candidate.direction === 'desc' ? '↓' : '↑') : candidate.mode === 'task' ? 'by task' : 'time');
+                needsRebuild = false;
+            }
             const fragment = document.createDocumentFragment();
             for (let index = start; index < stop; index++) {
-                const item = sequence[index];
+                const item = paintSequence[index];
                 let element;
                 if (typeof item === 'number') {
                     element = retained.get(item);
@@ -315,13 +341,17 @@ function fgCreateTextWindow(model, navigation, root) {
         });
     }
     function anchor() { return sequence[indexAt(Math.max(0, scrollY - offset()))]; }
-    function rebuild(preferredNumber) {
+    function rebuild(preferredNumber, options = {}) {
         const previous = preferredNumber ?? anchor();
         rebuildController?.abort();
         const own = rebuildController = new AbortController();
+        const abort = () => own.abort();
+        options.signal?.addEventListener('abort', abort, { once: true });
+        if (options.signal?.aborted) own.abort();
         controller?.abort(); generation++;
         rankingJob = null; needsRebuild = true; rebuilding++;
-        const mode = fgTextOrder, direction = fgTextSort, matches = window.fgFilterState.lines;
+        const mode = fgTextOrder, direction = options.filter ? options.filter.sortDir : fgTextSort;
+        const matches = options.filter ? options.filter.lines : window.fgFilterState.lines;
         const job = (async () => {
             check(own.signal);
             const candidate = fgTextModel.order(model, mode);
@@ -346,8 +376,6 @@ function fgCreateTextWindow(model, navigation, root) {
             }
             check(own.signal);
             const order = ranked ? ranked.order : candidate.order, ordinals = ranked ? ranked.ordinals : candidate.ordinals;
-            navigation.reorder(order);
-            plan = candidate; rankedOrder = ranked;
             const folding = fgTextModel.folding(model);
             const hidden = matches === null ? folding.hiddenMask(foldedBlocks) : null;
             const visibleRecord = matches === null ? null : folding.visibility(foldedBlocks, matches);
@@ -355,8 +383,10 @@ function fgCreateTextWindow(model, navigation, root) {
             const style = getComputedStyle(root);
             const estimate = Math.max(21, parseFloat(style.getPropertyValue('--fg-text-font-size')) * 1.5 +
                 2 * parseFloat(style.getPropertyValue('--fg-text-pad-y')));
-            positions.clear(); sequence = []; taskGroups = []; sizes = [];
-            const boundaries = direction ? [] : plan.boundaries;
+            const prepared = { positions: new Map(), sequence: [], taskGroups: [], sizes: [],
+                plan: candidate, rankedOrder: ranked, order, visibility, mode, direction,
+                resetHeights: options.resetHeights };
+            const boundaries = direction ? [] : candidate.boundaries;
             let boundaryIndex = 0;
             const pendingBoundaries = [];
             for (let index = 0; index < order.length; index++) {
@@ -368,43 +398,44 @@ function fgCreateTextWindow(model, navigation, root) {
                 }
                 const record = model.records[ordinal];
                 const visible = (visibleRecord ? visibleRecord(record) : hidden === null || !hidden[ordinal]) &&
-                    (direction || mode !== 'task' || !plan.hidden.has(number)) && fgTextEventVisible(record);
+                    (direction || mode !== 'task' || !candidate.hidden.has(number)) && fgTextEventVisible(record);
                 visibility[index] = visible ? 1 : 0;
                 if (!visible) continue;
                 if (pendingBoundaries.length) {
                     for (const boundary of pendingBoundaries) {
-                        if (boundary.kind === 'task-group-head') taskGroups.push({ index: sequence.length, text: boundary.text });
-                        sequence.push(boundary);
-                        sizes.push(30);
+                        if (boundary.kind === 'task-group-head') prepared.taskGroups.push({ index: prepared.sequence.length, text: boundary.text });
+                        prepared.sequence.push(boundary);
+                        prepared.sizes.push(30);
                     }
                     pendingBoundaries.length = 0;
                 }
-                positions.set(number, sequence.length); sequence.push(number);
-                sizes.push(heights[ordinal] || estimate);
+                prepared.positions.set(number, prepared.sequence.length); prepared.sequence.push(number);
+                prepared.sizes.push(options.resetHeights ? estimate : heights[ordinal] || estimate);
             }
-            navigation.setVisibility(visibility);
-            tree = new Float64Array(sequence.length + 1);
-            for (let index = 1; index < tree.length; index++) {
-                tree[index] += sizes[index - 1];
+            prepared.tree = new Float64Array(prepared.sequence.length + 1);
+            for (let index = 1; index < prepared.tree.length; index++) {
+                prepared.tree[index] += prepared.sizes[index - 1];
                 const parent = index + (index & -index);
-                if (parent < tree.length) tree[parent] += tree[index];
+                if (parent < prepared.tree.length) prepared.tree[parent] += prepared.tree[index];
             }
-            root.classList.toggle('grouped', mode === 'task' && !direction);
-            const button = document.getElementById('textOrderBtn');
-            if (button) button.textContent = 'Order: ' + (direction ? 'duration ' + (direction === 'desc' ? '↓' : '↑') : mode === 'task' ? 'by task' : 'time');
-            const anchorIndex = positions.get(previous) || 0;
-            first = end = 0; needsRebuild = false;
-            await paint(Math.max(0, Math.min(sequence.length - limit, anchorIndex - overscan)), own.signal);
+            const anchorIndex = prepared.positions.get(previous) || 0;
+            await paint(Math.max(0, Math.min(prepared.sequence.length - limit, anchorIndex - overscan)),
+                own.signal, prepared, options.commit);
             check(own.signal);
             if (scrollY > offset()) scrollTo({ top: offset() + prefix(anchorIndex), behavior: 'instant' });
         })();
         currentJob = job.catch(error => {
+            if (rebuildController === own && options.filter && needsRebuild) {
+                needsRebuild = false;
+                if (error.name === 'AbortError') showStatus();
+            }
             if (rebuildController === own && needsRebuild && error.name !== 'AbortError') {
                 showStatus('Text order not prepared: ' + error.message + '. Previous window retained; Retry.');
                 retry.hidden = false;
             }
             throw error;
         }).finally(() => {
+            options.signal?.removeEventListener('abort', abort);
             if (rebuildController === own) {
                 rebuildController = null; rankingJob = null;
                 if (!fullJob) root.removeAttribute('aria-busy');

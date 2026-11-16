@@ -50,6 +50,10 @@ late loads and delayed scrolling cannot pull focus back. Mounted rows still
 respond synchronously in the default renderer. Default Text initialization still loads all rows.
 New chunked sidecar reports now offer **experimental windowed Text**: use the
 **Windowed Text** tool or append `?text=windowed` to the HTTP URL before entering Text.
+Windowed filters keep the last complete result and pending feedback through
+sorting and remote-block validation. Cancellation stops subsequent rebuilding;
+late replies cannot replace the old window, and failure permits Apply to retry.
+See [filter preparation and cancellation](windowed-filter-transactions.md).
 It mounts at most 160 trace rows while retaining complete filter/fold/order metadata.
 In task order, a caption below the toolbar preserves the viewport's current task
 across eviction and horizontal scrolling. Its count covers the complete task group,

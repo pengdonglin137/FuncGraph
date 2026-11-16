@@ -991,6 +991,174 @@ class TextWindowTest(unittest.TestCase):
         }''')
         self.assertEqual(facts, dict(text='func:^absent$', visible=0, sort='', stable=True, restored=True))
 
+    def test_pending_sorted_filter_keeps_the_last_complete_applied_result(self):
+        self.open_gated_duration_report()
+        self.page.evaluate('''async () => {
+            document.getElementById('filterInput').value='func:leaf';
+            await applyFilter();
+            window.previousWindowFilter = fgFilterState;
+            window.previousWindowOrder = fgTextNavigation.order.slice();
+            document.getElementById('filterInput').value='func:^leaf$ sort:desc';
+            window.pendingSortedFilter = applyFilter();
+        }''')
+        self.page.wait_for_function('() => durationGates.length === 1')
+        facts = self.page.evaluate('''() => ({
+            applied: fgFilterState.text,
+            previous: previousWindowFilter.text,
+            sameLines: fgFilterState.lines === previousWindowFilter.lines,
+            stableOrder: JSON.stringify(fgTextNavigation.order) === JSON.stringify(previousWindowOrder),
+            pending: !!fgFilterProgress && !fgFilterProgress.error,
+            requested: fgFilterProgress?.text
+        })''')
+        self.assertEqual(facts, dict(applied='func:leaf', previous='func:leaf', sameLines=True,
+                                    stableOrder=True, pending=True, requested='func:^leaf$ sort:desc'))
+
+    def test_cancelled_sorted_filter_aborts_ranking_and_keeps_navigation_usable(self):
+        self.open_gated_duration_report()
+        self.page.evaluate('''async () => {
+            document.getElementById('filterInput').value='func:leaf'; await applyFilter();
+            window.previousWindowFilter=fgFilterState;
+            window.previousWindowOrder=fgTextNavigation.order.slice();
+            document.getElementById('filterInput').value='func:^leaf$ sort:desc';
+            window.pendingSortedFilter=applyFilter();
+        }''')
+        self.page.wait_for_function('() => durationGates.length === 1')
+        facts = self.page.evaluate('''async () => {
+            fgCancelPendingFilter();
+            const aborted=durationGates[0].signal.aborted;
+            durationGates[0].progress('STALE SORT');
+            await durationGates[0].release();
+            const applied=await pendingSortedFilter;
+            const stable=fgFilterState===previousWindowFilter && fgTextSort==='' &&
+                JSON.stringify(fgTextNavigation.order)===JSON.stringify(previousWindowOrder);
+            const row=await fgTextWindow.ensureLine(20000);
+            return {aborted,applied,stable,pending:fgFilterProgress,
+                navigated:row.id==='L20000' && row.isConnected,
+                stale:document.querySelector('.fg-window-notice').textContent.includes('STALE SORT')};
+        }''')
+        self.assertEqual(facts, dict(aborted=True, applied=None, stable=True, pending=None,
+                                    navigated=True, stale=False))
+
+    def test_pending_remote_filter_does_not_publish_navigation_or_replace_rows(self):
+        self.open_gated_duration_report()
+        self.page.evaluate('''() => {
+            window.previousWindowFilter=fgFilterState;
+            window.previousWindowNumbers=fgTextWindow.visibleNumbers.slice();
+            window.previousWindowRows=Array.from(document.querySelectorAll('#content .line-container'));
+            window.previousVisibleCount=fgTextNavigation.visibleCount;
+            const original=fgData.loadTextBlocks;
+            window.restoreWindowBlocks=()=>{fgData.loadTextBlocks=original};
+            window.windowPaintGates=[];
+            fgData.loadTextBlocks=(ordinals,options)=>new Promise((resolve,reject)=>{
+                const abort=()=>reject(new DOMException('Test paint cancelled','AbortError'));
+                options.signal.addEventListener('abort',abort,{once:true});
+                windowPaintGates.push({signal:options.signal,fail:reject,
+                    release:async()=>resolve(await original(ordinals,{...options,signal:undefined}))});
+            });
+            document.getElementById('filterInput').value='params:^arg=24000$';
+            window.pendingRemoteFilter=applyFilter();
+        }''')
+        self.page.wait_for_function('() => windowPaintGates.length === 1')
+        facts = self.page.evaluate('''async () => {
+            const before={sameState:fgFilterState===previousWindowFilter,
+                sameNumbers:JSON.stringify(fgTextWindow.visibleNumbers)===JSON.stringify(previousWindowNumbers),
+                sameCount:fgTextNavigation.visibleCount===previousVisibleCount,
+                sameRows:previousWindowRows.every(row=>row.isConnected),
+                pending:!!fgFilterProgress && !fgFilterProgress.error};
+            fgCancelPendingFilter();
+            const result=await pendingRemoteFilter;
+            restoreWindowBlocks();
+            await windowPaintGates[0].release();
+            const row=await fgTextWindow.ensureLine(20000);
+            return {...before,result,aborted:windowPaintGates[0].signal.aborted,
+                retained:fgFilterState===previousWindowFilter,
+                navigated:row.id==='L20000' && row.isConnected,
+                pendingAfter:fgFilterProgress};
+        }''')
+        self.assertEqual(facts, dict(sameState=True, sameNumbers=True, sameCount=True, sameRows=True,
+                                    pending=True, result=None, aborted=True, retained=True,
+                                    navigated=True, pendingAfter=None))
+
+    def test_remote_filter_failure_retains_exact_state_and_retry_commits_once(self):
+        self.open_gated_duration_report()
+        self.page.evaluate('''() => {
+            window.previousWindowFilter=fgFilterState;
+            window.previousWindowNumbers=fgTextWindow.visibleNumbers.slice();
+            window.previousWindowRows=Array.from(document.querySelectorAll('#content .line-container'));
+            const original=fgData.loadTextBlocks;
+            window.restoreWindowBlocks=()=>{fgData.loadTextBlocks=original};
+            window.windowPaintGates=[];
+            fgData.loadTextBlocks=(ordinals,options)=>new Promise((resolve,reject)=>{
+                windowPaintGates.push({signal:options.signal,fail:reject});
+            });
+            const notify=window.fgOnFilter;
+            window.appliedWindowFilters=[];
+            window.fgOnFilter=()=>{appliedWindowFilters.push(fgFilterState.text);notify?.()};
+            document.getElementById('filterInput').value='params:^arg=24000$';
+            window.pendingRemoteFilter=applyFilter();
+        }''')
+        self.page.wait_for_function('() => windowPaintGates.length === 1')
+        facts = self.page.evaluate('''async () => {
+            windowPaintGates[0].fail(new Error('remote filtered rows unavailable'));
+            const failed=await pendingRemoteFilter;
+            const retained=fgFilterState===previousWindowFilter &&
+                JSON.stringify(fgTextWindow.visibleNumbers)===JSON.stringify(previousWindowNumbers) &&
+                previousWindowRows.every(row=>row.isConnected);
+            const notifications=appliedWindowFilters.slice(),error=fgFilterProgress?.error;
+            restoreWindowBlocks();
+            const retried=await applyFilter();
+            const rows=Array.from(document.querySelectorAll('#content .line-container'));
+            return {failed,retained,notifications,error,retried,pending:fgFilterProgress,
+                applied:fgFilterState.text,commits:appliedWindowFilters,
+                matched:fgFilterState.lines.size===1 && fgTextNavigation.visibleCount===1 &&
+                    rows.length===1 && rows[0].dataset.params==='arg=24000'};
+        }''')
+        self.assertEqual(facts, dict(failed=False, retained=True, notifications=[], error=True,
+                                    retried=True, pending=None, applied='params:^arg=24000$',
+                                    commits=['params:^arg=24000$'], matched=True))
+
+    def test_cancelled_filter_after_zero_matches_keeps_the_complete_empty_result(self):
+        self.open_gated_duration_report()
+        self.page.evaluate('''async () => {
+            document.getElementById('filterInput').value='func:^absent$'; await applyFilter();
+            window.previousWindowFilter=fgFilterState;
+            document.getElementById('filterInput').value='func:leaf sort:desc';
+            window.pendingSortedFilter=applyFilter();
+        }''')
+        self.page.wait_for_function('() => durationGates.length === 1')
+        facts = self.page.evaluate('''async () => {
+            fgCancelPendingFilter(); await durationGates[0].release();
+            const result=await pendingSortedFilter;
+            const empty=fgFilterState===previousWindowFilter && fgTextWindow.visibleNumbers.length===0 &&
+                fgTextNavigation.visibleCount===0 && document.querySelectorAll('#content .line-container').length===0;
+            await clearFilter();
+            return {result,empty,pending:fgFilterProgress,
+                restored:fgTextNavigation.visibleCount===fgTextWindow.model.records.length};
+        }''')
+        self.assertEqual(facts, dict(result=None, empty=True, pending=None, restored=True))
+
+    def test_suspending_pending_filter_keeps_applied_state_after_reentry(self):
+        self.open_gated_duration_report()
+        self.page.evaluate('''async () => {
+            document.getElementById('filterInput').value='func:leaf'; await applyFilter();
+            window.previousWindowFilter=fgFilterState;
+            document.getElementById('filterInput').value='func:^leaf$ sort:desc';
+            window.pendingSortedFilter=applyFilter();
+        }''')
+        self.page.wait_for_function('() => durationGates.length === 1')
+        facts = self.page.evaluate('''async () => {
+            await fgSwitchView('timeline');
+            const aborted=durationGates[0].signal.aborted;
+            await durationGates[0].release();
+            const result=await pendingSortedFilter;
+            await fgSwitchView('text');
+            return {aborted,result,retained:fgFilterState===previousWindowFilter,
+                sort:fgTextSort,pending:fgFilterProgress,
+                navigated:(await fgTextWindow.ensureLine(20000)).id==='L20000'};
+        }''')
+        self.assertEqual(facts, dict(aborted=True, result=None, retained=True, sort='',
+                                    pending=None, navigated=True))
+
     def test_cooperative_duration_filter_failure_rolls_back_previous_complete_result(self):
         self.open_gated_duration_report()
         facts = self.page.evaluate('''async () => {
