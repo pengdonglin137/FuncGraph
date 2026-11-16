@@ -201,14 +201,14 @@ correctness and local timing evidence, not native capture/release certification.
 
 ## Final validation and refreshed examples
 
-The final 2026-11-16 checks cover **448 distinct passing regressions**, with no
+The final event-refresh follow-up on 2026-11-16 covers **455 distinct passing regressions**, with no
 skips, across windowing, report generation/syntax, sidecar/chunk access, viewport
 behavior, event visibility, shared filters, saved views, field controls, model
 semantics, anchors, copy, tree guides, layout and Text indexes. This includes
-the 61 windowed-Text cases and two syntax checks; their earlier targeted run
-is not added again to the count. Commands and individual test IDs are retained
-in `regressions.log`, `interaction-regressions.log` and
-`regression-inventory.json` in the local artifact directory.
+the 68 windowed-Text cases and two syntax checks; the earlier 85-case targeted
+window/event/syntax run is not added again. The single broad run, lasting
+289.498 seconds, and its individual test IDs are retained in `regressions.log`
+and `regression-inventory.json` under `build/windowed-event-filter/`.
 
 Both public HTML examples are regenerated from their unchanged saved inputs
 with Linux source commit `7475ea8b58616b33c04afb976cf0fbaad9dd63fb`, browser
@@ -216,10 +216,14 @@ revision `v7.4-rc2` and the matching local source/vmlinux paths. Every original
 row attribute/text, source payload, report identity and Timeline payload agrees;
 only the generated Timeline `stats.build_time` field is ignored. The kernel
 sample retains 739 rows / 10 events, and the mixed sample 1,504 rows / 74 events.
-All seven regenerated public/guide PNGs are byte-identical. Default full-Text
+All seven regenerated public/guide PNGs are byte-identical in the final check.
+An initial concurrent capture differed at three border pixels by one channel
+level; visual/pixel inspection and a quiet official recapture of that one image
+confirmed exact agreement. Both observations are retained in the artifact
+directory rather than masking pixels or changing screenshot code. Default full-Text
 appearance and recorded user/kernel evidence therefore remain unchanged.
 
-The portable wheel and source archive build successfully. Eighteen exact-byte
+The portable wheel and source archive build successfully. Nineteen exact-byte
 checks cover the changed runtime, related assets/modules, regression sources,
 both guides, this note and its source-distribution manifest entry. An isolated
 installation passes **10** smoke cases; **4** explicitly optional cases skip:
@@ -235,6 +239,9 @@ with events and four timestamp-shifted repetitions of the saved mixed input),
 not the small examples' normal full-Text fallback. They verify pending notice,
 unchanged previous rows/state, cancellation/late replies, successful retry,
 event restore and exact complete-model/Timeline preservation. These fixtures
+also verify that hiding events during a new filter's block load preserves the
+query, completes it with one matching pass and restores all data after clearing.
+The fixtures contain 4,851 rows / 48 events and 6,010 rows / 296 events. They
 are compatibility checks, not new recordings or performance measurements.
 
 没有重新采集或删减样例数据。事件按钮仅影响 Text 展示，函数、丢失警告、源码及
