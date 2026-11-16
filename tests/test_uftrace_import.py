@@ -60,6 +60,43 @@ def invoke(*args):
 
 
 class UftraceImportTest(unittest.TestCase):
+    def test_kernel_preempt_entry_exit_baselines_ignore_user_and_event_counts(self):
+        for exit_depth in (0, 1):
+            with self.subTest(exit_depth=exit_depth):
+                records = [call('entry', 'user', 100, 0, 'main', 1,
+                                common_flags=0, common_preempt_count=0),
+                           lifecycle_event('exec', 110),
+                           call('entry', 'kernel', 120, 0, 'schedule', 2,
+                                common_flags=0, common_preempt_count=1),
+                           call('exit', 'kernel', 140, 0, 'schedule', 2,
+                                common_flags=0, common_preempt_count=exit_depth),
+                           call('entry', 'kernel', 150, 0, 'mutex_lock', 3,
+                                common_flags=0, common_preempt_count=2),
+                           call('exit', 'kernel', 170, 0, 'mutex_lock', 3,
+                                common_flags=0, common_preempt_count=exit_depth + 1),
+                           call('entry', 'kernel', 180, 0, 'done', 4,
+                                common_flags=0, common_preempt_count=1),
+                           call('exit', 'kernel', 190, 0, 'done', 4,
+                                common_flags=0, common_preempt_count=exit_depth),
+                           call('exit', 'user', 200, 0, 'main', 1)]
+                records[1].update(common_flags=0, common_preempt_count=0)
+                data = build(records).to_data()
+                names = [data['strings'][key] for key in data['cols']['name']]
+                self.assertEqual((data['preempt_base'], data['preempt_exit_base']), (1, exit_depth))
+                self.assertEqual({names[index]: reasons for index, reasons in data['atomic']}, {'mutex_lock': 2})
+                schedule = names.index('schedule')
+                self.assertEqual((data['cols']['flags'][schedule] >> timeline.F_PREEMPT_SHIFT) & 15, 1)
+                sections = [section for section in data['sections'] if section[1] == timeline.SEC_PREEMPT]
+                self.assertEqual([(section[3] - section[2], section[6]) for section in sections], [(30, 1)])
+
+    def test_kernel_preempt_exit_only_baseline_keeps_orphan_evidence(self):
+        records = [call('exit', 'kernel', 100, 0, 'work', 1, common_flags=0, common_preempt_count=0),
+                   call('exit', 'kernel', 110, 0, 'schedule', 2, common_flags=0, common_preempt_count=1)]
+        data = build(records).to_data()
+        self.assertEqual((data['preempt_base'], data['preempt_exit_base']), (0, 0))
+        self.assertEqual(data['atomic'], [])
+        self.assertTrue(all(flags & timeline.F_ORPHAN for flags in data['cols']['flags']))
+
     def test_kernel_context_bits_are_preserved_when_joined_under_user(self):
         records = capture()
         records[4].update(common_flags=0x85, common_preempt_count=0x23)

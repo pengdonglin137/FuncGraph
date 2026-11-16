@@ -210,7 +210,7 @@ func(args);    [/* <-caller+off/len [mod] ret=X */]  叶子
 - 关中断窗口：只统计 task 上下文中的 `d`/`D`。
 - 时间原点 `t0` 取所有带时间的记录中最早的时刻：调用、off-CPU、need-resched、关中断、临界区、唤醒、CPU 运行段。调度事件常常早于第一个被跟踪的调用（例如任务开始跟踪前就在睡眠），只按调用取原点时这些记录会是负时间。前端的 Fit 和初始视图从第一个调用（`tCall`）开始，概览条覆盖 `[tCall, tMax]`，所以前面的空闲时间不会把调用挤到一边。
 - 事件行（`/* sched_switch: ... */` 等）不参与临界区和关中断窗口：它们是在调度器或事件代码里关着中断打印的，和任务自己的代码无关。以前任务第一次调用之前的一条 `sched_waking` 会打开一个关中断区间，一直延续到下一次调用，得到负的起点和几百微秒的假区间。
-- preempt 基线（`_preempt_baseline`）：function_graph 记录时用的是 `tracing_gen_ctx()`，而它自己的入口路径关着抢占（其他 tracer 用 `tracing_gen_ctx_dec()` 减掉这一层），所以在 `CONFIG_PREEMPTION` 内核上每一行的 preempt 数字都多 1。基线取任务上下文里出现过的最小值，最大为 1：整份 trace 都在关抢占区间里时（最小值 2），这段区间不会被当成基线掩盖。临界区、原子上下文睡眠、need-resched 窗口的 max preempt（`resched[i][3]`），以及前端的 `preemptOff(f)`（详情标签、Preempt depth 叠加层）都减去基线。文本视图的 `data-preempt` 保留原始数字。
+- preempt 基线（`_preempt_baselines`）：function_graph 的入口和返回记录路径可能附带不同的抢占计数，不能把所有行混在一起取最小值。仅从 task 上下文的函数入口和合并叶子行推断 `preempt_base`，仅从 task 上下文的 `}` 返回行推断 `preempt_exit_base`；各自取最小值并上限为 1，保留整份 trace 都在更深关抢占区间时的告警。无返回样本时返回基线沿用入口基线。事件、注释、IRQ 标记和头部不参与推断；uftrace 同样只使用对应类型的内核记录，不混入用户态记录。临界区及 need-resched 最大深度按当前记录类型扣除基线，事件的计数不减函数跟踪基线；睡眠告警只判断函数入口。前端详情、悬窗和叠加层按记录类型归一化：普通切片使用入口基线，无入口的 orphan 切片使用返回基线；旧模型没有返回基线时兼容沿用入口基线。Text 的 `data-preempt` 和 `cols.flags` 始终保留原始计数。基线是采集数据驱动的推断，睡眠告警不是内核实际打印的 BUG。参见 [校正与回归记录](preempt-baseline.md)。
 
 ### 6.4 Off-CPU
 
@@ -343,7 +343,7 @@ Canvas 的 `sliceLabel()` 只对显示文字去除已识别的末尾 GCC/LLVM �
 
 ## 7b. flag 与耗时的进一步分析
 
-- **临界区**：`_track_lat` 在 task 上下文里按行跟踪三种状态：关中断（`d`/`D`）、关抢占（preempt 数字大于基线）、关软中断（`b`/`D`）。基线取 task 上下文中出现过的最小 preempt 深度，6.18 上为 1（跟踪路径本身关了一次抢占）。区间在 flag 恢复、任务换出、或出现 hardirq/softirq 行时结束：中断能进来说明在没被跟踪的代码里已经重新开了中断。记录为 `sections[] = [task, kind, start, end, start_slice, end_slice, max_depth, start_line, end_line]`，起止切片是 flag 变化时栈顶的函数。精度受被跟踪函数密度限制。
+- **临界区**：`_track_lat` 在 task 上下文里按行跟踪三种状态：关中断（`d`/`D`）、关抢占（preempt 数字大于当前记录类型的基线）、关软中断（`b`/`D`）。入口和返回基线独立推断（见 §6.3），事件不直接开启或结束临界区。区间在 flag 恢复、任务换出、或出现 hardirq/softirq 行时结束：中断能进来说明在没被跟踪的代码里已经重新开了中断。记录为 `sections[] = [task, kind, start, end, start_slice, end_slice, max_depth, start_line, end_line]`，起止切片是 flag 变化时栈顶的函数。精度受被跟踪函数密度限制。
 - **原子上下文睡眠**：调用 `RE_MAY_SLEEP` 中的函数（`__might_sleep`、`mutex_lock*`、`down*`、`wait_for_completion*`、`msleep`、`schedule_timeout*` 等）时，若入口行关中断、关抢占（高于基线）、关软中断或处于中断上下文，记入 `atomic[] = [slice, bits]`。`vfree` 等内部会延迟到安全上下文执行的函数不在列表中。
 - **耗时去向**（前端 `breakdown()`）：对切片的子树分类，结果是实测耗时的精确划分：自身 self、被跟踪子调用的 self 之和、子树中进入更高上下文的中断切片、与该切片重叠的 off-CPU 段（阻塞/抢占，从它所在帧的 self 中扣除）。有开销估计时另外给出其中的跟踪开销。
 - **快慢对比**：同名（可限定调用点）调用按耗时排序，取最快一半与最慢 10%，比较两组每次调用在子树中各函数的平均调用次数和 self 时间，以及中断和 off-CPU 时间，按差值排序。

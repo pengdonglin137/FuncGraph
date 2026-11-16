@@ -278,12 +278,89 @@ class SyntheticTest(unittest.TestCase):
         self.assertEqual(secs[0][3] - secs[0][2], 100000)     # g() .. h(), not from the event line
 
     def test_preempt_baseline(self):
-        # function_graph adds one preempt level to every record: lowest depth 1 -> baseline 1;
+        # function_graph adds one preempt level to entry records: lowest depth 1 -> baseline 1;
         # a capture entirely inside a preempt-off region (lowest 2) still has baseline 1
         line = "1000.0001{k:02d} |   0)   sh-7     |  ...{p}. |   1.000 us    |  f{k}(); /* <-x+0x1/0x2 */"
         for depths, base in (([1, 2, 1], 1), ([2, 3, 2], 1), ([0, 1], 0)):
             t = "\n".join(line.format(k=k, p=p) for k, p in enumerate(depths))
             self.assertEqual(build(t)['preempt_base'], base, depths)
+
+    def test_preempt_baseline_ignores_event_marker_and_header_depths(self):
+        calls = ('1000.000100 |   0)   sh-7 |  ...1. |               |  schedule() {\n'
+                 '1000.000110 |   0)   sh-7 |  ...1. |  10.000 us    |  } /* schedule */\n')
+        for body in ('/* sched_process_exec: filename=/bin/sh pid=7 */',
+                     '/* message with schedule() inside */', '==========> |', '<========== |'):
+            for prefix in ('', '# '):
+                with self.subTest(body=body, prefix=prefix):
+                    extra = prefix + '1000.000099 |   0)   sh-7 |  ..... |               |  ' + body + '\n'
+                    data = build(extra + calls)
+                    self.assertEqual(data['preempt_base'], 1)
+                    self.assertEqual(data['atomic'], [])
+                    self.assertEqual(data['sections'], [])
+
+    def test_preempt_entry_exit_baselines_are_independent_and_keep_raw_flags(self):
+        for entry_depth, exit_depth in ((1, 0), (1, 1), (0, 0), (0, 1)):
+            with self.subTest(entry=entry_depth, exit=exit_depth):
+                text = (f'1000.000100 |   0)   sh-7 |  ...{entry_depth}. |               |  schedule() {{\n'
+                        f'1000.000102 |   0)   sh-7 |  ...{entry_depth}. |   1.000 us    |    work();\n'
+                        f'1000.000110 |   0)   sh-7 |  ...{exit_depth}. |  10.000 us    |  }} /* schedule */\n')
+                data = build(text)
+                self.assertEqual((data['preempt_base'], data['preempt_exit_base']), (entry_depth, exit_depth))
+                self.assertEqual([(flags >> timeline.F_PREEMPT_SHIFT) & 15 for flags in data['cols']['flags']],
+                                 [entry_depth, entry_depth])
+                self.assertEqual(data['atomic'], [])
+                self.assertEqual(data['sections'], [])
+                self.check(data, 'abs')
+
+    def test_preempt_baseline_preserves_genuine_atomic_sleep(self):
+        for baseline in (0, 1):
+            with self.subTest(baseline=baseline):
+                text = (f'1000.000100 |   0)   sh-7 |  ...{baseline}. |   1.000 us    |  work();\n'
+                        f'1000.000102 |   0)   sh-7 |  ...{baseline + 1}. |   1.000 us    |  schedule();\n'
+                        f'1000.000104 |   0)   sh-7 |  D..{baseline + 1}. |   1.000 us    |  mutex_lock.isra.0();\n'
+                        '1000.000106 |   0)   sh-7 |  d.h0. |   1.000 us    |  msleep();\n'
+                        '1000.000108 |   0)   sh-7 |  ..... |               |  /* marker */\n')
+                data = build(text)
+                self.assertEqual(data['preempt_base'], baseline)
+                self.assertEqual({self.name(data, index): reasons for index, reasons in data['atomic']},
+                                 {'schedule': 2, 'mutex_lock.isra.0': 1 | 2 | 8, 'msleep': 1 | 4})
+
+    def test_preempt_baseline_uses_leaves_and_caps_all_atomic_captures(self):
+        text = ('1000.000100 |   0)   sh-7 |  ...2. |   1.000 us    |  schedule();\n'
+                '1000.000102 |   0)   sh-7 |  ...3. |   1.000 us    |  mutex_lock();\n'
+                '1000.000104 |   0)   sh-7 |  ..... |               |  /* event */\n')
+        data = build(text)
+        self.assertEqual(data['preempt_base'], 1)
+        self.assertEqual(data['atomic'], [[0, 2], [1, 2]])
+
+    def test_preempt_return_depth_uses_its_own_baseline_for_sections(self):
+        text = ('1000.000100 |   0)   sh-7 |  ...1. |               |  work() {\n'
+                '1000.000102 |   0)   sh-7 |  ..... |   1.000 us    |  } /* work */\n'
+                '1000.000104 |   0)   sh-7 |  ...1. |               |  work() {\n'
+                '1000.000106 |   0)   sh-7 |  ...1. |   1.000 us    |  } /* work */\n'
+                '1000.000108 |   0)   sh-7 |  ...1. |   1.000 us    |  done();\n')
+        data = build(text)
+        sections = [section for section in data['sections'] if section[1] == timeline.SEC_PREEMPT]
+        self.assertEqual((data['preempt_base'], data['preempt_exit_base']), (1, 0))
+        self.assertEqual([(section[3] - section[2], section[6], section[7:]) for section in sections],
+                         [(2000, 1, [4, 5])])
+
+    def test_preempt_event_depth_in_resched_is_not_entry_normalized(self):
+        text = ('1000.000100 |   0)   sh-7 |  ...1. |   1.000 us    |  work();\n'
+                '1000.000102 |   0)   sh-7 |  .n.3. |               |  /* marker */\n'
+                '1000.000104 |   0)   sh-7 |  ...1. |   1.000 us    |  done();\n')
+        data = build(text)
+        self.assertEqual(data['preempt_base'], 1)
+        self.assertEqual(len(data['resched']), 1)
+        self.assertEqual(data['resched'][0][3], 3)
+
+    def test_preempt_exit_only_baseline_does_not_invent_a_call_entry(self):
+        text = ('1000.000100 |   0)   sh-7 |  ...1. |   1.000 us    |  } /* work */\n'
+                '1000.000104 |   0)   sh-7 |  ...2. |   1.000 us    |  } /* schedule */\n')
+        data = build(text)
+        self.assertEqual((data['preempt_base'], data['preempt_exit_base']), (0, 1))
+        self.assertEqual(data['atomic'], [])
+        self.assertTrue(all(flags & timeline.F_ORPHAN for flags in data['cols']['flags']))
 
     def test_depth_gap_parent(self):
         # the kernel's depth jumps by two (entry of arch_stack_walk not recorded): the calls inside

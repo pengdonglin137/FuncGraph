@@ -900,7 +900,8 @@ python3 funcgraph.py --timeline --tail-calls --fast --func-links \
 
 **点击切片**会在下方打开详情面板：
 
-- 标题旁的标签：上下文（`?` 表示推断）、irqs off、BH off、need-resched、preempt off（抢占计数高于这份 trace 的基线，`×N` 表示多关了几层，悬停标签可看到具体数值。function_graph 在记录时自己关了一层抢占，开了 `CONFIG_PREEMPTION` 的内核上每行的 preempt 数字都多 1：基线取任务上下文里出现过的最小值，最大为 1，这样整份 trace 都在关抢占区间里时也不会被掩盖。时间轴里的 preempt off、Sections、在原子上下文睡眠、Preempt depth 叠加层、Sched latency 的 max preempt off 都扣除了基线；文本视图显示的是原始数字，过滤时要用 `preempt:>1` 这样的写法）、migrate off、error origin/propagated、may sleep in atomic context、no exit、no entry、estimated。
+- 标题旁的标签：上下文（`?` 表示推断）、irqs off、BH off、need-resched、preempt off（抢占计数高于对应记录的基线，`×N` 表示多关了几层，悬停标签可看到原始数值及基线）、migrate off、error origin/propagated、may sleep in atomic context、no exit、no entry、estimated。
+- **Preempt 基线**：function_graph 的记录路径可能额外关一级抢占。入口和返回基线分别从各自的 task 上下文记录推断，上限均为 1；合并叶子行属于入口，事件及用户态记录不能把入口基线拉低。有些内核会出现入口 `...1.`、返回 `.....`，对应入口基线 1、返回基线 0，正常 `schedule()` 不应因此被告警。详情、悬窗、Preempt depth 及 Sections 使用相应基线；Sched latency 的 max preempt 对函数行按类型校正，对事件保留原始计数。Text 和详情 flags 始终保留原始数字：入口基线 1 时 `preempt:>1` 可筛出更深的入口，但不能当作适用于所有返回/事件的统一条件。睡眠告警是依据入口 flags 和可睡眠函数列表推断的风险，并非内核已输出的 BUG；基线为 0 时，入口计数大于 0 仍可正确触发告警。详见 [校正说明](preempt-baseline.md)。
 - 左栏：duration、self（及占总耗时的比例）、start、task、depth、flags、return、caller site、args、trace lines（入口和出口在 trace 中的行号，点击跳到文本视图）。
   - 详情字段直接对齐展示，不再有 **Trace metadata** 标题或折叠分组：依次为耗时/self/开始时间、task/CPU 与 flags/上下文告警、调用位置与参数/返回值、depth/原始入口地址/trace 行号。已记录的 **flags** 保留原始 preempt 计数及基线说明，纯内核报告也一样；`none` 表示采集了 latency 标志且均未置位，未采集时不显示 flags 行，包括没有内核标志的用户态调用。原始返回位紧随 BTF 解码返回值，仍保留原始数据与解释。
   - **call site** 下面是调用所在的源码位置（`文件:行号`，点击打开在线源码）；调用点在内联代码里时附上 `in 内联函数 (inlined)`。

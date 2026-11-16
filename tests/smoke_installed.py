@@ -240,6 +240,25 @@ class InstalledPackageTest(unittest.TestCase):
         self.assertTrue(data['caps']['sched_events'])
         self.assertTrue(data['caps']['retaddr'])
 
+    def test_preempt_record_baselines_from_installed_package(self):
+        trace = Path(self.tmp.name, 'preempt.txt')
+        trace.write_text(
+            '1000.000100 |   0)   sh-7 |  ..... |               |  /* sched_process_exec: filename=/bin/sh pid=7 */\n'
+            '1000.000102 |   0)   sh-7 |  ...1. |               |  schedule() {\n'
+            '1000.000106 |   0)   sh-7 |  ..... |   4.000 us    |  } /* schedule */\n'
+            '1000.000108 |   0)   sh-7 |  ...2. |   1.000 us    |  mutex_lock();\n'
+            '1000.000110 |   0)   sh-7 |  ...1. |   1.000 us    |  done();\n')
+        output = trace.with_suffix('.html')
+        self.run_command(self.executable('funcgraph'), '--no-config', '--timeline',
+                         '--output', str(output), str(trace))
+        report = output.read_text()
+        model = json.loads(re.search(r'<script[^>]+id="tlData"[^>]*>(.*?)</script>', report, re.S).group(1))
+        self.assertEqual((model['preempt_base'], model['preempt_exit_base']), (1, 0))
+        names = [model['strings'][index] for index in model['cols']['name']]
+        self.assertEqual({names[index]: reasons for index, reasons in model['atomic']}, {'mutex_lock': 2})
+        self.assertEqual((model['cols']['flags'][names.index('schedule')] >> 7) & 15, 1)
+        self.assertIn('Inferred function_graph preempt baseline', report)
+
     def test_command_help(self):
         for command in ('funcgraph', 'fgreport', 'fgcapture', 'fgcapture.sh'):
             with self.subTest(command=command):

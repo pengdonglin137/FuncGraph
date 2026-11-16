@@ -195,9 +195,10 @@ function tipSlice(i) {
     if (f & FL.ORPHAN) h += '<div class="t-warn">entry not captured (started before trace window)</div>';
     return h;
 }
-// preempt depth above the baseline of the trace (task context; in IRQ context preemption is off anyway)
+// preempt depth above the corresponding graph-record baseline (task context; IRQ context is already atomic)
 const PBASE = D.preempt_base || 0;
-function preemptOff(f) { return (f & FL.LAT) ? Math.max(0, ((f >> FL.PR_SHIFT) & 15) - PBASE) : 0; }
+function preemptBase(flags) { return flags & FL.ORPHAN ? D.preempt_exit_base ?? PBASE : PBASE; }
+function preemptOff(f) { return (f & FL.LAT) ? Math.max(0, ((f >> FL.PR_SHIFT) & 15) - preemptBase(f)) : 0; }
 function ctxFlagText(f) {
     if (!(f & FL.LAT)) return '';
     const parts = [];
@@ -206,7 +207,7 @@ function ctxFlagText(f) {
     const rs = (f >> FL.RS_SHIFT) & 7;
     if (rs) parts.push(RESCHED_NAMES[rs]);
     const p = (f >> FL.PR_SHIFT) & 15;
-    if (p) parts.push('preempt ' + p + (p > PBASE ? ' (preempt off)' : ''));
+    if (p) parts.push('preempt ' + p + (p > preemptBase(f) ? ' (preempt off)' : ''));
     const m = (f >> FL.MG_SHIFT) & 15;
     if (m) parts.push('migrate-off ' + m);
     return parts.length ? ' · ' + parts.join(', ') : '';

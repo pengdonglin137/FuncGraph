@@ -31,6 +31,7 @@ include docs/windowed-filter-transactions.md
 include docs/timeline-colors.md
 include docs/releasing.md docs/releasing.cn.md
 include docs/cpu-coverage.md
+include docs/preempt-baseline.md
 recursive-include docs/releases *.md
 include docs/raw-input.md docs/raw-input.cn.md
 include docs/kvm.md docs/kvm.cn.md

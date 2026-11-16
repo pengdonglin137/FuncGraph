@@ -4193,6 +4193,77 @@ class BrowserSmokeTest(unittest.TestCase):
         self.assertTrue(label.is_visible())
         self.assertEqual(label.locator('xpath=following-sibling::span[1]').inner_text(), 'none')
 
+    def test_timeline_schedule_ignores_event_and_return_offsets_without_hiding_atomic_calls(self):
+        path = os.path.join(self.k.dir, 'preempt-record-kinds.txt')
+        text = ('1000.000100 |   0)   sh-7 |  ..... |               |  /* sched_process_exec: filename=/bin/sh pid=7 */\n'
+                '1000.000102 |   0)   sh-7 |  ...1. |               |  schedule() {\n'
+                '1000.000106 |   0)   sh-7 |  ..... |   4.000 us    |  } /* schedule */\n'
+                '1000.000108 |   0)   sh-7 |  ...2. |   1.000 us    |  mutex_lock();\n'
+                '1000.000110 |   0)   sh-7 |  ...1. |   1.000 us    |  done();\n')
+        with open(path, 'w') as trace:
+            trace.write(text)
+        self.k.run(path, '--no-config', '--timeline', out='preempt-record-kinds.html')
+        self.page.goto('file://' + os.path.join(self.k.dir, 'preempt-record-kinds.html'))
+        self.open_timeline()
+        data = self.ev('fgData.read("tlData")')
+        self.assertEqual((data['preempt_base'], data['preempt_exit_base']), (1, 0))
+        self.ev("fgView('timeline').probe().select(0)")
+        self.assertIn('preempt 1 (baseline 1: preemptible)', self.page.locator('.tl-call-facts').inner_text())
+        self.assertEqual(self.page.locator('.tl-call-facts > .v.err').count(), 0)
+        self.assertNotIn('preempt off', self.page.locator('.tl-slice-head').inner_text())
+        self.assertIn('entry 1, return 0',
+                      self.page.locator('.tl-note').filter(has_text='Inferred function_graph preempt baseline').inner_text())
+        self.ev("fgView('timeline').probe().select(1)")
+        self.assertIn('preemption disabled 1 level', self.page.locator('.tl-call-facts').inner_text())
+        self.assertIn('sleeping function in atomic context', self.page.locator('.tl-call-facts').inner_text())
+        self.assertEqual(self.ev('fgData.read("tlData")'), data)
+
+    def test_timeline_orphan_preempt_flags_use_return_baseline_with_legacy_fallback(self):
+        for exit_base, expected_depth in ((0, 1), (1, 0), (None, 0)):
+            with self.subTest(exit_base=exit_base):
+                self.page.reload()
+                self.open_range_data(['entry', 'orphan'],
+                                     columns={'flags': [(1 << 15) | (1 << 7), (1 << 15) | (1 << 7) | (1 << 17)]},
+                                     extra={'preempt_base': 1, 'preempt_exit_base': exit_base})
+                self.ev("fgView('timeline').probe().select(0)")
+                self.assertIn('baseline 1: preemptible', self.page.locator('.tl-call-facts').inner_text())
+                self.ev("fgView('timeline').probe().select(1)")
+                expected = 'preemption disabled 1 level' if expected_depth else 'preemptible'
+                self.assertIn('baseline ' + str(1 if exit_base is None else exit_base) + ': ' + expected,
+                              self.page.locator('.tl-call-facts').inner_text())
+                self.assertEqual('preempt off' in self.page.locator('.tl-slice-head').inner_text(), bool(expected_depth))
+                self.ev('async () => { await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))); }')
+                self.page.mouse.move(0, 0)
+                self.page.mouse.move(*self.ev("fgView('timeline').probe().xyOf(1)"))
+                self.page.wait_for_selector('.tl-tip', state='visible')
+                self.assertIn('preempt 1' + (' (preempt off)' if expected_depth else ''),
+                              self.page.locator('.tl-tip').inner_text())
+                self.assertEqual('preempt off' in self.page.locator('.tl-tip').inner_text(), bool(expected_depth))
+
+    def test_timeline_preempt_overlay_uses_return_baseline_for_orphans(self):
+        for exit_base in (0, 1):
+            with self.subTest(exit_base=exit_base):
+                self.ev('localStorage.clear()')
+                self.page.reload()
+                self.open_range_data(['entry', 'orphan'],
+                                     columns={'flags': [(1 << 15) | (1 << 7), (1 << 15) | (1 << 7) | (1 << 17)]},
+                                     extra={'preempt_base': 1, 'preempt_exit_base': exit_base})
+                helpers.click_timeline_tool(self.page, '[data-ov=preempt]')
+                bars = self.ev('''async () => {
+                    const context = document.querySelector('.tl-canvas').getContext('2d');
+                    const original = context.fillRect, bars = [];
+                    context.fillRect = function(left, top, width, height) {
+                        if (height === 3) bars.push([left, top, width, height]);
+                        return original.apply(this, arguments);
+                    };
+                    try {
+                        fgView('timeline').draw();
+                        await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+                        return bars;
+                    } finally { context.fillRect = original; }
+                }''')
+                self.assertEqual(len(bars), 1 if exit_base == 0 else 0, bars)
+
     def test_timeline_user_calls_do_not_invent_unrecorded_kernel_flags(self):
         self.open_range_data(['user_call', 'kernel_call'], columns={'flags': [1 << 25, (1 << 15) | 4]},
                              extra={'uftrace': {'spaces': ['user', 'kernel']}})

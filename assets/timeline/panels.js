@@ -391,7 +391,7 @@ function showDetail(i) {
     if ((f >> FL.RS_SHIFT) & 7) pills += pill('warn', 'need-resched');
     // preemption: the preempt-count digit above the trace's baseline (the tracer itself may add one)
     const pd = preemptOff(f);
-    if (pd > 0) pills += pill('warn', 'preempt off' + (pd > 1 ? ' ×' + pd : ''), 'preempt count ' + ((f >> FL.PR_SHIFT) & 15) + ', baseline of this trace ' + PBASE);
+    if (pd > 0) pills += pill('warn', 'preempt off' + (pd > 1 ? ' ×' + pd : ''), 'preempt count ' + ((f >> FL.PR_SHIFT) & 15) + ', baseline for this record ' + preemptBase(f));
     if ((f >> FL.MG_SHIFT) & 15) pills += pill('warn', 'migrate off', 'migrate_disable() depth ' + ((f >> FL.MG_SHIFT) & 15));
     if (eRole[i] >= 0) pills += pill('err', eRole[i] === 0 ? 'error origin' : 'error propagated');
     if (ATOMIC.has(i)) pills += pill('err', 'may sleep in atomic context');
@@ -410,7 +410,7 @@ function showDetail(i) {
     h += kv('start', '+' + fmtDur(sStart[i]) + (MODE === 'abs' ? ' &nbsp;' + fmtAbs(sStart[i]) + ' s' : ''));
     h += kv('task', esc(trackLabel(t)) + (cpuOf(i) >= 0 ? ' &nbsp;on CPU ' + cpuOf(i) : ''));
     if (f & FL.LAT) h += kv('flags', esc(ctxFlagText(f).replace(/^ · /, '').replace(' (preempt off)', '') || 'none') +
-        ((f >> FL.PR_SHIFT) & 15 ? ' <span class="d">(baseline ' + PBASE + ': ' + (pd > 0 ? 'preemption disabled ' + pd + ' level' + (pd > 1 ? 's' : '') : 'preemptible') + ')</span>' : ''));
+        ((f >> FL.PR_SHIFT) & 15 ? ' <span class="d">(baseline ' + preemptBase(f) + ': ' + (pd > 0 ? 'preemption disabled ' + pd + ' level' + (pd > 1 ? 's' : '') : 'preemptible') + ')</span>' : ''));
     if (ATOMIC.has(i)) h += kv('context', 'called with ' + esc(atomicText(ATOMIC.get(i))) + ' (sleeping function in atomic context)', 'err');
     const r = retOf(i), rawReturn = rawRetOf(i), typedReturn = kernelTypesOf(i)?.ret;
     const c = callerOf(i);
@@ -1504,8 +1504,9 @@ function refreshPanel() {
         ' per traced child call, ' + fmtDur(D.overhead.self) + ' per call. Toggle <b>Overhead</b> to subtract it; slice positions stay as measured.', true);
     else if (N && TIMED) note(D.uftrace ? 'Durations include tracing overhead; no per-address-space correction was recorded.' :
         'Durations include tracing overhead (measured 0.2 us per traced call on a QEMU x86_64 VM, 1.1 us on a Raspberry Pi 4). Capture with <code>fgcapture.sh --calibrate</code> to get a correction.', true);
-    if (c.latency && PBASE && !D.uftrace) note('Every line shows preempt depth ' + PBASE + ' or more: function_graph itself disables preemption while recording. ' +
-        'The timeline subtracts it (preempt off, sections, atomic sleeps, preempt overlay); the text view shows the raw digit, so use <code>preempt:&gt;' + PBASE + '</code> there.', true);
+    if (c.latency && (PBASE || D.preempt_exit_base)) note('Inferred function_graph preempt baseline: entry ' + PBASE +
+        ', return ' + (D.preempt_exit_base ?? PBASE) + '. Entry and return callbacks may add different tracing levels; event records do not calibrate these baselines. ' +
+        'The timeline subtracts the corresponding baseline for preempt state and sleep warnings. Text and detail flags retain the raw digits; <code>preempt:&gt;' + PBASE + '</code> matches entry records above their baseline (not all record types).', true);
     if (D.lost.length) note(D.lost.length + ' "LOST EVENTS" record(s): some slices are incomplete (marked with dotted edges). Increase <code>buffer_size_kb</code>.');
     const st = D.stats;
     if (st.truncated || st.orphans) note(st.truncated + ' call(s) without exit, ' + st.orphans + ' without entry (trace window edges).', true);

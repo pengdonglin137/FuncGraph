@@ -275,6 +275,19 @@ class NativeRawTest(unittest.TestCase):
         self.path.write_bytes(container(**options))
         return inputs.read_lines([str(self.path)])[0]
 
+    def test_preempt_baselines_are_inferred_per_graph_record_kind(self):
+        for endian in ('<', '>'):
+            for width in (4, 8):
+                for exit_depth in (0, 1):
+                    with self.subTest(endian=endian, width=width, exit_depth=exit_depth):
+                        lines = self.decode(endian=endian, width=width, exit_preempt=exit_depth,
+                                            sched=True, wakeup_preempt=0)
+                        data = timeline.build_timeline(lines).to_data()
+                        self.assertEqual((data['preempt_base'], data['preempt_exit_base']), (1, exit_depth))
+                        self.assertEqual([(flags >> timeline.F_PREEMPT_SHIFT) & 15
+                                          for flags in data['cols']['flags']], [1, 1])
+                        self.assertFalse(any(section[1] == timeline.SEC_PREEMPT for section in data['sections']))
+
     def test_raw_sidecar_preserves_the_single_file_timeline(self):
         self.path.write_bytes(container(sched=True, retaddr=True))
         single = Path(self.directory.name) / 'single.html'

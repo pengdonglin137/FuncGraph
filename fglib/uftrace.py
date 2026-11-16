@@ -359,11 +359,13 @@ class UftraceTimeline(TimelineBuilder):
     def build(self, enable_fold=False, include_text=True):
         start = time.monotonic()
         self.caps.update(abs=True, proc=True, duration=True)
-        preempts = (record['common_preempt_count'] & 0xf for record in self.records
-                    if record['type'] == 'entry' and record.get('space') == 'kernel' and
-                    record.get('common_flags', 256) < 256 and not record['common_flags'] & 0x58 and
-                    record.get('common_preempt_count', 256) < 256)
-        self.preempt_base = min(1, min(preempts, default=0))
+        preempts = {kind: min((record['common_preempt_count'] & 0xf for record in self.records
+                              if record['type'] == kind and record.get('space') == 'kernel' and
+                              record.get('common_flags', 256) < 256 and not record['common_flags'] & 0x58 and
+                              record.get('common_preempt_count', 256) < 256), default=None)
+                    for kind in ('entry', 'exit')}
+        self.preempt_base = min(1, preempts['entry'] or 0)
+        self.preempt_exit_base = self.preempt_base if preempts['exit'] is None else min(1, preempts['exit'])
         user_comms = {record['tid']: _display(record['comm']) for record in self.records
                       if record.get('space') == 'user' and record.get('comm')}
         user_stacks = defaultdict(list)
@@ -409,7 +411,7 @@ class UftraceTimeline(TimelineBuilder):
             self._resolve_switch_in(task, cpu, timestamp)
             self._track_run(task, cpu, timestamp)
             if lat is not None and kind != 'event':
-                self._track_lat(task, lat, flags, timestamp, lineno, previous)
+                self._track_lat(task, lat, flags, timestamp, lineno, previous, is_exit=kind == 'exit')
             if kind == 'event':
                 self._event(record, task, timestamp, cpu, context, lineno, flags)
                 phase = LIFECYCLE.get(record.get('name'))

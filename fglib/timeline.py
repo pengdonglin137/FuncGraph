@@ -54,10 +54,9 @@ RE_CALLER = re.compile(r'<-([A-Za-z_$][\w.$]*)\+(0x[0-9a-fA-F]+)/(0x[0-9a-fA-F]+
 # kernels with BTF-aware funcgraph-retval also print ret=true/false, unsigned decimals and '(trunc)'
 RE_RET = re.compile(r' ret=(0[xX][0-9a-fA-F]+|-?\d+|true|false)(\(trunc\))?(?=\s|\*/|$)')
 RE_EXIT_NAME = re.compile(r'^ ([A-Za-z_$][\w.$]*)(?: \[([\w-]+)\])?')
-# preempt-depth digit of task-context lines (for the baseline of the trace)
+# preempt-depth digit of task-context lines (for the per-record-kind baselines)
 RE_LAT_TASK = re.compile(r' [.dDb][.BNLbnpl]\.([.0-9a-f])[.0-9a-f]? \| ')
-# Functions that may sleep: calling them with irqs off, preemption disabled or from an
-# interrupt is a bug ("BUG: sleeping function called from invalid context")
+# Sleep-capable entry points for trace-flag-based atomic-context diagnostics.
 RE_MAY_SLEEP = re.compile(r'^(?:__might_sleep|__might_fault|mutex_lock(?:_nested|_interruptible\w*|_killable\w*|_io\w*)?|__mutex_lock|'
                           r'down(?:_read|_write|_interruptible|_killable|_timeout)?(?:_nested)?|rwsem_down_\w+_slowpath|'
                           r'wait_for_completion\w*|msleep\w*|usleep_range\w*|schedule|io_schedule|schedule_timeout\w*|'
@@ -201,6 +200,7 @@ class TimelineBuilder:
         self.sections = []        # [task, kind, start, end, start_slice, end_slice, max_depth, start_line, end_line]
         self.atomic = []          # [slice, reasons bits: 1 irqs off, 2 preempt off, 4 irq context, 8 BH off]
         self.preempt_base = 0
+        self.preempt_exit_base = 0
         self.lost = []            # [cpu, ts, count, line]
         self.wakeups = {}         # pid -> list of (ts, waker_task)
         self.wake_events = []     # [waker_tid, ts, target_tid, ctx, waker_slice, offcpu_rec|None]
@@ -342,30 +342,44 @@ class TimelineBuilder:
         return f, ctx
 
     # -- main pass -----------------------------------------------------
-    def _preempt_baseline(self):
-        """Preempt depth the tracer itself adds to every record (0 or 1).
+    def _preempt_baselines(self):
+        """Infer independent function-entry and return tracing offsets (0 or 1).
 
-        function_graph records tracing_gen_ctx() while its own entry path runs with preemption
-        disabled, so on CONFIG_PREEMPTION kernels every line shows one level too many (other
-        tracers use tracing_gen_ctx_dec() for this). Measured as the lowest depth seen in task
-        context, capped at 1: a trace that lies entirely inside a preempt-off region (lowest 2+)
-        must not hide that region."""
-        lo = None
+        Only task-context calls (including folded leaves) determine the entry offset.
+        Return callbacks can have a different offset on older kernels. Events and markers
+        never calibrate either path. Each minimum is capped at one so a capture entirely
+        inside a deeper preempt-off region still exposes that region.
+        """
+        lowest = [None, None]
         for raw in self.lines:
-            m = RE_LAT_TASK.search(raw, 0, 120)
-            if m:
-                c = m.group(1)
-                v = 0 if c == '.' else int(c, 16)
-                if lo is None or v < lo:
-                    lo = v
-                    if v == 0:
-                        break
-        return min(lo or 0, 1)
+            if raw.startswith('#'):
+                continue
+            match = RE_LAT_TASK.search(raw, 0, 120)
+            if match is None:
+                continue
+            position = match.end()
+            duration = (RE_DUR.match(raw, position) or RE_DUR_NOMARK.match(raw, position)
+                        or RE_FILL.match(raw, position))
+            body = raw[duration.end() if duration else position:].lstrip()
+            if body.startswith('}'):
+                kind = 1
+            elif RE_FUNC_HEAD.match(body):
+                kind = 0
+            else:
+                continue
+            digit = match.group(1)
+            depth = 0 if digit == '.' else int(digit, 16)
+            if lowest[kind] is None or depth < lowest[kind]:
+                lowest[kind] = depth
+            if lowest == [0, 0]:
+                break
+        entry = min(lowest[0] or 0, 1)
+        return entry, entry if lowest[1] is None else min(lowest[1], 1)
 
     def build(self):
         t_start = time.time()
         lines = self.lines
-        self.preempt_base = self._preempt_baseline()
+        self.preempt_base, self.preempt_exit_base = self._preempt_baselines()
         ts_seen = False
         for lineno0, raw in enumerate(lines):
             if not raw or raw[0] == '#':
@@ -434,7 +448,8 @@ class TimelineBuilder:
             if lat is not None and ts is not None:
                 # trace event lines (/* sched_switch: ... */) are printed from inside the scheduler or the
                 # event code with irqs off: they say nothing about the task's own critical sections
-                self._track_lat(task, lat, lflags, ts, lineno, prev_ts, event=stripped.startswith('/*'))
+                self._track_lat(task, lat, lflags, ts, lineno, prev_ts,
+                                event=stripped.startswith('/*'), is_exit=stripped.startswith('}'))
             # Fill a pending leaf duration (no duration column) from the next timestamp
             if task.pending_leaf >= 0 and ts is not None:
                 i = task.pending_leaf
@@ -751,13 +766,14 @@ class TimelineBuilder:
         task.last_ts = ts
         task.last_cpu = cpu
 
-    def _track_lat(self, task, lat, lflags, ts, lineno, prev_ts=None, event=False):
+    def _track_lat(self, task, lat, lflags, ts, lineno, prev_ts=None, event=False, is_exit=False):
+        preempt_base = 0 if event else self.preempt_exit_base if is_exit else self.preempt_base
         if lat[1] != '.':
             if task.resched_open is None:
                 task.resched_open = ts
                 task.resched_info = [0, 0, lineno]
             info = task.resched_info
-            p = max(0, ((lflags >> F_PREEMPT_SHIFT) & 0xf) - self.preempt_base)   # minus the tracer's own level
+            p = max(0, ((lflags >> F_PREEMPT_SHIFT) & 0xf) - preempt_base)
             if p > info[0]:
                 info[0] = p
             if lflags & F_IRQOFF:
@@ -784,7 +800,7 @@ class TimelineBuilder:
                     task.sec_open[kind] = None
         if ctx == CTX_TASK and task.kind == 0:
             task.last_task_ts = ts
-            pd = ((lflags >> F_PREEMPT_SHIFT) & 0xf) - self.preempt_base
+            pd = max(0, ((lflags >> F_PREEMPT_SHIFT) & 0xf) - preempt_base)
             frame = task.stack[-1].idx if task.stack else -1
             for kind, on, depth in ((SEC_IRQ, lflags & F_IRQOFF, 1), (SEC_PREEMPT, pd > 0, pd),
                                     (SEC_BH, lflags & F_BHOFF, 1)):
@@ -1119,6 +1135,7 @@ class TimelineBuilder:
                          for r in self.sections if r[3] > r[2]] if timed else [],
             'atomic': [[remap[a[0]], a[1]] for a in self.atomic],
             'preempt_base': self.preempt_base,
+            'preempt_exit_base': self.preempt_exit_base,
             'lost': [[r[0], r[2], r[3]] for r in self.lost],
             'stats': {k: (round(v, 3) if isinstance(v, float) else v) for k, v in self.stats.items()},
             'overhead': {'child': ovh[0], 'self': ovh[1], 'source': self.overhead_source} if ovh else None,

@@ -5,7 +5,8 @@ import struct
 def container(endian='<', width=8, clock='mono', lost=0, retaddr=False,
               symbols=True, bad_depth=False, args=True, module=False,
               sched=False, retval=True, dynamic_args=False, relative_args=False, fixed_args=False,
-              address_base=0, kvm=False, kvm_only=False):
+              address_base=0, kvm=False, kvm_only=False, entry_preempt=1, exit_preempt=1,
+              wakeup_preempt=1):
     def packed(layout, *values):
         return struct.pack(endian + layout, *values)
 
@@ -91,10 +92,10 @@ def container(endian='<', width=8, clock='mono', lost=0, retaddr=False,
         if dynamic_args or relative_args:
             values += packed('I', len(arguments) << 16 | (0 if relative_args else 8 + len(values) + 4))
         values += arguments
-        return packed('HBBi', 11, 0, 1, 42) + values
+        return packed('HBBi', 11, 0, entry_preempt, 42) + values
 
     def exit_data(address, depth, start, end, returned):
-        return (packed('HBBi', 12, 0, 1, 42) + packed(word, address_base + address) +
+        return (packed('HBBi', 12, 0, exit_preempt, 42) + packed(word, address_base + address) +
                 packed('IIQQ', depth, 0, base + start, base + end) +
                 (packed(word, returned) if retval else b''))
 
@@ -113,7 +114,7 @@ def container(endian='<', width=8, clock='mono', lost=0, retaddr=False,
                     packed('ii' + word, previous, 120, prev_state) +
                     b'worker\0'.ljust(16, b'\0') + packed('ii', following, 120))
         records.extend([(200, switching_data(42, 43, 2)), (250, switching_data(43, 42, 0)),
-                        (225, packed('HBBi', 14, 0, 1, 43) + b'worker\0'.ljust(16, b'\0') +
+                        (225, packed('HBBi', 14, 0, wakeup_preempt, 43) + b'worker\0'.ljust(16, b'\0') +
                          packed('iii', 42, 120, 0))])
         records.sort(key=lambda item: item[0])
     payload = b''
