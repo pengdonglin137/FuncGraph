@@ -75,6 +75,12 @@ show/hide changes settle to the final choice. Geometry, block projection and an
 interrupted duration order may still need rebuilding; this is not a promise of
 zero work or unchanged end-to-end latency after an interaction.
 
+A later optimization retains one structurally validated complete duration
+order while its rows are pending, so an event-only retry does not sort that
+same plan and direction again. Partial/cancelled sorting is still discarded;
+geometry and block loading remain separate work. See [prepared-order reuse,
+extra memory and paired measurements](performance-text-prepared-ranking.md).
+
 Explicit cancellation remains authoritative and does not wait for a slow event
 refresh or cancel that separate display request. A new filter, leaving Text,
 changing order/folding, or choosing Full Text cannot let an old event-driven

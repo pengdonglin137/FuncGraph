@@ -72,6 +72,12 @@ index when rebuilding after folds or filters. Scroll feedback cannot cancel
 an in-progress rebuild. Large-model work and scattered HTML parsing still cost
 time; see the [two-size interaction comparison](performance-text-rebuild.md).
 
+A complete duration order waiting for HTML blocks can also survive Events
+refreshes or row-loading retries. One extra prepared order is retained per
+renderer, keyed by exact complete-plan identity and direction; interrupted
+sorts are not reused. This saves duplicate sorting, not full-model work or
+memory. See [prepared-order reuse and limits](performance-text-prepared-ranking.md).
+
 Rebuilds also reuse original record ordinals in task/duration orders and compute
 heights alongside visible rows. Unfiltered folds reuse prepared scope ranges
 with a temporary one-byte-per-record mask, fixing entry visibility only inside

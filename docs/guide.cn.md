@@ -71,6 +71,10 @@ Text、改变宽度或 Full Text 会取消过期排序；回到同宽 Text 也�
 原生排序。额外临时 typed buffers 共 `16 × N` 字节（输出另计），并非总内存上限；
 完整模型和分散 DOM 解析仍可能阻塞。见[协作式排序及测量](performance-text-cooperative-ranking.md)。
 
+若耗时排序已完成、仅等待行块，切换 Events 或重试加载会复用完整排列，不必再次
+全量排序；仅保留一份待提交排列，方向或完整顺序 plan 改变仍需重算。不会复用
+被中断的排序或省略记录，但会额外保留全量数组。见[完整待提交排序复用](performance-text-prepared-ranking.md)。
+
 窗口重建还会避免逐行临时键值对和冗余任务边界索引；完整行号、排列及源码校验
 保留，隐藏任务和 gap 的显示语义不变。无需新增参数，也不保证总内存上限；
 见[重建分配实测与限制](performance-text-rebuild-allocation.md)。

@@ -1115,16 +1115,25 @@ class TextWindowTest(unittest.TestCase):
         self.assertNotIn('Preparing', facts['notice'])
         self.assertNotIn('STALE', facts['notice'])
 
-    def open_pending_event_filter(self, phase='blocks'):
-        self.page.goto(urljoin(self.server.url, 'mixed/index.html?text=windowed'))
+    def open_pending_event_filter(self, phase='blocks', report='mixed', text='space:user sort:desc', previous=''):
+        self.page.goto(urljoin(self.server.url, report + '/index.html?text=windowed'))
         self.assertTrue(self.page.evaluate('async () => !!(await fgSwitchView("text"))'))
-        self.page.evaluate('''async phase => {
+        if previous:
+            self.page.evaluate('''async text => {
+                document.getElementById('filterInput').value=text;await applyFilter();
+            }''', previous)
+        self.page.evaluate('async () => {window.previousEventTimeline=JSON.stringify(await fgData.load("tlData"))}')
+        self.page.evaluate('''({phase,text}) => {
             window.previousEventFilter=fgFilterState;
             window.previousEventModel=JSON.stringify(fgTextWindow.model.records.map(record=>record.row));
-            window.previousEventTimeline=JSON.stringify(await fgData.load('tlData'));
             window.eventFilterMatches=0;
+            window.eventFilterRanks=0;
             const match=fgIndexedFilter,load=fgData.loadTextBlocks;
-            window.restoreEventFilter=()=>{window.fgIndexedFilter=match;fgData.loadTextBlocks=load};
+            const rank=fgTextModel.rankDuration,rankAsync=fgTextModel.rankDurationAsync;
+            window.restoreEventFilter=()=>{window.fgIndexedFilter=match;fgData.loadTextBlocks=load;
+                fgTextModel.rankDuration=rank;fgTextModel.rankDurationAsync=rankAsync};
+            fgTextModel.rankDuration=(...args)=>{eventFilterRanks++;return rank(...args)};
+            fgTextModel.rankDurationAsync=(...args)=>{eventFilterRanks++;return rankAsync(...args)};
             window.eventFilterGates=[];
             window.fgIndexedFilter=(...args)=>{
                 eventFilterMatches++;
@@ -1142,9 +1151,9 @@ class TextWindowTest(unittest.TestCase):
                         release:async()=>resolve(await load(ordinals,{...options,signal:undefined}))});
                 });
             };
-            document.getElementById('filterInput').value='space:user sort:desc';
+            document.getElementById('filterInput').value=text;
             window.pendingEventFilter=applyFilter();
-        }''', phase)
+        }''', dict(phase=phase, text=text))
         self.page.wait_for_function('() => eventFilterGates.length === 1')
 
     def gate_event_projection(self):
@@ -1174,7 +1183,7 @@ class TextWindowTest(unittest.TestCase):
             restoreEventFilter();
             const expected=fgTextWindow.model.records.filter(record=>record.getAttribute('data-space')==='user')
                 .map(record=>record.row[0]).sort((left,right)=>left-right);
-            return {during,applied,matches:eventFilterMatches,text:fgFilterState.text,
+            return {during,applied,matches:eventFilterMatches,ranks:eventFilterRanks,text:fgFilterState.text,
                 complete:JSON.stringify([...fgFilterState.lines||[]].sort((left,right)=>left-right))===JSON.stringify(expected),
                 model:JSON.stringify(fgTextWindow.model.records.map(record=>record.row))===previousEventModel,
                 timeline:JSON.stringify(fgData.read('tlData'))===previousEventTimeline,
@@ -1182,8 +1191,117 @@ class TextWindowTest(unittest.TestCase):
                 finished:fgFilterProgress===null,sort:fgTextSort};
         }''')
         self.assertEqual(facts, dict(during=dict(retained=True, hidden=True), applied=True,
-                                    matches=1, text='space:user sort:desc', complete=True, model=True,
+                                    matches=1, ranks=1, text='space:user sort:desc', complete=True, model=True,
                                     timeline=True, hidden=True, finished=True, sort='desc'))
+
+    def test_event_toggle_reuses_a_complete_cooperative_rank_while_loading_rows(self):
+        self.open_pending_event_filter(report='scattered-events', text='func:leaf sort:desc')
+        self.page.locator('#textEventsBtn').click()
+        facts = self.page.evaluate('''async () => {
+            await fgTextWindow.settled;await eventFilterGates[0].release();
+            const applied=await pendingEventFilter;
+            restoreEventFilter();
+            const model=fgTextWindow.model,plan=fgTextModel.order(model,'time');
+            const expected=fgTextModel.rankDuration(model,plan,'desc').order;
+            return {applied,matches:eventFilterMatches,ranks:eventFilterRanks,
+                complete:fgFilterState.lines.size===24576,
+                sorted:JSON.stringify(expected)===JSON.stringify(fgTextNavigation.order),
+                visible:fgTextWindow.visibleNumbers.length===24576,
+                unchanged:JSON.stringify(model.records.map(record=>record.row))===previousEventModel &&
+                    JSON.stringify(fgData.read('tlData'))===previousEventTimeline,
+                hidden:!fgTextEventsVisible && document.querySelectorAll('#content [data-trace-event="1"]').length===0,
+                finished:fgFilterProgress===null,mounted:document.querySelectorAll('#content .line-container').length};
+        }''')
+        mounted = facts.pop('mounted')
+        self.assertEqual(facts, dict(applied=True, matches=1, ranks=1, complete=True, sorted=True,
+                                    visible=True, unchanged=True, hidden=True, finished=True))
+        self.assertLessEqual(mounted, 160)
+
+    def test_event_refresh_of_committed_opposite_sort_keeps_pending_rank(self):
+        self.open_pending_event_filter(previous='space:user sort:asc')
+        self.page.locator('#textEventsBtn').click()
+        facts = self.page.evaluate('''async () => {
+            await fgTextWindow.settled;await eventFilterGates[0].release();
+            const applied=await pendingEventFilter;
+            restoreEventFilter();
+            const expected=fgTextModel.rankDuration(fgTextWindow.model,fgTextModel.order(fgTextWindow.model,'time'),'desc').order;
+            return {applied,previous:previousEventFilter.text,text:fgFilterState.text,
+                matches:eventFilterMatches,ranks:eventFilterRanks,
+                sorted:JSON.stringify(expected)===JSON.stringify(fgTextNavigation.order),
+                unchanged:JSON.stringify(fgData.read('tlData'))===previousEventTimeline};
+        }''')
+        self.assertEqual(facts, dict(applied=True, previous='space:user sort:asc', text='space:user sort:desc',
+                                    matches=1, ranks=1, sorted=True, unchanged=True))
+
+    def test_prepared_rank_is_single_entry_exact_plan_and_direction_and_renderer_local(self):
+        self.open_report()
+        facts = self.page.evaluate('''async () => {
+            const model=fgTextWindow.model,nativeRank=fgTextModel.rankDuration,nativePlan=fgTextModel.order,
+                nativeLoad=fgData.loadTextBlocks,original=JSON.stringify(fgTextNavigation.order),
+                records=JSON.stringify(model.records.map(record=>record.row));
+            let ranks=0;const counts=[],errors=[];
+            fgTextModel.rankDuration=(...args)=>{ranks++;return nativeRank(...args)};
+            fgData.loadTextBlocks=async()=>{throw new Error('Prepared row fetch failed')};
+            const attempt=async(mode,direction)=>{
+                fgTextOrder=mode;fgTextSort=direction;
+                errors.push(await fgTextWindow.rebuild().then(()=>null,error=>error.name));
+                counts.push(ranks);
+                if(JSON.stringify(fgTextNavigation.order)!==original)throw new Error('Failed preparation replaced navigation');
+            };
+            try {
+                await attempt('time','desc');await attempt('time','desc');
+                await attempt('task','desc');await attempt('time','desc');
+                await attempt('time','asc');await attempt('time','asc');
+                fgTextModel.order=(...args)=>({...nativePlan(...args)});
+                await attempt('time','asc');fgTextModel.order=nativePlan;
+                await attempt('time','asc');await attempt('time','asc');
+                const previous=fgTextWindow;previous.dispose();
+                fgTextWindow=fgCreateTextWindow(model,previous.navigation,previous.root);
+                await attempt('time','asc');
+                fgData.loadTextBlocks=nativeLoad;await fgTextWindow.rebuild();
+                const expected=nativeRank(model,nativePlan(model,'time'),'asc').order;
+                return {counts,errors,ranks,sorted:JSON.stringify(expected)===JSON.stringify(fgTextNavigation.order),
+                    records:JSON.stringify(model.records.map(record=>record.row))===records,
+                    mounted:document.querySelectorAll('#content .line-container').length};
+            } finally {fgTextModel.rankDuration=nativeRank;fgTextModel.order=nativePlan;fgData.loadTextBlocks=nativeLoad}
+        }''')
+        self.assertEqual(facts['counts'], [1, 1, 2, 3, 4, 4, 5, 6, 6, 7])
+        self.assertEqual(facts['errors'], ['Error'] * 10)
+        self.assertEqual(facts['ranks'], 7)
+        self.assertTrue(facts['sorted'])
+        self.assertTrue(facts['records'])
+        self.assertLessEqual(facts['mounted'], 160)
+
+    def test_invalid_prepared_rank_cannot_poison_a_complete_order_retry(self):
+        self.open_report()
+        facts = self.page.evaluate('''async () => {
+            const model=fgTextWindow.model,native=fgTextModel.rankDuration;
+            const errors=[],stable=[];let ranks=0;
+            const corruptions=[
+                result=>{result.order.pop()},
+                result=>{result.ordinals[0]=result.ordinals[1];result.order[0]=result.order[1]},
+                result=>{result.ordinals[0]=model.records.length},
+                result=>{[result.order[0],result.order[1]]=[result.order[1],result.order[0]]},
+                result=>{result.ordinals=[...result.ordinals]}
+            ];
+            try {
+                for(const corrupt of corruptions) {
+                    fgTextSort='';await fgTextWindow.rebuild();
+                    const previous=JSON.stringify(fgTextNavigation.order);
+                    fgTextModel.rankDuration=(...args)=>{ranks++;const result=native(...args);corrupt(result);return result};
+                    fgTextSort='desc';errors.push(await fgTextWindow.rebuild().then(()=>null,error=>error.message));
+                    stable.push(previous===JSON.stringify(fgTextNavigation.order));
+                    fgTextModel.rankDuration=(...args)=>{ranks++;return native(...args)};
+                    await fgTextWindow.rebuild();
+                    const expected=native(model,fgTextModel.order(model,'time'),'desc').order;
+                    if(JSON.stringify(expected)!==JSON.stringify(fgTextNavigation.order))throw new Error('Invalid order poisoned retry');
+                }
+                return {errors,stable,ranks};
+            } finally {fgTextModel.rankDuration=native}
+        }''')
+        self.assertEqual(facts['errors'], ['Invalid complete Text duration order'] * 5)
+        self.assertEqual(facts['stable'], [True] * 5)
+        self.assertEqual(facts['ranks'], 10)
 
     def test_event_toggle_during_matching_keeps_the_query_and_latest_visibility(self):
         self.open_pending_event_filter('matching')
