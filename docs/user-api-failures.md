@@ -141,6 +141,15 @@ Run it together with the existing kernel-return, report, sidecar and filter test
 - The 70 focused return/index/inline-style regressions pass, including real
   uftrace captures and browser checks. Both menu/button interactions and shortcuts
   are exercised; user-only hints do not depend on kernel return capabilities.
+- The full `tests/run.sh` run completes 1772 tests with no failures and three
+  optional skips, with raw, native uftrace and sample-browser checks required.
+  The real-vmlinux and real-sample-clone BTF checks were then enabled explicitly
+  against the matching kernel and both pass. The remaining optional old-size
+  kernel-tool check is described below, not presented as a passing test.
+- The sdist, pure wheel and bundled-recorder x86_64 wheel build and pass twine
+  checks. Each isolated wheel install runs 15 package smoke tests, including raw;
+  the pure wheel has its one expected native-payload skip, and the native wheel
+  has no skips. Package assets match the checked-out implementation exactly.
 - The committed C workload was also recorded with an installed Linux x86_64
   wheel, without `--uftrace-bin`, vmlinux or tracefs. Its bundled recorder produced
   the four expected hints. `strcmp` and the application-specific negative return
