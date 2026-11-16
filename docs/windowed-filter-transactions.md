@@ -139,3 +139,45 @@ and returns no applied result after cancellation. Full raw observations,
 resource hashes and source identities are in `paired.json` and
 `resource-identities.json` under the local artifact directory above. These are
 correctness and local timing evidence, not native capture/release certification.
+
+## Final validation and refreshed examples
+
+The final 2026-11-16 checks cover **448 distinct passing regressions**, with no
+skips, across windowing, report generation/syntax, sidecar/chunk access, viewport
+behavior, event visibility, shared filters, saved views, field controls, model
+semantics, anchors, copy, tree guides, layout and Text indexes. This includes
+the 61 windowed-Text cases and two syntax checks; their earlier targeted run
+is not added again to the count. Commands and individual test IDs are retained
+in `regressions.log`, `interaction-regressions.log` and
+`regression-inventory.json` in the local artifact directory.
+
+Both public HTML examples are regenerated from their unchanged saved inputs
+with Linux source commit `7475ea8b58616b33c04afb976cf0fbaad9dd63fb`, browser
+revision `v7.4-rc2` and the matching local source/vmlinux paths. Every original
+row attribute/text, source payload, report identity and Timeline payload agrees;
+only the generated Timeline `stats.build_time` field is ignored. The kernel
+sample retains 739 rows / 10 events, and the mixed sample 1,504 rows / 74 events.
+All seven regenerated public/guide PNGs are byte-identical. Default full-Text
+appearance and recorded user/kernel evidence therefore remain unchanged.
+
+The portable wheel and source archive build successfully. Eighteen exact-byte
+checks cover the changed runtime, related assets/modules, regression sources,
+both guides, this note and its source-distribution manifest entry. An isolated
+installation passes **10** smoke cases; **4** explicitly optional cases skip:
+native uftrace payload, raw dependencies, resolver/highlighter extras and
+tail-jump ELF dependencies/architecture. This does not certify those native
+paths or replace their platform-specific release checks.
+
+Six browser checks exercise the public examples and installed kernel/mixed
+single-file and sidecar reports, with event hiding, complete shared-filter
+results, view re-entry and full data restoration. Two additional installed
+checks deliberately use larger **synthetic chunked fixtures** (kernel calls
+with events and four timestamp-shifted repetitions of the saved mixed input),
+not the small examples' normal full-Text fallback. They verify pending notice,
+unchanged previous rows/state, cancellation/late replies, successful retry,
+event restore and exact complete-model/Timeline preservation. These fixtures
+are compatibility checks, not new recordings or performance measurements.
+
+没有重新采集或删减样例数据。事件按钮仅影响 Text 展示，函数、丢失警告、源码及
+Timeline 证据保留；用户仍可一键恢复显示。验证不增加常驻按钮、不升级版本，也不
+自动执行 push、tag、Release 或 Pages 部署。
