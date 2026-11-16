@@ -23,6 +23,8 @@ Timeline 的 Tools 与紧凑布局 Notes 在短窗口中会自动限高或向上
 切换也不会为此构建完整的分析/折叠模型。按钮获得焦点后可用
 Enter / 空格激活；链接、表单控件及可编辑内容保留自身的键盘操作，不再误触发 Text
 行导航快捷键。旧报告需要重新生成才能获得这些修复。
+窗口化筛选准备期间切换 Events 会保留待应用条件，复用已算好的完整命中集合；取消、
+排序变更或 Full Text 交接后不会被旧显隐重试覆盖。见[筛选交互说明](windowed-filter-transactions.md#event-visibility-while-filtering)。
 验证方式及性能边界见[事件显隐优化说明](performance-text-events.md)。
 大单文件会复用浏览器精确测得的事件显示/隐藏宽度，避免每次切换都重测全部块；
 筛选、折叠或布局改变后仍按需重测，不截断长内容。见[宽度复用实测与边界](performance-text-event-widths.md)。

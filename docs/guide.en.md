@@ -30,6 +30,9 @@ The choice persists; explicitly jumping to a hidden event shows events again.
 Full Text updates event rows without reprocessing unrelated open source panels.
 In single-file reports, toggling events does not construct the complete
 analysis/folding model if it has not been prepared yet.
+In windowed Text, event toggles also preserve a pending filter and reuse its
+complete matches. Cancellation, an order change or Full Text handoff cannot be
+overwritten by an old event-refresh retry; see [filter interaction details](windowed-filter-transactions.md#event-visibility-while-filtering).
 Focused buttons retain native Enter/Space activation; links, form controls and
 editable content keep their normal keyboard behavior rather than running Text
 row-navigation shortcuts. Regenerate older reports to receive these fixes.

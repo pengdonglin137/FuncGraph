@@ -169,7 +169,7 @@
             lsSet('textEvents', visible ? 'shown' : 'hidden');
             fgUpdateTextEventsButton();
             if (fgTextDeferred()) return;
-            if (fgTextWindow) return fgRefreshTextWindow();
+            if (fgTextWindow) return fgRefreshTextWindow({ eventRefresh: true });
             const root = document.getElementById('content'), model = fgDomTextModels.get(root);
             const events = model ? model.eventRecords : root.querySelectorAll('.line-container[data-trace-event="1"]');
             fgProjectTextRecords(events, fgTextModel.visibility(foldedBlocks, window.fgFilterState.lines), true);

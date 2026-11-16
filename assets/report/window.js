@@ -7,9 +7,19 @@ function fgOpenWindowedText() {
     location.assign(url.href);
 }
 
-function fgRefreshTextWindow() {
-    return fgTextWindow?.rebuild().catch(error => {
+function fgRefreshTextWindow(options = {}) {
+    return fgTextWindow?.rebuild(undefined, options).catch(error => {
         if (error.name !== 'AbortError') console.warn('Text window:', error);
+    });
+}
+
+function fgWaitTextWindow(pending, signal) {
+    return new Promise((resolve, reject) => {
+        const cleanup = () => signal?.removeEventListener('abort', cancel);
+        const cancel = () => { cleanup(); reject(new DOMException('Text operation cancelled', 'AbortError')); };
+        signal?.addEventListener('abort', cancel, { once: true });
+        Promise.resolve(pending).then(value => { cleanup(); resolve(value); }, error => { cleanup(); reject(error); });
+        if (signal?.aborted) cancel();
     });
 }
 
@@ -36,7 +46,7 @@ async function fgApplyWindowFilter(text, generation) {
         const result = await fgIndexedFilter(fgData.read('fgTextIndex'), text, controller.signal, progress);
         if (controller.signal.aborted || generation !== fgFilterGeneration || fgFilterController !== controller || renderer !== fgTextWindow) return null;
         progress('Preparing filtered Text rows… Previous result retained.');
-        await renderer.rebuild(previous.anchor, {
+        const preparation = {
             signal: controller.signal, filter: result, resetHeights: true,
             commit() {
                 _graphFoldIds = result.graphSets || {};
@@ -47,7 +57,29 @@ async function fgApplyWindowFilter(text, generation) {
                 }
                 committed = true;
             }
-        });
+        };
+        while (true) {
+            const events = renderer.eventRevision, interactions = renderer.interactionRevision;
+            try {
+                await renderer.rebuild(previous.anchor, preparation);
+                break;
+            } catch (error) {
+                const retained = () => !controller.signal.aborted && generation === fgFilterGeneration &&
+                    fgFilterController === controller && renderer === fgTextWindow &&
+                    interactions === renderer.interactionRevision;
+                if (error.name !== 'AbortError' || events === renderer.eventRevision || !retained()) throw error;
+                let pending;
+                do {
+                    pending = renderer.settled;
+                    try { await fgWaitTextWindow(pending, controller.signal); }
+                    catch (refreshError) {
+                        if (refreshError.name !== 'AbortError' || !retained()) throw refreshError;
+                    }
+                    if (!retained()) throw error;
+                } while (pending !== renderer.settled);
+                progress('Preparing filtered Text rows… Previous result retained.');
+            }
+        }
         if (controller.signal.aborted || generation !== fgFilterGeneration || fgFilterController !== controller || renderer !== fgTextWindow) return null;
         window.fgFilterProgress = null;
         fgNotifyFilter(result.text, result.lines);
@@ -120,6 +152,7 @@ function fgCreateTextWindow(model, navigation, root) {
     let destroyed = false, suspended = false, fullJob = null, fullController = null, currentJob = null, navigating = 0, rebuilding = 0;
     let measuredWidth = innerWidth, widest = 0, filterError = '';
     let rebuildController = null, rankingJob = null, needsRebuild = false;
+    let eventRevision = 0, interactionRevision = 0;
     const top = document.createElement('div'), body = document.createElement('div'), bottom = document.createElement('div');
     top.className = bottom.className = 'fg-window-spacer';
     top.setAttribute('aria-hidden', 'true'); bottom.setAttribute('aria-hidden', 'true');
@@ -353,6 +386,8 @@ function fgCreateTextWindow(model, navigation, root) {
     }
     function anchor() { return sequence[indexAt(Math.max(0, scrollY - offset()))]; }
     function rebuild(preferredNumber, options = {}) {
+        if (options.eventRefresh) eventRevision++;
+        else if (!options.filter) interactionRevision++;
         const previous = preferredNumber ?? anchor();
         rebuildController?.abort();
         const own = rebuildController = new AbortController();
@@ -468,13 +503,7 @@ function fgCreateTextWindow(model, navigation, root) {
         while (rankingJob) {
             const pending = rankingJob;
             try {
-                await new Promise((resolve, reject) => {
-                    const cleanup = () => options.signal?.removeEventListener('abort', cancel);
-                    const cancel = () => { cleanup(); reject(new DOMException('Text navigation canceled', 'AbortError')); };
-                    options.signal?.addEventListener('abort', cancel, { once: true });
-                    pending.then(value => { cleanup(); resolve(value); }, error => { cleanup(); reject(error); });
-                    if (options.signal?.aborted) cancel();
-                });
+                await fgWaitTextWindow(pending, options.signal);
             } catch (error) {
                 check(options.signal);
                 if (error.name !== 'AbortError' || rankingJob === pending) throw error;
@@ -495,6 +524,7 @@ function fgCreateTextWindow(model, navigation, root) {
         } finally { navigating--; }
     }
     function dispose() {
+        interactionRevision++;
         destroyed = true; generation++; controller?.abort(); rebuildController?.abort();
         rebuildController = null; rankingJob = null;
         observer.disconnect(); controlsObserver.disconnect(); cancelAnimationFrame(frame);
@@ -512,6 +542,7 @@ function fgCreateTextWindow(model, navigation, root) {
         if (destroyed) return;
         if (fullJob) return fullJob;
         check();
+        interactionRevision++;
         const loading = fullController = new AbortController();
         full.disabled = true;
         fullJob = (async () => {
@@ -594,8 +625,10 @@ function fgCreateTextWindow(model, navigation, root) {
         reportFilterError(message) { filterError = message; showStatus(); },
         reportFilterProgress(message) { showStatus(message); },
         invalidateHeights() { heights.fill(0); },
-        suspend() { suspended = true; context.hidden = true; controller?.abort(); rebuildController?.abort(); fullController?.abort(); },
+        suspend() { interactionRevision++; suspended = true; context.hidden = true; controller?.abort(); rebuildController?.abort(); fullController?.abort(); },
         get visibleNumbers() { return sequence.filter(item => typeof item === 'number'); },
         get mountedLimit() { return limit; },
+        get eventRevision() { return eventRevision; },
+        get interactionRevision() { return interactionRevision; },
         get settled() { return currentJob; } };
 }

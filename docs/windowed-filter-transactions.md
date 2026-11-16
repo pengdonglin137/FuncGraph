@@ -60,6 +60,65 @@ their required blocks are ready. Their existing controls, retry and ordering
 preferences remain unchanged. This is distinct from saving or applying a new
 filter expression.
 
+## Event visibility while filtering
+
+An additional interaction check reproduced a separate issue: clicking **Events:
+shown / hidden** while a new filter was ranking or loading rows rebuilt the old
+window and aborted the candidate. The pending expression then disappeared
+silently, even though the user had changed only a presentation preference.
+
+Event-only refreshes now retain the pending query and the complete matching
+result. The previous applied window first reflects the latest event preference;
+the filter then prepares its window again from the already computed match set.
+It does not repeat full-index matching or publish a partial result. Rapid
+show/hide changes settle to the final choice. Geometry, block projection and an
+interrupted duration order may still need rebuilding; this is not a promise of
+zero work or unchanged end-to-end latency after an interaction.
+
+Explicit cancellation remains authoritative and does not wait for a slow event
+refresh or cancel that separate display request. A new filter, leaving Text,
+changing order/folding, or choosing Full Text cannot let an old event-driven
+retry override the newer intent. Waiting uses the same abort-aware helper as
+Text navigation, with listeners removed on settlement or cancellation. No new
+buttons, status rows, sampled records or saved-filter semantics are introduced.
+
+进一步修复：筛选还在排序 / 载入时切换 Events，不再悄悄丢掉待应用的条件。先完成
+当前窗口的事件显隐，再复用已算好的完整命中集合准备筛选窗口；快速连点以最后一次
+选择为准。取消不必等待事件加载，也不会取消独立的显隐请求。切换排序、离开 Text、
+进入 Full Text 或提交新条件后，旧请求不能借显隐重试覆盖新操作。几何和被打断的
+耗时排序仍可能重做，不把复用命中集合说成没有额外开销。
+
+Seven dedicated browser cases cover matching, duration ranking, row loading,
+rapid toggles, cancellation while event loading is gated, explicit order change
+and Full Text handoff. They check complete result/order, one full-index match,
+model/Timeline preservation and the final visibility preference. A baseline
+failure against `eadd9fa6d1e5` and follow-up artifacts are retained locally under
+`build/windowed-event-filter/`.
+
+The follow-up complete Pi4 check uses the same unchanged **371,997 rows / 684
+events** and 94 hard-linked data resources described below. Three alternating
+fresh-context pairs compare `eadd9fa6d1e5` with the new runtime in Chromium
+145.0.7632.6 at 1440 × 900. Full-index `func:mutex` results agree across all six
+runs: 772 matches. Full model-row hashes, including all retained fields, agree
+before/after the interleaving exercise on both versions.
+
+Gating a sorted filter's block load and then hiding events reproduces the bug
+on the baseline: the pending operation returns no applied result and the query
+is empty. The fixed version applies all 772 matches in duration order, retains
+the hidden choice, mounts at most 160 units and invokes full-index matching
+once. This is a correctness comparison, not an elapsed-time speedup comparison
+between a cancelled operation and a completed one.
+
+Separate quiet warm API intervals measure unchanged rebuild **36.7 → 35.0 ms**
+and an uninterrupted full filter **623.4 → 637.1 ms** (medians of three). The
+filter's higher observed median is retained rather than presented as a speedup.
+Download/model startup, full-result hashing and gated scenarios are outside
+those intervals; browser/server caches are not forced cold. No tests or builds
+run concurrently. Reusing matches avoids an additional full matching pass in
+the interleaved scenario, not every geometry/ranking cost or all synchronous
+blocking. Raw observations and exact runtime hashes are in the follow-up
+`paired.json`.
+
 ## Accuracy, memory and remaining costs
 
 The full model and original nanosecond/time/argument/address/source metadata

@@ -54,6 +54,10 @@ class TextWindowTest(unittest.TestCase):
             for number in range(24576)))
         cls.kernel.run(str(scattered), '--no-config', '--timeline', '--enable-fold', '--filter', '--func-links',
                        '--report-mode', 'sidecar', out='report/scattered')
+        scattered_events = Path(cls.kernel.dir) / 'scattered-events.txt'
+        scattered_events.write_text(scattered.read_text() + ' 3)               |  /* sched_wakeup: comm=worker pid=43 target_cpu=3 */\n')
+        cls.kernel.run(str(scattered_events), '--no-config', '--timeline', '--enable-fold', '--filter', '--func-links',
+                       '--report-mode', 'sidecar', out='report/scattered-events')
         cls.server = create_server(Path(cls.kernel.dir) / 'report')
         cls.thread = threading.Thread(target=cls.server.serve_forever, kwargs={'poll_interval': 0.02}, daemon=True)
         cls.thread.start()
@@ -1110,6 +1114,191 @@ class TextWindowTest(unittest.TestCase):
         self.assertIsNone(facts['pending'])
         self.assertNotIn('Preparing', facts['notice'])
         self.assertNotIn('STALE', facts['notice'])
+
+    def open_pending_event_filter(self, phase='blocks'):
+        self.page.goto(urljoin(self.server.url, 'mixed/index.html?text=windowed'))
+        self.assertTrue(self.page.evaluate('async () => !!(await fgSwitchView("text"))'))
+        self.page.evaluate('''async phase => {
+            window.previousEventFilter=fgFilterState;
+            window.previousEventModel=JSON.stringify(fgTextWindow.model.records.map(record=>record.row));
+            window.previousEventTimeline=JSON.stringify(await fgData.load('tlData'));
+            window.eventFilterMatches=0;
+            const match=fgIndexedFilter,load=fgData.loadTextBlocks;
+            window.restoreEventFilter=()=>{window.fgIndexedFilter=match;fgData.loadTextBlocks=load};
+            window.eventFilterGates=[];
+            window.fgIndexedFilter=(...args)=>{
+                eventFilterMatches++;
+                if(phase!=='matching')return match(...args);
+                return new Promise((resolve,reject)=>{
+                    args[2].addEventListener('abort',()=>reject(new DOMException('Matching cancelled','AbortError')),{once:true});
+                    eventFilterGates.push({signal:args[2],release:async()=>resolve(await match(...args))});
+                });
+            };
+            fgData.loadTextBlocks=(ordinals,options)=>{
+                if(phase==='matching' || eventFilterGates.length)return load(ordinals,options);
+                return new Promise((resolve,reject)=>{
+                    options.signal.addEventListener('abort',()=>reject(new DOMException('Event projection superseded','AbortError')),{once:true});
+                    eventFilterGates.push({signal:options.signal,
+                        release:async()=>resolve(await load(ordinals,{...options,signal:undefined}))});
+                });
+            };
+            document.getElementById('filterInput').value='space:user sort:desc';
+            window.pendingEventFilter=applyFilter();
+        }''', phase)
+        self.page.wait_for_function('() => eventFilterGates.length === 1')
+
+    def gate_event_projection(self):
+        self.page.evaluate('''() => {
+            const load=fgData.loadTextBlocks;
+            window.restoreEventProjection=()=>{fgData.loadTextBlocks=load};
+            window.eventProjectionGates=[];
+            fgData.loadTextBlocks=(ordinals,options)=>new Promise((resolve,reject)=>{
+                options.signal.addEventListener('abort',()=>reject(new DOMException('Event visibility cancelled','AbortError')),{once:true});
+                eventProjectionGates.push({signal:options.signal,fail:reject,
+                    release:async()=>resolve(await load(ordinals,{...options,signal:undefined}))});
+            });
+            window.eventProjectionWork=fgSetTextEventsVisible(false);
+        }''')
+        self.page.wait_for_function('() => eventProjectionGates.length > 0')
+
+    def test_event_toggle_preserves_a_pending_filter_and_reuses_complete_matches(self):
+        self.open_pending_event_filter()
+        self.page.locator('#textEventsBtn').click()
+        facts = self.page.evaluate('''async () => {
+            await fgTextWindow.settled;
+            const during={retained:fgFilterProgress?.text==='space:user sort:desc' && !fgFilterProgress.error ||
+                    fgFilterState.text==='space:user sort:desc',
+                hidden:document.querySelectorAll('#content [data-trace-event="1"]').length===0};
+            await eventFilterGates[0].release();
+            const applied=await pendingEventFilter;
+            restoreEventFilter();
+            const expected=fgTextWindow.model.records.filter(record=>record.getAttribute('data-space')==='user')
+                .map(record=>record.row[0]).sort((left,right)=>left-right);
+            return {during,applied,matches:eventFilterMatches,text:fgFilterState.text,
+                complete:JSON.stringify([...fgFilterState.lines||[]].sort((left,right)=>left-right))===JSON.stringify(expected),
+                model:JSON.stringify(fgTextWindow.model.records.map(record=>record.row))===previousEventModel,
+                timeline:JSON.stringify(fgData.read('tlData'))===previousEventTimeline,
+                hidden:!fgTextEventsVisible && document.getElementById('textEventsBtn').textContent==='Events: hidden',
+                finished:fgFilterProgress===null,sort:fgTextSort};
+        }''')
+        self.assertEqual(facts, dict(during=dict(retained=True, hidden=True), applied=True,
+                                    matches=1, text='space:user sort:desc', complete=True, model=True,
+                                    timeline=True, hidden=True, finished=True, sort='desc'))
+
+    def test_event_toggle_during_matching_keeps_the_query_and_latest_visibility(self):
+        self.open_pending_event_filter('matching')
+        self.page.locator('#textEventsBtn').click()
+        facts = self.page.evaluate('''async () => {
+            await fgTextWindow.settled;
+            const pending=fgFilterState===previousEventFilter &&
+                fgFilterProgress?.text==='space:user sort:desc' && !eventFilterGates[0].signal.aborted;
+            await eventFilterGates[0].release();const applied=await pendingEventFilter;restoreEventFilter();
+            return {pending,applied,matches:eventFilterMatches,text:fgFilterState.text,
+                hidden:!fgTextEventsVisible,finished:fgFilterProgress===null};
+        }''')
+        self.assertEqual(facts, dict(pending=True, applied=True, matches=1,
+                                    text='space:user sort:desc', hidden=True, finished=True))
+
+    def test_event_toggle_during_duration_ranking_keeps_complete_filter_results(self):
+        self.page.goto(urljoin(self.server.url, 'scattered-events/index.html?text=windowed'))
+        self.assertTrue(self.page.evaluate('async () => !!(await fgSwitchView("text"))'))
+        self.page.evaluate('''() => {
+            window.eventRankGates=[];window.eventRankMatches=0;
+            const rank=fgTextModel.rankDurationAsync,match=fgIndexedFilter;
+            window.restoreEventRanking=()=>{fgTextModel.rankDurationAsync=rank;window.fgIndexedFilter=match};
+            window.fgIndexedFilter=(...args)=>{eventRankMatches++;return match(...args)};
+            fgTextModel.rankDurationAsync=(model,plan,direction,signal,progress)=>{
+                if(eventRankGates.length)return rank(model,plan,direction,signal,progress);
+                return new Promise((resolve,reject)=>{
+                    signal.addEventListener('abort',()=>reject(new DOMException('Ranking superseded','AbortError')),{once:true});
+                    eventRankGates.push({signal,release:async()=>resolve(await rank(model,plan,direction,undefined,progress))});
+                });
+            };
+            document.getElementById('filterInput').value='func:leaf sort:desc';
+            window.eventRankWork=applyFilter();
+        }''')
+        self.page.wait_for_function('() => eventRankGates.length === 1')
+        self.page.locator('#textEventsBtn').click()
+        facts = self.page.evaluate('''async () => {
+            await eventRankGates[0].release();const applied=await eventRankWork;restoreEventRanking();
+            const model=fgTextWindow.model,plan=fgTextModel.order(model,'time');
+            const expected=fgTextModel.rankDuration(model,plan,'desc').order
+                .filter(number=>fgTextModel.locate(model,number).record.getAttribute('data-func')==='leaf');
+            return {applied,aborted:eventRankGates[0].signal.aborted,matches:eventRankMatches,
+                complete:JSON.stringify(fgTextWindow.visibleNumbers)===JSON.stringify(expected),
+                count:fgFilterState.lines.size,hidden:!fgTextEventsVisible,finished:fgFilterProgress===null};
+        }''')
+        self.assertEqual(facts, dict(applied=True, aborted=True, matches=1, complete=True,
+                                    count=24576, hidden=True, finished=True))
+
+    def test_rapid_event_toggles_keep_the_last_preference_and_the_pending_query(self):
+        self.open_pending_event_filter()
+        facts = self.page.evaluate('''async () => {
+            const changes=[];
+            for(const visible of [false,true,false,true,false])changes.push(fgSetTextEventsVisible(visible));
+            await Promise.all(changes);await eventFilterGates[0].release();
+            const applied=await pendingEventFilter;
+            restoreEventFilter();
+            return {applied,matches:eventFilterMatches,text:fgFilterState.text,finished:fgFilterProgress===null,
+                hidden:!fgTextEventsVisible && fgTextWindow.visibleNumbers.every(number=>
+                    fgTextModel.locate(fgTextWindow.model,number).record.getAttribute('data-trace-event')!=='1'),
+                model:JSON.stringify(fgTextWindow.model.records.map(record=>record.row))===previousEventModel};
+        }''')
+        self.assertEqual(facts, dict(applied=True, matches=1, text='space:user sort:desc',
+                                    finished=True, hidden=True, model=True))
+
+    def test_filter_cancellation_does_not_wait_for_or_cancel_event_visibility_loading(self):
+        self.open_pending_event_filter()
+        self.gate_event_projection()
+        self.page.evaluate('''() => {
+            window.cancelledEventFilter='waiting';
+            pendingEventFilter.then(result=>{window.cancelledEventFilter=result});
+            fgCancelPendingFilter();
+        }''')
+        self.page.wait_for_function('() => cancelledEventFilter !== "waiting"')
+        facts = self.page.evaluate('''async () => {
+            const before={result:cancelledEventFilter,retained:fgFilterState===previousEventFilter,
+                pending:fgFilterProgress,displayContinues:eventProjectionGates.every(gate=>!gate.signal.aborted)};
+            restoreEventProjection();await Promise.all(eventProjectionGates.map(gate=>gate.release()));
+            await eventProjectionWork;await eventFilterGates[0].release();restoreEventFilter();
+            return {...before,hidden:!fgTextEventsVisible &&
+                document.querySelectorAll('#content [data-trace-event="1"]').length===0,
+                unchanged:fgFilterState===previousEventFilter};
+        }''')
+        self.assertEqual(facts, dict(result=None, retained=True, pending=None, displayContinues=True,
+                                    hidden=True, unchanged=True))
+
+    def test_event_refresh_does_not_resume_a_filter_after_explicit_order_change(self):
+        self.open_pending_event_filter()
+        self.gate_event_projection()
+        facts = self.page.evaluate('''async () => {
+            restoreEventProjection();await fgSetTextOrder('task');
+            await Promise.all(eventProjectionGates.map(gate=>gate.release()));
+            await eventProjectionWork;await eventFilterGates[0].release();
+            const applied=await pendingEventFilter;restoreEventFilter();
+            return {applied,retained:fgFilterState===previousEventFilter,order:fgTextOrder,
+                sort:fgTextSort,finished:fgFilterProgress===null};
+        }''')
+        self.assertEqual(facts, dict(applied=None, retained=True, order='task', sort='', finished=True))
+
+    def test_full_text_handoff_cannot_be_overwritten_by_an_event_filter_retry(self):
+        self.open_pending_event_filter()
+        self.gate_event_projection()
+        facts = self.page.evaluate('''async () => {
+            restoreEventProjection();restoreEventFilter();
+            const renderer=fgTextWindow,full=renderer.fullText();
+            const applied=await pendingEventFilter;
+            await Promise.all(eventProjectionGates.map(gate=>gate.release()));
+            await eventProjectionWork;await eventFilterGates[0].release();await full;
+            return {applied,full:fgTextWindow===null,mounted:document.querySelectorAll('#content .line-container').length,
+                expected:renderer.model.records.length,hidden:document.querySelectorAll('#content [data-trace-event="1"]')
+                    .length>0 && Array.from(document.querySelectorAll('#content [data-trace-event="1"]'))
+                        .every(row=>!row.getClientRects().length)};
+        }''')
+        self.assertIsNone(facts['applied'])
+        self.assertTrue(facts['full'])
+        self.assertEqual(facts['mounted'], facts['expected'])
+        self.assertTrue(facts['hidden'])
 
     def test_same_generation_filter_handoff_aborts_the_previous_controller(self):
         self.open_gated_duration_report()

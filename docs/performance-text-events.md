@@ -25,6 +25,10 @@ same path on reload.
 Event DOM writes and affected layout work remain. Sidecar data loading is not
 changed. Windowed Text still rebuilds its complete visibility sequence and mounts
 its bounded window; this change is not a new windowing algorithm or memory limit.
+The subsequent [pending-filter interaction fix](windowed-filter-transactions.md#event-visibility-while-filtering)
+keeps event-only refreshes from silently cancelling a prepared filter. Complete
+matches are reused, while geometry or interrupted ranking may still be rebuilt;
+explicit cancellation and newer navigation/presentation intent remain authoritative.
 
 The same review found that Text's global keyboard handler intercepted Space on
 toolbar buttons and could use Enter to expand the selected row instead of
