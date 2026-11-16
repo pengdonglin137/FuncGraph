@@ -92,6 +92,38 @@ numeric/exact/unknown/missing fields and raw returns. Browser checks in
 single-file Timeline, sidecar, Windowed Text and indexed filtering before Text
 is mounted. Restored records and Timeline payloads remain unchanged.
 
+Final verification on 2026-11-16, retained in `build/filter-matchers/`:
+
+- `filter-regressions.log`: **133 passing cases**, 33.490s, covering matchers,
+  field/dropdown controls, shared Timeline filters, the Text model, event
+  visibility and generated/asset JavaScript syntax.
+- `viewer-regressions.log`: **494 passing cases**, 579.095s, covering reports,
+  sidecar delivery, browser interactions, Windowed Text, viewport/layout,
+  saved views and independent Compare regex workers. `test-inventory.json`
+  records **625 distinct cases** after excluding two repeated syntax checks;
+  neither suite skips any cases.
+- Both public HTML samples are rebuilt from the unchanged saved captures with
+  Linux `v7.4-rc2` / `7475ea8b58616b33c04afb976cf0fbaad9dd63fb` and its matching
+  image/source tree. Every original row attribute and text, source payload,
+  Timeline identity and Timeline payload agree; only generated
+  `stats.build_time` is ignored. The kernel sample retains **739 rows / 10 event
+  rows**; the mixed sample retains **1,504 rows / 74 event rows**.
+- Seven public screenshots are regenerated and byte-identical. No layout,
+  color, visible controls or capture data changes are intended.
+- Six real-report browser checks cover both public examples and installed-CLI
+  kernel/mixed reports in single-file and HTTP sidecar modes. Each checks
+  complete valid/invalid filter line sets, compilation counts, event hiding,
+  Text/Timeline round trips, restored record data/text, unchanged Timeline
+  data and absence of page errors; see `ui-verification.json`.
+- Portable wheel/sdist builds pass **16 exact source/archive byte comparisons**.
+  Isolated installed smoke has **10 passing / 4 optional skips** out of 14
+  cases; the skips require native uftrace, raw dependencies or optional ELF
+  extras. This is not native-enabled release certification.
+
+样例和验证只更新生成产物，不改写采集记录；截图逐字节一致。625 个独立前端 / 模型
+回归均通过且无跳过；安装包冒烟测试另有 4 项原生 / 可选依赖场景未启用，不据此
+宣称完成原生打包或发布验证。当前 HTML 内嵌了新脚本，旧报告仍需手动重建。
+
 This cache **does not isolate a slow valid native regex**: a single `test()`
 can still block the main thread. It adds no Worker to the shared expression
 filter; Timeline Find and Compare have their own separately documented worker
