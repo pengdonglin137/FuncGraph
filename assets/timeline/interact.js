@@ -232,6 +232,16 @@ function tipOff(r) {
     if (r[9] >= 0) h += row('woken by', esc(trackLabel(TRACKS[r[9]])));
     return h;
 }
+let cpuIrqSummary = null;
+function cpuIrqTimes(segment) {
+    if (cpuIrqSummary && cpuIrqSummary.cpu === segment.cpu &&
+            cpuIrqSummary.start === segment.s && cpuIrqSummary.end === segment.e) return cpuIrqSummary.totals;
+    const totals = [0, 0, 0, 0], records = CPU_IRQ.get(segment.cpu);
+    if (records) for (const record of records) if (record[1] > segment.s && record[0] < segment.e)
+        totals[record[2]] += Math.min(record[1], segment.e) - Math.max(record[0], segment.s);
+    cpuIrqSummary = { cpu: segment.cpu, start: segment.s, end: segment.e, totals };
+    return totals;
+}
 function tipCpu(c) {
     const t = TRACKS[c.t];
     let h = '<div class="t-name">' + esc(trackLabel(t)) + '</div><div><span class="t-dur">' + fmtDur(c.e - c.s) +
@@ -239,12 +249,9 @@ function tipCpu(c) {
     h += '<div class="t-row"><span class="t-k">' + (CPU_HAS_SWITCHES ? 'start' : 'first observed') + '</span><span class="t-v">' + fmtDur(c.s) + (MODE === 'abs' ? ' (' + fmtAbs(c.s) + ')' : '') + '</span></div>';
     h += '<div class="t-row"><span class="t-k">' + (CPU_HAS_SWITCHES ? 'end' : 'last observed') + '</span><span class="t-v">' + fmtDur(c.e) + (MODE === 'abs' ? ' (' + fmtAbs(c.e) + ')' : '') + '</span></div>';
     if (!CPU_HAS_SWITCHES) h += '<div class="t-warn">No sched_switch records. This spans CPU-tagged observations, not continuous running time. Its edges are not task start/exit or main entry/return; CPU placement outside these observations is unknown.</div>';
-    const irq = CPU_IRQ.get(c.cpu);
-    if (irq) {
-        const sum = [0, 0, 0, 0];
-        for (const r of irq) if (r[1] > c.s && r[0] < c.e) sum[r[2]] += Math.min(r[1], c.e) - Math.max(r[0], c.s);
-        for (let q = 1; q < 4; q++) if (sum[q]) h += '<div class="t-row"><span class="t-k">' + CTX_NAMES[q] + '</span><span class="t-v">' + fmtDur(sum[q]) + '</span></div>';
-    }
+    const totals = cpuIrqTimes(c);
+    for (let context = 1; context < 4; context++) if (totals[context])
+        h += '<div class="t-row"><span class="t-k">' + CTX_NAMES[context] + '</span><span class="t-v">' + fmtDur(totals[context]) + '</span></div>';
     return h + '<div class="t-warn">click to open this task</div>';
 }
 function revealTaskTrack(task) {

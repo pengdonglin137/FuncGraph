@@ -846,7 +846,9 @@ The **time mode** depends on the columns in the trace and is named at the right 
 
 - Each segment is colored by task name (same task, same color) and labeled `name pid` when wide enough.
 - The thin strip at the bottom of a segment is interrupt time: **orange** hardirq, **green** softirq, **purple** NMI.
-- Hover: how long the task ran on this CPU in one go and how much of it went to hard/soft interrupts; click to jump to the task's track and select the innermost real call at that time (even when tracing began at nonzero depth). With no overlapping call, the click clears the previous slice details and opens Tasks scoped to this identity, keeping the time range. Tracks without calls are revealed on demand as headers, not invented slices.
+- Hover distinguishes running segments backed by `sched_switch` from CPU-tagged observation spans; the latter do not prove uninterrupted execution or task/main lifetime boundaries. Recorded softirq, hardirq and NMI extents are clipped to the segment and summed separately; nested contexts can overlap, so their sum is not CPU utilization. Click to jump to the task's track and select the innermost real call at that time (even when tracing began at nonzero depth). With no overlapping call, the click clears the previous slice details and opens Tasks scoped to this identity, keeping the time range. Tracks without calls are revealed on demand as headers, not invented slices.
+
+Pointer moves within the same CPU segment reuse the last interrupt summary instead of repeatedly scanning its complete history. Changing CPU or either time boundary recomputes it without changing preview content or recorded data. See [CPU hover performance notes](performance-cpu-hover.md).
 
 Canvas labels and detail titles hide recognized trailing compiler suffixes: for example,
 `inode_has_perm.isra.0` displays as `inode_has_perm`. Known GCC numeric clones,
