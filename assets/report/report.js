@@ -1055,7 +1055,7 @@
         // andExpr → notExpr (AND notExpr)*
         // notExpr → NOT notExpr | atom
         // atom → COND | LPAREN expr RPAREN
-        function parseFilterExpr(text) {
+        function parseFilterExpr(text, preserveGroups = false) {
             const tokens = tokenizeFilter(text);
             let sortDir = '';
             // Extract sort directive
@@ -1106,7 +1106,7 @@
                     advance();
                     const expr = parseOr();
                     if (peek() && peek().type === 'RPAREN') advance();
-                    return expr;
+                    return expr && preserveGroups ? { ...expr, grouped: true } : expr;
                 }
                 if (t.type === 'COND') {
                     advance();
@@ -1312,6 +1312,7 @@
         // Serialize AST back to text
         function astToText(ast, parentPriority = 0) {
             if (!ast) return '';
+            if (ast.grouped) return '(' + astToText({ ...ast, grouped: false }) + ')';
             switch (ast.type) {
                 case 'AND':
                 case 'OR': {
@@ -1336,46 +1337,53 @@
             if (!tagsDiv) return;
             tagsDiv.innerHTML = '';
 
-            const { ast, sortDir } = parseFilterExpr(text);
+            const { ast, sortDir } = parseFilterExpr(text, true);
             if (!ast) return;
 
             // Flatten top-level AND/OR into tag list
             function flattenExpr(node, items, logicType) {
                 if (!node) return;
-                if (node.type === logicType) {
+                if (node.type === logicType && !node.grouped) {
                     flattenExpr(node.left, items, logicType);
                     flattenExpr(node.right, items, logicType);
                 } else {
-                    items.push(node);
+                    items.push(node.type === 'AND' || node.type === 'OR' ? { ...node, grouped: true } : node);
                 }
             }
 
             // Determine top-level logic
             let topLogic = 'AND';
             let parts = [];
-            if (ast.type === 'AND' || ast.type === 'OR') {
+            if ((ast.type === 'AND' || ast.type === 'OR') && !ast.grouped) {
                 topLogic = ast.type;
                 flattenExpr(ast, parts, topLogic);
             } else {
                 parts = [ast];
             }
 
-            function applyParts(items, logic) {
+            function applyParts(items, logic, selector, focusIndex) {
                 const input = document.getElementById('filterInput');
                 if (!input) return;
+                const restoreFocus = tagsDiv.contains(document.activeElement);
                 const expression = items.reduce((left, right) => left ? { type: logic, left, right } : right, null);
                 input.value = [astToText(expression), sortDir ? 'sort:' + sortDir : ''].filter(Boolean).join(' ');
                 applyFilter();
+                if (restoreFocus) {
+                    const controls = tagsDiv.querySelectorAll(selector);
+                    (controls[Math.min(focusIndex, controls.length - 1)] || input).focus();
+                }
             }
 
             parts.forEach((part, idx) => {
                 if (idx > 0) {
-                    const logicTag = document.createElement('span');
+                    const logicTag = document.createElement('button');
+                    logicTag.type = 'button';
                     logicTag.className = 'filter-tag-logic';
                     logicTag.textContent = topLogic;
-                    logicTag.title = 'Click to toggle AND/OR';
+                    logicTag.title = 'Change all top-level conditions to ' + (topLogic === 'AND' ? 'OR' : 'AND');
+                    logicTag.setAttribute('aria-label', logicTag.title);
                     logicTag.addEventListener('click', () => {
-                        applyParts(parts, topLogic === 'AND' ? 'OR' : 'AND');
+                        applyParts(parts, topLogic === 'AND' ? 'OR' : 'AND', '.filter-tag-logic', idx - 1);
                     });
                     tagsDiv.appendChild(logicTag);
                 }
@@ -1383,10 +1391,16 @@
                 const tag = document.createElement('span');
                 tag.className = 'filter-tag';
                 const tagText = astToText(part);
-                tag.textContent = tagText + ' ';
-                const remove = document.createElement('span');
-                remove.className = 'tag-remove'; remove.title = 'Remove'; remove.textContent = '×';
-                remove.addEventListener('click', () => applyParts(parts.filter((part, index) => index !== idx), topLogic));
+                const label = document.createElement('span');
+                label.className = 'filter-tag-label';
+                label.textContent = tagText;
+                tag.appendChild(label);
+                const remove = document.createElement('button');
+                remove.type = 'button';
+                remove.className = 'tag-remove'; remove.title = 'Remove condition: ' + tagText; remove.textContent = '×';
+                remove.setAttribute('aria-label', remove.title);
+                remove.addEventListener('click', () => applyParts(parts.filter((part, index) => index !== idx), topLogic,
+                    '.tag-remove', idx));
                 tag.appendChild(remove);
                 tagsDiv.appendChild(tag);
             });

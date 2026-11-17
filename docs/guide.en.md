@@ -726,6 +726,15 @@ Compact touch layouts use 44px option/action targets and 16px input text;
 desktop dimensions stay unchanged.
 Regenerate older HTML; see [field-filter interaction checks](filter-field-interaction.md).
 
+Applied-condition tags retain complete text and wrap long predicates. The desktop
+tag area has a bounded scroll region; compact layouts use the existing Filter
+panel scroll, without widening the page or filling the trace viewport. Tab reaches
+the **×** and **AND / OR** buttons; Enter / Space activates them. Logic buttons
+change all top-level conjunctions, not grouped subexpressions. Removal focuses
+the next remove button, or the previous one at the end; removing the last condition
+returns to the input and retains `sort:`. Touch targets are at least 44px and keep
+the existing colors. See [Text functional validation](text-validation.md).
+
 **Dropdown choices are exact; handwritten expressions still support regex.**
 Choosing CPU `1` generates `cpu:="1"`, not a match for CPU `10`; choosing flag
 `.` does not match `d`. Case-sensitive `field:="…"` literals support

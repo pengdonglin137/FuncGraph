@@ -697,7 +697,7 @@
         }
         .text-compact .filter-input-row input { min-width: 0; font-size: 16px; }
         .text-compact .filter-input-row input::placeholder { font-size: 12px; }
-        .text-compact .filter-tag { white-space: normal; overflow-wrap: anywhere; max-width: 100%; }
+        .text-compact .filter-tags { flex-shrink: 0; max-height: none; overflow: visible; }
         .text-compact :is(.filter-box, .text-toolbar-options) button { min-height: 34px; }
 
         /* Filter box styles */
@@ -745,6 +745,11 @@
             flex-wrap: wrap;
             gap: 4px;
             min-height: 0;
+            max-height: min(20vh, 140px);
+            overflow: auto;
+            overscroll-behavior: contain;
+            padding: 2px;
+            margin: -2px;
         }
         .filter-tags:empty {
             display: none;
@@ -759,9 +764,26 @@
             background: var(--btn-primary);
             color: white;
             cursor: default;
-            white-space: nowrap;
+            box-sizing: border-box;
+            min-width: 0;
+            max-width: 100%;
+        }
+        .filter-tag-label {
+            min-width: 0;
+            overflow-wrap: anywhere;
         }
         .filter-tag .tag-remove {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            align-self: flex-start;
+            flex: 0 0 auto;
+            min-height: 16.5px;
+            padding: 0;
+            border: 0;
+            background: transparent;
+            color: inherit;
+            font-family: inherit;
             cursor: pointer;
             font-size: 13px;
             line-height: 1;
@@ -775,6 +797,9 @@
             color: var(--text-secondary);
             font-weight: bold;
             font-size: 11px;
+            font-family: inherit;
+            line-height: inherit;
+            align-self: center;
             padding: 2px 4px;
             cursor: pointer;
             border: 1px dashed var(--border-color);
@@ -783,6 +808,13 @@
         .filter-tag-logic:hover {
             background: var(--border-color);
             color: var(--text-primary);
+        }
+        .filter-tag .tag-remove:focus-visible, .filter-tag-logic:focus-visible {
+            outline: 2px solid currentColor;
+            outline-offset: 0;
+        }
+        @media (pointer: coarse) {
+            .filter-tags button.tag-remove, .filter-tags button.filter-tag-logic { min-width: 44px; min-height: 44px; }
         }
         /* Field selector buttons */
         .filter-fields {

@@ -77,6 +77,50 @@ match the independent oracle. These are correctness checks, not speed claims.
 真实完整索引分别核对全部原始行号集合，不只比较计数。修复既消除了多选出的记录，
 也恢复了之前被漏掉的后续 `OR` 分支；原始 trace 数据不变。事件输入不伪造函数名或耗时。
 
+## Filter tag interaction / 过滤标签交互
+
+The next interaction audit reproduced two problems in the existing controls:
+remove and logic actions were non-focusable spans, and a 3,207-character literal
+expanded a 1,400px desktop document to 21,331px. The same overflow occurred at
+800px; compact panels wrapped labels but did not provide keyboard actions.
+Baseline screenshots, geometry and an actual Tab traversal are retained in
+`build/text-tag-audit/baseline.json` and `before-*.png`.
+
+The interaction tests also found that toggling an outer `AND` to `OR` flattened
+an existing grouped `OR` into separate chips. Toggling back could then change
+the intended predicate. Tag parsing/serialization now retain explicit parentheses,
+including same-operator and whole-expression groups, and retain compound chips
+formed by operator precedence when the outer operator changes; ordinary evaluation keeps
+its existing AST and precedence. `grouping-baseline.log` records eight deliberate
+failures exposing the earlier behavior. The separate interrupted
+`harness-directory-diagnostic.log` used unsupported directory URLs in the test
+harness, not a product regression; the final tests request explicit `index.html`.
+
+Existing actions now use native buttons with explicit accessible names. Removing
+a condition focuses the next removal action, or the preceding action at the end;
+the last removal focuses the input and preserves any sort directive. Logic toggles
+retain focus and apply to all top-level conditions while preserving nested groups.
+Restoration happens during the initiating interaction, without delayed callbacks
+that could steal focus after the user moves to another control. No trace-wide pass
+or new filtering model is added.
+
+Complete labels wrap instead of truncating or widening the page. Desktop tags use
+a bounded native scroll area; compact layouts keep only the existing scrolling
+Filter panel. Touch actions are at least 44px, with the existing theme colors.
+These controls do not alter captured records, source mappings or predicate values.
+
+`tests/test_filter_tags.py` checks native Tab/Enter/Space, first/middle/last
+removals, grouping and sorting, Text/Timeline result agreement, quoted markup as
+literal text, long conditions, many conditions, native wheel scrolling and focus
+after async filtering. It exercises ordinary Text-only and single-file Timeline
+reports, full sidecar and opt-in Windowed Text, both themes, desktop sizes and
+Chromium-emulated touch portrait/landscape. This is not a claim of real-device or
+all-browser coverage. Regenerate existing HTML for these changes.
+
+新增验证不增加筛选动作：让原有标签支持键盘与触控，长条件完整换行并在受限区域内滚动，
+不省略条件、不改变原始记录，不靠延迟回调重新抢焦点。只核对有限测试场景，不能替代
+所有设备和浏览器的验收。
+
 ## Referenced remote sources / 按文件补齐源码
 
 No repository clone, checkout or source archive is needed. The existing URL
@@ -103,7 +147,7 @@ DWARF 行号信息时，下载源码不能可靠补出地址到行号的映射�
 
 ## Reproduce / 复现
 
-Final validation on November 18, 2026 passes **1,059 distinct tests with no
+The original correctness audit on November 18, 2026 passed **1,059 distinct tests with no
 skips**: 986 Text/filter/browser/input/source/documentation regressions and
 73 complementary Timeline, event-only and mixed-input checks. Native raw tests
 run with `FG_RAW_REQUIRED=1`; the complementary input invariants also consume
@@ -111,7 +155,7 @@ the local `write4`, host-QEMU-functions and kernel-default captures through
 `FG_TRACES`. The earlier 782-test audit and later 31-test source/documentation
 rerun overlap this population and are not added to the distinct total.
 
-最终 1,059 项不同测试全部通过、无跳过；重复运行的检查不重复计数。浏览器验收使用
+首轮 1,059 项不同测试全部通过、无跳过；重复运行的检查不重复计数。浏览器验收使用
 Chromium 的桌面及模拟触控场景，不宣称已覆盖所有浏览器或真实移动设备。
 
 ```bash
@@ -132,8 +176,39 @@ records the distinct total. `boolean-baseline-tests.log` deliberately records
 the old parser's three assertion failures. Early browser-harness development
 logs are superseded by the final runs, not additional product failures.
 
-Both public reports are regenerated with the corrected shared parser. Their
+In that original audit both public reports were regenerated with the corrected shared parser. Their
 five JSON payloads preserve all source data, line identities and 485/714
 Timeline calls, excluding build timing only. Full HTML differs only in the
 parser runtime and generation metadata. Five regenerated public/guide
-screenshots remain byte-identical; no new layout or controls are introduced.
+screenshots remained byte-identical; that parser fix introduced no new layout or controls.
+
+The subsequent filter-tag interaction change regenerates the same reports again.
+All five JSON payloads still preserve the 485/714 calls and source/line identities,
+excluding build timing only. Complete HTML differs only in the intended shared
+CSS/JavaScript and generation metadata (`build/text-tag-audit/sample-fidelity.json`).
+The Text screenshot is updated for the native chip controls; the other four public
+and guide PNGs remain byte-identical (`screenshot-fidelity.json`). The eight
+light/dark layout captures keep a 3,207-character literal inside the viewport at
+1,400px, 800px, 390px portrait and 844px landscape widths, with native scrolling
+instead of discarded text. Independent predicate evaluation also verifies that
+two logic toggles retain truth-table matches `[13, 14, 15]`; the earlier control
+incorrectly narrowed them to `[15]` (`grouping-proof.json`).
+
+Follow-up validation passes **753 distinct tests with no skips**: 38 final
+tag/boolean/literal/matcher tests, 77 final control/tree/anchor/copy/help/remote-source
+tests, 237 model/window/layout/event/index/chunk tests, all 259 browser tests in
+four batches, 98 sidecar/Timeline-filter tests and 44 sample/documentation/source
+checks. The eight tag test methods exercise 80 browser configurations; these
+subcases and earlier overlapping reruns are not counted as extra unit tests.
+`validation-summary.json` records every unique test identity and the shared asset
+digests. The authoritative logs are `tag-final.log`, `control-final.log`,
+`model-regressions.log`, `browser-0.log` through `browser-3.log`,
+`sidecar-regressions.log` and `sample-doc-tests.log`. The monolithic
+`regressions.log` ended with SIGTERM (exit 143), not a completed passing run;
+only the completed batches contribute to this follow-up total. These counts are
+not added to the original 1,059 because the audits overlap.
+
+后续标签交互修复完成 753 项不同测试、无跳过；另有 80 个浏览器配置子场景，不额外
+累计为单元测试。原汇总进程被 SIGTERM 中断，不计作通过；以完整分批日志为准。
+这次总数与首轮有重叠，不相加。新旧报告的数据与截图完整性证明保留在
+`build/text-tag-audit/`。
