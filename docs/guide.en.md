@@ -1104,6 +1104,8 @@ With an overhead estimate (the header written by `fgcapture.sh --calibrate`, or 
 
 **Slices are always placed and sized by measured time**; only the numbers change. The correction is an estimate: overhead depends on CPU, frequency and kernel configuration, and is off on paths with many interrupts or different cache behavior.
 
+Measured self times are computed once; corrected self times are computed on first use. Subsequent switches reuse both results and their color scales instead of scanning every call again. The current detail/analysis panel and canvas still refresh, so the entire interaction is not constant-cost. See [switch performance and data-fidelity validation](performance-overhead-switch.md).
+
 ### 6.8 Inline frames (Inline)
 
 ![tl_inline](img/tl_inline.png)

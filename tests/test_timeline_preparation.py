@@ -32,6 +32,23 @@ class CpuPreparationFixtureTest(unittest.TestCase):
                                     for index in range(1, count + 1)))
 
 
+class OverheadBenchmarkFixtureTest(unittest.TestCase):
+    def test_correction_charges_only_recorded_descendants_in_plain_and_inline_fixtures(self):
+        from benchmark_overhead import fixture
+
+        with tempfile.TemporaryDirectory(prefix='fg-overhead-fixture-') as directory:
+            for scenario in ('plain', 'inline'):
+                destination = Path(directory) / 'report.html'
+                facts = fixture(Path(helpers.ROOT) / 'sample.html', destination, scenario, 3)
+                data = helpers.json_script(destination.read_text(), 'tlData')
+                self.assertEqual(facts['calls'], 6)
+                self.assertEqual(data['cols']['adj'], [6000, 2000] * 3)
+                for index, duration in enumerate(data['cols']['dur']):
+                    children = sum(parent == index for parent in data['cols']['parent'])
+                    self.assertEqual(data['cols']['adj'][index], max(0, duration - children * 1000 - 2000))
+                self.assertEqual(bool(data['inline']), scenario == 'inline')
+
+
 @unittest.skipUnless(shutil.which('node'), 'node not installed')
 class TimelinePreparationTest(unittest.TestCase):
     def run_model(self, assertions, cpu=False):
@@ -107,13 +124,45 @@ class TimelinePreparationTest(unittest.TestCase):
         factory = 'function* prepare() {\n' + source + '''
             function callerOf(index) { return sCaller && sCaller[index] >= 0 ? S[sCaller[index]] : null; }
             return {N, NA, SYN, S, sStart, sEnd, sDepth, sTask, sFlags, sName, sParent,
-                sLine, sLdAll, sDur, sSelf, TRACKS, sortTimelineRow, buildRows''' + (
+                sLine, sLdAll, sDur, sSelf, TRACKS, sortTimelineRow, buildRows, setAdjusted,
+                durationState: () => ({sDur, sSelf, sSelfRaw, adjOn, maxSelf, maxDuration})''' + (
                     ', CPU_SEGS, CPU_IRQ, CPU_LIST, CPU_IRQ_INDEX, ORDER' if cpu else '') + '''};
         }
         '''
         result = subprocess.run(['node', '-e', setup + factory + assertions],
                                 capture_output=True, text=True, timeout=30)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_duration_switches_ignore_synthetic_parents_and_preserve_full_geometry(self):
+        self.run_model('''
+            for (const inline of [false, true]) {
+                input = data(4);
+                Object.assign(input.cols, {start:[0,100,9900,100], dur:[9000,4000,9000,4000],
+                    adj:[6000,2000,6000,2000], parent:[-1,0,-1,2], name:[0,1,0,1],
+                    caller:[-1,2,-1,2], depth:[0,inline ? 1 : 4,0,inline ? 1 : 4]});
+                if (inline) input.inline = {'2':[['root','root.c',1],['outer','outer.h',2],['inner','inner.h',3]]};
+                freeze(input);
+                const original = JSON.stringify(input), {model} = drain(prepare());
+                assert.ok(model.NA > model.N);
+                const geometry = JSON.stringify([model.sStart,model.sEnd,model.sParent,model.sDepth,
+                    model.sLdAll,model.SYN,model.TRACKS]);
+                const raw = model.durationState();
+                let corrected;
+                for (const on of [true,false,true,false,true]) {
+                    model.setAdjusted(on);
+                    const current = model.durationState();
+                    assert.deepEqual(Array.from(current.sSelf), on ? [4000,2000,4000,2000] : [5000,4000,5000,4000]);
+                    assert.deepEqual(Array.from(current.sSelfRaw), [5000,4000,5000,4000]);
+                    assert.equal(current.maxSelf, on ? 4000 : 5000);
+                    assert.equal(current.maxDuration, on ? 6000 : 9000);
+                    if (on) { if (corrected) assert.equal(current.sSelf, corrected); corrected = current.sSelf; }
+                    else assert.equal(current.sSelf, raw.sSelf);
+                    assert.equal(JSON.stringify(input), original);
+                    assert.equal(JSON.stringify([model.sStart,model.sEnd,model.sParent,model.sDepth,
+                        model.sLdAll,model.SYN,model.TRACKS]), geometry);
+                }
+            }
+        ''')
 
     def test_empty_and_small_inputs_keep_exact_columns_without_batch_delays(self):
         self.run_model('''

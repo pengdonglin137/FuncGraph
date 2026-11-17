@@ -54,22 +54,29 @@ const sDurAdj = C.adj ? Float64Array.from(C.adj) : null;
 let sDur = sDurRaw;
 let adjOn = false;
 function durOf(i) { return sDur[i]; }
-const sSelf = new Float64Array(N);
-let maxSelf = 0, maxDuration = 0, selfColorLog = 0, durationColorLog = 0;
-function computeSelf() {
-    maxDuration = 0;
-    for (let i = 0; i < N; i++) {
-        sSelf[i] = sDur[i];
-        if (sDur[i] > maxDuration) maxDuration = sDur[i];
+function computeSelf(durations) {
+    const values = new Float64Array(N);
+    let maximumSelf = 0, maximumDuration = 0;
+    for (let index = 0; index < N; index++) {
+        values[index] = durations[index];
+        if (durations[index] > maximumDuration) maximumDuration = durations[index];
     }
-    for (let i = 0; i < N; i++) { const p = sParent[i]; if (p >= 0) sSelf[p] -= sDur[i]; }
-    maxSelf = 0;
-    for (let i = 0; i < N; i++) { if (sSelf[i] < 0) sSelf[i] = 0; if (sSelf[i] > maxSelf) maxSelf = sSelf[i]; }
-    selfColorLog = Math.log1p(maxSelf);
-    durationColorLog = Math.log1p(maxDuration);
+    for (let index = 0; index < N; index++) {
+        const parent = sParent[index];
+        if (parent >= 0) values[parent] -= durations[index];
+    }
+    for (let index = 0; index < N; index++) {
+        if (values[index] < 0) values[index] = 0;
+        if (values[index] > maximumSelf) maximumSelf = values[index];
+    }
+    return {values, maxSelf: maximumSelf, maxDuration: maximumDuration,
+        selfColorLog: Math.log1p(maximumSelf), durationColorLog: Math.log1p(maximumDuration)};
 }
-computeSelf();
-const sSelfRaw = Float64Array.from(sSelf);      // measured self time (for breakdowns)
+const rawSelfMetrics = computeSelf(sDurRaw);
+let adjustedSelfMetrics = null;
+const sSelfRaw = rawSelfMetrics.values;
+let sSelf = sSelfRaw;
+let {maxSelf, maxDuration, selfColorLog, durationColorLog} = rawSelfMetrics;
 const SECTIONS = D.sections || [];              // [task, kind, start, end, sslice, eslice, maxDepth, sline, eline]
 const SEC_NAMES = ['irqs off', 'preempt off', 'BH off'];
 const ATOMIC = new Map((D.atomic || []).map(a => [a[0], a[1]]));
@@ -77,9 +84,13 @@ function atomicText(bits) {
     return [[1, 'irqs off'], [2, 'preemption disabled'], [4, 'in interrupt'], [8, 'BH disabled']].filter(x => bits & x[0]).map(x => x[1]).join(', ');
 }
 function setAdjusted(on) {
-    adjOn = !!(on && sDurAdj);
+    const adjusted = !!(on && sDurAdj);
+    if (adjusted === adjOn) return;
+    const metrics = adjusted ? (adjustedSelfMetrics ||= computeSelf(sDurAdj)) : rawSelfMetrics;
+    adjOn = adjusted;
     sDur = adjOn ? sDurAdj : sDurRaw;
-    computeSelf();
+    sSelf = metrics.values;
+    ({maxSelf, maxDuration, selfColorLog, durationColorLog} = metrics);
 }
 
 yield 'Building inline frames…';

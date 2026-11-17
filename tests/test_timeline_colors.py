@@ -33,7 +33,7 @@ TRACE = """\
 class DurationColorModelTest(unittest.TestCase):
     def run_colors(self, durations, parents, assertions, adjusted=None):
         model = (ROOT / 'assets/timeline/model.js').read_text()
-        times = model[model.index('const sDurRaw ='):model.index('const sSelfRaw =')]
+        times = model[model.index('const sDurRaw ='):model.index('const SECTIONS =')]
         correction = model[model.index('function setAdjusted('):model.index("yield 'Building inline frames")]
         render = (ROOT / 'assets/timeline/render.js').read_text()
         colors = render[render.index('const colorCache ='):render.index('function sliceStyle(')]
@@ -41,7 +41,11 @@ class DurationColorModelTest(unittest.TestCase):
             const assert = require('node:assert/strict');
             const N = input.durations.length;
             const C = {dur:input.durations, adj:input.adjusted};
-            const sParent = input.parents;
+            let parentReads = 0;
+            const sParent = new Proxy(input.parents, {get(target, key, receiver) {
+                if (typeof key === 'string' && /^\\d+$/.test(key)) parentReads++;
+                return Reflect.get(target, key, receiver);
+            }});
             const sFlags = Array(N).fill(0), sName = Array(N).fill(0);
             const FL = {CTX:3, USER:1 << 25};
             let colorMode = 'total', dark = false;
@@ -109,6 +113,85 @@ class DurationColorModelTest(unittest.TestCase):
             assert.equal(maxSelf, 9000);
             assert.deepEqual(Array.from(sSelf), [1000, 9000, 100]);
         ''', adjusted=[800, 1000, 0])
+
+    def test_duration_bases_reuse_self_columns_and_skip_parent_rescans(self):
+        self.run_colors([9000, 4000], [-1, 0], '''
+            const measured = sSelf, original = JSON.stringify(input);
+            assert.equal(measured, sSelfRaw);
+            assert.equal(parentReads, N);
+            for (const value of [false, null, 0]) setAdjusted(value);
+            assert.equal(parentReads, N);
+            assert.equal(sSelf, measured);
+            setAdjusted(true);
+            const adjusted = sSelf;
+            assert.notEqual(adjusted, measured);
+            assert.deepEqual(Array.from(adjusted), [4000, 2000]);
+            assert.equal(parentReads, 2 * N);
+            for (let round = 0; round < 8; round++) {
+                setAdjusted(true);
+                assert.equal(sSelf, adjusted);
+                assert.equal(sDur, sDurAdj);
+                setAdjusted(false);
+                assert.equal(sSelf, measured);
+                assert.equal(sDur, sDurRaw);
+                assert.deepEqual(Array.from(sSelfRaw), [5000, 4000]);
+            }
+            assert.equal(parentReads, 2 * N);
+            assert.equal(JSON.stringify(input), original);
+        ''', adjusted=[6000, 2000])
+
+    def test_missing_estimate_never_recomputes_measured_self(self):
+        self.run_colors([5, 7, 0], [-1, 0, -1], '''
+            const measured = sSelf, reads = parentReads;
+            for (const on of [true, false, true, 1, null]) {
+                setAdjusted(on);
+                assert.equal(adjOn, false);
+                assert.equal(sDur, sDurRaw);
+                assert.equal(sSelf, measured);
+                assert.equal(parentReads, reads);
+                assert.deepEqual(Array.from(sSelf), [0, 7, 0]);
+            }
+        ''')
+
+    def test_cached_metrics_match_ordered_reference_for_every_basis_and_shape(self):
+        cases = [([], [], []), ([0], [-1], [0]), ([1], [-1], [0]),
+                 ([0, 5, 4], [-1, 0, 0], [0, 2, 0]),
+                 ([10, 9, 5, 2, 1], [-1, 0, 1, 1, 0], [8, 7, 4, 0, 0]),
+                 ([0.3, 0.1, 0.2, 9007199254740000], [-1, 0, 0, -1], [0.2, 0.09, 0.1, 8]),
+                 ([3, 10, 1, 0], [1, -1, 1, -1], [1, 5, 0, 0])]
+        for durations, parents, adjusted in cases:
+            with self.subTest(durations=durations, parents=parents):
+                self.run_colors(durations, parents, '''
+                    function reference(durations) {
+                        const values = Float64Array.from(durations);
+                        let maximum = 0, maximumSelf = 0;
+                        for (let index = 0; index < N; index++) maximum = Math.max(maximum, durations[index]);
+                        for (let index = 0; index < N; index++)
+                            if (input.parents[index] >= 0) values[input.parents[index]] -= durations[index];
+                        for (let index = 0; index < N; index++) {
+                            if (values[index] < 0) values[index] = 0;
+                            maximumSelf = Math.max(maximumSelf, values[index]);
+                        }
+                        return {values, maximum, maximumSelf};
+                    }
+                    Object.freeze(input.durations); Object.freeze(input.parents); Object.freeze(input.adjusted);
+                    const original = JSON.stringify(input), raw = reference(input.durations);
+                    for (const on of [false, true, false, true, true, false]) {
+                        setAdjusted(on);
+                        const expected = on ? reference(input.adjusted) : raw;
+                        assert.deepEqual(sSelf, expected.values);
+                        assert.equal(maxSelf, expected.maximumSelf);
+                        assert.equal(maxDuration, expected.maximum);
+                        assert.equal(selfColorLog, Math.log1p(expected.maximumSelf));
+                        assert.equal(durationColorLog, Math.log1p(expected.maximum));
+                        assert.deepEqual(sSelfRaw, raw.values);
+                        for (const mode of ['total', 'heat']) {
+                            colorMode = mode;
+                            for (let index = 0; index < N; index++) assert.ok(Number.isFinite(heatBin(index)));
+                        }
+                    }
+                    assert.equal(JSON.stringify(input), original);
+                ''', adjusted=adjusted)
 
     def test_light_and_dark_endpoints_have_consistent_hues(self):
         self.run_colors([0, 1000], [-1, -1], '''
@@ -252,6 +335,35 @@ class TimelineColorsBrowserTest(unittest.TestCase):
         self.assertIn('Measured', self.page.locator('.tl-heat-note').inner_text())
         self.assertTrue(self.page.evaluate("JSON.stringify(fgData.read('tlData')) === originalColorsInput"))
 
+    def test_repeated_overhead_switches_keep_detail_breakdown_geometry_and_heat_colors(self):
+        self.open_report()
+        self.choose('heat')
+        self.page.evaluate("() => fgView('timeline').probe().select(0)")
+        original = self.colors()
+        breakdown = self.page.locator('.an-bd-legend').inner_html()
+        geometry = self.page.evaluate('''() => { const model = fgView('timeline').probe();
+            return JSON.stringify([model.sStart, model.sEnd, model.sParent, model.view(), model.sel()]); }''')
+        self_field = self.page.locator('.tl-call-facts > .k').filter(has_text='self').locator('xpath=following-sibling::span[1]')
+        measured_self = self_field.inner_text()
+        adjusted_colors = None
+        for round_number in range(3):
+            with self.subTest(round=round_number):
+                helpers.click_timeline_tool(self.page, '[data-act=adj]')
+                self.assertNotEqual(self_field.inner_text(), measured_self)
+                self.assertEqual(self_field.inner_text(), '0 ns (0.0%)')
+                colors = self.colors()
+                if adjusted_colors is not None:
+                    self.assertEqual(colors, adjusted_colors)
+                adjusted_colors = colors
+                self.assertEqual(self.page.locator('.an-bd-legend').inner_html(), breakdown)
+                helpers.click_timeline_tool(self.page, '[data-act=adj]')
+                self.assertEqual(self_field.inner_text(), measured_self)
+                self.assertEqual(self.colors(), original)
+                self.assertEqual(self.page.locator('.an-bd-legend').inner_html(), breakdown)
+                self.assertEqual(self.page.evaluate('''() => { const model = fgView('timeline').probe();
+                    return JSON.stringify([model.sStart, model.sEnd, model.sParent, model.view(), model.sel()]); }'''), geometry)
+                self.assertTrue(self.page.evaluate("JSON.stringify(fgData.read('tlData')) === originalColorsInput"))
+
     def test_theme_change_updates_both_ramp_and_canvas_colors(self):
         self.open_report()
         for mode in ['total', 'heat']:
@@ -325,6 +437,14 @@ class TimelineColorsBrowserTest(unittest.TestCase):
             self.assertEqual(self.colors(), expected)
             helpers.click_timeline_tool(self.page, '[data-act=adj]')
             self.assertIn('8.900 us', self.page.locator('.tl-heat-caption').inner_text())
+            adjusted = self.colors()
+            for round_number in range(3):
+                with self.subTest(round=round_number):
+                    helpers.click_timeline_tool(self.page, '[data-act=adj]')
+                    self.assertEqual(self.colors(), expected)
+                    helpers.click_timeline_tool(self.page, '[data-act=adj]')
+                    self.assertEqual(self.colors(), adjusted)
+                    self.assertTrue(self.page.evaluate("JSON.stringify(fgData.read('tlData')) === originalColorsInput"))
             self.assertEqual(requests, [])
         finally:
             server.shutdown()
