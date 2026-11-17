@@ -467,8 +467,16 @@ class UftraceDetailBrowserTest(unittest.TestCase):
                                 panel.get_by_text('args (BTF)', exact=True).wait_for()
                                 self.assertIn('fd=3, buffer=0xffff1234, length=0x200', panel.inner_text())
                                 self.assertEqual(panel.locator('details:has(summary:text-is("Raw argument slots"))').get_attribute('open'), None)
+                                self.assertIn('-2', panel.locator('.k:text-is("return (BTF)") + .v').inner_text())
+                                evidence = panel.locator('.tl-return-evidence')
+                                self.assertIsNone(evidence.get_attribute('open'))
+                                self.assertFalse(evidence.locator('.tl-code-raw').is_visible())
+                                evidence.locator('summary').click()
+                                self.assertEqual(evidence.locator('.tl-code-raw').inner_text(), '0xfffffffffffffffe')
                                 page.set_viewport_size({'width': 390, 'height': 844})
                                 self.assertEqual(page.get_by_text('args (BTF)', exact=True).count(), 1)
+                                self.assertTrue(evidence.locator('.tl-code-raw').is_visible())
+                                self.assertEqual(panel.locator('.k:text-is("raw return")').count(), 0)
                                 page.evaluate('() => fgView("timeline").probe().select(0)')
                                 panel.get_by_text('Not recorded · capture with -T', exact=False).wait_for()
                                 self.assertIn('User function source (entry)', panel.locator('.tl-cs > summary').text_content())
@@ -482,6 +490,7 @@ class UftraceDetailBrowserTest(unittest.TestCase):
     def test_btf_widths_match_text_preserve_raw_and_never_round_64bit_addresses(self):
         cases = [('s8', '0xdeadbeefffffffff', '-1', '-1'),
                  ('u16', '0xdeadbeefffff1234', '0x1234', '0x1234'),
+                 ('s32', '0xdeadbeef00000000', '0', '0'),
                  ('s64', '0xffffffffffffffea', '-22', '-22'),
                  ('u64', '0xfedcba9876543210', '0xfedcba9876543210', '0xfedcba9876543210'),
                  ('ptr', '0xdeadbeefffffffff', '0xffffffff', '0xffffffff'),
@@ -530,20 +539,92 @@ class UftraceDetailBrowserTest(unittest.TestCase):
                         self.assertEqual(panel.locator('.k:text-is("args (BTF)") + .v').inner_text().splitlines()[0],
                                          'no parameters' if argument is None else 'value=' + argument)
                         self.assertIn(raw, panel.locator('details:has(summary:text-is("Raw argument slots"))').text_content())
-                        self.assertIn(raw, panel.locator('.k:text-is("raw return") + .v').text_content())
                         self.assertEqual(panel.locator('[data-trace-metadata], .tl-metadata').count(), 0)
-                        self.assertTrue(panel.locator('.k:text-is("raw return") + .v').is_visible())
+                        self.assertEqual(panel.locator('.k:text-is("raw return")').count(), 0)
+                        evidence = panel.locator('.tl-return-evidence')
+                        original = evidence.locator('.tl-code-raw')
+                        self.assertIsNone(evidence.get_attribute('open'))
+                        self.assertEqual(original.text_content(), raw)
+                        self.assertFalse(original.is_visible())
                         fields = panel.locator('.tl-call-facts > .k').all_text_contents()
-                        self.assertLess(fields.index('raw return'), fields.index('depth'))
+                        return_field = 'return type' if returned is None else 'return (BTF)'
+                        self.assertLess(fields.index(return_field), fields.index('depth'))
                         if returned is None:
                             self.assertEqual(panel.locator('.k:text-is("return (BTF)")').count(), 0)
+                            self.assertEqual(panel.locator('.k:text-is("return type") + .v > .tl-code-keyword').inner_text(), 'void')
                         else:
                             self.assertIn(returned, panel.locator('.k:text-is("return (BTF)") + .v').inner_text())
-                            self.assertEqual(fields.index('raw return'), fields.index('return (BTF)') + 1)
+
+                        before = page.evaluate('''() => {
+                            const model = fgView('timeline').probe();
+                            return [JSON.stringify(fgData.read('tlData')), model.sel(), model.view()];
+                        }''')
+                        evidence.locator('summary').focus()
+                        page.keyboard.press('Enter')
+                        self.assertTrue(original.is_visible())
+                        self.assertEqual(original.inner_text(), raw)
                         if kind == 'void':
                             self.assertIn('these bits are not a return value', panel.inner_text())
+                        after = page.evaluate('''() => {
+                            const model = fgView('timeline').probe();
+                            return [JSON.stringify(fgData.read('tlData')), model.sel(), model.view()];
+                        }''')
+                        self.assertEqual(after, before)
+                        page.keyboard.press('Space')
+                        self.assertFalse(original.is_visible())
+                        evidence.locator('summary').click()
+                        self.assertTrue(original.is_visible())
+                        page.evaluate('() => fgView("timeline").probe().select(0)')
+                        page.evaluate('(index) => fgView("timeline").probe().select(index)', index)
+                        self.assertIsNone(evidence.get_attribute('open'))
+                        self.assertFalse(original.is_visible())
                     finally:
                         page.close()
+
+    def test_untyped_and_missing_returns_do_not_hide_the_only_recorded_value(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = BtfBuilder()
+            arguments(source, 'inner', [('value', 'int')])
+            image = root / 'debug.elf'
+            image.write_bytes(make_elf({'.BTF': source.blob()}))
+            for mixed in (False, True):
+                for raw in ('0x0', '0xfedcba9876543210', None):
+                    with self.subTest(mixed=mixed, raw=raw):
+                        records = capture()
+                        if raw is None:
+                            del records[6]['retval']
+                        else:
+                            records[6]['retval'] = raw
+                        if not mixed:
+                            records = [record for record in records if record['space'] == 'kernel']
+                        trace = root / 'trace.jsonl'
+                        report = root / 'report.html'
+                        trace.write_text(stream(records))
+                        extra = ['--btf', image] if raw is None else []
+                        result = invoke(trace, '--timeline', '--output', report, *extra)
+                        self.assertEqual(result.returncode, 0, result.stderr)
+                        page = self.browser.new_page()
+                        page.set_default_timeout(5000)
+                        try:
+                            page.goto(report.as_uri())
+                            page.evaluate('''async () => {
+                                await fgSwitchView('timeline');
+                                const model = fgView('timeline').probe();
+                                model.select(Array.from({length: model.N}, (_, index) => index)
+                                    .find(index => model.nameOf(index) === 'inner'));
+                            }''')
+                            panel = page.locator('.tl-detail')
+                            self.assertEqual(panel.locator('.tl-return-evidence').count(), 0)
+                            self.assertEqual(panel.locator('.k:text-is("return (BTF)"), .k:text-is("return type")').count(), 0)
+                            value = panel.locator('.k:text-is("raw return") + .v')
+                            if raw is None:
+                                self.assertEqual(value.count(), 0)
+                            else:
+                                self.assertTrue(value.is_visible())
+                                self.assertEqual(value.inner_text(), raw)
+                        finally:
+                            page.close()
 
     def test_caller_position_survives_missing_source_files_and_untraced_wrappers(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -181,11 +181,16 @@ class DetailLayoutBrowserTest(unittest.TestCase):
                 self.select('inner')
                 self.assertEqual(main.locator('.k').all_text_contents(),
                                  ['duration', 'self', 'start', 'task', 'args (BTF)', 'return (BTF)',
-                                  'raw return', 'depth', 'trace lines'])
+                                  'depth', 'trace lines'])
                 self.assertTrue(self.value('return (BTF)').is_visible())
                 self.assertTrue(self.page.locator('.tl-pill.err').is_visible())
                 self.assertTrue(main.locator('.v.err').is_visible())
-                self.assertTrue(self.value('raw return').is_visible())
+                evidence = self.value('return (BTF)').locator('.tl-return-evidence')
+                self.assertEqual(main.locator('.k:text-is("raw return")').count(), 0)
+                self.assertIsNone(evidence.get_attribute('open'))
+                self.assertFalse(evidence.locator('.tl-code-raw').is_visible())
+                evidence.locator('summary').click()
+                self.assertTrue(evidence.locator('.tl-code-raw').is_visible())
                 self.assertTrue(self.page.locator('.tl-context-row[data-space-boundary]').is_visible())
 
     def test_direct_fields_preserve_argument_disclosure_and_trace_navigation(self):
@@ -227,8 +232,9 @@ class DetailLayoutBrowserTest(unittest.TestCase):
                 original = self.page.evaluate('JSON.stringify(fgData.read("tlData"))')
                 initial_fields = self.page.locator('.tl-left > .tl-call-facts').inner_text()
                 self.select('inner')
-                for label in ('task', 'depth', 'raw return', 'trace lines'):
+                for label in ('task', 'depth', 'return (BTF)', 'trace lines'):
                     self.assertTrue(self.value(label).is_visible(), label)
+                self.assertFalse(self.value('return (BTF)').locator('.tl-return-evidence .tl-code-raw').is_visible())
                 self.page.evaluate('''() => {
                     const model = fgView('timeline').probe();
                     model.range(model.sStart[0], model.sEnd[0]);

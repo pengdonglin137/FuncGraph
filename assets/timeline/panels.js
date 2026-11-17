@@ -454,14 +454,17 @@ function showDetail(i) {
         else h += kv(D.uftrace ? (f & FL.USER ? 'raw payload' : 'raw args') : 'args',
             D.uftrace ? detailToken('raw', a) : detailArgumentsHtml(a), D.uftrace ? '' : 'tl-arguments');
     }
+    const returnEvidence = typedReturn && rawReturn !== null ?
+        '<details class="tl-context-note tl-return-evidence"><summary>Original return bits</summary>' + detailToken('raw', rawReturn) +
+        (typedReturn[0] === 'void' ? '<div>void (BTF) · these bits are not a return value.</div>' : '') + '</details>' : '';
     if (r !== null) {
         let rv = detailValueHtml(r);
         if (eRole[i] >= 0) rv += ' ' + esc(errName(eErr[i])) + ' · ' + esc(errRoleText(i));
         else if (f & FL.NULLRET) rv += ' (' + detailToken('keyword', 'NULL') + ')';
-        h += kv(typedReturn ? 'return (BTF)' : D.uftrace ? 'raw return' : 'return', rv, eRole[i] >= 0 ? 'err' : '');
+        h += kv(typedReturn ? 'return (BTF)' : D.uftrace ? 'raw return' : 'return', rv + returnEvidence, eRole[i] >= 0 ? 'err' : '');
+    } else if (returnEvidence) {
+        h += kv('return type', detailToken('keyword', 'void') + returnEvidence);
     }
-    if (typedReturn && rawReturn !== null) h += kv('raw return', detailToken('raw', rawReturn) +
-        (typedReturn[0] === 'void' ? '<div class="tl-context-note">void (BTF) · these bits are not a return value.</div>' : ''));
     h += kv('depth', String(sDepth[i]));
     if (userDetail) h += kv('recorded address', detailToken('raw', userDetail.address) + '<div class="tl-context-note">Function entry address, not the call site.</div>');
     h += kv('trace lines', lineLink(sLine[i]) + (sEline && sEline[i] && sEline[i] !== sLine[i] ? ' → ' + lineLink(sEline[i]) : ''));

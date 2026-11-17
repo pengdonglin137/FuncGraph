@@ -388,6 +388,8 @@ body.tl-max.tl-active { padding: 2px; }
 .tl-context-head .tl-sec { margin: 0; }
 .tl-context-footer, .tl-context-note { color: var(--text-muted); font-size: 11px; }
 .tl-context-note { margin: 6px 0; font-family: system-ui, sans-serif; word-break: normal; overflow-wrap: anywhere; }
+.tl-context-note > summary { width: fit-content; cursor: pointer; }
+.tl-return-evidence { font-weight: normal; }
 .tl-tail-note { font-family: system-ui, sans-serif; word-break: normal; overflow-wrap: anywhere; }
 .tl-tip .tl-tail-note { color: #b8c1ce; }
 .tl-context-list > .tl-crumbs { display: grid; grid-template-columns: minmax(66px, max-content) minmax(0, 1.4fr) minmax(0, 1fr); column-gap: 6px; line-height: 1.3; }

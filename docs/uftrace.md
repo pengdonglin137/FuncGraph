@@ -320,8 +320,9 @@ kernel names separately, even when their symbols have identical spelling.
   conversion. Zero-parameter functions hide spare slots; missing captured slots
   use `…`, never invented values. **return (BTF)** applies the same width/sign
   correction, boolean returns use bit 0 as `true/false`, and `void` has no value.
-  Expand **Raw argument slots** or **Original return bits** for unmodified
-  register values; the JSONL and model retain their original data.
+  Expand the initially collapsed **Raw argument slots** or **Original return bits**
+  for unmodified register values; there is no duplicate visible **raw return** row.
+  The JSONL and model retain their original data.
   Only an ABI-safe integer/pointer prefix is interpreted. Aggregates, floats,
   variadic tails, conflicting prototypes and unknown pointer
   word sizes never force a count/slot mapping. Remaining slots use `slotN`.

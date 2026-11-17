@@ -249,7 +249,7 @@ Compare 与 `--export` 分开统计用户态、内核态的同名函数。
   指针按已知目标字长保留精确十六进制，不解引用；64 位数据不经过 JavaScript 浮点数转换。
   完整原型为零参时不展示残余槽；声明参数多于实采槽时以 `…` 标出缺失，不补值。
   **return (BTF)** 同样修正返回值的位宽和符号；布尔返回值取 bit 0，显示 `true/false`，`void` 不伪造返回值。
-  参数和返回寄存器的原始位模式仍分别保存在 **Raw argument slots** 和 **Original return bits**，JSONL 和模型原值不变。
+  参数和返回寄存器的原始位模式仍分别保存在默认折叠的 **Raw argument slots** 和 **Original return bits** 中，按需展开；不再重复平铺 **raw return**。JSONL 和模型原值不变。
   只解释 ABI 对应关系已确认的整数/指针前缀；聚合参数、浮点、可变参数、原型冲突、
   未知指针字长等不能确认的布局不强行裁剪，其余槽位保持 `slotN`。
   优先匹配完整符号：BTF 中明确存在的 `fn.isra.0`、`fn.constprop.0` 等原型，不再因后缀而跳过。

@@ -82,7 +82,8 @@ only for `fullscreenElement` to become null.
 - **Timing:** duration, self time (and percentage), start time.
 - **Execution context:** task/CPU, recorded flags, and any atomic-context warning.
 - **Call and values:** caller site, any static tail-jump evidence, arguments,
-  return value, then original return bits alongside a BTF-decoded return.
+  then the return value. A BTF-decoded return includes a collapsed **Original
+  return bits** disclosure instead of a duplicate visible **raw return** row.
 - **Record references:** depth, recorded user function-entry address when
   available, and trace-line links.
 - Fields appear directly in one grid without a **Trace metadata** heading or
@@ -96,23 +97,26 @@ only for `fullscreenElement` to become null.
   IRQ/preemption/atomic-context warnings are unchanged. Calls without recorded
   latency data have no flags row; missing flags are not presented as clear flags.
 - A recorded function-entry address is still labeled as an entry, not a caller
-  site. Original bits for a BTF `void` return remain inspectable but are explicitly
-  not a return value. If a value is untyped or only raw bytes were captured, it
-  remains visible as raw data rather than being hidden.
+  site. BTF `void` is labeled **return type**, not a numeric return value;
+  its original register bits remain in the same collapsed disclosure with an
+  explanation. Open it with a click, Enter or Space; selecting another call
+  starts collapsed again. If a value is untyped or only raw bytes were captured,
+  it remains visible as raw data rather than being hidden.
 
 所有字段在同一网格内直接展示，不再显示 **Trace metadata** 标题或折叠开关，顺序如下：
 
 1. **时间指标**：duration、self（含占比）、start。
 2. **执行上下文**：task/CPU、已记录的 flags、atomic 上下文告警（如有）。
-3. **调用与数值**：caller site、静态尾跳转证据（如有）、参数、返回值，以及 BTF 解码前的原始返回位。
+3. **调用与数值**：caller site、静态尾跳转证据（如有）、参数、返回值；BTF 解码前的原始返回位默认折叠在 **Original return bits** 中，不再单独平铺 **raw return** 行。
 4. **底层记录**：depth、用户态函数入口地址（如有）、trace 行号链接。
 
 不再读写旧的元数据展开/折叠偏好，切换函数、打开分析、重载都不会隐藏这些字段。
 参数原始字节、源码等其他折叠区保持原有行为。
 
 错误、未完整采集、IRQ/抢占/atomic 告警、caller 不匹配和尾跳转证据仍直接可见。入口地址
-不会被改称调用地址，`void` 的原始返回位不会被伪装成有效返回值。仅有原始参数/返回数据时，
-主信息仍直接展示原始数据，不因为没有类型信息而隐藏。
+不会被改称调用地址；BTF `void` 只显示为 **return type**，其原始寄存器位仍可展开核对，
+并明确提示它们不是有效返回值。点击或用 Enter / 空格展开 **Original return bits**；切换调用后
+恢复默认折叠。仅有原始参数/返回数据时，主信息仍直接展示原始数据，不因为没有类型信息而隐藏。
 
 已记录的 **flags** 直接放在主信息区，纯内核调用同样可见，保留原始抢占计数及基线说明。
 没有采集 latency 数据时不显示 flags 行，不把未采集误报为所有标志均未置位。
