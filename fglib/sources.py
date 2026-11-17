@@ -18,6 +18,7 @@ import hashlib
 import os
 import re
 import subprocess
+import tempfile
 import urllib.error
 import urllib.request
 from urllib.parse import quote
@@ -109,6 +110,7 @@ class UrlProvider(Provider):
         self.template, self.rev, self.timeout = template, rev, timeout
         self.cache_dir = cache_dir or os.path.join(os.path.expanduser('~'), '.cache', 'funcgraph', 'src')
         self.fetched = self.cached = 0
+        self.cache_errors = {}
 
     def describe(self):
         return self.template.replace('{rev}', self.rev or '{rev}')
@@ -119,10 +121,16 @@ class UrlProvider(Provider):
     def _fetch(self, path):
         url = self.url(path)
         key = os.path.join(self.cache_dir, hashlib.sha1(url.encode()).hexdigest()[:20])
-        if os.path.exists(key):
+        try:
+            with open(key, encoding='utf-8', errors='replace') as stream:
+                data = stream.read()
+        except FileNotFoundError:
+            pass
+        except OSError as error:
+            self.cache_errors[path] = str(error)
+        else:
             self.cached += 1
-            with open(key, encoding='utf-8', errors='replace') as f:
-                return f.read()
+            return data
         req = urllib.request.Request(url, headers={'User-Agent': 'funcgraph'})
         try:
             with urllib.request.urlopen(req, timeout=self.timeout) as r:
@@ -131,12 +139,26 @@ class UrlProvider(Provider):
             if e.code == 404:
                 return None
             raise
-        os.makedirs(self.cache_dir, exist_ok=True)
-        tmp = key + '.tmp%d' % os.getpid()
-        with open(tmp, 'w', encoding='utf-8') as f:
-            f.write(data)
-        os.replace(tmp, key)
         self.fetched += 1
+        temporary = None
+        try:
+            os.makedirs(self.cache_dir, exist_ok=True)
+            with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8', dir=self.cache_dir,
+                                             prefix=os.path.basename(key) + '.tmp-', delete=False) as stream:
+                temporary = stream.name
+                stream.write(data)
+            os.replace(temporary, key)
+            temporary = None
+        except OSError as error:
+            self.cache_errors[path] = str(error)
+        finally:
+            if temporary is not None:
+                try:
+                    os.unlink(temporary)
+                except FileNotFoundError:
+                    pass
+                except OSError as error:
+                    self.cache_errors.setdefault(path, str(error))
         return data
 
 

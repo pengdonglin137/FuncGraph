@@ -423,6 +423,18 @@ for rebuilds. `--source-browser` only sets external links and does not implicitl
 download sources. See [Text validation](text-validation.md) for the source-less
 tree, requested-file, cached-rebuild and missing-information regression checks.
 
+The source cache is optional acceleration, not a prerequisite for displaying code.
+An unreadable cache falls back to a download. An unwritable directory, full disk
+or failed cache publication does not discard successfully downloaded source from
+the current report; generation prints one summary warning. Select another
+directory with `--source-cache /writable/path`; `--verbose` lists affected files
+and errors. Each write uses its own temporary file and publishes it atomically
+only after the complete write, so concurrent report processes do not share a
+temporary filename. Failed writes attempt cleanup; incomplete temporary files
+are never read as cache entries. Offline rebuilds are not guaranteed after cache
+failures. If the download also fails, resolved positions remain without invented
+source code.
+
 `--source-url` encodes only the substituted `{path}` and `{rev}`, preserving the
 template's own query syntax and existing escapes. Path slashes remain directory
 separators; revisions are encoded as one URL component. Filename characters such

@@ -360,6 +360,14 @@ class HtmlGenerator:
 </html>
 """)
 
+        cache_errors = getattr(self.source_provider, 'cache_errors', {})
+        if cache_errors:
+            cache_files = f"{len(cache_errors)} file" + ('' if len(cache_errors) == 1 else 's')
+            print(f"Warning: source cache failed for {cache_files}; available source is still used, "
+                  "but offline cache reuse is not guaranteed.", file=sys.stderr)
+            if self.verbose:
+                for path, error in sorted(cache_errors.items()):
+                    verbose_print(f"Source cache: {path}: {error}", True)
         elapsed = time.time() - start_time
         verbose_print(f"HTML generation completed in {elapsed:.2f} seconds", self.verbose)
 

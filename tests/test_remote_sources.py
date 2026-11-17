@@ -1,4 +1,5 @@
 """A debug image plus requested remote files works without a local source tree."""
+import hashlib
 import http.server
 import importlib.util
 import json
@@ -13,6 +14,7 @@ import threading
 import unittest
 
 import helpers
+from fglib import uftrace
 
 
 SOURCE = '''__attribute__((noinline)) int remote_target(int value)
@@ -48,6 +50,7 @@ class RemoteSourceReportTest(unittest.TestCase):
         source.parent.rmdir()
         self.assertFalse(Path(mapped).exists())
         symbols = subprocess.check_output(['nm', '-S', str(self.vmlinux)], text=True)
+        self.target_address = '0x' + re.search(r'^([0-9a-f]+) [0-9a-f]+ T remote_target$', symbols, re.M)[1]
         size = int(re.search(r'^[0-9a-f]+ ([0-9a-f]+) T start_kernel$', symbols, re.M)[1], 16)
         self.trace = self.root / 'trace.txt'
         self.trace.write_text('# tracer: function_graph\n'
@@ -82,19 +85,26 @@ class RemoteSourceReportTest(unittest.TestCase):
         self.addCleanup(self.server.shutdown)
         self.url = 'http://127.0.0.1:' + str(self.server.server_address[1]) + '/{rev}/{path}'
 
-    def report(self, name, image=None):
-        output = self.root / (name + '.html')
+    def report(self, name, image=None, cache=None, mode='single', verbose=False):
+        output = self.root / (name + '.html' if mode == 'single' else name)
+        mode_args = ['--report-mode', mode]
+        if mode == 'auto':
+            mode_args.extend(['--sidecar-threshold', '0'])
+        if verbose:
+            mode_args.append('--verbose')
         result = subprocess.run([sys.executable, str(Path(helpers.ROOT) / 'funcgraph.py'),
                                  '--no-config', '--fast', '--vmlinux', str(image or self.vmlinux),
                                  '--source-url', self.url, '--source-rev', REVISION,
-                                 '--source-cache', str(self.root / 'cache'), '--source-browser', 'github',
+                                 '--source-cache', str(cache or self.root / 'cache'), '--source-browser', 'github',
                                  '--source-browser-rev', REVISION, '--timeline', '--filter', '--enable-fold',
-                                 '--func-links', '--output', str(output), str(self.trace)],
+                                 '--func-links', '--output', str(output), *mode_args, str(self.trace)],
                                 capture_output=True, text=True, timeout=30,
                                 env=dict(os.environ, CROSS_COMPILE='', LLVM='', DEBUGINFOD_URLS=''))
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.last_result = result
+        self.last_output = output
         self.assertFalse((self.root / 'kernel').exists())
-        return output.read_text()
+        return (output if output.is_file() else output / 'index.html').read_text()
 
     def payload(self, report, identifier):
         return json.loads(re.search(r'<script type="application/json" id="' + identifier +
@@ -118,6 +128,92 @@ class RemoteSourceReportTest(unittest.TestCase):
         self.assertEqual(self.requests, requested)
         for identifier in ('fgSrc', 'fgSrcLines'):
             self.assertEqual(self.payload(first, identifier), self.payload(second, identifier))
+
+    def test_failed_cache_keeps_downloaded_source_and_reports_warning(self):
+        baseline = self.report('baseline')
+        blocked = self.root / 'not-a-cache-directory'
+        blocked.write_text('keep this file')
+        report = self.report('cache-failed', cache=blocked)
+        self.assertEqual(self.requests, ['/' + REVISION + '/kernel/demo.c'] * 2)
+        self.assertEqual(blocked.read_text(), 'keep this file')
+        identifiers = re.findall(r'<script type="application/json" id="([^"]+)">', baseline)
+        self.assertEqual(set(identifiers), set(re.findall(r'<script type="application/json" id="([^"]+)">', report)))
+        for identifier in identifiers:
+            self.assertEqual(self.payload(report, identifier), self.payload(baseline, identifier))
+        self.assertIn('return value + 17;', json.dumps(self.payload(report, 'fgSrc')))
+        self.assertEqual(self.payload(report, 'tlData')['n'], 1)
+        self.assertIn('Warning: source cache', self.last_result.stderr)
+        self.assertIn('offline cache reuse is not guaranteed', self.last_result.stderr)
+        self.assertNotIn('not found', self.last_result.stdout)
+
+    def test_failed_cache_preserves_source_chunks_in_sidecar_and_auto(self):
+        baseline = self.report('baseline')
+        blocked = self.root / 'not-a-cache-directory'
+        blocked.write_text('keep this file')
+        for mode in ('sidecar', 'auto'):
+            with self.subTest(mode=mode):
+                report = self.report('cache-failed-' + mode, cache=blocked, mode=mode)
+                descriptor = self.payload(report, 'fgDataManifest')
+                manifest_path = self.last_output / descriptor['manifest']['file']
+                payload = manifest_path.read_bytes()
+                self.assertEqual(len(payload), descriptor['manifest']['bytes'])
+                self.assertEqual(hashlib.sha256(payload).hexdigest(), descriptor['manifest']['sha256'])
+                resources = {}
+                for identifier, resource in json.loads(payload)['resources'].items():
+                    content = (manifest_path.parent / resource['file']).read_bytes()
+                    self.assertEqual(len(content), resource['bytes'])
+                    self.assertEqual(hashlib.sha256(content).hexdigest(), resource['sha256'])
+                    resources[identifier] = content
+                self.assertEqual(json.loads(resources['fgSrc0']), self.payload(baseline, 'fgSrc'))
+                self.assertEqual(json.loads(resources['tlData']), self.payload(baseline, 'tlData'))
+                for identifier in ('fgSrcLines', 'fgErrnoNames', 'fgTimelineIdentity'):
+                    self.assertEqual(self.payload(report, identifier), self.payload(baseline, identifier))
+                self.assertEqual(self.last_result.stderr.count('Warning: source cache'), 1)
+                self.assertEqual(blocked.read_text(), 'keep this file')
+        self.assertEqual(self.requests, ['/' + REVISION + '/kernel/demo.c'] * 3)
+
+    def test_verbose_cache_warning_lists_affected_file_without_discarding_source(self):
+        blocked = self.root / 'not-a-cache-directory'
+        blocked.write_text('keep this file')
+        report = self.report('verbose-cache-failed', cache=blocked, verbose=True)
+        self.assertIn('return value + 17;', json.dumps(self.payload(report, 'fgSrc')))
+        self.assertEqual(self.last_result.stderr.count('Warning: source cache'), 1)
+        self.assertEqual(self.last_result.stderr.count('Source cache: kernel/demo.c:'), 1)
+        self.assertEqual(blocked.read_text(), 'keep this file')
+
+    def test_cache_and_network_failure_preserve_locations_without_fabricated_code(self):
+        blocked = self.root / 'not-a-cache-directory'
+        blocked.write_text('keep this file')
+        self.available = False
+        report = self.report('cache-and-download-failed', cache=blocked)
+        self.assertEqual(self.requests, ['/' + REVISION + '/kernel/demo.c'])
+        self.assertIn('kernel/demo.c', json.dumps(self.payload(report, 'tlData')['sources']))
+        self.assertNotIn('return value + 17;', json.dumps(self.payload(report, 'fgSrc')))
+        self.assertIn('Warning: source cache', self.last_result.stderr)
+        self.assertIn('1 not found', self.last_result.stdout)
+        self.assertEqual(blocked.read_text(), 'keep this file')
+
+    def test_function_entry_source_without_call_site_also_reports_cache_failure(self):
+        self.trace = self.root / 'entry.jsonl'
+        records = [dict(type='metadata', schema=uftrace.SCHEMA, order='streams', timestamp_unit='ns',
+                        depth_basis='address-space', clock='mono',
+                        kernel_settings={'trace_clock': 'local [mono] boot'}),
+                   dict(type='entry', space='kernel', time_ns=1000, depth=0, name='remote_target',
+                        address=self.target_address, tid=42, cpu=0),
+                   dict(type='exit', space='kernel', time_ns=2000, depth=0, name='remote_target',
+                        address=self.target_address, tid=42, cpu=0),
+                   dict(type='end', complete=True)]
+        self.trace.write_text('\n'.join(json.dumps(record) for record in records) + '\n')
+        blocked = self.root / 'not-a-cache-directory'
+        blocked.write_text('keep this file')
+        report = self.report('entry-cache-failed', cache=blocked)
+        self.assertEqual(self.requests, ['/' + REVISION + '/kernel/demo.c'])
+        self.assertIn('return value + 17;', json.dumps(self.payload(report, 'fgSrc')))
+        self.assertIn('kernel function entry', json.dumps(self.payload(report, 'fgSrc')))
+        self.assertEqual(self.payload(report, 'tlData')['n'], 1)
+        self.assertIn('Warning: source cache failed for 1 file;', self.last_result.stderr)
+        self.assertEqual(self.last_result.stderr.count('Warning: source cache'), 1)
+        self.assertEqual(blocked.read_text(), 'keep this file')
 
     def test_missing_remote_source_preserves_locations_without_fabricated_code(self):
         self.available = False

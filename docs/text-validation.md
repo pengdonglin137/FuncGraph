@@ -145,6 +145,57 @@ locations nor unrelated download requests.
 代替 GitHub，不依赖公网状态或证明某个远程分支与采集镜像相符。只有符号表、没有
 DWARF 行号信息时，下载源码不能可靠补出地址到行号的映射。
 
+### Optional cache failures / 可选缓存故障
+
+The follow-up cache audit reproduced two failures: an unwritable cache discarded
+a successful download, and providers running concurrently in the same process
+shared a PID-based temporary filename. The unchanged baseline fails the three
+targeted cases in `build/source-cache-audit/baseline.log`.
+
+Cache reads now fall back to downloads on filesystem errors, and failed cache
+writes retain the complete downloaded file for the current report. Unique
+temporary files are closed before atomic publication; incomplete writes never
+become reusable entries. Cleanup is best effort and preserves the original
+warning. Cache errors remain separate from unavailable-source errors. Generation
+reports one cache warning after source generation, including kernel-entry
+excerpts fetched after the initial call-site preparation. Detailed paths/errors
+are available with `--verbose`, without adding a new report panel or metric.
+
+`tests/test_source_cache.py` checks file/directory collisions, denied cache reads,
+full-disk publication and partial writes, cleanup denial, synchronized concurrent
+providers, HTTP failures, truncated responses, recovery and offline cache hits.
+The real-CLI tests additionally compare all embedded JSON payloads against
+successful-cache output, verify sidecar and auto resources and their digests,
+retain locations when cache and network both fail, check verbose diagnostics,
+and check a structured kernel entry with no recorded call site. This entry
+fixture uses FuncGraph's uftrace JSONL schema; it does not assert a new fallback
+for ordinary ftrace rows lacking call sites. The original full-URL cache keys
+remain unchanged, so existing cache entries are still usable.
+
+Filesystem collisions and HTTP exchanges use real temporary files and loopback
+requests; deterministic mocks inject read denial, disk-full and cleanup failures
+without exhausting the host disk or changing system permissions.
+
+缓存损坏或不可写不应让已下载源码消失，也不应把缓存问题误报成源码不存在。测试覆盖
+并发发布、下载及写入中断和离线复用；不依赖公网，也不把临时文件当作完整源码。
+完整验证命令与结果保存在 `build/source-cache-audit/`；该目录是本地证据，不随包发布。
+
+Focused reproduction:
+
+```bash
+GMON_OUT_PREFIX=/tmp/funcgraph-source-cache PYTHONPATH=tests \
+  python3 -m unittest test_source_cache test_remote_sources test_sources -v
+```
+
+The focused suite passes all 28 tests. Across six completed regression batches,
+468 distinct tests pass and one optional comparison with the kernel's own
+faddr2line is skipped because `FG_VMLINUX` / `FG_KERNEL_SRC` are not set. Ten
+repeated cache tests are not counted twice. Native raw tests run with
+`FG_RAW_REQUIRED=1`. `summary.json` lists every test identity, batch outcome and
+sample digest. Public reports, PNGs and frontend assets remain unchanged; this
+cache-only change does not require regenerating healthy existing samples.
+These results overlap earlier audits and are not added to their totals.
+
 ## Reproduce / 复现
 
 The original correctness audit on November 18, 2026 passed **1,059 distinct tests with no
