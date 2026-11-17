@@ -62,7 +62,7 @@
             const source = +el.dataset.src;
             const fill = text => {
                 el.innerHTML = text;
-                if (fgSrcMode === 'chain') fgChainView(el);
+                if (fgSrcMode === 'chain') fgChainView(el, el.fgSourceFocus);
                 fgTrackSource(el);
                 el.dispatchEvent(new Event('fg-source-ready'));
             };
@@ -103,7 +103,7 @@
             });
             return job.promise;
         }
-        function fgChainView(el) {
+        function fgChainView(el, focus) {
             const chains = [];
             let frames = null;
             for (const node of Array.from(el.childNodes)) {
@@ -126,11 +126,17 @@
                 el.classList.add('src-chain');
                 const anchor = frames[0].loc;
                 const count = frames.length;
+                const focused = focus && frames.find(frame => {
+                    const position = frame.loc.textContent.replace(/^\s*\(inlined\s+by\)\s*/, '')
+                        .match(/^(\S+)\s+at\s+(.*):([0-9]+)(?:\s+\(discriminator [0-9]+\))?\s*$/);
+                    return position && position[1] === focus[0] && +position[3] === focus[2] &&
+                        (position[2] === focus[1] || position[2].endsWith('/' + focus[1]));
+                });
                 frames.reverse().forEach((frame, level) => {
                     const disclosure = document.createElement('details');
                     disclosure.className = 'src-frame' + (level === count - 1 ? ' src-call' : '');
                     disclosure.style.marginLeft = (level * 14) + 'px';
-                    if (level === count - 1) disclosure.open = true;
+                    if (focused ? frame === focused : level === count - 1) disclosure.open = true;
                     const summary = document.createElement('summary');
                     const text = frame.loc.textContent.replace(/^\s*\(inlined\s+by\)\s*/, '');
                     const position = text.match(/^(\S+)\s+at\s+(.*)$/);

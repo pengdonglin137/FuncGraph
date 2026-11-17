@@ -1114,6 +1114,8 @@ Tooltip and detail panel of an inline frame:
 
 In both views the call stacks list the inline frames.
 
+Clicking an inline slice also opens **Inline source context** in its own detail panel, without selecting a recorded child. It reuses the first traced call's embedded source chain and opens the selected inline level, including a middle level in a nested chain. **Source: chain/flat** remains synchronized with Text. This is a source position along that recorded call path, not the inline function's entry or full body. Reports with positions but no excerpts keep their source links and explain that no excerpt was included. Timeline-only reports need `--keep-source` to retain this information; older HTML must be regenerated.
+
 Inline and untraced details cache the selected frame's raw extent facts, so refreshing does not rescan every child. Inline-chain exports distinguish the resolved containing call-site function from actual recorded calls and never assign source-only frames fabricated slice indexes or durations.
 
 ### 6.9 Keyboard and mouse

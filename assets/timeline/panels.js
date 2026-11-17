@@ -346,7 +346,7 @@ function showInlineDetail(i) {
     const f = detailContextData(i).facts;
     let h = '<div class="tl-detail-head tl-slice-head"><span class="tl-detail-title" title="' + esc(f.fn) + '">' + detailSymbolHtml(symbolLabel(f.fn)) + '</span>' + pill('mute', 'inlined') +
         pill('mute', 'into ' + symbolLabel(f.intoFn), f.intoFn) + '<span class="sp"></span>' + lineLink(sLine[f.kids[0]], 'Open first call in text view ↵') +
-        '<button class="tl-close" title="Close (Esc)">×</button></div>' + callNavigationHtml(i) + '<div class="tl-detail-body"><div class="tl-kv">';
+        '<button class="tl-close" title="Close (Esc)">×</button></div>' + callNavigationHtml(i) + '<div class="tl-detail-body"><div class="tl-left"><div class="tl-kv">';
     h += kv('traced extent', fmtDur(f.span) + ' &nbsp;<span class="d">from the first traced call inside to the end of the last one</span>');
     h += kv('start / end', fmtDur(sStart[i]) + ' → ' + fmtDur(sEnd[i]));
     h += kv('inlined into', detailSymbolHtml(f.intoFn) + ' at ' + esc(f.atFile) + ':' + f.atLine);
@@ -355,8 +355,11 @@ function showInlineDetail(i) {
     h += kv('between them', fmtDur(f.gap) + ' <span class="d">own inlined code, untraced callees, interrupts</span>');
     if (f.mismatch) h += kv('note', 'containing function ' + esc(f.ch[0][0]) + ' ≠ recorded parent ' + esc(nameOf(f.y.p)) + ' (tail call, inline or untraced code; cause unresolved)');
     h += '<span class="k">limits</span><span class="v d">Inlined code has no entry/exit events: only the traced calls inside it are visible, so the real start may be earlier and the real end later.</span>';
-    h += '</div><div>' + detailListHtml('inline') + detailListHtml('children') + detailContextHint() + '</div></div>';
+    h += '</div><details class="tl-cs" open><summary class="tl-sec">Inline source context</summary>' +
+        '<div class="tl-context-note">Source at the first traced call inside this frame, not its full body or function entry.</div>' +
+        '<div class="tl-cs-src"></div></details></div><div>' + detailListHtml('inline') + detailListHtml('children') + detailContextHint() + '</div></div>';
     openDetail(h);
+    fillCallSite(f.kids[0], f.ch[f.k]);
 }
 function showGhostDetail(i) {
     const f = detailContextData(i).facts, y = f.y;
@@ -526,14 +529,21 @@ function callSitePos(i) {
     csPosCache.set(k, r);
     return r;
 }
-function fillCallSite(i) {
+function fillCallSite(i, inlineFrame) {
     const box = elDetail.querySelector('.tl-cs');
     if (!box) return;
-    const k = callSiteBlock(i);
-    if (k === null) { box.remove(); return; }
     const el = box.querySelector('.tl-cs-src');
+    const unavailable = () => {
+        if (!inlineFrame) { box.remove(); return; }
+        el.removeAttribute('data-src');
+        el.className = 'tl-cs-src tl-context-note';
+        el.textContent = 'Source excerpt not included in this report. Use the inline chain source links when available.';
+    };
+    const k = callSiteBlock(i);
+    if (k === null) { unavailable(); return; }
     el.className = 'tl-cs-src expanded-content';
     el.dataset.src = k;
+    el.fgSourceFocus = inlineFrame;
     const location = () => {
         const pos = callSitePos(i);
         const at = elDetail.querySelector('.tl-cs-at');
@@ -550,7 +560,7 @@ function fillCallSite(i) {
     el.addEventListener('fg-source-ready', () => {
         if (!box.isConnected) return;
         location();
-        if (!el.querySelector('.source-line')) { box.remove(); return; }
+        if (!el.querySelector('.source-line')) { unavailable(); return; }
         if (box.querySelector('[data-fg-source-mode]')) return;
         const mode = document.createElement('button');
         mode.type = 'button';
