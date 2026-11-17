@@ -1112,7 +1112,12 @@ Tooltip and detail panel of an inline frame:
 | Inline chain at the call site | the full chain, this level in bold |
 | Traced calls inside | every recorded call inside; 100-row pages, keyboard navigation and full CSV export |
 
-In both views the call stacks list the inline frames.
+In both views the call stacks list the inline frames. Adjacent nested records
+that share the same recorded return site reuse its inline source context rather
+than inserting that chain repeatedly. Real calls and their timing remain
+unchanged. Source reuse is not itself proof of a tail call; static tail-jump
+markers still require `--tail-calls` evidence. See the
+[recognition rules and example](tail-inline-context.md).
 
 Clicking an inline slice also opens **Inline source context** in its own detail panel, without selecting a recorded child. It reuses the first traced call's embedded source chain and opens the selected inline level, including a middle level in a nested chain. **Source: chain/flat** remains synchronized with Text. This is a source position along that recorded call path, not the inline function's entry or full body. Reports with positions but no excerpts keep their source links and explain that no excerpt was included. Timeline-only reports need `--keep-source` to retain this information; older HTML must be regenerated.
 

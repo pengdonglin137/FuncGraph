@@ -291,6 +291,16 @@ def tl_tail(b, rep):
     shot(pg, 'tl_tail')
 
 
+def tl_tail_inline(b, rep):
+    pg = open_page(b, rep['sample'], 'timeline', height=980)
+    pg.evaluate(f"{PROBE}.inline(true)")
+    zoom(pg, find(pg, 'vfs_read'), pad=0.08, select=False)
+    pg.evaluate('index => fgView("timeline").probe().select(index)', find(pg, 'filemap_read'))
+    pg.wait_for_timeout(400)
+    pg.locator('.tl-tail-tag').first.wait_for()
+    shot(pg, 'tl_tail_inline')
+
+
 def tl_help(browser, reports):
     page = open_page(browser, reports['sample'], 'timeline')
     page.locator('#viewHelpBtn').click()
@@ -427,7 +437,7 @@ def tl_loading(browser, reports):
 
 SHOTS = {
     'text_view': text_view, 'text_folding': text_folding, 'tl_loading': tl_loading, 'tl_layout': tl_layout, 'tl_compact': tl_compact, 'tl_search': tl_search, 'tl_errors': tl_errors, 'tl_dense': tl_dense, 'tl_irqoff': tl_irqoff,
-    'tl_offcpu': tl_offcpu, 'tl_untraced': tl_untraced, 'tl_detail': tl_detail, 'tl_inline': tl_inline, 'tl_tail': tl_tail, 'tl_help': tl_help,
+    'tl_offcpu': tl_offcpu, 'tl_untraced': tl_untraced, 'tl_detail': tl_detail, 'tl_inline': tl_inline, 'tl_tail': tl_tail, 'tl_tail_inline': tl_tail_inline, 'tl_help': tl_help,
     'timeline_saved_views': tl_saved_views,
     'timeline_focus': tl_focus,
     'an_range': an_range, 'an_dist': an_dist, 'an_slowfast': an_slowfast, 'an_sections': panel('an_sections', 'sample', 'sections'),
