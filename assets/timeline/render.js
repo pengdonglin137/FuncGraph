@@ -257,7 +257,6 @@ function resize() {
         // is wider in CSS (no scrollbar above it) and would be stretched: x positions drift apart
         cv.style.width = w + 'px';
     }
-    ovDirty = true;
     layout();
     draw();
     scheduleDistHistogram();
@@ -859,7 +858,7 @@ function drawOff(r, y, vs, k) {
 }
 
 // ---- header: overview + axis ----
-let ovDirty = true, ovDens = null, ovMax = 1;
+let ovWidth = -1, ovDens = null, ovMax = 1;
 function buildOverview() {
     ovDens = new Float32Array(Math.max(1, Math.ceil(W)));
     const hasTasks = ORDER.some(track => track.kind === 0);
@@ -881,10 +880,10 @@ function buildOverview() {
     ovMax = 0;
     for (let p = 0; p < ovDens.length; p++) if (ovDens[p] > ovMax) ovMax = ovDens[p];
     ovMax = ovMax || 1;
-    ovDirty = false;
+    ovWidth = W;
 }
 function renderHead() {
-    if (ovDirty) buildOverview();
+    if (ovWidth !== W) buildOverview();
     hctx.setTransform(1, 0, 0, 1, 0, 0);
     hctx.fillStyle = P.hdr;
     hctx.fillRect(0, 0, elHead.width, elHead.height);

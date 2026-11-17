@@ -1677,7 +1677,7 @@ else elNotesButton.hidden = true;
 syncToolbar();
 if (!WAKES.length) tlRoot.querySelector('[data-ov=wk]').classList.add('na');
 if (!D.caps.retval && !USER_ERRORS.size) tlRoot.querySelector('[data-ov=err]').classList.add('na');
-new MutationObserver(() => { palette(); ovDirty = true; draw(); scheduleDistHistogram(); })
+new MutationObserver(() => { palette(); draw(); scheduleDistHistogram(); })
     .observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
 window.addEventListener('resize', () => { if (window.fgCurrentView() === 'timeline') { resize(); sizeDetailHead(); } });
 window.addEventListener('scroll', scheduleToolbarOverlays, { passive: true });

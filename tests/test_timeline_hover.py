@@ -74,6 +74,7 @@ class TimelineHoverTest(unittest.TestCase):
                     const model = fgView('timeline').probe();
                     const canvas = document.querySelector('.tl-canvas');
                     const tip = document.querySelector('.tl-tip');
+                    const body = tip.querySelector('.tl-tip-body');
                     const point = model.xyOf(1);
                     const bounds = canvas.getBoundingClientRect();
                     const empty = [bounds.left + 50, bounds.bottom - 2];
@@ -85,7 +86,7 @@ class TimelineHoverTest(unittest.TestCase):
                     const descriptor = Object.getOwnPropertyDescriptor(Element.prototype, 'innerHTML');
                     const read = Element.prototype.getBoundingClientRect;
                     const work = {writes:0, reads:0};
-                    Object.defineProperty(tip, 'innerHTML', {configurable:true,
+                    Object.defineProperty(body, 'innerHTML', {configurable:true,
                         get() { return descriptor.get.call(this); },
                         set(value) { work.writes++; descriptor.set.call(this, value); }});
                     Element.prototype.getBoundingClientRect = function(...args) {
@@ -97,7 +98,7 @@ class TimelineHoverTest(unittest.TestCase):
                     await hoverFrame();
                     const after = {...work};
                     Element.prototype.getBoundingClientRect = read;
-                    delete tip.innerHTML;
+                    delete body.innerHTML;
                     return {immediate, after, samePixels:canvas.toDataURL() === reference.pixels,
                         sameTip:tip.textContent === reference.tip};
                 }''')
@@ -126,6 +127,7 @@ class TimelineHoverTest(unittest.TestCase):
                     text = page.evaluate('''() => ({rows:fgTextNavigation.order.slice(),
                         content:document.getElementById('content').textContent, scroll:scrollY})''')
                     page.locator('.view-tab[data-view=timeline]').click()
+                    page.evaluate('async () => { await hoverFrame(); await hoverFrame(); }')
                     result = page.evaluate('''async () => {
                         const model = fgView('timeline').probe();
                         const canvas = document.querySelector('.tl-canvas');
@@ -214,6 +216,7 @@ class TimelineHoverTest(unittest.TestCase):
                 }''', identifier)
                 for iteration in range(2):
                     page.locator('.view-tab[data-view=timeline]').click()
+                    page.evaluate('async () => { await hoverFrame(); await hoverFrame(); }')
                     self.assertEqual(page.evaluate('getSelection().rangeCount'), 0)
                     result = page.evaluate('''async () => {
                         const model = fgView('timeline').probe();
