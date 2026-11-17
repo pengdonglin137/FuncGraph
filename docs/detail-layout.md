@@ -123,6 +123,18 @@ only for `fullscreenElement` to become null.
 
 ## Arguments and evidence / 参数与证据
 
+Return-value typing, inline source chains and tail-jump analysis are independent
+evidence. A caller/parent mismatch is labeled **caller mismatch**, not inferred
+as inline; **tail jump (static)** requires supported `--tail-calls` evidence.
+Source chains require explicit `(inlined by)` resolver markers. Multiple unrelated
+positions stay separate, and their headers, source lines and links are retained.
+The containing source frame is labeled **function**, not proof of a recorded entry.
+
+返回类型、内联源码链和尾跳转各有独立证据。调用点与父函数不一致时标为 **caller mismatch**，
+不默认判为内联；**tail jump (static)** 需要 `--tail-calls` 的直接跳转证据。源码只有在解析器
+明确给出 `(inlined by)` 时才连成内联链，多条独立位置、标题、源码和链接不会被合并或丢弃。
+源码外层标为 **function**，不等于该函数入口一定被采集。
+
 - Decoded user arguments use `name=value` with recorded DWARF names. Missing
   names use explicit `slot1=value`, `slot2=value` placeholders in both Text and
   Timeline; these are captured values, not guessed source parameter names or a
@@ -178,7 +190,8 @@ Semantic colors are documented in [detail-colors.md](detail-colors.md).
 ```bash
 PYTHONPATH=.:tests python3 -m unittest \
     test_detail_layout test_detail_actions test_detail_colors test_detail_expand \
-    test_timeline_fullscreen test_timeline_resize test_timeline_zero test_uftrace_details -v
+    test_timeline_fullscreen test_timeline_resize test_timeline_zero test_uftrace_details \
+    test_source_classification test_inline test_tailcalls -v
 ```
 
 These browser checks require Playwright and Chromium. The Actions suite covers

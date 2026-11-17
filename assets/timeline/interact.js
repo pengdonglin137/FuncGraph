@@ -153,7 +153,7 @@ function tipInline(i) {
     h += row('traced calls', f.kids.length + ' (' + fmtDur(f.covered) + ')');
     h += row('between them', fmtDur(f.gap) + ' (own inlined code or untraced work)');
     h += '<div class="t-warn">Start/end = first/last traced call inside: the inlined code itself may begin earlier and end later.</div>';
-    if (f.mismatch) h += '<div class="t-warn">Containing function ' + esc(f.ch[0][0]) + ' differs from the parent slice ' + esc(nameOf(f.y.p)) + ' (untraced frame in between).</div>';
+    if (f.mismatch) h += '<div class="t-warn">' + esc(callerRelationText(f.kids[0])) + '</div>';
     return h;
 }
 function inlineLine(i) {

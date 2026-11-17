@@ -5686,7 +5686,7 @@ class BrowserSmokeTest(unittest.TestCase):
             const panels = Array.from(document.querySelectorAll('.expanded-content[data-src]')).slice(0, 2);
             const originalSource = fgSourceHtml;
             fgSourceHtml = () => '<a class="location-link">inner at inner.c:2</a><div class="source-line">inner();</div>' +
-                '<a class="location-link">outer at outer.c:4</a><div class="source-line">outer();</div>';
+                '<a class="location-link">(inlined by) outer at outer.c:4</a><div class="source-line">outer();</div>';
             panels.forEach(panel => fgFill(panel));
             const unopened = document.createElement('div');
             unopened.hidden = true;

@@ -104,50 +104,58 @@
             return job.promise;
         }
         function fgChainView(el) {
-            // split into frames: a location line starts a frame, source lines belong to it
-            const frames = [];
-            let head = null;
-            const tail = [];
+            const chains = [];
+            let frames = null;
             for (const node of Array.from(el.childNodes)) {
                 const isLoc = node.classList && node.classList.contains('location-link');
-                if (isLoc && node.querySelector && node.querySelector('strong')) { head = node; continue; }
-                if (isLoc) { frames.push({ loc: node, lines: [] }); continue; }
-                if (frames.length && node.classList && node.classList.contains('source-line')) { frames[frames.length - 1].lines.push(node); continue; }
-                tail.push(node);
-            }
-            if (frames.length < 2) return;           // no inlining: keep as is
-            el.innerHTML = '';
-            el.classList.add('src-chain');
-            if (head) el.appendChild(head);
-            const n = frames.length;
-            frames.reverse().forEach((f, k) => {     // outer (traced function) first
-                const d = document.createElement('details');
-                d.className = 'src-frame' + (k === n - 1 ? ' src-call' : '');
-                d.style.marginLeft = (k * 14) + 'px';
-                if (k === n - 1) d.open = true;
-                const sm = document.createElement('summary');
-                const txt = f.loc.textContent.replace(/^\(inlined\s+by\)\s*/, '');
-                const m = txt.match(/^(\S+)\s+at\s+(.*)$/);
-                const tag = k === 0 ? 'traced' : 'inline';
-                sm.innerHTML = '<span class="src-tag ' + tag + '">' + tag + '</span> <b>' +
-                    (m ? escapeHtml(m[1]) : escapeHtml(txt)) + '</b> <span class="src-at">' +
-                    (m ? escapeHtml(m[2]) : '') + '</span>' +
-                    (k < n - 1 ? ' <span class="src-note">→ inlines ' + escapeHtml((frames[k + 1].loc.textContent.replace(/^\(inlined\s+by\)\s*/, '').split(/\s+at\s+/)[0]) || '') + ' here</span>'
-                               : ' <span class="src-note">← the traced call happens here</span>');
-                const link = f.loc.matches('a[href]') ? f.loc : f.loc.querySelector('a[href]');
-                if (link) {
-                    const source = link.cloneNode(false);
-                    source.textContent = m ? m[2] : txt;
-                    source.className = 'src-at';
-                    source.title = 'Open source at ' + source.textContent;
-                    source.rel = 'noopener noreferrer';
-                    sm.querySelector('.src-at').replaceWith(source);
+                if (isLoc && node.querySelector('strong')) { frames = null; continue; }
+                if (isLoc) {
+                    if (!frames || !/^\s*\(inlined\s+by\)\s+/.test(node.textContent)) {
+                        frames = [];
+                        chains.push(frames);
+                    }
+                    frames.push({ loc: node, lines: [] });
+                } else if (frames && node.classList && node.classList.contains('source-line')) {
+                    frames[frames.length - 1].lines.push(node);
+                } else if (node.nodeType !== Node.TEXT_NODE || node.textContent.trim()) {
+                    frames = null;
                 }
-                d.appendChild(sm);
-                for (const ln of f.lines) d.appendChild(ln);
-                el.appendChild(d);
-            });
-            for (const t of tail) el.appendChild(t);
+            }
+            for (const frames of chains) {
+                if (frames.length < 2) continue;
+                el.classList.add('src-chain');
+                const anchor = frames[0].loc;
+                const count = frames.length;
+                frames.reverse().forEach((frame, level) => {
+                    const disclosure = document.createElement('details');
+                    disclosure.className = 'src-frame' + (level === count - 1 ? ' src-call' : '');
+                    disclosure.style.marginLeft = (level * 14) + 'px';
+                    if (level === count - 1) disclosure.open = true;
+                    const summary = document.createElement('summary');
+                    const text = frame.loc.textContent.replace(/^\s*\(inlined\s+by\)\s*/, '');
+                    const position = text.match(/^(\S+)\s+at\s+(.*)$/);
+                    const tag = level === 0 ? 'function' : 'inline';
+                    const next = frames[level + 1]?.loc.textContent.replace(/^\s*\(inlined\s+by\)\s*/, '').split(/\s+at\s+/)[0] || '';
+                    summary.innerHTML = '<span class="src-tag ' + (level === 0 ? 'traced' : 'inline') + '">' + tag + '</span> <b>' +
+                        (position ? escapeHtml(position[1]) : escapeHtml(text)) + '</b> <span class="src-at">' +
+                        (position ? escapeHtml(position[2]) : '') + '</span>' +
+                        (level < count - 1 ? ' <span class="src-note">→ inlines ' + escapeHtml(next) + ' here</span>'
+                                          : ' <span class="src-note">← the traced call happens here</span>');
+                    const link = frame.loc.matches('a[href]') ? frame.loc : frame.loc.querySelector('a[href]');
+                    if (link) {
+                        const source = link.cloneNode(false);
+                        source.textContent = position ? position[2] : text;
+                        source.className = 'src-at';
+                        source.title = 'Open source at ' + source.textContent;
+                        source.rel = 'noopener noreferrer';
+                        summary.querySelector('.src-at').replaceWith(source);
+                    }
+                    disclosure.appendChild(summary);
+                    for (const line of frame.lines) disclosure.appendChild(line);
+                    el.insertBefore(disclosure, anchor);
+                });
+                for (const frame of frames) frame.loc.remove();
+            }
         }
         // ---- text order: by time (as captured) or grouped by task ----
         // ftrace interleaves all CPUs by time; with several busy tasks a task's calls are scattered.

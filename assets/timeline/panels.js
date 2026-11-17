@@ -400,6 +400,7 @@ function showDetail(i) {
     if (f & FL.TRUNC) pills += pill('mute', 'no exit');
     if (f & FL.ORPHAN) pills += pill('mute', 'no entry');
     if (f & FL.EST) pills += pill('mute', 'estimated');
+    if (f & FL.MISMATCH) pills += pill('mute', tailJumpOf(i) ? 'tail jump (static)' : 'caller mismatch', callerRelationText(i));
     let h = '<div class="tl-detail-head tl-slice-head"><span class="tl-detail-title" title="' + esc(nameOf(i)) + '">' + detailSymbolHtml(sliceLabel(i)) +
         (modOf(i) ? ' [' + esc(modOf(i)) + ']' : '') + '</span>' + pills + '<span class="sp"></span>' +
         '<button class="tl-btn tl-call-actions-button" type="button" data-call-actions aria-haspopup="menu" ' +
@@ -512,12 +513,14 @@ function callSitePos(i) {
     if (typeof fgSourceHtml === 'function') {
         const tmp = document.createElement('div');
         tmp.innerHTML = fgSourceHtml(k);
-        const locs = tmp.querySelectorAll('a.location-link, div.location-link:not(:first-child)');
-        const a = locs[0];
+        const locs = Array.from(tmp.querySelectorAll('.location-link'));
+        const first = locs.findIndex(location => !location.querySelector('strong'));
+        const a = first >= 0 ? locs[first] : null;
         if (a) {
             const txt = a.textContent.replace(/^\(inlined\s+by\)\s*/, '');
             const m = txt.match(/^(\S+)\s+at\s+(.*)$/);
-            if (m) r = { func: m[1], at: m[2], href: a.getAttribute && a.getAttribute('href'), inl: locs.length > 1 };
+            if (m) r = { func: m[1], at: m[2], href: a.getAttribute && a.getAttribute('href'),
+                inl: /^\s*\(inlined\s+by\)\s+/.test(locs[first + 1]?.textContent || '') };
         }
     }
     csPosCache.set(k, r);

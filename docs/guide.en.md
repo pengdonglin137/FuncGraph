@@ -654,7 +654,7 @@ Lines with a call site can be expanded (click the line or press Enter). The bloc
 
 When the call site is inside inlined code, faddr2line returns an inline chain. The **Source** button switches between two layouts:
 
-- **chain** (default): outer to inner. `traced` is the function ftrace saw; below it each inlined `inline` function, indented one level, collapsible, with "→ inlines X here". Only the innermost one ("← the traced call happens here", the line that makes this call) is open. ↗ on each level is an online source link.
+- **chain** (default): outer to inner, based only on explicit `(inlined by)` resolver markers. `function` is the DWARF function containing the call site, not proof that its entry was recorded; below it each `inline` function is indented, collapsible, and labeled "→ inlines X here". Only the innermost one ("← the traced call happens here", the line that makes this call) is open. ↗ on each level is an online source link. Independent candidate locations are not merged into an inline chain; all locations, source lines and links remain available.
 - **flat**: exactly like faddr2line's output, innermost first, everything open.
 
 The Text toolbar and Timeline call-site Source buttons stay synchronized. In browsers with weak-reference support, switching only rebuilds populated source panels, without scanning empty placeholders across the trace or parsing an unused source pool. Unopened blocks use the current mode on first expansion; replaced detail panels are not kept alive by the registry. Older browsers retain a compatible scanning path. Source content is unchanged. In sidecar reports, expansion fetches only the source's verified chunk; a closed Timeline source panel waits until opened. Pending requests show **Loading source…** and failures provide **Retry**. Collapse, detail replacement/close and view changes cancel that panel's request, not other consumers of the same chunk; still-open pending panels restart on view reentry. Successful chunks are reused without refetching. Single-file reports keep synchronous embedded sources.
@@ -946,6 +946,8 @@ python3 funcgraph.py --timeline --tail-calls --fast --func-links \
 ```
 
 A tail call can use `jmp` / `b` instead of a regular call and retain an outer return address. A caller/parent mismatch therefore does not necessarily mean that a frame was missed. Default reports explain the unresolved causes. Only `--tail-calls` inspects the supplied binary for a direct jump from the recorded parent to the child's entry. Without it, no tail-call ELF analysis or disassembler runs.
+
+Without that analysis, the detail heading uses a restrained **caller mismatch** badge, not an automatic inline or tail-call diagnosis. Supported direct-jump evidence uses **tail jump (static)**. Inline frames require an explicit DWARF inline chain independently of this option: real inline code at the call site can coexist with an unresolved parent/child relationship or with separate static tail-jump evidence.
 
 ![tl_tail](img/tl_tail.png)
 
