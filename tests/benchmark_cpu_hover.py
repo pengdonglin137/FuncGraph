@@ -18,11 +18,20 @@ def instrument(text):
 window.cpuHoverStats = {calls:0, lookups:0, records:0, milliseconds:0};
 let measuringCpuTip = false;
 const cpuHoverGet = CPU_IRQ.get.bind(CPU_IRQ);
+const cpuHoverRecords = new WeakMap();
 CPU_IRQ.get = cpu => {
     const records = cpuHoverGet(cpu);
     if (measuringCpuTip) {
         cpuHoverStats.lookups++;
-        cpuHoverStats.records += records?.length || 0;
+        if (records && cpuHoverStats.countRecords !== false) {
+            if (!cpuHoverRecords.has(records)) cpuHoverRecords.set(records, new Proxy(records, {
+                get(target, key, receiver) {
+                    if (typeof key === 'string' && /^(0|[1-9][0-9]*)$/.test(key)) cpuHoverStats.records++;
+                    return Reflect.get(target, key, receiver);
+                }
+            }));
+            return cpuHoverRecords.get(records);
+        }
     }
     return records;
 };
@@ -41,7 +50,8 @@ function tipCpu(segment) {
     marker = 'const probe = () => ({ N, NA, SYN, S,'
     if text.count(marker) != 1:
         raise ValueError('Cannot instrument the Timeline probe')
-    return text.replace(marker, marker + ' CPU_IRQ, CPU_SEGS, CPU_LIST, cpuTip:tipCpu,', 1)
+    return text.replace(marker, marker + ''' CPU_IRQ, CPU_SEGS, CPU_LIST, cpuTip:tipCpu,
+        clearCpuSummary:()=>{ if (typeof cpuIrqSummary !== 'undefined') cpuIrqSummary=null; },''', 1)
 
 
 def fixture(text, count):
@@ -92,8 +102,17 @@ def measure(browser, report, moves):
             reset();
             for (let index=0;index<moves;index++)
                 if (model.cpuTip({...segment}) !== html) throw new Error('CPU tooltip content changed');
+            const repeated = {...cpuHoverStats};
+            cpuHoverStats.countRecords = false;
+            model.clearCpuSummary();
+            reset();
+            if (model.cpuTip(segment) !== html) throw new Error('CPU timing changed content');
+            const coldTiming = {...cpuHoverStats};
+            reset();
+            for (let index=0;index<moves;index++)
+                if (model.cpuTip({...segment}) !== html) throw new Error('Repeated timing changed content');
             if (JSON.stringify(fgData.read('tlData')) !== before) throw new Error('Recorded data changed');
-            return {segment,cold,repeated:{...cpuHoverStats},html,input:before,
+            return {segment,cold,repeated,timings:{cold:coldTiming,repeated:{...cpuHoverStats}},html,input:before,
                 interrupts:Array.from(model.CPU_IRQ.values(),records=>records.length).reduce((total,count)=>total+count,0)};
         }''', moves)
         if errors:
@@ -145,10 +164,11 @@ def main():
             record['html_sha256'] = hashlib.sha256(record.pop('html').encode()).hexdigest()
     result = dict(browser=version, synthetic_interrupts=arguments.interrupts, moves=arguments.moves,
                   rounds=arguments.rounds, samples=samples,
-                  medians={name:{phase:{key:median(record[phase][key] for record in records)
+                  medians={name:{phase:{key:median(record['timings'][phase][key] if key == 'milliseconds' else record[phase][key]
+                                                  for record in records)
                               for key in ('calls','lookups','records','milliseconds')}
                               for phase in ('cold','repeated')} for name,records in samples.items()},
-                  scope='CPU tooltip formatting only; not total pointer, rendering or startup latency')
+                  scope='CPU tooltip formatting only; record counts collected separately from timing passes without per-record proxies; not total pointer, rendering or startup latency')
     arguments.output.parent.mkdir(parents=True, exist_ok=True)
     arguments.output.write_text(json.dumps(result, indent=2) + '\n')
     print(json.dumps(result['medians'], indent=2))

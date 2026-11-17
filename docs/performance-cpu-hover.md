@@ -3,6 +3,8 @@
 The November 18, 2026 optimization removes repeated IRQ-history scans while
 moving over the same CPU segment. It does not add a setting, change the preview
 layout or remove evidence. Existing HTML needs regeneration to embed the fix.
+The subsequent [CPU interval index](performance-cpu-intervals.md) also accelerates
+first/new-window queries and CPU-track repaints; this page records the cache step.
 
 ## Root cause and bounded reuse
 
@@ -27,7 +29,8 @@ those measured intervals. The task name and other preview fields still format
 normally instead of caching the entire HTML under an IRQ-only key. Pointer
 position, hit-testing, selection and highlight painting are unchanged.
 
-The initial visit to a new window still scans that CPU's complete history.
+Before the follow-up interval index, an initial visit still scanned that CPU's
+complete history. It now uses indexed traversal while retaining the same cache.
 Repeated HTML formatting, rendering and any tooltip layout invalidation still
 take time. This change does not claim to solve initial report loading, the first
 hover over a huge history, every move across different segments, or general FPS.
@@ -59,14 +62,15 @@ older window is not retained in an unbounded cache. Actual pointer movements
 cover kernel and mixed captures in single-file and sidecar mode, light/dark
 themes and device pixel ratios one and two. Text source expansion and a return
 to Timeline retain the model and summary. A 25,000-interrupt fixture verifies
-one initial scan followed by zero history lookups across 32 repeated previews;
+one initial range query followed by zero history lookups across 32 repeated previews;
 the baseline fails that assertion with 32 lookups.
 
 ## Reproduce the measurements
 
 `tests/benchmark_cpu_hover.py` instruments temporary report copies. It counts
-history lookups and the number of records they expose only during CPU tooltip
-formatting, excluding unrelated rendering reads. It also times that formatter;
+history lookups and actual record accesses only during CPU tooltip formatting,
+including binary-search reads but excluding unrelated rendering reads. Separate
+timing passes disable per-record proxies and check unchanged preview HTML;
 those durations are not end-to-end pointer or physical presentation latency.
 Each side must retain the complete `tlData` input except generated build time,
 the same segment and byte-identical full tooltip HTML. Otherwise the
@@ -77,16 +81,18 @@ With Playwright and Chromium installed, compare the saved sample with baseline
 
 ```bash
 git show 0f3ee23cf918:sample.html > /tmp/cpu-hover-before.html
-python3 tests/benchmark_cpu_hover.py /tmp/cpu-hover-before.html sample.html \
+git show 2b4d89f6ca97:sample.html > /tmp/cpu-hover-cached.html
+python3 tests/benchmark_cpu_hover.py /tmp/cpu-hover-before.html /tmp/cpu-hover-cached.html \
   --output build/cpu-hover-sample.json
-python3 tests/benchmark_cpu_hover.py /tmp/cpu-hover-before.html sample.html \
+python3 tests/benchmark_cpu_hover.py /tmp/cpu-hover-before.html /tmp/cpu-hover-cached.html \
   --interrupts 100000 --moves 24 --rounds 3 \
   --output build/cpu-hover-stress.json
 PYTHONPATH=tests python3 -m unittest \
   test_cpu_hover test_cpu_coverage test_timeline_hover test_tooltip -v
 ```
 
-The stress option replaces the input in temporary copies with one synthetic
+The following results describe the cache-only comparison between the two
+revisions above, before interval indexing. The stress option replaces the input in temporary copies with one synthetic
 task span and 100,000 interrupt roots, not a real capture. Its first preview
 still visits 100,000 records on both sides. Across 24 repeated previews, history
 lookups drop from 24 to zero and visited records from 2,400,000 to zero. The
@@ -107,7 +113,8 @@ resolution; the original large source-rich report is untouched and is not the
 timed artifact. The small-case timings are near the browser timer's resolution
 and establish no perceptible speedup. The stress case deliberately has many
 interrupt roots; it is not representative of every large trace. Only repeated
-scans are eliminated: each first preview still visits its complete history.
+scans were eliminated at that step. Current first-preview behavior is described
+in the [interval-index follow-up](performance-cpu-intervals.md).
 
 The checked-in kernel and mixed samples are regenerated with their matching
 kernel image, pinned source revision and user source tree. Their five JSON

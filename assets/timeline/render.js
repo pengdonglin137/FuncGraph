@@ -557,13 +557,11 @@ function drawCpuTrack(top, vs, ve, k) {
             if (hovCpu && hovCpu.cpu === cpu && hovCpu.j === j) { ctx.strokeStyle = P.hov; ctx.lineWidth = 1; ctx.strokeRect(cx0 + 0.5, ry + 0.5, w - 1, ROW - 2); }
         }
         ctx.globalAlpha = 1;
-        const irq = CPU_IRQ.get(cpu);
-        if (irq) for (const r of irq) {
-            if (r[1] < vs || r[0] > ve) continue;
-            const x0 = (r[0] - vs) * k, x1 = (r[1] - vs) * k;
-            ctx.fillStyle = r[2] === 1 ? 'hsl(152,60%,40%)' : r[2] === 2 ? 'hsl(30,85%,50%)' : 'hsl(282,60%,50%)';
+        visitCpuInterrupts(cpu, vs, ve, record => {
+            const x0 = (record[0] - vs) * k, x1 = (record[1] - vs) * k;
+            ctx.fillStyle = record[2] === 1 ? 'hsl(152,60%,40%)' : record[2] === 2 ? 'hsl(30,85%,50%)' : 'hsl(282,60%,50%)';
             ctx.fillRect(Math.max(0, x0), ry + ROW - 5, Math.max(1.5, x1 - Math.max(0, x0)), 3);
-        }
+        });
         // CPU label
         const lab = 'CPU ' + cpu;
         ctx.font = FONT_S;

@@ -473,7 +473,7 @@ initialEnd = Math.max(initialStart + 1, initialEnd);
 const OPEN_OFF = new Set(D.offcpu.filter(record => record[2] === null));
 for (const r of D.offcpu) if (r[2] === null) r[2] = tMax;
 const SCHED_BLOCK_SIZE = 128;
-function* indexSchedulingIntervals(records) {
+function* indexSchedulingIntervals(records, timeColumn = 1) {
     if (records.length < SCHED_BLOCK_SIZE) return null;
     const bounds = new Float64Array(2 * Math.ceil(records.length / SCHED_BLOCK_SIZE));
     let ordered = true, previousStart = -Infinity, previousEnd = -Infinity;
@@ -482,7 +482,7 @@ function* indexSchedulingIntervals(records) {
         let earliest = Infinity, latest = -Infinity;
         const stop = Math.min(records.length, start + SCHED_BLOCK_SIZE);
         for (let ordinal = start; ordinal < stop; ordinal++) {
-            const record = records[ordinal], begin = record[1], end = record[2];
+            const record = records[ordinal], begin = record[timeColumn], end = record[timeColumn + 1];
             earliest = Math.min(earliest, begin);
             latest = Math.max(latest, end);
             if (begin < previousStart || end < previousEnd) ordered = false;
@@ -494,16 +494,17 @@ function* indexSchedulingIntervals(records) {
     }
     return ordered ? true : bounds;
 }
-function visitSchedulingIntervals(records, index, left, right, visit) {
+function visitSchedulingIntervals(records, index, left, right, visit, timeColumn = 1) {
     if (index === true) {
         let low = 0, high = records.length;
         while (low < high) {
             const middle = (low + high) >>> 1;
-            if (records[middle][2] < left) low = middle + 1;
+            if (records[middle][timeColumn + 1] < left) low = middle + 1;
             else high = middle;
         }
-        for (let ordinal = low; ordinal < records.length && records[ordinal][1] <= right; ordinal++) {
+        for (let ordinal = low; ordinal < records.length; ordinal++) {
             const record = records[ordinal];
+            if (record[timeColumn] > right) break;
             if (visit(record)) return record;
         }
     } else if (index) {
@@ -512,12 +513,12 @@ function visitSchedulingIntervals(records, index, left, right, visit) {
             const stop = Math.min(records.length, start + SCHED_BLOCK_SIZE);
             for (let ordinal = start; ordinal < stop; ordinal++) {
                 const record = records[ordinal];
-                if (record[1] <= right && record[2] >= left && visit(record)) return record;
+                if (record[timeColumn] <= right && record[timeColumn + 1] >= left && visit(record)) return record;
             }
         }
     } else {
         for (const record of records) {
-            if (record[1] <= right && record[2] >= left && visit(record)) return record;
+            if (record[timeColumn] <= right && record[timeColumn + 1] >= left && visit(record)) return record;
         }
     }
     return null;
@@ -566,6 +567,7 @@ yield 'Preparing scheduling context…';
 // ---- CPU tracks: which task ran on each CPU, plus irq/softirq strips ----
 const CPU_SEGS = new Map();   // cpu -> {s: Float64Array, e: Float64Array, t: Int32Array}
 const CPU_IRQ = new Map();    // cpu -> [[s, e, ctx], ...]
+const CPU_IRQ_INDEX = new Map();
 const CPU_HAS_SWITCHES = !!D.caps.sched_events;
 (function buildCpu() {
     if (!TIMED) return;
@@ -596,6 +598,14 @@ const CPU_HAS_SWITCHES = !!D.caps.sched_events;
     }
     for (const a of CPU_IRQ.values()) a.sort((x, y) => x[0] - y[0]);
 })();
+for (const [cpu, records] of CPU_IRQ) {
+    const index = yield* indexSchedulingIntervals(records, 0);
+    if (index !== null) CPU_IRQ_INDEX.set(cpu, index);
+}
+function visitCpuInterrupts(cpu, left, right, visit) {
+    const records = CPU_IRQ.get(cpu);
+    if (records) visitSchedulingIntervals(records, CPU_IRQ_INDEX.get(cpu), left, right, visit, 0);
+}
 const CPU_LIST = Array.from(CPU_SEGS.keys()).sort((a, b) => a - b);
 if (CPU_LIST.length && ORDER.some(t => t.kind === 0)) {
     const ct = { id: -1, pid: -1, comm: 'CPUs', comms: [], kind: 9, cpu: null, runs: [], lo: -1, hi: -1,

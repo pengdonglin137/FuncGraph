@@ -236,9 +236,11 @@ let cpuIrqSummary = null;
 function cpuIrqTimes(segment) {
     if (cpuIrqSummary && cpuIrqSummary.cpu === segment.cpu &&
             cpuIrqSummary.start === segment.s && cpuIrqSummary.end === segment.e) return cpuIrqSummary.totals;
-    const totals = [0, 0, 0, 0], records = CPU_IRQ.get(segment.cpu);
-    if (records) for (const record of records) if (record[1] > segment.s && record[0] < segment.e)
-        totals[record[2]] += Math.min(record[1], segment.e) - Math.max(record[0], segment.s);
+    const totals = [0, 0, 0, 0];
+    visitCpuInterrupts(segment.cpu, segment.s, segment.e, record => {
+        if (record[1] > segment.s && record[0] < segment.e)
+            totals[record[2]] += Math.min(record[1], segment.e) - Math.max(record[0], segment.s);
+    });
     cpuIrqSummary = { cpu: segment.cpu, start: segment.s, end: segment.e, totals };
     return totals;
 }
