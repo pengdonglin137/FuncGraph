@@ -376,6 +376,78 @@ class TimelinePreparationTest(unittest.TestCase):
             }
         ''')
 
+    def test_row_ranges_and_synthetic_ids_match_native_grouping_at_batch_boundaries(self):
+        self.run_model('''
+            input = data(20020);
+            freeze(input);
+            const {model} = drain(prepare());
+            for (let index = 0; index < model.N; index++) model.sStart[index] = (index * 7919) % 127;
+            for (const count of [0, 1, 8191, 8192, 8193, 16384, 16385]) {
+                for (const synthetic of [[], [19999], [0, 19999, 1, 0],
+                        Array.from({length:8193}, (value, index) => 19999 - index)]) {
+                    Object.freeze(synthetic);
+                    const expectedIds = Array.from({length:count}, (value, index) => index + 7).concat(synthetic);
+                    let visited = 0, labels = 0;
+                    const iterator = model.buildRows(7, 7 + count, synthetic, index => { visited++; return index % 5; });
+                    let result;
+                    do {
+                        visited = 0;
+                        result = iterator.next();
+                        assert.ok(visited <= 8208, 'Depth scans must remain bounded');
+                        if (!result.done) labels++;
+                    } while (!result.done);
+                    const [rows, maximum] = result.value;
+                    assert.equal(maximum, expectedIds.length ? Math.max(...expectedIds.map(index => index % 5)) : -1);
+                    assert.equal(rows.length, maximum + 1);
+                    for (let depth = 0; depth <= maximum; depth++) {
+                        const expected = expectedIds.filter(index => index % 5 === depth)
+                            .sort((left, right) => model.sStart[left] - model.sStart[right] || left - right);
+                        assert.deepEqual(Array.from(rows[depth]), expected);
+                    }
+                    if (count > 8192) assert.ok(labels >= 3);
+                }
+            }
+        ''')
+
+    def test_track_indexing_never_joins_history_sized_recorded_identity_arrays(self):
+        self.run_model('''
+            for (const inline of [false, true]) {
+                input = data(20004);
+                input.cols.task.fill(1, 10002);
+                for (let index = 1; index < input.n; index += 2) {
+                    input.cols.parent[index] = index - 1;
+                    input.cols.depth[index] = 3;
+                    input.cols.caller[index] = 2;
+                }
+                if (inline) input.inline = {'2':[['root', 'root.c', 1], ['outer', 'outer.h', 2]]};
+                freeze(input);
+                const concat = Array.prototype.concat;
+                let copied = 0, model;
+                try {
+                    Array.prototype.concat = function(...extra) {
+                        if (this.length >= 8192 && this.every(Number.isInteger)) copied += this.length;
+                        return Reflect.apply(concat, this, extra);
+                    };
+                    model = drain(prepare()).model;
+                } finally { Array.prototype.concat = concat; }
+                assert.equal(copied, 0, 'Traverse recorded ID ranges without copying them into view arrays');
+                for (const track of model.TRACKS) {
+                    const ids = Array.from({length:model.NA}, (value, index) => index)
+                        .filter(index => model.sTask[index] === track.id);
+                    for (const [rows, depthOf, visible] of [
+                            [track.rowsT, index => model.sDepth[index], index => index < model.N || !!(model.sFlags[index] & (1 << 24))],
+                            [track.rowsI, index => model.sLdAll[index], () => true]]) {
+                        for (let depth = 0; depth < rows.length; depth++) {
+                            const expected = ids.filter(index => visible(index) && depthOf(index) === depth)
+                                .sort((left, right) => model.sStart[left] - model.sStart[right] || left - right);
+                            assert.deepEqual(Array.from(rows[depth]), expected);
+                        }
+                    }
+                    if (!inline) assert.equal(track.rowsT, track.rowsI);
+                }
+            }
+        ''')
+
     def test_cancellation_in_all_preparation_phases_keeps_frozen_input_reusable(self):
         self.run_model('''
             input = data(18000);

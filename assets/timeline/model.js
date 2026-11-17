@@ -379,17 +379,20 @@ function* sortTimelineRow(row, compare = (left, right) => sStart[left] - sStart[
         yield label;
     }
 }
-function* buildRows(ids, depthOf) {
+function* buildRows(first, end, synthetic, depthOf) {
+    const recorded = end - first, total = recorded + synthetic.length;
     let mx = -1;
     let prepared = 0;
-    for (const i of ids) {
+    for (let ordinal = 0; ordinal < total; ordinal++) {
+        const slice = ordinal < recorded ? first + ordinal : synthetic[ordinal - recorded];
         if ((++prepared & (PREPARE_BATCH - 1)) === 0) yield 'Indexing task tracks…';
-        if (depthOf(i) > mx) mx = depthOf(i);
+        if (depthOf(slice) > mx) mx = depthOf(slice);
     }
     const cnt = new Int32Array(mx + 1);
-    for (const i of ids) {
+    for (let ordinal = 0; ordinal < total; ordinal++) {
+        const slice = ordinal < recorded ? first + ordinal : synthetic[ordinal - recorded];
         if ((++prepared & (PREPARE_BATCH - 1)) === 0) yield 'Indexing task tracks…';
-        cnt[depthOf(i)]++;
+        cnt[depthOf(slice)]++;
     }
     const rows = [];
     for (let d = 0; d <= mx; d++) {
@@ -397,9 +400,10 @@ function* buildRows(ids, depthOf) {
         rows.push(new Int32Array(cnt[d]));
     }
     cnt.fill(0);
-    for (const i of ids) {
+    for (let ordinal = 0; ordinal < total; ordinal++) {
+        const slice = ordinal < recorded ? first + ordinal : synthetic[ordinal - recorded];
         if ((++prepared & (PREPARE_BATCH - 1)) === 0) yield 'Indexing task tracks…';
-        const d = depthOf(i); rows[d][cnt[d]++] = i;
+        const depth = depthOf(slice); rows[depth][cnt[depth]++] = slice;
     }
     for (const row of rows) yield* sortTimelineRow(row);
     return [rows, mx];
@@ -412,14 +416,14 @@ for (let i = N; i < NA; i++) {
 }
 for (const t of TRACKS) {
     if (t.lo < 0) continue;
-    const real = [];
-    for (let i = t.lo; i < t.hi; i++) {
-        if ((i - t.lo) && ((i - t.lo) & (PREPARE_BATCH - 1)) === 0) yield 'Indexing task tracks…';
-        real.push(i);
-    }
     const syn = synByTask.get(t.id) || [];
-    [t.rowsT, t.maxDT] = yield* buildRows(real.concat(syn.filter(isGhost)), i => sDepth[i]);
-    if (HAS_INL) [t.rowsI, t.maxDI] = yield* buildRows(real.concat(syn), i => sLdAll[i]);
+    const ghosts = [];
+    for (let ordinal = 0; ordinal < syn.length; ordinal++) {
+        if (ordinal && (ordinal & (PREPARE_BATCH - 1)) === 0) yield 'Indexing task tracks…';
+        if (isGhost(syn[ordinal])) ghosts.push(syn[ordinal]);
+    }
+    [t.rowsT, t.maxDT] = yield* buildRows(t.lo, t.hi, ghosts, slice => sDepth[slice]);
+    if (HAS_INL) [t.rowsI, t.maxDI] = yield* buildRows(t.lo, t.hi, syn, slice => sLdAll[slice]);
     else { t.rowsI = t.rowsT; t.maxDI = t.maxDT; }
 }
 for (const r of D.offcpu) {   // [task, start, end, depth, reason, state, cpuOut, cpuIn, preempted, waker]

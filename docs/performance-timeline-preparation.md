@@ -45,12 +45,10 @@ The benchmark instruments the production generator in temporary copies of single
 
 Input payloads must match after excluding only the generator's `stats.build_time`; source report byte sizes and SHA-256 identities are recorded too. Every compared run must have identical call/frame/track counts and SHA-256 digests for the complete time/depth/parent/task/name/flag/line/inline-depth/duration/self-time columns, strings, full synthetic metadata and track row orders. A missing or reordered member fails the comparison; the script does not sample the model or accept matching counts alone. Timing excludes this verification and is not a peak-memory measurement.
 
-## Regression coverage
-
 ## Measured responsiveness
 
-Chromium 145.0.7632.6, three alternating fresh-context runs per side, medians
-in milliseconds (before → after):
+Initial cooperative-preparation rollout: Chromium 145.0.7632.6, three
+alternating fresh-context runs per side, median milliseconds (before → after):
 
 | Input | Calls / frames / tracks | Longest generator step | Preparation elapsed | Two-rAF readiness | Longest observed preparation task |
 | --- | --- | --- | --- | --- | --- |
@@ -66,13 +64,80 @@ faster loading: additional scheduling increases total readiness time. Zero means
 no Long Task was observed in the measured preparation window, not a guarantee
 that no browser work exceeds a frame budget.
 
-Focused preparation coverage passes all 13 tests. The isolated Timeline,
-browser, provider and report suites run 324 tests with one fixture-dependent
-skip. Real Pi4 and mixed fixtures pass 24 layout/theme/storage configurations
-and 96 scope comparisons. The combined native-required worktree audit runs
-964 tests: 960 pass, three skip, and one pre-existing pending Text-layout test
-fails because Chromium reports `containIntrinsicBlockSize` with an `auto`
-prefix. That independent Text change is not part of this iteration.
+At that initial rollout, focused preparation coverage passed all 13 tests.
+The isolated Timeline, browser, provider and report suites ran 324 tests with
+one fixture-dependent skip. Real Pi4 and mixed fixtures passed 24
+layout/theme/storage configurations and 96 scope comparisons. The combined
+native-required worktree audit ran 964 tests: 960 passed, three skipped, and
+one pre-existing pending Text-layout test failed because Chromium reported
+`containIntrinsicBlockSize` with an `auto` prefix. That independent Text change
+was not part of the initial preparation iteration.
+
+## Track identity ranges: November 18 follow-up
+
+After CPU preparation was made cooperative, task-row grouping still built an
+ordinary array containing every recorded slice ID in a track, then concatenated
+that array with synthetic IDs for each view. Those temporary history-sized
+arrays duplicated a range already described by the track's `lo`/`hi` bounds.
+The concatenations and synthetic `filter()` ran synchronously between yields.
+
+The row builder now traverses the recorded `[lo, hi)` range directly, followed
+by the existing synthetic IDs. It still performs the same maximum-depth,
+per-depth count and row-fill passes, and retains every final typed row. Normal
+rows include recorded calls and untraced frames; inline rows include those plus
+inline frames. Synthetic selection also yields in 8,192-operation batches,
+including candidates not selected for the normal view. The comparator remains
+start time followed by original identity, including negative deltas, equal
+starts, nonzero track offsets and empty depths. No input or synthetic list is
+sorted or mutated during grouping.
+
+This removes temporary recorded-ID lists and their joined copies, not the full
+model, rows, synthetic metadata or sort buffers. It adds no controls and does
+not change loading thresholds, cancellation/retry, source navigation, duration
+correction, filters, drawing or the small-report synchronous path.
+
+Chromium 145.0.7632.6, 1500 × 900, three alternating fresh-context pairs;
+median milliseconds, baseline `194c9ef59048` → range-based grouping:
+
+| Controlled input | Active task-indexing work | Longest task-indexing step | Preparation elapsed | Two-rAF readiness |
+| --- | ---: | ---: | ---: | ---: |
+| 300,001 calls, unordered CPU fixture | 90.4 → 68.1 | 20.3 → 15.3 | 358.9 → 302.7 | 636.0 → 572.9 |
+| 240,000 calls / 600,000 frames, missing depths | 70.9 → 52.8 | 15.7 → 9.9 | 303.9 → 287.2 | 356.8 → 329.2 |
+| 240,000 calls / 600,000 frames, inline | 83.4 → 71.8 | 13.1 → 20.0 | 317.2 → 302.9 | 365.3 → 352.6 |
+| 240,000 calls / 420,000 frames, interleaved rows | 84.2 → 62.4 | 17.4 → 10.8 | 276.0 → 244.1 | 327.2 → 292.4 |
+
+All complete-model hashes match, including CPU runs and IRQ tuples. Active
+task-indexing time sums the measured generator steps labeled
+`Indexing task tracks…`; it includes more than just row grouping and excludes
+scheduler waits. The inline fixture's longest step increased despite lower
+total active work and readiness: allocation, native operations and GC remain
+unbounded by the cooperative budget. CPU-fixture median longest observed Long
+Tasks were 138 → 132 ms; the other three fixtures observed none in this window.
+Neither result proves a hard frame deadline, a peak-memory reduction, faster
+physical presentation or universal loading speedup. Repeated synthetic scans
+can add yields even though the recorded-ID copying is gone.
+
+The small source-rich kernel sample's preparation medians were 22.7 → 23.9 ms;
+the mixed sample's were 36.0 → 32.8 ms. These tiny cases do not establish a
+general speedup. Existing reports must be regenerated to embed the change.
+
+Reproduce with the commands above and the `cpu` scenario documented in
+[CPU preparation](performance-cpu-preparation.md). Range-specific regressions
+cover recorded and synthetic-only input, frozen/duplicate synthetic IDs,
+nonzero offsets, complete memberships, depth scans at 8,191/8,192/8,193 and
+16,384/16,385 boundaries, and bounded per-step visits. A separate allocation
+regression detects history-sized recorded-ID concatenations and fails against
+the unchanged baseline. Existing cancellation/retry cases remain required.
+Local measurements and validation logs are retained in
+`build/track-row-preparation-audit/` (not release assets).
+
+Validation for this follow-up passes 527 distinct tests, including 24 focused
+preparation cases and three real captures. Optional-browser discovery also
+passes 20 fixture/Node cases and cleanly skips the four browser cases without
+Playwright. Both regenerated samples retain all five original JSON payloads
+apart from build time; complete HTML matches after substituting the changed
+runtime and normalizing generation metadata. All five regenerated public
+screenshots are byte-identical.
 
 ## Regression cases
 
