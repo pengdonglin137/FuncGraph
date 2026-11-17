@@ -208,6 +208,12 @@ model/selection/range equality.
 Zero-valued CPU/symbol indexes, BTF scalar widths and `void` return evidence
 remain covered rather than being dropped as empty fields.
 
+Return disclosures additionally cover collapsed defaults, exact 64-bit register
+bits after expansion, Enter/Space, selection reset, `void`, missing values and
+visible raw-only fallbacks. Source classification covers explicit/absent inline
+markers, independent candidates and headers, legacy/compact positions, and
+tail analysis on/off without changing recorded geometry.
+
 浏览器检查需要 Playwright 和 Chromium。Actions 用例覆盖两种交付方式、三种地址空间、
 明暗主题、窄屏 / 短横屏 / 宽触屏平板、原生 / 页面全屏、键盘与触屏操作、禁用 Text、
 切换选择和合成帧。只打开或关闭菜单不能改写调用时间、轨道、选择或视野，也不能提前
@@ -215,3 +221,12 @@ remain covered rather than being dropped as empty fields.
 布局用例还核对混合和纯内核报告的字段顺序、旧折叠偏好或跨导航/重载不隐藏字段、
 参数原始字节的键盘折叠操作、trace 链接跳转、原始证据可读性，以及模型、选择和时间范围不变。
 CPU/符号索引为零、BTF 标量位宽和 `void` 原始返回位均有覆盖，不会被误当成空字段丢弃。
+
+返回值还覆盖原始位默认折叠、展开后完整 64 位值、Enter / 空格、切换调用恢复折叠、
+`void`、缺失值及仅有 raw 时直接可见。源码分类覆盖明确/缺失的内联标记、独立候选与标题、
+旧版/紧凑位置数据及尾调用分析开关，不改写采集几何。
+
+2026-11-17 的本次验证：181 项相关回归、58 项源码/内联/调用栈浏览器回归、37 项发布样例与
+全屏/缩放布局回归全部通过，共 276 项，非全仓库测试。重新生成的 `sample.html` 保持 739 行、
+485 个真实调用、10 个事件；`sample_mixed.html` 保持 1504 行、714 个真实调用、74 个事件。
+逐项比对原始行、源码池、位置索引和 Timeline 模型，除生成耗时外均一致，原生样例的尾跳转证据保留。
