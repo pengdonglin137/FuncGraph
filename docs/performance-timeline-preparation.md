@@ -2,6 +2,11 @@
 
 Newly generated reports batch the model work behind the existing cancellable Timeline loading status. They keep the same complete model, drawing and input policy; they do not make reports use sidecar automatically.
 
+The later [CPU preparation follow-up](performance-cpu-preparation.md) also batches
+run/IRQ collection, stable sorting, clipping and typed-column filling. The
+measurements below describe the earlier frame/task-row iteration, not that
+follow-up's readiness or memory trade-offs.
+
 ## What changes
 
 - Inline and untraced-frame scans count both recorded calls and expanded levels toward an 8,192-operation batch. One deeply nested call can yield without waiting for thousands of other calls.

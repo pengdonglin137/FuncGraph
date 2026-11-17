@@ -3,11 +3,10 @@
 import argparse
 import hashlib
 import json
+from math import gcd
 from pathlib import Path
 import re
 import tempfile
-
-from playwright.sync_api import sync_playwright
 
 
 def fixture(report, destination, scenario, pairs):
@@ -17,7 +16,26 @@ def fixture(report, destination, scenario, pairs):
     if not match:
         raise ValueError('Expected a single-file Timeline report: ' + str(report))
     data = json.loads(match[2])
-    if scenario != 'original':
+    if scenario == 'cpu':
+        from benchmark_cpu_intervals import fixture as cpu_fixture
+
+        text = cpu_fixture(text, pairs, nested=True)
+        match = re.search(r'(<script type="application/json" id="tlData">)(.*?)(</script>)', text, re.S)
+        data = json.loads(match[2])
+        groups = (pairs + 2) // 3
+        stride = 7919
+        while gcd(stride, groups) != 1:
+            stride += 1
+        span = groups * 6000 + 1000
+        data['cols']['dur'][0] = span
+        previous = 0
+        for ordinal in range(pairs):
+            start = ((ordinal // 3 * stride) % groups) * 6000 + ordinal % 3 * 2000 + 1000
+            data['cols']['start'][ordinal + 1] = start - previous
+            data['cols']['dur'][ordinal + 1] = min((5000, 400, 100)[ordinal % 3], span - start)
+            previous = start
+        data['tasks'][0]['runs'] = [[start, min(start + 6000, span), 0] for start in range(0, span, 6000)][::-1]
+    elif scenario != 'original':
         count = pairs * 2
         starts = [value for index in range(pairs) for value in (10000 if index else 0, 100)]
         for index in range(2, count, 2):
@@ -40,11 +58,12 @@ def fixture(report, destination, scenario, pairs):
             if scenario == 'interleaved':
                 data['cols']['caller'] = [value for index in range(pairs)
                                           for value in (-1, 2 if index % 2 else -1)]
+    if scenario != 'original':
         text = text[:match.start(2)] + json.dumps(data, separators=(',', ':')) + text[match.end(2):]
     marker = 'const probe = () => ({ N, NA, SYN, S,'
     if text.count(marker) != 1:
         raise ValueError('Cannot instrument the complete Timeline model')
-    text = text.replace(marker, marker + ' sFlags, sLine, sLdAll, sDur, sSelf, sSelfRaw,', 1)
+    text = text.replace(marker, marker + ' sFlags, sLine, sLdAll, sDur, sSelf, sSelfRaw, CPU_SEGS, CPU_IRQ, CPU_LIST,', 1)
     destination.write_text(text, encoding='utf-8')
     logical = dict(data, stats=dict(data.get('stats') or {}))
     logical['stats'].pop('build_time', None)
@@ -104,6 +123,9 @@ def measure(browser, report):
             for (const key of ['sStart', 'sEnd', 'sDepth', 'sParent', 'sTask', 'sName',
                     'sFlags', 'sLine', 'sLdAll', 'sDur', 'sSelf', 'sSelfRaw']) digests[key] = await hash(model[key]);
             for (const key of ['S', 'SYN']) digests[key] = await hash(new TextEncoder().encode(JSON.stringify(model[key])));
+            digests.cpu = await hash(new TextEncoder().encode(JSON.stringify({list:model.CPU_LIST,
+                runs:Array.from(model.CPU_SEGS,([cpu,runs])=>[cpu,Array.from(runs.s),Array.from(runs.e),Array.from(runs.t)]),
+                irqs:Array.from(model.CPU_IRQ)})));
             digests.tracks = await hash(new TextEncoder().encode(JSON.stringify(model.TRACKS.map(track => ({
                 lo:track.lo, hi:track.hi, maxDT:track.maxDT, maxDI:track.maxDI, busy:track.busy,
                 rowsT:track.rowsT.map(row => Array.from(row)), rowsI:track.rowsI.map(row => Array.from(row)),
@@ -122,15 +144,18 @@ def measure(browser, report):
 
 
 def main():
+    from playwright.sync_api import sync_playwright
+
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('reports', nargs='+', type=Path)
-    parser.add_argument('--scenario', choices=('original', 'gaps', 'inline', 'interleaved'), default='original')
+    parser.add_argument('--scenario', choices=('original', 'gaps', 'inline', 'interleaved', 'cpu'), default='original')
     parser.add_argument('--pairs', type=int, default=60000)
     parser.add_argument('--rounds', type=int, default=3)
     parser.add_argument('--output', required=True, type=Path)
     args = parser.parse_args()
     if args.pairs < 1 or args.rounds < 1:
         parser.error('--pairs and --rounds must be positive')
+    args.output.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix='fg-preparation-benchmark-') as temporary, sync_playwright() as playwright:
         reports = []
         for index, source in enumerate(args.reports):

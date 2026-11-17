@@ -1,6 +1,7 @@
 from pathlib import Path
 import shutil
 import subprocess
+import tempfile
 import unittest
 
 import helpers
@@ -11,12 +12,33 @@ except ImportError:
     sync_playwright = None
 
 
+class CpuPreparationFixtureTest(unittest.TestCase):
+    def test_group_permutation_preserves_every_time_even_when_stride_shares_a_factor(self):
+        from benchmark_preparation import fixture
+
+        with tempfile.TemporaryDirectory(prefix='fg-cpu-fixture-') as directory:
+            for count in (1, 2, 23756, 23757):
+                destination = Path(directory) / 'report.html'
+                fixture(Path(helpers.ROOT) / 'sample.html', destination, 'cpu', count)
+                data = helpers.json_script(destination.read_text(), 'tlData')
+                starts, current = [], 0
+                for delta in data['cols']['start']:
+                    current += delta
+                    starts.append(current)
+                groups = (count + 2) // 3
+                self.assertEqual(sorted(starts[1::3]), [group * 6000 + 1000 for group in range(groups)])
+                self.assertEqual(data['n'], count + 1)
+                self.assertTrue(all(starts[index] + data['cols']['dur'][index] <= data['cols']['dur'][0]
+                                    for index in range(1, count + 1)))
+
+
 @unittest.skipUnless(shutil.which('node'), 'node not installed')
 class TimelinePreparationTest(unittest.TestCase):
-    def run_model(self, assertions):
+    def run_model(self, assertions, cpu=False):
         asset = Path(__file__).resolve().parents[1] / 'assets' / 'timeline' / 'model.js'
         source = asset.read_text(encoding='utf-8')
-        source = source[:source.index('for (const r of D.offcpu) {   // [task, start, end, depth')]
+        boundary = '// Idle tracks start collapsed' if cpu else 'for (const r of D.offcpu) {   // [task, start, end, depth'
+        source = source[:source.index(boundary)]
         setup = '''
             const assert = require('node:assert/strict');
             globalThis.document = {getElementById: () => null};
@@ -29,7 +51,7 @@ class TimelinePreparationTest(unittest.TestCase):
                         parent:Array(count).fill(-1), line:Array.from({length:count}, (_, index) => index + 1),
                         caller:Array(count).fill(-1), ret:null, args:null, module:null, cpu:null},
                     tasks:[{pid:1, comm:'first', kind:0}, {pid:2, comm:'second', kind:0}],
-                    errs:[], chains:[], errnames:{}, offcpu:[], resched:[], irqoff:[]};
+                    errs:[], chains:[], errnames:{}, offcpu:[], resched:[], irqoff:[], caps:{}};
             }
             function freeze(value) {
                 if (!value || typeof value !== 'object' || Object.isFrozen(value)) return;
@@ -49,11 +71,44 @@ class TimelinePreparationTest(unittest.TestCase):
                     model.sEnd, model.sDepth, model.sTask, model.sFlags, model.sName, model.sParent,
                     model.sLine, model.sLdAll, model.sDur, model.sSelf], tracks:model.TRACKS});
             }
+            function cpuSnapshot(model) {
+                return {runs:Array.from(model.CPU_SEGS, ([cpu, runs])=>
+                    [cpu,Array.from(runs.s),Array.from(runs.e),Array.from(runs.t)]),
+                    irqs:Array.from(model.CPU_IRQ), cpus:model.CPU_LIST};
+            }
+            function referenceCpu(model) {
+                const runs=new Map(), irqs=new Map();
+                if (!['abs','rel'].includes(input.mode)) return {runs:[],irqs:[],cpus:[]};
+                for (let task=0;task<input.tasks.length;task++) {
+                    if (input.tasks[task].kind!==0) continue;
+                    for (const [start,end,cpu] of input.tasks[task].runs||[]) {
+                        if (cpu<0 || end<=start) continue;
+                        if (!runs.has(cpu)) runs.set(cpu,[]);
+                        runs.get(cpu).push([start,end,task]);
+                    }
+                }
+                for (const records of runs.values()) {
+                    records.sort((left,right)=>left[0]-right[0]);
+                    for (let ordinal=1;ordinal<records.length;ordinal++)
+                        if (records[ordinal][0]<records[ordinal-1][1]) records[ordinal-1][1]=records[ordinal][0];
+                }
+                if (input.cols.cpu) for (let ordinal=0;ordinal<model.N;ordinal++) {
+                    const context=model.sFlags[ordinal]&3, parent=model.sParent[ordinal], cpu=input.cols.cpu[ordinal];
+                    if (!context || parent>=0 && (model.sFlags[parent]&3)===context || cpu<0) continue;
+                    if (!irqs.has(cpu)) irqs.set(cpu,[]);
+                    irqs.get(cpu).push([model.sStart[ordinal],model.sEnd[ordinal],context]);
+                    if (!runs.has(cpu)) runs.set(cpu,[]);
+                }
+                for (const records of irqs.values()) records.sort((left,right)=>left[0]-right[0]);
+                return {runs:Array.from(runs,([cpu,records])=>[cpu,...[0,1,2].map(column=>records.map(record=>record[column]))]),
+                    irqs:Array.from(irqs),cpus:Array.from(runs.keys()).sort((left,right)=>left-right)};
+            }
         '''
         factory = 'function* prepare() {\n' + source + '''
             function callerOf(index) { return sCaller && sCaller[index] >= 0 ? S[sCaller[index]] : null; }
             return {N, NA, SYN, S, sStart, sEnd, sDepth, sTask, sFlags, sName, sParent,
-                sLine, sLdAll, sDur, sSelf, TRACKS, sortTimelineRow, buildRows};
+                sLine, sLdAll, sDur, sSelf, TRACKS, sortTimelineRow, buildRows''' + (
+                    ', CPU_SEGS, CPU_IRQ, CPU_LIST, CPU_IRQ_INDEX, ORDER' if cpu else '') + '''};
         }
         '''
         result = subprocess.run(['node', '-e', setup + factory + assertions],
@@ -75,6 +130,106 @@ class TimelinePreparationTest(unittest.TestCase):
                 assert.deepEqual(model.TRACKS[0].rowsT.map(row => Array.from(row)), count ? [Array.from({length:count}, (_, index) => index)] : []);
             }
         ''')
+
+    def test_cpu_runs_context_roots_and_stable_ties_match_independent_reference(self):
+        self.run_model('''
+            for (const mode of ['abs','rel','count']) {
+                input=data(6); input.mode=mode;
+                input.tasks[0].runs=[[50,80,1],[0,70,1],[50,90,1],[10,10,0],[30,20,0],[0,100,-1]];
+                input.tasks[1].runs=[[50,120,1],[0,50,0]];
+                input.tasks.push({pid:3,comm:'idle',kind:1,runs:[[0,1000,7]]});
+                Object.assign(input.cols,{start:[100,-80,0,0,5,10],task:[0,0,1,1,2,2],
+                    flags:[1,2,2,2,3,1],cpu:[0,0,2,2,3,-1],parent:[-1,-1,-1,2,-1,-1],depth:[0,0,0,1,0,0]});
+                freeze(input); const original=JSON.stringify(input);
+                const {model}=drain(prepare());
+                assert.deepEqual(cpuSnapshot(model),referenceCpu(model));
+                assert.equal(JSON.stringify(input),original);
+            }
+        ''', cpu=True)
+
+    def test_cpu_run_collection_yields_even_for_invalid_runs_and_empty_tracks(self):
+        self.run_model('''
+            for (const empty of [false,true]) {
+                input=data(0);
+                if (empty) input.tasks=Array.from({length:20000},(_,ordinal)=>({pid:ordinal,comm:'idle',kind:1}));
+                else input.tasks[0].runs=Array.from({length:20000},()=>[0,100,-1]);
+                freeze(input);
+                const {model,labels}=drain(prepare());
+                assert.deepEqual(cpuSnapshot(model),referenceCpu(model));
+                assert.ok(labels.filter(label=>label==='Collecting CPU runs…').length>=2);
+            }
+        ''', cpu=True)
+
+    def test_cpu_sort_clamp_and_fill_yield_without_changing_equal_start_ownership(self):
+        self.run_model('''
+            input=data(0);
+            input.tasks[0].runs=Array.from({length:25003},(_,ordinal)=> {
+                const start=(ordinal*7919)%10007; return [start,start+100,ordinal%2];
+            });
+            input.tasks[1].runs=[[5,100,0],[5,200,0],[90000,90001,2]];
+            freeze(input); const original=JSON.stringify(input);
+            const {model,labels}=drain(prepare());
+            assert.deepEqual(cpuSnapshot(model),referenceCpu(model));
+            for (const phase of ['Sorting CPU runs…','Clipping CPU runs…','Filling CPU columns…'])
+                assert.ok(labels.includes(phase),phase);
+            assert.equal(JSON.stringify(input),original);
+        ''', cpu=True)
+
+    def test_cpu_interrupt_scan_yields_for_nonirq_and_missing_cpu_records(self):
+        self.run_model('''
+            for (const flags of [0,1]) {
+                input=data(20000);
+                input.cols.flags.fill(flags); input.cols.cpu=Array(20000).fill(-1);
+                freeze(input);
+                const {model,labels}=drain(prepare());
+                assert.deepEqual(cpuSnapshot(model),referenceCpu(model));
+                assert.equal(model.CPU_IRQ.size,0);
+                assert.ok(labels.filter(label=>label==='Collecting CPU interrupts…').length>=2);
+            }
+        ''', cpu=True)
+
+    def test_cpu_array_sort_is_stable_batched_and_keeps_sorted_arrays_untouched(self):
+        self.run_model('''
+            input=data(0); const {model}=drain(prepare());
+            for (const count of [0,1,8191,8192,8193,16385,40003]) {
+                const records=Array.from({length:count},(_,ordinal)=>[(ordinal*7919)%127,ordinal%5,ordinal]);
+                const expected=records.slice().sort((left,right)=>left[0]-right[0]);
+                const {labels}=drain(model.sortTimelineRow(records,(left,right)=>left[0]-right[0],'CPU test sort'));
+                assert.deepEqual(records,expected);
+                assert.ok(records.every((record,ordinal)=>record===expected[ordinal]));
+                if (count>8192) assert.ok(labels.length>1);
+                records.slice=()=>{throw new Error('Already sorted CPU records must not be copied');};
+                drain(model.sortTimelineRow(records,(left,right)=>left[0]-right[0],'CPU test sort'));
+            }
+        ''', cpu=True)
+
+    def test_cpu_preparation_can_cancel_every_phase_and_rebuild_exact_frozen_evidence(self):
+        self.run_model('''
+            input=data(25000);
+            input.tasks[0].runs=Array.from({length:25000},(_,ordinal)=> {
+                const start=(ordinal*7919)%10007; return [start,start+100,0];
+            });
+            input.cols.cpu=Array(25000).fill(0);
+            for (let ordinal=0,previous=0;ordinal<input.n;ordinal++) {
+                const start=(ordinal*7919)%10007;
+                input.cols.start[ordinal]=start-previous; previous=start;
+                input.cols.flags[ordinal]=ordinal%3+1;
+            }
+            freeze(input); const original=JSON.stringify(input), expected=cpuSnapshot(drain(prepare()).model);
+            for (const phase of ['Collecting CPU runs…','Sorting CPU runs…','Clipping CPU runs…',
+                    'Filling CPU columns…','Collecting CPU interrupts…','Sorting CPU interrupts…']) {
+                const iterator=prepare(); let found=false;
+                for (let step=iterator.next();!step.done;step=iterator.next()) if (step.value===phase) {
+                    assert.equal(iterator.return().done,true); found=true; break;
+                }
+                assert.ok(found,phase);
+                assert.equal(iterator.next().done,true);
+                assert.equal(JSON.stringify(input),original);
+                const rebuilt=drain(prepare()).model;
+                assert.deepEqual(cpuSnapshot(rebuilt),expected);
+                assert.deepEqual(cpuSnapshot(rebuilt),referenceCpu(rebuilt));
+            }
+        ''', cpu=True)
 
     def test_coalesced_ghost_extents_names_children_and_direct_child_boundaries(self):
         self.run_model('''
@@ -261,6 +416,7 @@ class TimelinePreparationBrowserTest(unittest.TestCase):
         root = Path(cls.kernel.dir)
         for scenario in ('gaps', 'inline', 'interleaved'):
             fixture(root / 'base.html', root / f'{scenario}.html', scenario, 12000)
+        fixture(root / 'base.html', root / 'cpu.html', 'cpu', 25000)
         cls.playwright = sync_playwright().start()
         try:
             cls.browser = cls.playwright.chromium.launch()
@@ -347,6 +503,40 @@ class TimelinePreparationBrowserTest(unittest.TestCase):
             return {calls:model.N, frames:model.NA, rows:model.TRACKS[0].rowsI.reduce((sum, row) => sum + row.length, 0)};
         }''')
         self.assertEqual(facts, dict(calls=24000, frames=42000, rows=42000))
+
+    def test_cancel_cpu_collection_sort_and_fill_never_publishes_partial_tracks(self):
+        for phase in ('Collecting CPU runs…', 'Sorting CPU runs…', 'Clipping CPU runs…',
+                      'Filling CPU columns…', 'Collecting CPU interrupts…', 'Sorting CPU interrupts…'):
+            with self.subTest(phase=phase):
+                self.gate('cpu', phase, 1)
+                self.page.locator('.fg-loading button').click()
+                self.assertTrue(self.page.evaluate('async () => await preparing === null'))
+                self.assertTrue(self.page.evaluate('preparationClosed'))
+                self.assertEqual(self.page.evaluate('fgCurrentView()'), 'text')
+                self.assertEqual(self.page.locator('.tl-canvas').count(), 0)
+                self.assertTrue(self.page.evaluate('JSON.stringify(fgData.read("tlData")) === beforePreparation'))
+                self.page.evaluate('fgViews.timeline.steps = originalSteps; releasePreparation()')
+                facts = self.page.evaluate('''async () => {
+                    const model=(await fgSwitchView('timeline')).probe();
+                    return {calls:model.N,irqs:model.CPU_IRQ.get(0).length,runs:model.CPU_SEGS.get(0).s.length,
+                        unchanged:JSON.stringify(fgData.read('tlData'))===beforePreparation};
+                }''')
+                self.assertEqual(facts, dict(calls=25001, irqs=25000, runs=8335, unchanged=True))
+                self.page.evaluate("fgSwitchView('text'); localStorage.clear()")
+
+    def test_escape_during_cpu_collection_keeps_the_input_and_can_reopen(self):
+        self.gate('cpu', 'Collecting CPU interrupts…', 1)
+        self.page.keyboard.press('Escape')
+        self.assertTrue(self.page.evaluate('async () => await preparing === null'))
+        self.assertTrue(self.page.evaluate('preparationClosed'))
+        self.assertEqual(self.page.locator('.tl-canvas').count(), 0)
+        self.assertTrue(self.page.evaluate('JSON.stringify(fgData.read("tlData")) === beforePreparation'))
+        self.page.evaluate('fgViews.timeline.steps = originalSteps; releasePreparation()')
+        facts = self.page.evaluate('''async () => {
+            const model=(await fgSwitchView('timeline')).probe();
+            return {calls:model.N,irqs:model.CPU_IRQ.get(0).length};
+        }''')
+        self.assertEqual(facts, dict(calls=25001, irqs=25000))
 
 
 if __name__ == '__main__':

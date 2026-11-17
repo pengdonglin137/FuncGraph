@@ -343,27 +343,30 @@ for (let i = 0; i < N; i++) {
     if (sParent[i] < 0) t.busy += sEnd[i] - sStart[i];
     if (sCpu && sCpu[i] >= 0) t.cpus.add(sCpu[i]);
 }
-function* sortTimelineRow(row) {
-    const compare = (left, right) => sStart[left] - sStart[right] || left - right;
+function* sortTimelineRow(row, compare = (left, right) => sStart[left] - sStart[right] || left - right,
+        label = 'Indexing task tracks…') {
+    const typed = row instanceof Int32Array;
     let ordered = true;
     for (let index = 1; index < row.length; index++) {
-        if ((index & (PREPARE_BATCH - 1)) === 0) yield 'Indexing task tracks…';
+        if ((index & (PREPARE_BATCH - 1)) === 0) yield label;
         if (compare(row[index - 1], row[index]) > 0) { ordered = false; break; }
     }
     if (ordered) return;
     for (let start = 0; start < row.length; start += PREPARE_BATCH) {
-        row.subarray(start, start + PREPARE_BATCH).sort(compare);
-        yield 'Indexing task tracks…';
+        const chunk = typed ? row.subarray(start, start + PREPARE_BATCH) : row.slice(start, start + PREPARE_BATCH);
+        chunk.sort(compare);
+        if (!typed) for (let offset = 0; offset < chunk.length; offset++) row[start + offset] = chunk[offset];
+        yield label;
     }
     if (row.length <= PREPARE_BATCH) return;
-    const buffer = new Int32Array(row.length);
+    const buffer = typed ? new Int32Array(row.length) : new Array(row.length);
     let source = row, target = buffer;
     for (let width = PREPARE_BATCH; width < row.length; width *= 2) {
         for (let start = 0; start < row.length; start += width * 2) {
             const middle = Math.min(start + width, row.length), end = Math.min(start + width * 2, row.length);
             let left = start, right = middle;
             for (let index = start; index < end; index++) {
-                if (index && (index & (PREPARE_BATCH - 1)) === 0) yield 'Indexing task tracks…';
+                if (index && (index & (PREPARE_BATCH - 1)) === 0) yield label;
                 target[index] = left < middle && (right >= end || compare(source[left], source[right]) <= 0)
                     ? source[left++] : source[right++];
             }
@@ -371,8 +374,9 @@ function* sortTimelineRow(row) {
         [source, target] = [target, source];
     }
     if (source !== row) for (let start = 0; start < row.length; start += PREPARE_BATCH) {
-        row.set(source.subarray(start, start + PREPARE_BATCH), start);
-        yield 'Indexing task tracks…';
+        if (typed) row.set(source.subarray(start, start + PREPARE_BATCH), start);
+        else for (let index = start; index < Math.min(row.length, start + PREPARE_BATCH); index++) row[index] = source[index];
+        yield label;
     }
 }
 function* buildRows(ids, depthOf) {
@@ -569,23 +573,37 @@ const CPU_SEGS = new Map();   // cpu -> {s: Float64Array, e: Float64Array, t: In
 const CPU_IRQ = new Map();    // cpu -> [[s, e, ctx], ...]
 const CPU_IRQ_INDEX = new Map();
 const CPU_HAS_SWITCHES = !!D.caps.sched_events;
-(function buildCpu() {
+yield* (function* buildCpu() {
     if (!TIMED) return;
     const tmp = new Map();
+    let prepared = 0;
     for (const t of TRACKS) {
+        if ((++prepared & (PREPARE_BATCH - 1)) === 0) yield 'Collecting CPU runs…';
         if (t.kind !== 0) continue;
         for (const r of t.runs) {
+            if ((++prepared & (PREPARE_BATCH - 1)) === 0) yield 'Collecting CPU runs…';
             if (r[2] < 0 || r[1] <= r[0]) continue;
             if (!tmp.has(r[2])) tmp.set(r[2], []);
             tmp.get(r[2]).push([r[0], r[1], t.id]);
         }
     }
     for (const [cpu, a] of tmp) {
-        a.sort((x, y) => x[0] - y[0]);
-        for (let k = 1; k < a.length; k++) if (a[k][0] < a[k - 1][1]) a[k - 1][1] = a[k][0];
-        CPU_SEGS.set(cpu, { s: Float64Array.from(a, x => x[0]), e: Float64Array.from(a, x => x[1]), t: Int32Array.from(a, x => x[2]) });
+        yield* sortTimelineRow(a, (left, right) => left[0] - right[0], 'Sorting CPU runs…');
+        for (let index = 1; index < a.length; index++) {
+            if ((++prepared & (PREPARE_BATCH - 1)) === 0) yield 'Clipping CPU runs…';
+            if (a[index][0] < a[index - 1][1]) a[index - 1][1] = a[index][0];
+        }
+        const segments = { s: new Float64Array(a.length), e: new Float64Array(a.length), t: new Int32Array(a.length) };
+        for (let index = 0; index < a.length; index++) {
+            if ((++prepared & (PREPARE_BATCH - 1)) === 0) yield 'Filling CPU columns…';
+            segments.s[index] = a[index][0];
+            segments.e[index] = a[index][1];
+            segments.t[index] = a[index][2];
+        }
+        CPU_SEGS.set(cpu, segments);
     }
     if (sCpu) for (let i = 0; i < N; i++) {
+        if ((++prepared & (PREPARE_BATCH - 1)) === 0) yield 'Collecting CPU interrupts…';
         const c = sFlags[i] & FL.CTX;
         if (!c) continue;
         const p = sParent[i];
@@ -596,7 +614,8 @@ const CPU_HAS_SWITCHES = !!D.caps.sched_events;
         CPU_IRQ.get(cpu).push([sStart[i], sEnd[i], c]);
         if (!CPU_SEGS.has(cpu)) CPU_SEGS.set(cpu, { s: new Float64Array(0), e: new Float64Array(0), t: new Int32Array(0) });
     }
-    for (const a of CPU_IRQ.values()) a.sort((x, y) => x[0] - y[0]);
+    for (const records of CPU_IRQ.values())
+        yield* sortTimelineRow(records, (left, right) => left[0] - right[0], 'Sorting CPU interrupts…');
 })();
 for (const [cpu, records] of CPU_IRQ) {
     const index = yield* indexSchedulingIntervals(records, 0);

@@ -1442,6 +1442,8 @@ EOF
 
 默认单文件逐段写出 UTF-8，成功后原子发布，失败保留旧文件。其目标必须为普通文件（非 `/dev/null`、FIFO 或目录），上级目录必须可写；保留已有权限和输出符号链接，旧 `generate_html()` 字符串 API 不变。显式 `--report-mode sidecar` 发布独立目录，延迟完整 Text 的传输。可选 `--timeline --report-mode auto --sidecar-threshold BYTES --output DIRECTORY` 仅在完整 HTML 未压缩 UTF-8 字节数严格超过显式阈值时切换，否则在该目录保留离线 `index.html`。没有默认阈值、行数触发或 Text 虚拟化。CLI 会输出判断结果，两种结果均可用 `fgview DIRECTORY` 打开，目录模式的 `fgreport --open` 前台服务至 Ctrl+C。配置、安全更新及临时磁盘要求见[查看器指南](viewer.cn.md)。生成阶段仍解析完整 trace，见[生成实测](design.md#83-分段写出的生成阶段内存2026-11-10)，带内核符号流水线的峰值 RSS 几乎不变。
 
+CPU 轨道的运行区间收集、稳定排序、边界裁剪、列填充及中断根扫描也已分批。相同起点的原始顺序、嵌套中断和完整 CPU 数据保持不变，可在这些阶段取消后重新打开。它主要改善连续阻塞与取消响应；乱序长历史的总准备时间可能增加，不保证报告更快打开。见 [CPU 准备实测与取舍](performance-cpu-preparation.md)。
+
 **时间轴上没有空隙，横轴写着 compressed time**
 
 采集时没有开 `funcgraph-abstime`。
