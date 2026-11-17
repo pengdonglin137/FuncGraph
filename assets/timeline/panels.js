@@ -651,6 +651,14 @@ function closeCallActions(restoreFocus = false) {
 function callActionItems() {
     return Array.from(elCallActions.querySelectorAll('[role=menuitem]:not(:disabled)'));
 }
+function focusCallAction(item) {
+    if (!item) return;
+    item.focus({ preventScroll: true });
+    const menu = elCallActions.getBoundingClientRect(), bounds = item.getBoundingClientRect();
+    const top = menu.top + elCallActions.clientTop, bottom = top + elCallActions.clientHeight;
+    if (bounds.top < top) elCallActions.scrollTop += bounds.top - top;
+    else if (bounds.bottom > bottom) elCallActions.scrollTop += bounds.bottom - bottom;
+}
 function openCallActions(trigger, last = false) {
     if (sel < 0 || sel >= N) return;
     closeCallActions();
@@ -682,7 +690,7 @@ function openCallActions(trigger, last = false) {
     elCallActions.style.top = Math.max(top + edge, Math.min(target, top + height - menu.height - edge)) + 'px';
     elCallActions.scrollTop = 0;
     const items = callActionItems();
-    items[last ? items.length - 1 : 0]?.focus({ preventScroll: true });
+    focusCallAction(items[last ? items.length - 1 : 0]);
 }
 function callActionsKey(event) {
     const trigger = event.target.closest?.('[data-call-actions]');
@@ -704,7 +712,7 @@ function callActionsKey(event) {
         const items = callActionItems(), current = items.indexOf(document.activeElement);
         const index = event.key === 'Home' ? 0 : event.key === 'End' ? items.length - 1 :
             (current + (event.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length;
-        items[index]?.focus({ preventScroll: true });
+        focusCallAction(items[index]);
         return true;
     }
     if ((event.key === 'ArrowLeft' || event.key === 'ArrowRight') &&

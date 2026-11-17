@@ -105,6 +105,19 @@ class DetailActionsBrowserTest(unittest.TestCase):
     def focused_action(self):
         return self.page.evaluate('document.activeElement.dataset.callAction')
 
+    def assert_menu_focus_visible(self):
+        facts = self.menu.evaluate('''menu => {
+            const item = document.activeElement.getBoundingClientRect();
+            const bounds = menu.getBoundingClientRect(), top = bounds.top + menu.clientTop;
+            return {itemTop:item.top, itemBottom:item.bottom, top,
+                bottom:top + menu.clientHeight, scrollTop:menu.scrollTop,
+                outer:[scrollX, scrollY, document.querySelector('.tl-detail').scrollTop,
+                    document.querySelector('.tl-scroll').scrollTop]};
+        }''')
+        self.assertGreaterEqual(facts['itemTop'], facts['top'] - 0.5, facts)
+        self.assertLessEqual(facts['itemBottom'], facts['bottom'] + 0.5, facts)
+        return facts
+
     def gate_fullscreen(self):
         self.page.evaluate('''() => {
             const state=window.fullscreenTest={root:null};
@@ -186,8 +199,14 @@ class DetailActionsBrowserTest(unittest.TestCase):
         self.open()
         self.open_menu()
         bounds = self.menu.bounding_box()
+        self.menu.evaluate('''menu => {
+            const original = menu.getBoundingClientRect.bind(menu);
+            window.actionMenuReads = 0;
+            menu.getBoundingClientRect = () => { actionMenuReads++; return original(); };
+        }''')
         self.page.mouse.move(bounds['x'] + 30, bounds['y'] + 20, steps=5)
         self.assertTrue(self.menu.is_visible())
+        self.assertEqual(self.page.evaluate('actionMenuReads'), 0)
         self.trigger.click()
         self.assertFalse(self.menu.is_visible())
         self.trigger.press('Space')
@@ -236,6 +255,102 @@ class DetailActionsBrowserTest(unittest.TestCase):
                 self.trigger.focus()
                 self.page.keyboard.press('H')
                 self.assertEqual(self.page.locator('.tl-detail').inner_text(), actual)
+
+    def test_clipped_menu_keeps_keyboard_focus_visible_without_scrolling_the_report(self):
+        for mode, theme, fullscreen in product(('single', 'sidecar'), ('light', 'dark'),
+                                                ('normal', 'native', 'page')):
+            with self.subTest(mode=mode, theme=theme, fullscreen=fullscreen):
+                self.open(mode=mode, theme=theme, width=568, height=320, touch=True,
+                          native=fullscreen != 'page')
+                if fullscreen != 'normal':
+                    self.page.locator('[data-act=max]').click()
+                    self.page.wait_for_function('''() =>
+                        document.getElementById('timelineView').classList.contains('tl-fullscreen') &&
+                        !document.querySelector('[data-act=max]').disabled''')
+                    self.page.evaluate('''async () => {
+                        for (let frame = 0; frame < 3; frame++) await new Promise(requestAnimationFrame);
+                    }''')
+                self.page.evaluate('''() => {
+                    Object.defineProperty(visualViewport, 'height', {configurable:true, value:120});
+                    Object.defineProperty(visualViewport, 'offsetTop', {configurable:true, value:80});
+                }''')
+                self.trigger.focus()
+                self.page.evaluate('''() => {
+                    window.actionMenuScroll = [scrollX, scrollY,
+                        document.querySelector('.tl-detail').scrollTop,
+                        document.querySelector('.tl-scroll').scrollTop];
+                }''')
+                self.trigger.press('ArrowUp')
+                for key, action in ((None, 'focus-function'), ('Home', 'distribution'),
+                                    ('End', 'focus-function'), ('ArrowDown', 'distribution'),
+                                    ('ArrowUp', 'focus-function'), ('ArrowUp', 'focus-task'),
+                                    ('ArrowUp', 'text'), ('ArrowUp', 'distribution')):
+                    if key:
+                        self.page.keyboard.press(key)
+                    self.assertEqual(self.focused_action(), action)
+                    facts = self.assert_menu_focus_visible()
+                    self.assertEqual(facts['outer'], self.page.evaluate('actionMenuScroll'))
+                    self.assertTrue(self.menu.is_visible())
+                self.page.keyboard.press('Escape')
+                self.assertTrue(self.trigger.evaluate('element => element === document.activeElement'))
+                self.assert_unchanged()
+
+    def test_short_window_without_visual_viewport_reveals_keyboard_targets(self):
+        for mode in ('single', 'sidecar'):
+            with self.subTest(mode=mode):
+                self.open(mode=mode, width=844, height=160, touch=True)
+                self.page.evaluate('''() => {
+                    Object.defineProperty(window, 'visualViewport', {configurable:true, value:undefined});
+                }''')
+                self.trigger.press('ArrowUp')
+                self.assertEqual(self.focused_action(), 'focus-function')
+                self.assertTrue(self.menu.evaluate('menu => menu.scrollHeight > menu.clientHeight'))
+                self.assert_menu_focus_visible()
+                self.page.keyboard.press('Home')
+                self.assertEqual(self.focused_action(), 'distribution')
+                self.assert_menu_focus_visible()
+                self.page.keyboard.press('Escape')
+                self.assert_unchanged()
+
+    def test_menu_wheel_stays_inside_menu_at_both_boundaries(self):
+        for mode, theme, clipped in product(('single', 'sidecar'), ('light', 'dark'), (False, True)):
+            with self.subTest(mode=mode, theme=theme, clipped=clipped):
+                self.open(mode=mode, theme=theme, width=568, height=320, touch=True)
+                self.page.evaluate('''clipped => {
+                    Object.defineProperty(visualViewport, 'height', {configurable:true, value:clipped ? 120 : 320});
+                    Object.defineProperty(visualViewport, 'offsetTop', {configurable:true, value:clipped ? 80 : 0});
+                    window.actionWheelEvents = [];
+                    document.getElementById('tlCallActions').addEventListener('wheel', event => {
+                        actionWheelEvents.push(event.defaultPrevented);
+                    }, {passive:true});
+                }''', clipped)
+                self.trigger.press('ArrowDown')
+                original = self.page.evaluate('''[scrollX, scrollY,
+                    document.querySelector('.tl-detail').scrollTop,
+                    document.querySelector('.tl-scroll').scrollTop]''')
+                self.assertGreater(original[1], 0)
+                maximum = self.menu.evaluate('menu => menu.scrollHeight - menu.clientHeight')
+                if clipped:
+                    self.assertGreater(maximum, 45)
+                else:
+                    self.assertEqual(maximum, 0)
+                bounds = self.menu.bounding_box()
+                self.page.mouse.move(bounds['x'] + bounds['width'] / 2, bounds['y'] + 20)
+                steps = ((-400, 0), (45, 45), (400, maximum), (400, maximum),
+                         (-40, maximum - 40), (-400, 0)) if clipped else ((-400, 0), (400, 0))
+                for ordinal, (delta, target) in enumerate(steps, 1):
+                    self.page.mouse.wheel(0, delta)
+                    self.page.wait_for_function('count => actionWheelEvents.length === count', arg=ordinal)
+                    self.page.evaluate('''async () => {
+                        for (let frame = 0; frame < 8; frame++) await new Promise(requestAnimationFrame);
+                    }''')
+                    self.assertTrue(self.menu.is_visible())
+                    self.assertAlmostEqual(self.menu.evaluate('menu => menu.scrollTop'), target, delta=1)
+                    self.assertEqual(self.page.evaluate('''[scrollX, scrollY,
+                        document.querySelector('.tl-detail').scrollTop,
+                        document.querySelector('.tl-scroll').scrollTop]'''), original)
+                self.assertEqual(self.page.evaluate('actionWheelEvents'), [False] * len(steps))
+                self.assert_unchanged()
 
     def test_horizontal_menu_arrows_do_not_pan_the_underlying_timeline(self):
         for mode in ('single', 'sidecar'):

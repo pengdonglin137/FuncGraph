@@ -302,7 +302,7 @@ body.tl-max.tl-active { padding: 2px; }
 }
 .tl-detail-title { font: 600 13px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; word-break: break-all; }
 .tl-call-actions-button { flex-shrink: 0; }
-.tl-call-actions-panel { position: fixed; z-index: 2500; box-sizing: border-box; padding: 4px; overflow: auto; border: 1px solid var(--border-color); border-radius: 8px; color: var(--text-color); background: var(--container-bg); box-shadow: 0 6px 20px rgba(0, 0, 0, .16); }
+.tl-call-actions-panel { position: fixed; z-index: 2500; box-sizing: border-box; padding: 4px; overflow: auto; overscroll-behavior: contain; border: 1px solid var(--border-color); border-radius: 8px; color: var(--text-color); background: var(--container-bg); box-shadow: 0 6px 20px rgba(0, 0, 0, .16); }
 .tl-call-actions-panel[hidden] { display: none; }
 .tl-call-actions-panel [role=menuitem] { display: flex; align-items: center; justify-content: space-between; gap: 12px; width: 100%; min-height: 36px; padding: 8px 10px; border: 0; border-radius: 4px; background: none; color: inherit; font: inherit; text-align: start; cursor: pointer; }
 .tl-call-actions-panel [role=menuitem]:not(:disabled):hover { background: var(--container-bg-hover); }

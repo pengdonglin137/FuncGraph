@@ -22,6 +22,13 @@ are unchanged. This is a presentation change, not a new decoding mode.
   Enter or Space activates one. Escape closes the menu and restores button
   focus; Tab closes it and continues normal keyboard navigation. Horizontal
   arrow keys stay within the menu instead of panning the underlying Timeline.
+  If the menu needs internal scrolling, keyboard navigation reveals the focused
+  action without scrolling the page, detail panel or tracks. Opening with Arrow
+  Up also reveals the last enabled action rather than focusing it out of sight.
+  Native menu scrolling remains available; at its boundaries, CSS scroll
+  containment prevents a wheel gesture from spilling into the page and closing
+  the menu. This uses the same containment as Tools, without canceling wheel
+  events or adding global scroll interception.
 - Activating an action moves focus to a visible destination: the Timeline
   control after opening the distribution, or the Text tab after switching views.
   It never leaves focus on an item inside the now-hidden menu.
@@ -44,6 +51,10 @@ are unchanged. This is a presentation change, not a new decoding mode.
 Home / End 切换可用项，Enter / 空格执行。Escape 仅关闭菜单并恢复按钮焦点；Tab 关闭后
 继续正常移动焦点；左右箭头不会穿透菜单、平移下方的 Timeline。在全屏中，先按 Escape
 关闭菜单，再按 Escape 才退出全屏。
+菜单需要内部滚动时，上下箭头和 Home / End 会将聚焦项带入可见区，只滚动菜单本身，
+不移动页面、详情区或轨道。用上箭头打开时，最后一个可用项也会直接可见。
+保留菜单原生滚动；到达边界后采用与 Tools 相同的 CSS 滚动隔离，避免滚轮带动整页、
+意外关闭菜单，不通过拦截或取消滚轮事件实现。
 执行操作后焦点落在可见目标：耗时分布返回 Timeline 控件，跳到文本则聚焦 Text 标签，
 不会留在已经隐藏的菜单项中。
 
@@ -201,6 +212,15 @@ full screen; keyboard focus and dismissal; disabled Text; stale selection and
 synthetic frames. Menu-only operations must retain the model, call timestamps,
 track identity, selection and time range, and must not fetch deferred Text or
 Compare resources. Scroll checks require actual movement, not a synthetic event.
+Clipped-menu checks compare the focused item's bounds with the menu's visible
+client area through all navigation directions, not merely its focus identity.
+They cover a 120px visual viewport with an offset and a real 160px window without
+visualViewport, including native/page full screen. Pointer movement must not add
+menu geometry reads.
+Actual wheel input must scroll the menu in both directions, stay contained at
+both boundaries, preserve outer scroll positions and leave wheel events
+uncanceled. A menu whose full content already fits must also contain wheel
+input. These are Chromium observations, not physical-device measurements.
 The layout suite verifies exact field order in mixed and kernel-only reports,
 direct visibility despite old collapsed preferences or navigation/reload,
 unchanged keyboard argument disclosure, working trace links, readable raw evidence and exact
@@ -218,6 +238,11 @@ tail analysis on/off without changing recorded geometry.
 明暗主题、窄屏 / 短横屏 / 宽触屏平板、原生 / 页面全屏、键盘与触屏操作、禁用 Text、
 切换选择和合成帧。只打开或关闭菜单不能改写调用时间、轨道、选择或视野，也不能提前
 请求延迟加载的 Text / Compare。滚动用例验证实际位置变化，不靠伪造滚动事件通过。
+菜单聚焦检查同时核对可见边界，而不是只检查焦点身份；覆盖带偏移的 120px 可视窗口、
+缺少 visualViewport 的真实 160px 窗口及两种全屏。鼠标移动不新增菜单尺寸读取。
+真实滚轮输入同时验证菜单双向滚动、两端边界隔离、外层位置不变及事件未被取消；
+内容已经完整容纳、不需要内部滚动时也验证边界隔离。这些是 Chromium 验证，
+不代表已经在所有实体设备上测量。
 布局用例还核对混合和纯内核报告的字段顺序、旧折叠偏好或跨导航/重载不隐藏字段、
 参数原始字节的键盘折叠操作、trace 链接跳转、原始证据可读性，以及模型、选择和时间范围不变。
 CPU/符号索引为零、BTF 标量位宽和 `void` 原始返回位均有覆盖，不会被误当成空字段丢弃。

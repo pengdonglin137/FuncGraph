@@ -1018,7 +1018,10 @@ tooltip dimensions; content, viewport and font changes invalidate them. See
   - **Children**: real direct recorded children, even across skipped depths, grouped by function and ordered by total duration; `×N` = number of calls. The compact preview shows up to eight functions and labels the top-eight/total. Its native buttons open the **longest** call of each function, not an arbitrary first call. **Explore all children** opens complete groups and individual calls (7.8), including functions outside the preview.
 - **Actions ▾** at the top right groups **Duration distribution** (7.2, shortcut `H`)
   and **Open in Text** (shortcut `Enter`) instead of repeating two links beside
-  the symbol. It supports mouse, touch and keyboard; reports without Text disable
+  the symbol. It supports mouse, touch and keyboard; in short windows, arrows and
+  Home/End reveal the focused action by scrolling only the menu, not the page,
+  detail panel or tracks. Wheel input stays inside the menu at its scroll edges,
+  rather than scrolling the page and dismissing it. Reports without Text disable
   that action with an explanation. See [detail layout](detail-layout.md) for interaction details.
 
 The visible stack shares three columns for duration/type, function symbol and source position instead of sizing each row independently. Long durations, `inline` / `untraced`, outside-window notes and bold selected frames cannot shift only their own symbol; columns also stay aligned with larger fonts. Explicit line height leaves room for underscores and descenders rather than hiding leading underscores to simulate alignment. Loading more rows or toggling Overhead updates the shared columns using displayed content only, without another trace scan.
