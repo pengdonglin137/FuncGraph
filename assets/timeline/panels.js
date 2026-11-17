@@ -651,13 +651,14 @@ function closeCallActions(restoreFocus = false) {
 function callActionItems() {
     return Array.from(elCallActions.querySelectorAll('[role=menuitem]:not(:disabled)'));
 }
-function focusCallAction(item) {
+function focusOverlayControl(overlay, item) {
     if (!item) return;
     item.focus({ preventScroll: true });
-    const menu = elCallActions.getBoundingClientRect(), bounds = item.getBoundingClientRect();
-    const top = menu.top + elCallActions.clientTop, bottom = top + elCallActions.clientHeight;
-    if (bounds.top < top) elCallActions.scrollTop += bounds.top - top;
-    else if (bounds.bottom > bottom) elCallActions.scrollTop += bounds.bottom - bottom;
+    if (item === overlay) return;
+    const menu = overlay.getBoundingClientRect(), bounds = item.getBoundingClientRect();
+    const top = menu.top + overlay.clientTop, bottom = top + overlay.clientHeight;
+    if (bounds.top < top) overlay.scrollTop += bounds.top - top;
+    else if (bounds.bottom > bottom) overlay.scrollTop += bounds.bottom - bottom;
 }
 function openCallActions(trigger, last = false) {
     if (sel < 0 || sel >= N) return;
@@ -690,7 +691,7 @@ function openCallActions(trigger, last = false) {
     elCallActions.style.top = Math.max(top + edge, Math.min(target, top + height - menu.height - edge)) + 'px';
     elCallActions.scrollTop = 0;
     const items = callActionItems();
-    focusCallAction(items[last ? items.length - 1 : 0]);
+    focusOverlayControl(elCallActions, items[last ? items.length - 1 : 0]);
 }
 function callActionsKey(event) {
     const trigger = event.target.closest?.('[data-call-actions]');
@@ -712,7 +713,7 @@ function callActionsKey(event) {
         const items = callActionItems(), current = items.indexOf(document.activeElement);
         const index = event.key === 'Home' ? 0 : event.key === 'End' ? items.length - 1 :
             (current + (event.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length;
-        focusCallAction(items[index]);
+        focusOverlayControl(elCallActions, items[index]);
         return true;
     }
     if ((event.key === 'ArrowLeft' || event.key === 'ArrowRight') &&
@@ -887,6 +888,24 @@ function setNotes(on) {
     if (!compactToolbar.matches) resize();
     else fitToolbarOverlays();
 }
+function focusToolbarOptions() {
+    const menu = elOptions.getBoundingClientRect();
+    const top = menu.top + elOptions.clientTop, bottom = top + elOptions.clientHeight;
+    const closed = Array.from(elOptions.querySelectorAll('details:not([open])'));
+    let candidate = null;
+    for (const control of elOptions.querySelectorAll('button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), summary, a[href]')) {
+        if (control.tabIndex < 0 || control.closest('[inert]') || getComputedStyle(control).visibility !== 'visible') continue;
+        if (closed.some(details => details.contains(control) && !details.querySelector(':scope > summary')?.contains(control))) continue;
+        const bounds = control.getBoundingClientRect();
+        if (!bounds.width || !bounds.height || bounds.bottom <= top || bounds.top >= bottom) continue;
+        candidate ||= control;
+        if (bounds.top >= top && bounds.bottom <= bottom) {
+            candidate = control;
+            break;
+        }
+    }
+    focusOverlayControl(elOptions, candidate || elOptions);
+}
 function setToolbarOptions(on, restoreFocus = false) {
     const open = !!on;
     if (open) closeCallActions();
@@ -894,8 +913,7 @@ function setToolbarOptions(on, restoreFocus = false) {
     elOptions.classList.toggle('open', open);
     elMore.setAttribute('aria-expanded', String(open));
     if (open) fitToolbarOverlays();
-    if (open) Array.from(elOptions.querySelectorAll('button:not([disabled]), input:not([disabled])'))
-        .find(control => control.getClientRects().length)?.focus({ preventScroll: true });
+    if (open) focusToolbarOptions();
     if (restoreFocus) elMore.focus({ preventScroll: true });
 }
 function syncToolbar() {

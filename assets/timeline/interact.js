@@ -950,6 +950,11 @@ window.addEventListener('keydown', ev => {
         return;
     }
     if (ev.target.matches && ev.target.matches('input, textarea, select')) return;
+    if (elOptions.contains(ev.target instanceof Node ? ev.target : document.activeElement) &&
+            ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End', 'PageUp', 'PageDown'].includes(ev.key)) {
+        ev.stopPropagation();
+        return;
+    }
     ev.stopPropagation();
     if ((ev.key === 'Enter' || ev.key === ' ') && ev.target.closest && ev.target.closest('button, a[href], summary')) return;
     const span = view.e - view.s, cx = cursorX >= 0 ? cursorX : W / 2;

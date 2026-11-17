@@ -183,6 +183,142 @@ class ToolbarOverlayBrowserTest(unittest.TestCase):
         self.assert_inside('.tl-options')
         self.assertEqual(self.page.locator('[data-act=options]').get_attribute('aria-expanded'), 'true')
 
+    def test_reopening_tools_preserves_scroll_and_focuses_a_visible_control(self):
+        for mode, theme, size, fraction in product(('single', 'sidecar'), ('light', 'dark'),
+                                                   ((568, 320, True), (640, 480, False)), (0.5, 1)):
+            with self.subTest(mode=mode, theme=theme, size=size, fraction=fraction):
+                self.open_report(*size, mode, theme)
+                before = self.state()
+                opener = self.page.locator('[data-act=options]')
+                panel = self.page.locator('.tl-options')
+                opener.click()
+                panel.evaluate('(element, fraction) => element.scrollTop = (element.scrollHeight - element.clientHeight) * fraction', fraction)
+                self.settle()
+                scroll = panel.evaluate('element => element.scrollTop')
+                self.assertGreater(scroll, 0)
+                self.page.keyboard.press('Escape')
+                if fraction == 1:
+                    opener.press('Enter')
+                else:
+                    opener.click()
+                self.settle()
+                self.assert_action_inside('.tl-options :focus')
+                self.assertAlmostEqual(panel.evaluate('element => element.scrollTop'), scroll, delta=1)
+                self.assertEqual(self.state(), before)
+                self.page.context.close()
+
+    def test_tools_preserves_reading_position_when_only_explanatory_text_is_visible(self):
+        for mode in ('single', 'sidecar'):
+            with self.subTest(mode=mode):
+                self.open_report(mode=mode)
+                before = self.state()
+                opener = self.page.locator('[data-act=options]')
+                opener.click()
+                self.page.locator('.tl-options').evaluate('''panel => {
+                    const note = document.createElement('p');
+                    note.id = 'longToolsExplanation';
+                    note.textContent = 'An extended explanation of the filter syntax and recorded evidence. '.repeat(80);
+                    panel.prepend(note);
+                    panel.scrollTop = note.offsetTop + note.offsetHeight / 2;
+                }''')
+                self.settle()
+                scroll = self.page.locator('.tl-options').evaluate('element => element.scrollTop')
+                self.page.keyboard.press('Escape')
+                opener.press('Enter')
+                self.settle()
+                self.assertTrue(self.page.locator('.tl-options').evaluate('element => element === document.activeElement'))
+                self.assertAlmostEqual(self.page.locator('.tl-options').evaluate('element => element.scrollTop'), scroll, delta=1)
+                self.assertEqual(self.state(), before)
+                self.page.keyboard.press('Escape')
+                self.assertTrue(opener.evaluate('element => element === document.activeElement'))
+                self.page.context.close()
+
+    def test_reports_without_shared_filter_focus_the_first_visible_select(self):
+        for report in ('kernel.html', 'events.html'):
+            with self.subTest(report=report):
+                self.open_report(width=640, height=480, touch=False)
+                self.page.goto(Path(self.kernel.dir, report).as_uri())
+                self.page.evaluate("async () => { await fgSwitchView('timeline'); }")
+                self.page.locator('[data-act=options]').press('Enter')
+                self.assertTrue(self.page.locator('#tlColorMode').evaluate('element => element === document.activeElement'))
+                self.assert_action_inside('#tlColorMode')
+                self.page.context.close()
+
+    def test_tools_navigation_keys_do_not_change_the_underlying_timeline(self):
+        for mode in ('single', 'sidecar'):
+            with self.subTest(mode=mode):
+                self.open_report(width=640, height=480, touch=False, mode=mode)
+                self.page.locator('[data-act=options]').click()
+                self.page.locator('[data-act=fhide]').focus()
+                before = self.state()
+                for key in ('ArrowLeft', 'ArrowRight', 'ArrowDown', 'ArrowUp', 'End', 'PageUp', 'PageDown', 'Home'):
+                    self.page.keyboard.press(key)
+                    self.settle()
+                    self.assertTrue(self.page.locator('.tl-options').is_visible())
+                    self.assertEqual(self.state(), before, key)
+                self.page.keyboard.press('Escape')
+                self.assertTrue(self.page.locator('[data-act=options]').evaluate('element => element === document.activeElement'))
+                self.page.context.close()
+
+    def test_tools_focus_skips_unavailable_and_closed_disclosure_controls(self):
+        for availability in ('disabled', 'inert', 'visibility', 'tabindex', 'nested-details'):
+            with self.subTest(availability=availability):
+                self.open_report(width=1500, height=900, touch=False)
+                before = self.state()
+                self.page.evaluate('''availability => {
+                    const panel = document.querySelector('.tl-options');
+                    const filter = panel.querySelector('.tl-filterbar');
+                    if (availability === 'disabled') {
+                        for (const control of filter.querySelectorAll('button, input, select')) control.disabled = true;
+                        filter.querySelector('summary').tabIndex = -1;
+                    } else if (availability === 'inert') filter.setAttribute('inert', '');
+                    else if (availability === 'visibility') filter.style.visibility = 'hidden';
+                    else if (availability === 'tabindex') {
+                        for (const control of filter.querySelectorAll('button, input, select, summary')) control.tabIndex = -1;
+                    } else {
+                        filter.setAttribute('inert', '');
+                        const closed = document.createElement('details');
+                        closed.innerHTML = '<summary tabindex="-1">Hidden controls</summary>' +
+                            '<details open><summary tabindex="-1">Nested</summary><select><option>Not visible</option></select></details>';
+                        panel.prepend(closed);
+                    }
+                }''', availability)
+                self.page.locator('[data-act=options]').press('Enter')
+                self.assertTrue(self.page.locator('#tlColorMode').evaluate('element => element === document.activeElement'))
+                self.assert_action_inside('#tlColorMode')
+                self.assertEqual(self.state(), before)
+                self.page.context.close()
+
+    def test_native_tools_controls_keep_keyboard_editing_and_sidecar_laziness(self):
+        for mode in ('single', 'sidecar'):
+            with self.subTest(mode=mode):
+                self.open_report(width=640, height=480, touch=False, mode=mode)
+                requests = []
+                self.page.on('request', lambda request: requests.append(request.url))
+                before = self.state()
+                self.page.locator('[data-act=options]').press('Enter')
+                field = self.page.locator('.tl-ftext')
+                field.fill('func:write')
+                field.evaluate('''element => {
+                    window.toolsInputKeys = [];
+                    element.addEventListener('keydown', event => toolsInputKeys.push(event.key));
+                }''')
+                for key in ('Home', 'ArrowRight', 'End', 'ArrowLeft'):
+                    field.press(key)
+                self.assertEqual(self.page.evaluate('toolsInputKeys'), ['Home', 'ArrowRight', 'End', 'ArrowLeft'])
+                self.assertEqual(field.evaluate('element => element.selectionStart'), len('func:write') - 1)
+                self.assertEqual(field.input_value(), 'func:write')
+                picker = self.page.locator('#tlColorMode')
+                picker.press('ArrowDown')
+                self.assertEqual(picker.input_value(), 'name')
+                picker.press('ArrowUp')
+                self.assertEqual(picker.input_value(), 'ctx')
+                self.assertEqual(self.state(), before)
+                self.assertFalse(any(url.endswith(('text.html', 'text-index.json', 'compare.json')) for url in requests))
+                if mode == 'sidecar':
+                    self.assertFalse(self.page.evaluate('fgData.ready("fgText")'))
+                self.page.context.close()
+
     def test_visual_viewport_changes_keep_controls_visible_and_allow_growth(self):
         self.open_report(width=390, height=740, viewport='''
             window.overlayViewport = new EventTarget();

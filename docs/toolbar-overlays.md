@@ -45,6 +45,53 @@ temporarily checking its preferred height. Trace records, source data,
 selection, time range, filter population and canvas/detail allocation are not
 changed to make room for a floating menu.
 
+## Reopening and keyboard focus
+
+A November 18, 2026 Chromium audit found that Tools retained its scroll offset
+but always focused the first input, even when it was outside the visible panel.
+In the published mixed example at 568 × 320, reopening at the bottom left the
+filter input at y = −353…−309 while the panel occupied y = 8…153.5.
+
+Tools now keeps that reading position and focuses the first fully visible,
+available native control in logical order. A partly visible control is used
+only when no complete control fits; only the menu scrolls enough to reveal it.
+If the visible region contains explanatory text but no control, the dialog
+itself receives focus without jumping back to an offscreen field. Its negative
+tab index does not add a permanent Tab stop.
+
+Selects and disclosure summaries participate alongside inputs and buttons.
+Disabled, inert, CSS-hidden and negative-tab-index controls are skipped.
+Collapsed disclosure contents are excluded explicitly, including nested
+disclosures: a nonzero layout rectangle alone does not establish that a control
+is painted or focusable. Their visible summaries remain eligible.
+
+Arrow, Home/End and Page Up/Down keys inside Tools do not pan, fit or navigate
+the underlying trace. Native editing and selection in inputs/selects still
+work. Escape retains its existing close/draft-restoration behavior, and the
+existing full-screen/help shortcuts remain available from buttons or the panel.
+Opening Tools neither applies a filter draft nor loads deferred Text/Compare.
+
+Focus selection inspects only the small Tools subtree on opening, not calls or
+Text rows. Stable hover and closed-panel paths do not gain geometry reads or a
+new observer loop. This is a usability correction, not a measured large-trace
+throughput improvement or a new viewport-resize focus policy. No controls,
+colors or persistent focus preferences are added. Regenerate older reports.
+
+The browser regressions reopen at middle/bottom offsets by pointer and keyboard
+in both themes and single/sidecar modes; preserve report geometry, data,
+selection and time range; and cover text-only regions, native selects, disabled,
+inert, hidden and nested-disclosure controls. Real keyboard input verifies both
+native control editing and isolation from Timeline navigation. The existing
+native/page fullscreen and idle-measurement regressions remain applicable.
+
+The November 18 follow-up passes 395 distinct tests without skips: 56 overlay,
+detail-action, fullscreen and search tests, plus 339 browser, mixed-sample,
+detail-expansion, hover, position and saved-view tests. Complete sample JSON
+payloads and Text chunks remain unchanged except generated build time; the
+kernel/mixed reports retain 739/1,504 rows and 485/714 calls. Four regenerated
+sample/detail screenshots are byte-identical. Logs and fidelity checks are
+retained locally under `build/tools-focus-audit/`.
+
 ## Reproduction and tests
 
 1. Generate or open a new mixed report and switch to Timeline.

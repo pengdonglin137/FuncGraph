@@ -777,7 +777,7 @@ tlRoot.innerHTML = `
   </div>
   ${MIXED ? '<span class="tl-group tl-space-key" aria-label="Address space legend"><span class="tl-space-user">User</span><span>Kernel</span>' +
     (D.stats.user_kernel_boundaries ? '<span class="tl-space-edge" title="Boundary spans the recorded kernel call">User → kernel</span>' : '') + '</span>' : ''}
-  <div class="tl-options" id="tlOptions" role="dialog" aria-label="Timeline tools">
+  <div class="tl-options" id="tlOptions" role="dialog" aria-label="Timeline tools" tabindex="-1">
   <div class="tl-group tl-filterbar" role="group" aria-label="Filter calls">
     <div class="tl-filter-heading"><label class="tl-label" for="tlFilterInput">Filter calls</label><span class="tl-fdraft" role="status" aria-live="polite" hidden>Unapplied changes</span></div>
     <div class="tl-filter-entry">

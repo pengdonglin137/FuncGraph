@@ -3,7 +3,10 @@
 Timeline's Tools and compact Notes panels adapt to short windows, opening upward
 when needed and scrolling internally so the final actions remain reachable.
 They paint above sticky view tabs without adding controls or changing trace
-data. Regenerate old HTML to use this behavior; see
+data. Reopening Tools keeps its reading position and focuses a currently visible
+control, or the panel itself when only explanatory text is visible. Arrow,
+Home/End and paging keys in the panel do not move the underlying Timeline;
+inputs and selects retain native keyboard behavior. Regenerate old HTML; see
 [menu placement and validation boundaries](toolbar-overlays.md).
 
 Compact Find also keeps its input and navigation buttons separate from Full
