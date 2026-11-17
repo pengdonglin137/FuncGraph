@@ -994,7 +994,7 @@ function showLatency() {
             textHits ? 'No need-resched windows overlap calls matching the current filter.' : 'No pending need-resched windows in this trace.') + '</div>';
         openWindowPanel(h); return;
     }
-    h += windowTimeHint() + '<div class="an-hint" style="padding:6px 12px 0">Window = need-resched set until the task schedules (or is switched out). ' +
+    h += windowTimeHint() + '<div class="an-hint" style="padding:6px 12px 0">Window = any recorded NEED_RESCHED, NEED_RESCHED_LAZY or PREEMPT_RESCHED request until cleared or switched out; lazy-only is not an immediate scheduling deadline. ' +
         'Self times are proportional overlap estimates from matching calls, not exact on-CPU or causal attribution. ' +
         'Overhead changes self estimates, not window positions or lengths. Overview sums every matching function across windows.</div>' +
         '<div class="an-blame">' + data.top.map(([name, value]) => '<span class="an-chip"><span class="k">' + esc(S[name]) + '</span>' + fmtDur(value) + '</span>').join('') + '</div>';

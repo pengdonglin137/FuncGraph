@@ -220,6 +220,8 @@ def _latency(record, lazy_resched):
     preempt = record.get('common_preempt_count')
     if raw is None or preempt is None or raw > 0xff or preempt > 0xff:
         return 0, None, None
+    if lazy_resched is None and raw & 0x02:
+        raise UftraceInputError('cannot interpret common_flags bit 0x02 without a recorded kernel release')
     irq, bh = bool(raw & 0x01), bool(raw & 0x80)
     nmi, hard, soft = bool(raw & 0x40), bool(raw & 0x08), bool(raw & 0x10)
     irq_char = '.dbD'[irq + 2 * bh]

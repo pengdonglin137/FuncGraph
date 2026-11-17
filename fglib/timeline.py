@@ -41,7 +41,7 @@ RE_ABS = re.compile(r' *(\d+)\.(\d{6,9}) \|  ')
 RE_REL = re.compile(r' *(\d+) us \|  ')
 RE_CPU = re.compile(r' *(\d+)\) ')
 RE_PROC = re.compile(r' *(.+?)-(\d+) *\| ')
-RE_LAT = re.compile(r' ([.dDb][.BNLbnpl][.ZzHhs][.0-9a-f][.0-9a-f]?) \| ')
+RE_LAT = re.compile(r' ([.dDbX][.BNLbnpl][.ZzHhs][.0-9a-f][.0-9a-f]?) \| ')
 RE_DUR = re.compile(r'([ +!#*@$]) (\d+(?:\.\d+)?) us *\|  ')
 RE_DUR_NOMARK = re.compile(r' {1,2}(\d+(?:\.\d+)?) us *\|  ')
 RE_FILL = re.compile(r' {14}\|  ')
@@ -55,7 +55,7 @@ RE_CALLER = re.compile(r'<-([A-Za-z_$][\w.$]*)\+(0x[0-9a-fA-F]+)/(0x[0-9a-fA-F]+
 RE_RET = re.compile(r' ret=(0[xX][0-9a-fA-F]+|-?\d+|true|false)(\(trunc\))?(?=\s|\*/|$)')
 RE_EXIT_NAME = re.compile(r'^ ([A-Za-z_$][\w.$]*)(?: \[([\w-]+)\])?')
 # preempt-depth digit of task-context lines (for the per-record-kind baselines)
-RE_LAT_TASK = re.compile(r' [.dDb][.BNLbnpl]\.([.0-9a-f])[.0-9a-f]? \| ')
+RE_LAT_TASK = re.compile(r' [.dDbX][.BNLbnpl]\.([.0-9a-f])[.0-9a-f]? \| ')
 # Sleep-capable entry points for trace-flag-based atomic-context diagnostics.
 RE_MAY_SLEEP = re.compile(r'^(?:__might_sleep|__might_fault|mutex_lock(?:_nested|_interruptible\w*|_killable\w*|_io\w*)?|__mutex_lock|'
                           r'down(?:_read|_write|_interruptible|_killable|_timeout)?(?:_nested)?|rwsem_down_\w+_slowpath|'
@@ -89,6 +89,8 @@ F_LEAF = 1 << 21
 F_CTX_INFERRED = 1 << 22
 F_USER = 1 << 25
 F_BOUNDARY = 1 << 26
+F_CTX_NESTED = 1 << 27
+F_IRQS_UNKNOWN = 1 << 28
 
 # Context inference without latency-format (name based, inherited by callees)
 RE_HARDIRQ_ROOT = re.compile(
@@ -332,9 +334,13 @@ class TimelineBuilder:
             f |= F_IRQOFF
         if c0 in 'bD':
             f |= F_BHOFF
+        if c0 == 'X':
+            f |= F_IRQS_UNKNOWN
         f |= _RESCHED_CODE.get(lat[1], 0) << F_RESCHED_SHIFT
         ctx = _CTX_CHAR.get(lat[2], 0)
         f |= ctx
+        if lat[2] in 'HZ':
+            f |= F_CTX_NESTED
         if lat[3] != '.':
             f |= (int(lat[3], 16) & 0xf) << F_PREEMPT_SHIFT
         if len(lat) > 4 and lat[4] != '.':

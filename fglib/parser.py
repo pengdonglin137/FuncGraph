@@ -7,6 +7,9 @@ from .model import FtraceLine
 from .util import remove_compiler_suffix, verbose_print
 
 
+RE_LATENCY = re.compile(r'(?:^|[|)])\s*([.dDbX])([.BNLbnpl])([.ZzHhs])([.0-9a-f])[.0-9a-f]?\s*\|')
+
+
 class FtraceParser:
     """Parses ftrace function_graph output files."""
 
@@ -120,34 +123,13 @@ class FtraceParser:
                         # 提取 PID/Comm
                         pid, comm = self._parse_pid_comm(search_area)
 
-                        # 提取 latency 字段（irqs-off, need-resched, hardirq/softirq, preempt-depth）
-                        # Latency 模式格式：CPU)  进程-PID  |  d.h2  |  [耗时]  |  函数
-                        # 4 个字符: irqs_off(d/.), need_resched(B/N/n/p/L/b/l/.), hardirq_softirq(Z/z/H/h/s/.), preempt_depth(0-9)
                         irqs_off = None
                         need_resched = None
                         hardirq_softirq = None
                         preempt_depth = None
-                        if pipe_pos != -1 and second_pipe != -1 and not has_timestamp:
-                            # Latency 模式：状态字段在 pipe_pos 和 second_pipe 之间
-                            latency_area = prefix[pipe_pos+1:second_pipe]
-                            lat_match = re.search(r'([d.])([.BNnpLbl])([.ZzHhs])(\d)', latency_area)
-                            if lat_match:
-                                irqs_off = lat_match.group(1)
-                                need_resched = lat_match.group(2)
-                                hardirq_softirq = lat_match.group(3)
-                                preempt_depth = lat_match.group(4)
-                        elif has_timestamp and pipe_pos != -1:
-                            # 带时间戳格式：时间戳 | CPU) 进程-PID | 状态 | [耗时] | 函数
-                            # 需要找第二、三个 pipe 之间的 latency 区域
-                            third_pipe = prefix.find('|', second_pipe + 1) if second_pipe != -1 else -1
-                            if second_pipe != -1 and third_pipe != -1:
-                                latency_area = prefix[second_pipe+1:third_pipe]
-                                lat_match = re.search(r'([d.])([.BNnpLbl])([.ZzHhs])(\d)', latency_area)
-                                if lat_match:
-                                    irqs_off = lat_match.group(1)
-                                    need_resched = lat_match.group(2)
-                                    hardirq_softirq = lat_match.group(3)
-                                    preempt_depth = lat_match.group(4)
+                        lat_match = RE_LATENCY.search(prefix)
+                        if lat_match:
+                            irqs_off, need_resched, hardirq_softirq, preempt_depth = lat_match.groups()
 
                         # 检查是否包含函数信息（支持多种格式）
                         func_info = None

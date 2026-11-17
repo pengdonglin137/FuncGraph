@@ -577,10 +577,14 @@ def main():
         if pre.active():
             print('Error: CLI pre-filters are not supported for uftrace; use the report filters', file=sys.stderr)
             sys.exit(1)
-        builder = raw_lines.build(enable_fold=args.enable_fold, verbose=args.verbose, errno_map=ERROR_CODE_MAP,
-                                  include_text=not args.no_text_view or args.keep_source,
-                                  rettype_resolver=rettype_resolver,
-                                  overhead=parse_overhead(args.overhead))
+        try:
+            builder = raw_lines.build(enable_fold=args.enable_fold, verbose=args.verbose, errno_map=ERROR_CODE_MAP,
+                                      include_text=not args.no_text_view or args.keep_source,
+                                      rettype_resolver=rettype_resolver,
+                                      overhead=parse_overhead(args.overhead))
+        except UftraceInputError as error:
+            print(f'Error: cannot decode uftrace input: {error}', file=sys.stderr)
+            sys.exit(1)
         parsed_lines = builder.parsed
         structured_data = builder.to_data()
         if builder.mixed and not builder.aligned:

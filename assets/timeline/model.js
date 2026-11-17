@@ -12,14 +12,21 @@ const FL = {
     GHOST: 1 << 24,    // synthetic untraced frame filling a depth gap (front-end only)
     CTX: 3, IRQOFF: 1 << 2, BHOFF: 1 << 3, RS_SHIFT: 4, PR_SHIFT: 7, MG_SHIFT: 11,
     LAT: 1 << 15, TRUNC: 1 << 16, ORPHAN: 1 << 17, EST: 1 << 18, MISMATCH: 1 << 19,
-    NULLRET: 1 << 20, LEAF: 1 << 21, CTXINF: 1 << 22, USER: 1 << 25, BOUNDARY: 1 << 26
+    NULLRET: 1 << 20, LEAF: 1 << 21, CTXINF: 1 << 22, USER: 1 << 25, BOUNDARY: 1 << 26,
+    CTXNEST: 1 << 27, IRQUNKNOWN: 1 << 28
 };
 const HAS_USER = D.uftrace?.spaces.includes('user');
 const HAS_KERNEL = !D.uftrace || D.uftrace.spaces.includes('kernel');
 const MIXED = HAS_USER && HAS_KERNEL;
 const CTX_NAMES = ['task', 'softirq', 'hardirq', 'NMI'];
-const RESCHED_NAMES = ['', 'need-resched (n)', 'need-resched + preempt (N)', 'preempt-resched (p)',
-    'lazy (l)', 'lazy + preempt (L)', 'need + lazy (b)', 'need + lazy + preempt (B)'];
+const RESCHED_LABELS = [[], ['need-resched'], ['need-resched', 'preempt-resched'], ['preempt-resched'],
+    ['lazy-resched'], ['lazy-resched', 'preempt-resched'], ['need-resched', 'lazy-resched'],
+    ['need-resched', 'lazy-resched', 'preempt-resched']];
+const RESCHED_NAMES = RESCHED_LABELS.map((labels, index) => labels.length ? labels.join(' + ') + ' (' + '.nNplLbB'[index] + ')' : '');
+function contextName(flags) {
+    const context = flags & FL.CTX;
+    return flags & FL.CTXNEST && context >= 2 ? CTX_NAMES[context] + (context === 2 ? ' + softirq (H)' : ' + hardirq (Z)') : CTX_NAMES[context];
+}
 
 yield 'Preparing call columns…';
 // ---- slice columns ----

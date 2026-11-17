@@ -5,6 +5,7 @@ import unittest
 
 import helpers  # noqa: F401  (sets sys.path)
 from fglib.parser import FtraceParser
+from latency_reference import DEPTH_BYTES, linux_latency
 
 SAMPLE = """\
 # tracer: function_graph
@@ -35,6 +36,34 @@ class ParserTest(unittest.TestCase):
 
     def test_one_entry_per_input_line(self):
         self.assertEqual(len(self.lines), SAMPLE.count('\n'))
+
+    def test_all_linux_latency_characters_and_combinations_reach_text_filters(self):
+        for timestamp in ('', '1000.000100 |  '):
+            for columns in (4, 5):
+                with self.subTest(timestamp=bool(timestamp), columns=columns):
+                    expected = [linux_latency(flags, preempt)[:columns]
+                                for flags in range(256) for preempt in DEPTH_BYTES]
+                    text = '\n'.join(timestamp + ' 0) task-42 |  ' + latency +
+                                     ' |   1.000 us    |  work();' for latency in expected)
+                    rows = parse(text)
+                    self.assertEqual(len(rows), len(expected))
+                    self.assertEqual([''.join((row.irqs_off, row.need_resched,
+                                              row.hardirq_softirq, row.preempt_depth)) for row in rows],
+                                     [latency[:4] for latency in expected])
+                    self.assertTrue(all(row.raw_func_name == 'work' for row in rows))
+
+    def test_legacy_unknown_irq_state_is_not_reported_as_enabled(self):
+        row = parse(' 0) task-42 |  Xp.f. |   1.000 us    |  work();\n')[0]
+        self.assertEqual((row.irqs_off, row.need_resched, row.preempt_depth), ('X', 'p', 'f'))
+
+    def test_latency_filter_fields_do_not_depend_on_optional_cpu_task_or_time_columns(self):
+        for timestamp in ('', '1000.000100 |  ', '      100 us |  '):
+            for identity in ('', ' 0) ', 'task-42 | ', ' 0) task-42 | '):
+                with self.subTest(timestamp=timestamp, identity=identity):
+                    rows = parse('\n'.join(timestamp + identity + ' D' + code +
+                                           'Haf |   1.000 us    |  work();' for code in '.nNplLbB'))
+                    self.assertEqual([(row.irqs_off, row.need_resched, row.hardirq_softirq, row.preempt_depth)
+                                      for row in rows], [('D', code, 'H', 'a') for code in '.nNplLbB'])
 
     def test_header_line_is_plain(self):
         self.assertFalse(self.lines[0].expandable)

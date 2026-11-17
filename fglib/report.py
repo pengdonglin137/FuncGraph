@@ -678,11 +678,11 @@ class HtmlGenerator:
             # latency 字段按钮（仅在 latency trace 时出现）
             if unique_irqs:
                 vals = field_values(sorted(unique_irqs))
-                field_buttons.append(f'<button class="field-btn" data-field="irqs" data-values="{vals}" data-hints="d=disabled,.=enabled">irqs</button>')
+                field_buttons.append(f'<button class="field-btn" data-field="irqs" data-values="{vals}" data-hints="d=IRQs off,b=BH off,D=IRQs+BH off,X=IRQ state unavailable,.=neither disabled">irqs</button>')
 
             if unique_resched:
                 vals = field_values(sorted(unique_resched))
-                field_buttons.append(f'<button class="field-btn" data-field="resched" data-values="{vals}" data-hints="B=NEED_RESCHED+LAZY,N=NEED_RESCHED,n=NEED_RESCHED_LAZY,p=PREEMPT_NEED,.=none">resched</button>')
+                field_buttons.append(f'<button class="field-btn" data-field="resched" data-values="{vals}" data-hints="n=NEED_RESCHED,p=PREEMPT_RESCHED,N=NEED_RESCHED+PREEMPT_RESCHED,l=NEED_RESCHED_LAZY,L=NEED_RESCHED_LAZY+PREEMPT_RESCHED,b=NEED_RESCHED+NEED_RESCHED_LAZY,B=NEED_RESCHED+NEED_RESCHED_LAZY+PREEMPT_RESCHED,.=none">resched</button>')
 
             if unique_hirq:
                 vals = field_values(sorted(unique_hirq))

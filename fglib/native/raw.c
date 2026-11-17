@@ -8,6 +8,18 @@
 #include <trace-seq.h>
 
 extern const char *tracecmd_get_trace_clock(struct tracecmd_input *handle);
+extern const char *tracecmd_get_uname(struct tracecmd_input *handle);
+
+enum captured_flag {
+    FG_IRQS_OFF = 0x01,
+    FG_LAZY_RESCHED = 0x02,
+    FG_NEED_RESCHED = 0x04,
+    FG_HARDIRQ = 0x08,
+    FG_SOFTIRQ = 0x10,
+    FG_PREEMPT_RESCHED = 0x20,
+    FG_NMI = 0x40,
+    FG_BH_OFF = 0x80
+};
 
 struct module_symbol {
     unsigned long long address;
@@ -19,6 +31,7 @@ struct decoder {
     unsigned long sched;
     unsigned long kvm;
     unsigned long other;
+    int lazy_resched;
     struct module_symbol *modules;
     size_t module_count;
 };
@@ -144,22 +157,28 @@ static void symbol(struct tep_handle *tep, unsigned long long address, struct de
     module_name(tep, address, state);
 }
 
-static void prefix(struct tep_handle *tep, struct tep_record *record, int cpu,
-                   int pid, const char *comm, int latency)
+static void prefix(struct tep_record *record, int cpu, int pid, const char *comm)
 {
     printf("%llu.%09llu |  %d) ", record->ts / 1000000000,
            record->ts % 1000000000, cpu);
     safe_text(comm, strlen(comm));
     printf("-%d | ", pid);
-    if (latency) {
-        putchar(' ');
-        struct trace_seq sequence;
-        trace_seq_init(&sequence);
-        tep_print_event(tep, &sequence, record, "%s", TEP_PRINT_LATENCY);
-        safe_text(sequence.buffer, sequence.len);
-        printf(" | ");
-        trace_seq_destroy(&sequence);
-    }
+}
+
+static void latency(unsigned int flags, unsigned int preempt, int lazy_resched)
+{
+    int irq = !!(flags & FG_IRQS_OFF);
+    int bh = !!(flags & FG_BH_OFF);
+    char irq_char = ".dbD"[irq + 2 * bh];
+    if (irq_char == '.' && !lazy_resched && (flags & FG_LAZY_RESCHED))
+        irq_char = 'X';
+    int resched = !!(flags & FG_NEED_RESCHED) + 2 * !!(flags & FG_PREEMPT_RESCHED) +
+                  4 * (lazy_resched == 1 && (flags & FG_LAZY_RESCHED));
+    int hard = !!(flags & FG_HARDIRQ);
+    int soft = !!(flags & FG_SOFTIRQ);
+    char context = flags & FG_NMI ? (hard ? 'Z' : 'z') : ".hsH"[hard + 2 * soft];
+    printf(" %c%c%c%c%c | ", irq_char, ".npNlbLB"[resched], context,
+           ".123456789abcdef"[preempt & 0xf], ".123456789abcdef"[preempt >> 4]);
 }
 
 static int arguments(struct tep_handle *tep, struct tep_event *event,
@@ -273,7 +292,7 @@ static int sched_event(struct tep_handle *tep, struct tep_event *event,
     printf("-%llu\n", next_pid);
     tep_override_comm(tep, previous, prev_pid);
     tep_override_comm(tep, next, next_pid);
-    prefix(tep, record, cpu, next_pid, next, 0);
+    prefix(record, cpu, next_pid, next);
     printf("              |  /* raw: switch-in */\n");
     return 0;
 }
@@ -286,10 +305,15 @@ static int visit(struct tracecmd_input *handle, struct tep_record *record,
     struct tep_event *event = tep_find_event_by_record(tep, record);
     unsigned long long pid;
     unsigned long long common;
+    unsigned long long preempt;
     if (!event || number(event, record, "common_pid", &pid) || pid > 2147483647 ||
         number(event, record, "common_flags", &common) ||
-        number(event, record, "common_preempt_count", &common))
+        number(event, record, "common_preempt_count", &preempt) || common > 0xff || preempt > 0xff)
         goto malformed;
+    if (state->lazy_resched < 0 && (common & FG_LAZY_RESCHED)) {
+        fprintf(stderr, "cannot interpret common_flags bit 0x02 without a recorded kernel release\n");
+        goto malformed;
+    }
     if ((!strcmp(event->system, "sched") ||
          (!strcmp(event->system, "kvm") &&
           (!strcmp(event->name, "kvm_entry") || !strcmp(event->name, "kvm_exit")))) &&
@@ -300,7 +324,8 @@ static int visit(struct tracecmd_input *handle, struct tep_record *record,
     else if (record->missed_events < 0)
         printf("CPU:%d [LOST ? EVENTS]\n", cpu);
     const char *comm = tep_data_comm_from_pid(tep, pid);
-    prefix(tep, record, cpu, pid, comm ? comm : "<unknown>", 1);
+    prefix(record, cpu, pid, comm ? comm : "<unknown>");
+    latency(common, preempt, state->lazy_resched);
     if (!strcmp(event->system, "ftrace") &&
         (!strcmp(event->name, "funcgraph_entry") ||
          !strcmp(event->name, "fgraph_retaddr_entry") ||
@@ -343,7 +368,7 @@ int main(int argc, char **argv)
         return 1;
     }
     int status = 1;
-    struct decoder state = {0};
+    struct decoder state = {.lazy_resched = -1};
     struct tracecmd_input *selected = root;
     if (argc == 3) {
         selected = NULL;
@@ -362,6 +387,10 @@ int main(int argc, char **argv)
         fprintf(stderr, "cannot read module symbol ownership\n");
         goto done;
     }
+    const char *uname = tracecmd_get_uname(selected);
+    unsigned int major, minor;
+    if (uname && sscanf(uname, "%*s %*s %u.%u", &major, &minor) == 2)
+        state.lazy_resched = major > 6 || (major == 6 && minor >= 13);
     const char *clock = tracecmd_get_trace_clock(selected);
     if (clock && strcmp(clock, "local") && strcmp(clock, "global") &&
                strcmp(clock, "mono") && strcmp(clock, "mono_raw") &&

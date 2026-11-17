@@ -492,11 +492,13 @@ Copy 的「可见」指没有被隐藏的记录，包括滚动区外的行；窗
 | | `D` | 关中断且关软中断（BH） |
 | | `b` | 只关软中断 |
 | | `.` | 都没关 |
-| 2 需要调度 | `N` | 设置了 TIF_NEED_RESCHED，且 preempt 计数要求调度 |
-| | `n` | 只设置了 TIF_NEED_RESCHED |
-| | `p` | 只有 preempt 计数要求调度 |
-| | `L` / `l` | 懒抢占（PREEMPT_LAZY）的 need-resched，`L` 同时有 preempt 要求 |
-| | `B` / `b` | need-resched 和 lazy 同时设置（`B` 同时有 preempt 要求） |
+| 2 需要调度 | `n` | 只有 NEED_RESCHED |
+| | `N` | NEED_RESCHED + PREEMPT_RESCHED |
+| | `p` | 只有 PREEMPT_RESCHED |
+| | `l` | 只有 NEED_RESCHED_LAZY |
+| | `L` | NEED_RESCHED_LAZY + PREEMPT_RESCHED |
+| | `b` | NEED_RESCHED + NEED_RESCHED_LAZY |
+| | `B` | NEED_RESCHED + NEED_RESCHED_LAZY + PREEMPT_RESCHED |
 | | `.` | 不需要调度 |
 | 3 上下文 | `h` | 硬中断 |
 | | `s` | 软中断 |
@@ -506,7 +508,7 @@ Copy 的「可见」指没有被隐藏的记录，包括滚动区外的行；窗
 | 4 preempt 深度 | `0`–`f` | preempt_count 的低 4 位，`.` 表示 0 |
 | 5 migrate-disable 深度 | `0`–`f` | 禁止迁移的嵌套深度，`.` 表示 0 |
 
-注意：preempt 深度是在跟踪 hook 里读到的，跟踪路径本身通常会多加 1。所以在 6.18 和 7.2 上，进程上下文里正常的值是 `1` 而不是 `.`。时间轴分析会自动识别这个基线（见 7.3 节）。
+注意：第二列的 PREEMPT_RESCHED 是调度请求，不是第四列的关抢占计数。跟踪 hook 可能额外关一级抢占，入口和返回路径分别进行内部校正，不在详情中展示 baseline 数值；不能把所有记录的基线都写死为 1。flags 仍保留原始计数。八种调度组合、Text/raw/uftrace 一致性和测试边界见 [flags 解码说明](latency-flags.md)。
 
 **耗时标记字符**（内核 `trace_find_mark()` 的定义）：
 
@@ -908,10 +910,10 @@ python3 funcgraph.py --timeline --tail-calls --fast --func-links \
 
 **点击切片**会在下方打开详情面板：
 
-- 标题旁的标签：上下文（`?` 表示推断）、irqs off、BH off、need-resched、preempt off（抢占计数高于对应记录的基线，`×N` 表示多关了几层，悬停标签可看到原始数值及基线）、migrate off、error origin/propagated、may sleep in atomic context、no exit、no entry、estimated。
+- 标题旁的标签：上下文（`?` 表示推断；`H`/`Z` 保留嵌套中断含义）、irqs off、BH off，以及按实际组合分别显示的 need-resched / lazy-resched / preempt-resched。preempt off 的 `×N` 表示校正后仍多关了几层，悬停可看原始计数和推断的校正深度；其余包括 migrate off、error origin/propagated、may sleep in atomic context、no exit、no entry、estimated。
 - **Preempt 状态**：详情和悬窗保留原始 flags；只有校正后仍有额外抢占禁止层级时才显示 `preempt off` 标识，其悬停提示包含原始计数和推断的校正深度。不在详情、Notes 或 Sections 中展示内部 baseline 数值，也不把校正深度为 0 直接标成“可抢占”。function_graph 的记录路径可能额外关一级抢占，入口和返回仍分别校正，以兼容入口 `...1.`、返回 `.....` 的内核；事件和用户态记录不参与函数基线推断。Preempt depth、Sections 和睡眠风险提示保留原有分析逻辑，Sched latency 对事件保留原始计数。`preempt:>1` 是原始计数筛选，不是适用于所有记录的统一状态判断。睡眠风险提示不是内核已输出的 BUG，也不能仅凭校正深度为 0 判断可以安全睡眠。技术细节见 [校正说明](preempt-baseline.md)。
 - 左栏：duration、self（及占总耗时的比例）、start、task、depth、flags、return、caller site、args、trace lines（入口和出口在 trace 中的行号，点击跳到文本视图）。
-  - 详情字段直接对齐展示，不再有 **Trace metadata** 标题或折叠分组：依次为耗时/self/开始时间、task/CPU 与 flags/上下文告警、调用位置与参数/返回值、depth/原始入口地址/trace 行号。已记录的 **flags** 保留原始 preempt 计数及基线说明，纯内核报告也一样；`none` 表示采集了 latency 标志且均未置位，未采集时不显示 flags 行，包括没有内核标志的用户态调用。原始返回位紧随 BTF 解码返回值，仍保留原始数据与解释。
+  - 详情字段直接对齐展示，不再有 **Trace metadata** 标题或折叠分组：依次为耗时/self/开始时间、task/CPU 与 flags/上下文告警、调用位置与参数/返回值、depth/原始入口地址/trace 行号。已记录的 **flags** 保留原始 preempt 计数和实际调度请求类型，纯内核报告也一样；`none` 表示这一行没有 IRQ/BH 禁止、调度请求或深度值，不代表所有执行上下文都允许睡眠，具体上下文见标题标签。未采集时不显示 flags 行，包括没有内核标志的用户态调用。原始返回位紧随 BTF 解码返回值，仍保留原始数据与解释。
   - **call site** 下面是调用所在的源码位置（`文件:行号`，点击打开在线源码）；调用点在内联代码里时附上 `in 内联函数 (inlined)`。
   - **Call site source**：调用点的源码块，和文本视图展开一行时看到的完全相同（语法高亮、`>行号<` 标出调用所在行、内联链按 Source 按钮的 chain/flat 布局）。点标题可以收起，状态会被记住。Text 和 Timeline 共享去重源码池及“trace 行号 → source ID”索引，不要求对应 Text 行已存在于 DOM 中。没有 `--kernel-src` / `--source-rev` / `--source-url` 时只显示位置链接；普通 `--no-text-view` 不保留两者，加上 `--keep-source` 可在纯 Timeline 报告中保留已有的源码/位置/内联信息。
 - 右栏：
@@ -1175,7 +1177,7 @@ Timeline 的 **Open in Text**、**Enter** 和真实 trace 行号链接统一聚�
 | max depth | 关抢占时 preempt 深度的最大值（只在 preempt off 这一类中显示） |
 | top self (est.) | 区间内匹配调用的自身耗时估算最高的 3 个函数；按这一列排序时比较第一名的估算值 |
 
-preempt 深度是相对基线计算的。trace 中进程上下文的最小 preempt 深度会被识别为基线（6.18 和 7.2 上都是 1），面板说明里会显示这个值。
+preempt 深度扣除了推断的跟踪开销，入口和返回分别校正；面板不展示内部 baseline 数值。不同内核和记录路径可能不同，不能统一写死为 1，详见 [校正说明](preempt-baseline.md)。
 
 精度说明：开关中断、开关抢占的操作通常是内联代码，不会出现在 trace 里，所以区间的起止只能定位到"flag 变化前后的两个被跟踪的调用"之间。点击一行会在时间轴上框选出这段区间。
 
@@ -1291,6 +1293,8 @@ trace 结束时仍未闭合的等待，在时长前显示 **≥**，表示下界
 - 与 Sections 相同，过滤逐窗口检查重叠的真实调用，统计数量 / total / max 使用保留窗口的原始长度；自身耗时只来自匹配调用。Overhead 仅更新自身耗时估算。每轨道按调用深度建立重叠索引，排序和追加行复用统计，不为每个窗口反复扫描整条轨道。
 
 需要 `latency-format` 和时间戳才能计算。
+
+这里的 pending 窗口涵盖 NEED_RESCHED、NEED_RESCHED_LAZY、PREEMPT_RESCHED 的全部非零组合。lazy-only 不表示必须立即抢占，也不能仅凭窗口较长就认定发生调度故障；在详情 flags 和标题标签中可以区分具体请求类型。
 
 ### 7.7 任务导航（Tasks）
 

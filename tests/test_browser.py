@@ -4173,7 +4173,7 @@ class BrowserSmokeTest(unittest.TestCase):
         label = self.page.locator('.tl-call-facts > .k').filter(has_text='flags')
         self.assertTrue(label.is_visible())
         value = label.locator('xpath=following-sibling::span[1]').inner_text()
-        for expected in ['irqs off', 'BH off', 'need-resched + preempt (N)', 'preempt 3',
+        for expected in ['irqs off', 'BH off', 'need-resched + preempt-resched (N)', 'preempt 3',
                          'migrate-off 2']:
             self.assertIn(expected, value)
         self.assertNotIn('baseline', value)
@@ -4197,6 +4197,67 @@ class BrowserSmokeTest(unittest.TestCase):
         label = self.page.locator('.tl-call-facts > .k').filter(has_text='flags')
         self.assertTrue(label.is_visible())
         self.assertEqual(label.locator('xpath=following-sibling::span[1]').inner_text(), 'none')
+
+    def test_timeline_resched_badges_distinguish_all_eight_combinations(self):
+        codes = '.nNplLbB'
+        expected = [[], ['need-resched'], ['need-resched', 'preempt-resched'], ['preempt-resched'],
+                    ['lazy-resched'], ['lazy-resched', 'preempt-resched'], ['need-resched', 'lazy-resched'],
+                    ['need-resched', 'lazy-resched', 'preempt-resched']]
+        flags = [(1 << 15) | (index << 4) | (1 << 7) for index in range(8)]
+        self.open_range_data(['work_' + code for code in codes], columns={'flags': flags},
+                             extra={'preempt_base': 1})
+        original = self.ev('JSON.stringify(fgData.read("tlData"))')
+        for index, (code, labels) in enumerate(zip(codes, expected)):
+            with self.subTest(code=code):
+                self.ev('index => fgView("timeline").probe().select(index)', index)
+                badges = self.page.locator('.tl-slice-head .tl-pill.warn')
+                self.assertEqual(badges.all_text_contents(), labels)
+                value = self.page.locator('.tl-call-facts > .k').filter(has_text='flags').locator(
+                    'xpath=following-sibling::span[1]').inner_text()
+                description = ' + '.join(labels) + ' (' + code + ')' if labels else ''
+                self.assertEqual(value, description + ', preempt 1' if labels else 'preempt 1')
+                self.page.mouse.move(*self.ev('index => fgView("timeline").probe().xyOf(index)', index))
+                self.page.locator('.tl-tip').wait_for(state='visible')
+                for label in labels:
+                    self.assertIn(label, self.page.locator('.tl-tip').inner_text())
+                self.assertNotIn('preempt off', self.page.locator('.tl-slice-head').inner_text())
+        self.assertEqual(self.ev('JSON.stringify(fgData.read("tlData"))'), original)
+
+    def test_timeline_nested_irq_context_and_unknown_irq_state_remain_visible(self):
+        cases = [('task', 0), ('softirq', 1), ('hardirq', 2), ('NMI', 3),
+                 ('hardirq + softirq (H)', 2 | (1 << 27)), ('NMI + hardirq (Z)', 3 | (1 << 27)),
+                 ('task', 1 << 28)]
+        self.open_range_data(['work_' + str(index) for index in range(len(cases))],
+                             columns={'flags': [(1 << 15) | flags for label, flags in cases]})
+        for index, (label, flags) in enumerate(cases):
+            with self.subTest(context=label, flags=flags):
+                self.ev('index => fgView("timeline").probe().select(index)', index)
+                self.assertEqual(self.page.locator('.tl-slice-head .tl-pill').first.inner_text(), label)
+                if flags & (1 << 28):
+                    self.assertIn('IRQ state unavailable (X)', self.page.locator('.tl-call-facts').inner_text())
+
+    def test_text_resched_filter_keeps_case_sensitive_linux_codes_and_correct_hints(self):
+        path = os.path.join(self.k.dir, 'resched-combinations.txt')
+        codes = '.nNplLbB'
+        with open(path, 'w') as trace:
+            trace.write('\n'.join(f'1000.000{100 + index * 10:03d} |   0) task-42 |  D{code}Haf |   1.000 us    |  work_{index}();'
+                                  for index, code in enumerate(codes)))
+        self.k.run(path, '--no-config', '--timeline', '--filter', out='resched-combinations.html')
+        self.page.goto('file://' + os.path.join(self.k.dir, 'resched-combinations.html'))
+        hints = self.page.locator('[data-field=resched]').get_attribute('data-hints')
+        for definition in ('n=NEED_RESCHED,', 'N=NEED_RESCHED+PREEMPT_RESCHED,',
+                           'l=NEED_RESCHED_LAZY,', 'B=NEED_RESCHED+NEED_RESCHED_LAZY+PREEMPT_RESCHED,'):
+            self.assertIn(definition, hints)
+        for index, code in enumerate(codes):
+            with self.subTest(code=code):
+                self.ev('code => { document.getElementById("filterInput").value = \'resched:="\' + code + \'"\'; applyFilter(); }', code)
+                rows = self.page.locator('.line-container:visible')
+                self.assertEqual(rows.count(), 1)
+                self.assertEqual(rows.get_attribute('data-resched'), code)
+                self.assertEqual(rows.get_attribute('data-irqs'), 'D')
+                self.assertEqual(rows.get_attribute('data-hirq'), 'H')
+                self.assertEqual(rows.get_attribute('data-preempt'), 'a')
+                self.assertIn('work_' + str(index), rows.inner_text())
 
     def test_timeline_preempt_correction_stays_internal_without_changing_recorded_flags(self):
         for entry_base, raw_depth, corrected_depth in ((0, 0, 0), (0, 1, 1), (1, 1, 0), (1, 3, 2)):

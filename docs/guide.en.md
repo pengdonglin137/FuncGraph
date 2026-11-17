@@ -550,11 +550,13 @@ A line with all options enabled:
 | | `D` | irqs and softirqs (BH) disabled |
 | | `b` | only BH disabled |
 | | `.` | neither |
-| 2 need-resched | `N` | TIF_NEED_RESCHED set and the preempt count asks for a reschedule |
-| | `n` | only TIF_NEED_RESCHED |
-| | `p` | only the preempt count asks for it |
-| | `L` / `l` | lazy need-resched (PREEMPT_LAZY); `L` also with the preempt request |
-| | `B` / `b` | need-resched and lazy both set (`B` also with the preempt request) |
+| 2 reschedule | `n` | NEED_RESCHED only |
+| | `N` | NEED_RESCHED + PREEMPT_RESCHED |
+| | `p` | PREEMPT_RESCHED only |
+| | `l` | NEED_RESCHED_LAZY only |
+| | `L` | NEED_RESCHED_LAZY + PREEMPT_RESCHED |
+| | `b` | NEED_RESCHED + NEED_RESCHED_LAZY |
+| | `B` | NEED_RESCHED + NEED_RESCHED_LAZY + PREEMPT_RESCHED |
 | | `.` | no reschedule pending |
 | 3 context | `h` | hard interrupt |
 | | `s` | softirq |
@@ -564,7 +566,7 @@ A line with all options enabled:
 | 4 preempt depth | `0`–`f` | low 4 bits of preempt_count, `.` for 0 |
 | 5 migrate-disable depth | `0`–`f` | nesting of migrate_disable, `.` for 0 |
 
-Note: the preempt depth is read inside the tracing hook, and the tracing path usually adds one. On 6.18 and 7.2 the normal value in task context is therefore `1`, not `.`. The timeline analyses detect this baseline automatically (7.3).
+Note: PREEMPT_RESCHED in column two is a reschedule request, not column four's preempt-disable count. Tracing may add one preemption level; entry and return paths are corrected independently without exposing numeric baselines in details. Do not hardcode one for every record. Flags retain the recorded count. See [latency-flags.md](latency-flags.md) for all eight combinations, Text/raw/uftrace consistency and coverage limits.
 
 **Duration marks** (kernel `trace_find_mark()`):
 
@@ -986,10 +988,10 @@ New reports use the compact call-site position index for this tooltip, including
 
 **Clicking a slice** opens the detail panel below:
 
-- Tags next to the title: context (`?` if inferred), irqs off, BH off, need-resched, preempt off (preempt count above the corresponding record's baseline, `×N` for N extra levels; hover the tag for the raw count and baseline), migrate off, error origin/propagated, may sleep in atomic context, no exit, no entry, estimated.
+- Tags next to the title: context (`?` if inferred; `H`/`Z` retain their nested interrupt meaning), irqs off, BH off, and separate need-resched / lazy-resched / preempt-resched badges for the recorded combination. For preempt off, `×N` means N extra levels after correction; hover for the raw count and inferred adjusted depth. Other tags include migrate off, error origin/propagated, may sleep in atomic context, no exit, no entry and estimated.
 - **Preempt state:** details and tooltips retain the raw flags. A `preempt off` badge appears only when extra preemption-disable depth remains after correction; its tooltip gives the recorded count and inferred adjusted depth. Details, Notes and Sections do not display internal baseline values, and zero adjusted depth is not labeled as proof of preemptibility. Function-graph recording may add one preemption level; entry and return corrections remain independent to support kernels with entry `...1.` and return `.....`. Events and user records do not calibrate function baselines. Preempt depth, Sections and sleep-risk analysis retain their existing calculations; Sched latency keeps raw event counts. `preempt:>1` filters raw counts, not a universal state across all record types. Sleep-risk hints are not kernel-emitted BUG messages, and zero adjusted depth alone does not prove that sleeping is safe. See the [correction notes](preempt-baseline.md) for implementation details.
 - Left column: duration, self (and its share), start, task, depth, flags, return, caller site, args, trace lines (entry and exit line numbers; click to open the text view).
-  - Detail fields share one aligned list without a **Trace metadata** heading or disclosure: timing (duration/self/start), task/CPU and flags/context warnings, call site and arguments/return, then depth/recorded entry address/trace-line links. Recorded **flags** retain the raw preempt count and baseline explanation, including in kernel-only reports. `none` means latency flags were recorded and clear; no flags row is shown without recorded latency data, including user calls without kernel flags. Original return bits follow a BTF-decoded return, preserving the raw evidence and its explanation.
+  - Detail fields share one aligned list without a **Trace metadata** heading or disclosure: timing (duration/self/start), task/CPU and flags/context warnings, call site and arguments/return, then depth/recorded entry address/trace-line links. Recorded **flags** retain raw preempt counts and actual request types, including in kernel-only reports. `none` means no IRQ/BH-disable, reschedule or depth values in this row, not proof that every execution context permits sleeping; see the context badge. No flags row is shown without recorded latency data, including user calls without kernel flags. Original return bits follow a BTF-decoded return, preserving the raw evidence and its explanation.
   - Below **call site**: the source position of the call (`file:line`, click to open the online source); `in FUNC (inlined)` when the call sits in inlined code.
   - **Call site source**: the call site's source block, the same as when expanding the line in the text view (highlighting, `>line<` marks the call, inline chain in the chain/flat layout of the Source button). Click the title to collapse it; the choice is remembered. Text and Timeline share one de-duplicated source pool and a trace-line → source-ID index; the corresponding Text row does not need to exist in the DOM. Without `--kernel-src` / `--source-rev` / `--source-url` only the position link is shown. Plain `--no-text-view` omits both; add `--keep-source` to retain available source/position/inline information in Timeline-only reports.
 - Right column:
@@ -1285,7 +1287,7 @@ Every region in task context with **irqs off**, **preemption off** or **BH off**
 | max depth | maximum preempt depth (preempt off only) |
 | top self (est.) | the 3 highest self-time estimates from matching calls inside the region; sorting compares the first function's estimate |
 
-The preempt depth is relative to a baseline: the lowest preempt depth seen in task context (1 on both 6.18 and 7.2), shown in the panel text.
+Preempt depth excludes inferred tracing overhead, with independent entry and return correction. The panel does not display internal numeric baselines. Kernels and recording paths can differ; do not hardcode one. See [preempt-baseline.md](preempt-baseline.md).
 
 Precision: enabling/disabling irqs or preemption is usually inlined code that does not appear in the trace, so a region's ends are only known up to the two traced calls around the flag change. Clicking a row selects the region in the timeline.
 
@@ -1406,6 +1408,8 @@ Each **need-resched window**, from setting the need-resched flag until the task 
 - As in Sections, filtering tests real-call overlap per window; count / total / max use retained windows' original lengths, while self estimates include matching calls only. Overhead changes only self estimates. A per-track, per-depth overlap index avoids full-track scans for every window; sorting and pagination reuse the prepared statistics.
 
 Needs `latency-format` and timestamps.
+
+Pending windows cover every nonzero NEED_RESCHED / NEED_RESCHED_LAZY / PREEMPT_RESCHED combination. Lazy-only does not mean that preemption must happen immediately, so a long window alone does not prove a scheduling fault. Details and badges distinguish the recorded request types.
 
 ### 7.7 Task navigator (Tasks)
 

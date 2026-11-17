@@ -6,7 +6,7 @@ def container(endian='<', width=8, clock='mono', lost=0, retaddr=False,
               symbols=True, bad_depth=False, args=True, module=False,
               sched=False, retval=True, dynamic_args=False, relative_args=False, fixed_args=False,
               address_base=0, kvm=False, kvm_only=False, entry_preempt=1, exit_preempt=1,
-              wakeup_preempt=1):
+              wakeup_preempt=1, release=None, flag_cases=None):
     def packed(layout, *values):
         return struct.pack(endian + layout, *values)
 
@@ -77,11 +77,13 @@ def container(endian='<', width=8, clock='mono', lost=0, retaddr=False,
     if module:
         kallsyms = kallsyms.replace(b'child\n', b'child\t[demo_mod]\n')
     clock_text = ('[' + clock + ']').encode()
+    uname = ('Linux test-host ' + release + ' x86_64\0').encode() if release else None
+    uname_option = packed('HI', 5, len(uname)) + uname if uname else b''
     metadata = (b'\x17\x08Dtracing6\0' + bytes([int(endian == '>'), width]) + packed('I', 4096) +
                 b'header_page\0' + sized(header) + b'header_event\0' + sized(b'') +
                 packed('I', 2) + sized(entry) + sized(exiting) + systems +
                 sized(kallsyms, 'I') + sized(b'', 'I') + sized(b'42 worker\n') + packed('I', 1) +
-                b'options\0\0\0' + packed('HI', 4, len(clock_text)) + clock_text + packed('H', 0) +
+                b'options\0\0\0' + packed('HI', 4, len(clock_text)) + clock_text + uname_option + packed('H', 0) +
                 b'flyrecord\0')
     base = 1000000000
     def entry_data(address, depth):
@@ -102,6 +104,14 @@ def container(endian='<', width=8, clock='mono', lost=0, retaddr=False,
     records = [(0, entry_data(0x1000, 0)), (101, entry_data(0x1100, 1)),
                (310, exit_data(0x1100, 1, 101, 310, (1 << (width * 8)) - 2)),
                (513, exit_data(0x1000, 0, 0, 513, 0))]
+    if flag_cases is not None:
+        records = []
+        for index, (common_flags, preempt) in enumerate(flag_cases):
+            for timestamp, record in ((index * 10, entry_data(0x1100, 0)),
+                                      (index * 10 + 1, exit_data(0x1100, 0, index * 10, index * 10 + 1, 0))):
+                updated = bytearray(record)
+                updated[2:4] = bytes((common_flags, preempt))
+                records.append((timestamp, bytes(updated)))
     if kvm_only:
         records = []
     if kvm or kvm_only:

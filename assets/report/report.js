@@ -1243,7 +1243,7 @@
             if (field === 'preempt' && op !== '=') {
                 const pAttr = line.getAttribute('data-preempt');
                 if (!pAttr) return false;
-                const pVal = parseInt(pAttr);
+                const pVal = pAttr === '.' ? 0 : parseInt(pAttr, 16);
                 const cVal = parseInt(value);
                 if (isNaN(cVal)) return false;
                 switch (op) {

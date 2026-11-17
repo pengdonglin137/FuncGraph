@@ -391,11 +391,12 @@ function showDetail(i) {
     const context = detailContextData(i);
     const f = sFlags[i], d = durOf(i), t = TRACKS[sTask[i]];
     let pills = D.uftrace ? pill('mute', f & FL.USER ? 'User space' : 'Kernel space') : '';
-    if (!D.uftrace || f & FL.LAT) pills += pill('ctx' + (f & FL.CTX), CTX_NAMES[f & FL.CTX] + (f & FL.CTXINF ? '?' : ''));
+    if (!D.uftrace || f & FL.LAT) pills += pill('ctx' + (f & FL.CTX), contextName(f) + (f & FL.CTXINF ? '?' : ''));
     if (f & FL.BOUNDARY) pills += pill('mute', 'User → kernel', 'Same thread and contained recorded interval; exact user call site is not known');
     if (f & FL.IRQOFF) pills += pill('warn', 'irqs off');
     if (f & FL.BHOFF) pills += pill('warn', 'BH off');
-    if ((f >> FL.RS_SHIFT) & 7) pills += pill('warn', 'need-resched');
+    const resched = (f >> FL.RS_SHIFT) & 7;
+    for (const label of RESCHED_LABELS[resched]) pills += pill('warn', label, RESCHED_NAMES[resched]);
     // preemption: the preempt-count digit above the trace's baseline (the tracer itself may add one)
     const pd = preemptOff(f);
     if (pd > 0) pills += pill('warn', 'preempt off' + (pd > 1 ? ' ×' + pd : ''), 'Recorded preempt count ' + ((f >> FL.PR_SHIFT) & 15) + '; tracing-adjusted depth ' + pd + ' (inferred)');
@@ -1591,7 +1592,7 @@ ${HAS_USER ? '<i style="background:#e8873a"></i><span>user API failure hint (sym
 <i style="background:#f6b8b8;outline:1.5px solid #c62828"></i><span>error propagation</span>
 <i style="background:repeating-linear-gradient(135deg,#888 0 2px,#ddd 2px 4px)"></i><span>irqs disabled when the call started</span>
 <i style="background:#4b5563;height:2px"></i><span>under the track header: irqs-off periods</span>
-<i style="background:#f59e0b"></i><span>need-resched pending (header band / corner)</span>
+<i style="background:#f59e0b"></i><span>reschedule request pending, including lazy / preempt requests (header band / corner)</span>
 <i style="background:repeating-linear-gradient(135deg,#aaa 0 2px,#eee 2px 4px)"></i><span>off-CPU (amber tint: preempted)</span>
 <i style="background:#8e44ad"></i><span>caller ≠ recorded parent (cause unresolved); ⇢ = static tail-jump evidence</span>
 <i style="background:#0f9d8a;height:2px"></i><span>wakeup: waker → woken task (sched_waking/wakeup); bunched: small marker only</span>

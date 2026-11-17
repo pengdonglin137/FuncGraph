@@ -17,6 +17,7 @@ from fglib import inputs, prefilter, raw, timeline
 from fglib.cli import build_parser
 from fglib.util import format_args_info
 from raw_fixture import container
+from latency_reference import DEPTH_BYTES, linux_latency
 
 
 @unittest.skipUnless(shutil.which('bash'), 'bash not installed')
@@ -287,6 +288,40 @@ class NativeRawTest(unittest.TestCase):
                         self.assertEqual([(flags >> timeline.F_PREEMPT_SHIFT) & 15
                                           for flags in data['cols']['flags']], [1, 1])
                         self.assertFalse(any(section[1] == timeline.SEC_PREEMPT for section in data['sections']))
+
+    def test_all_flag_bytes_and_depth_nibbles_match_linux_without_library_formatting(self):
+        cases = [(flags, preempt) for flags in range(256) for preempt in DEPTH_BYTES]
+        for endian in ('<', '>'):
+            for width in (4, 8):
+                for offset in range(0, len(cases), 32):
+                    with self.subTest(endian=endian, width=width, offset=offset):
+                        batch = cases[offset:offset + 32]
+                        lines = self.decode(endian=endian, width=width, release='7.4.0-rc2',
+                                            flag_cases=batch, args=False)
+                        expected = [linux_latency(flags, preempt) for flags, preempt in batch]
+                        actual = [match[1] for line in lines if (match := timeline.RE_LAT.search(line))]
+                        self.assertEqual(actual, [latency for latency in expected for _ in range(2)])
+                        data = timeline.build_timeline(lines).to_data()
+                        self.assertEqual(data['n'], len(batch))
+                        for flags, latency in zip(data['cols']['flags'], expected):
+                            decoded, context = timeline.TimelineBuilder._lat_flags(latency)
+                            self.assertEqual(flags & ~(timeline.F_LEAF | timeline.F_NULL_RET), decoded)
+                            self.assertEqual(flags & timeline.F_CTX_MASK, context)
+
+    def test_recorded_release_disambiguates_lazy_from_legacy_irq_support(self):
+        for release, lazy in (('6.12.99', False), ('6.13.0-rc1', True),
+                              ('6.18.56-v8-MY_CUSTOM_KERNEL+', True), ('7.4.0-rc2', True)):
+            with self.subTest(release=release):
+                cases = [(0x02, 0), (0x22, 0x42), (0xff, 0xff)]
+                lines = self.decode(release=release, flag_cases=cases)
+                self.assertEqual([match[1] for line in lines if (match := timeline.RE_LAT.search(line))],
+                                 [linux_latency(flags, preempt, lazy) for flags, preempt in cases for _ in range(2)])
+
+    def test_ambiguous_flag_bit_without_kernel_release_fails_instead_of_guessing(self):
+        for release in (None, 'unknown'):
+            with self.subTest(release=release):
+                with self.assertRaisesRegex(raw.RawInputError, 'bit 0x02 without a recorded kernel release'):
+                    self.decode(release=release, flag_cases=[(0x02, 0)])
 
     def test_raw_sidecar_preserves_the_single_file_timeline(self):
         self.path.write_bytes(container(sched=True, retaddr=True))

@@ -172,7 +172,7 @@ function tipSlice(i) {
     const t = TRACKS[sTask[i]];
     h += row('task', esc(trackLabel(t)) + (cpuOf(i) >= 0 ? ' &nbsp;CPU ' + cpuOf(i) : ''));
     if (D.uftrace) h += row('space', f & FL.BOUNDARY ? 'Kernel · entered from user' : f & FL.USER ? 'User' : 'Kernel');
-    if (!D.uftrace || f & FL.LAT) h += row('context', CTX_NAMES[f & FL.CTX] + (f & FL.CTXINF ? ' (inferred)' : '') + ctxFlagText(f));
+    if (!D.uftrace || f & FL.LAT) h += row('context', contextName(f) + (f & FL.CTXINF ? ' (inferred)' : '') + ctxFlagText(f));
     const r = retOf(i);
     const userDetail = f & FL.USER ? D.uftrace?.user_details?.[sLine[i]] : null;
     if (userDetail?.retval !== undefined) {
@@ -207,6 +207,7 @@ function preemptOff(f) { return (f & FL.LAT) ? Math.max(0, ((f >> FL.PR_SHIFT) &
 function ctxFlagText(f) {
     if (!(f & FL.LAT)) return '';
     const parts = [];
+    if (f & FL.IRQUNKNOWN) parts.push('IRQ state unavailable (X)');
     if (f & FL.IRQOFF) parts.push('irqs off');
     if (f & FL.BHOFF) parts.push('BH off');
     const rs = (f >> FL.RS_SHIFT) & 7;

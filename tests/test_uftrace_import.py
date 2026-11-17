@@ -14,6 +14,7 @@ import helpers
 from fglib import export, inputs, timeline, uftrace
 from fglib.viewer import create_server
 from test_timeline import decode, invariant_errors
+from latency_reference import linux_latency
 
 
 ORIGIN = 18446744000000000000
@@ -111,7 +112,7 @@ class UftraceImportTest(unittest.TestCase):
         self.assertEqual(cols['flags'][2], timeline.F_BOUNDARY | timeline.F_HAS_LAT | timeline.F_IRQOFF |
                          timeline.F_BHOFF | 1 << timeline.F_RESCHED_SHIFT | 3 << timeline.F_PREEMPT_SHIFT |
                          2 << timeline.F_MIGRATE_SHIFT)
-        self.assertEqual(cols['flags'][3], timeline.F_HAS_LAT | timeline.CTX_NMI)
+        self.assertEqual(cols['flags'][3], timeline.F_HAS_LAT | timeline.CTX_NMI | timeline.F_CTX_NESTED)
         for index in (0, 1):
             self.assertFalse(cols['flags'][index] & timeline.F_HAS_LAT)
             self.assertIsNone(builder.parsed[cols['line'][index] - 1].preempt_depth)
@@ -137,14 +138,23 @@ class UftraceImportTest(unittest.TestCase):
                 self.assertEqual(latency, expected[:3] + '24')
                 self.assertEqual((flags, context), timeline.TimelineBuilder._lat_flags(expected[:3] + '24'))
 
+    def test_all_kernel_flag_bytes_and_depth_bytes_match_linux(self):
+        for lazy in (False, True):
+            for raw in range(256):
+                for preempt in range(256):
+                    expected = linux_latency(raw, preempt, lazy)
+                    flags, context, latency = uftrace._latency(dict(common_flags=raw, common_preempt_count=preempt), lazy)
+                    self.assertEqual(latency[:3], expected[:3])
+                    self.assertEqual(latency[3:], f'{preempt & 15:x}{preempt >> 4:x}')
+                    self.assertEqual((flags, context), timeline.TimelineBuilder._lat_flags(expected))
+
     def test_kernel_release_disambiguates_reused_flag_bit_and_missing_data(self):
         records = capture()
         records[4].update(common_flags=0x22, common_preempt_count=2)
         records[5].update(common_flags=0x80)
         records[8].update(common_flags=0, common_preempt_count=256)
         for release, expected in (('6.12.99', ('X', 'p')), ('6.13.0-rc1', ('.', 'L')),
-                                  ('6.18.56-v8-MY_CUSTOM_KERNEL+', ('.', 'L')),
-                                  ('unknown', ('.', 'p'))):
+                                  ('6.18.56-v8-MY_CUSTOM_KERNEL+', ('.', 'L'))):
             with self.subTest(release=release):
                 metadata = dict(HEADER, kernel_settings=dict(HEADER['kernel_settings'], kernel_release=release))
                 builder = build(records, metadata)
@@ -156,6 +166,24 @@ class UftraceImportTest(unittest.TestCase):
                 for index in (3, 4):
                     self.assertFalse(cols['flags'][index] & timeline.F_HAS_LAT)
                     self.assertIsNone(builder.parsed[cols['line'][index] - 1].irqs_off)
+
+    def test_unknown_kernel_release_does_not_silently_drop_the_reused_flag_bit(self):
+        records = capture()
+        records[4].update(common_flags=0x22, common_preempt_count=2)
+        for release in ('', 'unknown'):
+            with self.subTest(release=release):
+                metadata = dict(HEADER, kernel_settings=dict(HEADER['kernel_settings'], kernel_release=release))
+                with self.assertRaisesRegex(uftrace.UftraceInputError, 'bit 0x02 without a recorded kernel release'):
+                    build(records, metadata)
+                with tempfile.TemporaryDirectory() as directory:
+                    source = Path(directory) / 'unknown-kernel.jsonl'
+                    output = Path(directory) / 'unknown-kernel.html'
+                    source.write_text(stream(records, metadata), encoding='utf-8')
+                    result = invoke(source, '--timeline', '--output', output)
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn('bit 0x02 without a recorded kernel release', result.stderr)
+                    self.assertNotIn('Traceback', result.stderr)
+                    self.assertFalse(output.exists())
 
     def test_lifecycle_keeps_exact_kernel_milestones_and_clock_separation(self):
         records = capture()[:4] + [lifecycle_event('exec', 70), lifecycle_event('exit', 980)]

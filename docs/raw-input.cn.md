@@ -103,6 +103,7 @@ export LD_LIBRARY_PATH="$HOME/.local/funcgraph-raw/lib${LD_LIBRARY_PATH:+:$LD_LI
 - `retaddr` 是记录的**返回 PC**，caller offset 使用该 PC；符号长度来自下一条 kallsyms 地址边界，不是重新测量的代码长度。不臆造架构相关的调用指令偏移修正。
 - 调度切换/唤醒保留任务、CPU、状态及时间戳。额外的 switch-in 上下文行使恢复边界等于真实切换时间，而不是下一条函数事件。丢事件保留计数，未知数量仍为 `?`/JSON null；graph overrun 以明确注释显示。
 - 当前支持 local/global/mono/mono_raw/boot/tai/uptime/perf 纳秒时钟；没有保存时钟的旧容器按 reader 的 local 约定处理。counter/cycle 时钟（含 x86-tsc）暂不支持，建议采集时用 `-C mono`。local 时钟原有的跨 CPU 同步限制仍存在。
+- latency 列直接解码 common 字段，保留普通/lazy/preempt 调度请求的八种组合、IRQ/BH 状态、嵌套 IRQ/NMI 上下文及十六进制 preempt/migration 深度，不依赖已固定版本的 libtraceevent 的 latency 格式化。根据容器保存的 uname 区分上游 6.13 前后 `0x02` 位的不同含义；该位已设置但没有可识别的采集内核版本时明确报错，不猜测。映射、测试和厂商回移等适用边界见 [flags 解码说明](latency-flags.md)。
 - 其它事件保留为可读注释，不代表都有专门分析能力。这是**完整文件解码/归一化**，不是实时读取 trace_pipe_raw、常量内存处理或 Text 虚拟化；单文件和 sidecar 输出使用同一份解码模型。Text 行号指生成的事件行，不是二进制文件偏移。
 
 CLI 使用的 `inputs.read_lines()` 直接保留原生解码器生成的归一化行列表，压缩输入、stdin 以及混合多输入中的每个 raw 文件均走此路径，不再把整份列表拼成完整 trace 字符串再重新拆行。公开的 `inputs.read_text()` API 在调用者明确需要字符串时，仍为 raw 输入返回以换行符结尾的文本。这只消除加载时的冗余复制；完整归一化 trace 和分析模型仍保存在内存中。

@@ -46,6 +46,25 @@ class FilterMatcherTest(unittest.TestCase):
             assert.deepEqual(compilations, fields.map(() => ['^w[0-9]+$', 'i']));
         ''')
 
+    def test_preempt_numeric_filters_decode_hexadecimal_depth_and_zero_dots(self):
+        self.run_script('''
+            for (const symbol of '.0123456789abcdef') {
+                const depth = symbol === '.' ? 0 : Number.parseInt(symbol, 16);
+                const row = record({'data-preempt': symbol});
+                for (const threshold of [0, 1, 9, 10, 15]) {
+                    for (const operator of ['>', '>=', '<', '<=']) {
+                        const expected = operator === '>' ? depth > threshold :
+                            operator === '>=' ? depth >= threshold : operator === '<' ? depth < threshold : depth <= threshold;
+                        assert.equal(evalExpr(row, parseFilterExpr('preempt:' + operator + threshold).ast), expected);
+                    }
+                }
+                assert.equal(evalExpr(row, parseFilterExpr('preempt:="' + symbol + '"').ast), true);
+            }
+            for (const missing of [null, '']) {
+                assert.equal(evalExpr(record({'data-preempt': missing}), parseFilterExpr('preempt:<=0').ast), false);
+            }
+        ''')
+
     def test_invalid_regex_keeps_branch_specific_literal_fallback(self):
         self.run_script('''
             for (const field of ['func', 'cpu', 'pid', 'comm', 'ret', 'params',

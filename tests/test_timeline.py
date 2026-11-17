@@ -10,10 +10,46 @@ import unittest
 import helpers
 from fglib import timeline
 from fglib.btf import ReturnTypeDB
+from latency_reference import linux_latency
 
 
 def build(text, db=None):
     return timeline.build_timeline(text.split('\n'), rettypes=db).to_data()
+
+
+class LatencyFlagsTest(unittest.TestCase):
+    def test_all_flag_bytes_and_depth_bytes_preserve_the_printed_columns(self):
+        codes = {'.': 0, 'n': 1, 'N': 2, 'p': 3, 'l': 4, 'L': 5, 'b': 6, 'B': 7}
+        contexts = {'.': 0, 's': 1, 'h': 2, 'H': 2, 'z': 3, 'Z': 3}
+        for raw in range(256):
+            for preempt in range(256):
+                latency = linux_latency(raw, preempt)
+                flags, context = timeline.TimelineBuilder._lat_flags(latency)
+                self.assertTrue(flags & timeline.F_HAS_LAT)
+                self.assertEqual(bool(flags & timeline.F_IRQOFF), bool(raw & 0x01))
+                self.assertEqual(bool(flags & timeline.F_BHOFF), bool(raw & 0x80))
+                self.assertEqual((flags >> timeline.F_RESCHED_SHIFT) & 7, codes[latency[1]])
+                self.assertEqual((flags >> timeline.F_PREEMPT_SHIFT) & 15, preempt & 15)
+                self.assertEqual((flags >> timeline.F_MIGRATE_SHIFT) & 15, preempt >> 4)
+                self.assertEqual(context, contexts[latency[2]])
+                self.assertEqual(bool(flags & timeline.F_CTX_NESTED), latency[2] in 'HZ')
+                self.assertFalse(flags & timeline.F_IRQS_UNKNOWN)
+
+    def test_all_resched_combinations_open_windows_without_affecting_call_durations(self):
+        for code in '.nNplLbB':
+            with self.subTest(code=code):
+                text = (f'1000.000100 |   0) task-42 |  .{code}.1. |   1.000 us    |  work();\n'
+                        '1000.000110 |   0) task-42 |  ...1. |   1.000 us    |  done();\n')
+                data = build(text)
+                self.assertEqual(data['n'], 2)
+                self.assertEqual(data['cols']['dur'], [1000, 1000])
+                self.assertEqual(len(data['resched']), int(code != '.'))
+
+    def test_legacy_unknown_irq_state_remains_distinct_from_enabled(self):
+        data = build('1000.000100 |   0) task-42 |  Xp.1. |   1.000 us    |  work();\n')
+        self.assertEqual(data['n'], 1)
+        self.assertTrue(data['cols']['flags'][0] & timeline.F_IRQS_UNKNOWN)
+        self.assertFalse(data['cols']['flags'][0] & timeline.F_IRQOFF)
 
 
 def decode(d):
