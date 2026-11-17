@@ -63,6 +63,52 @@ Home / End 切换可用项，Enter / 空格执行。Escape 仅关闭菜单并恢
 打开菜单不遍历调用、不改变选择/视野/过滤，也不预加载 Text；sidecar 仅执行跳转时加载。
 切换调用、页面或分析会关闭旧菜单，防止误操作另一个调用。
 
+## Keyboard resizing / 键盘调整详情高度
+
+The existing divider is a focusable horizontal separator controlling the detail
+panel. Tab to it, use Up/Down for 16px adjustments, Home/End for the current
+minimum/maximum, and Enter for the same default reset as double-click. A focus
+outline is painted only for keyboard focus. No new button or normal-layout
+space is added. Left/Right stay local instead of panning the Timeline.
+
+Its pixel-valued minimum, maximum and current height are refreshed by normal
+layout, including dragging, orientation changes, full screen, panel replacement
+and restoration from temporary detail expansion. A hidden or temporarily
+expanded divider is not a Tab stop. The minimum remains 60px and the chart
+retains its existing 160px minimum; extreme windows can still require scrolling.
+Already-clamped keyboard adjustments do not replace a preferred larger split.
+
+Pointer and keyboard changes use the same saved fractional sizing. When storage
+writes or removal fail, a session fallback keeps resizing and reset usable;
+reload cannot retain an unsaved change. This also fixes the existing pointer
+path: denying storage writes previously left the mixed sample at 307px after
+an 80px upward drag. Successful storage behavior remains unchanged.
+
+The browser regressions check actual Tab/arrow/Enter input, pointer parity,
+reload, both themes, narrow windows, single/HTTP sidecar, kernel/mixed/event-only
+reports, native and page full screen, expansion, IME/modifier/consumed keys,
+storage failures, painted canvases and complete model invariants. Resize alone
+does not fetch deferred Text/Compare. Accessibility attributes are checked in
+Chromium; this is not a physical-device or assistive-technology compatibility
+claim, nor a throughput improvement. Run `PYTHONPATH=tests python3 -m unittest
+test_detail_resize -v`. Regenerate old HTML to receive the runtime changes.
+
+The November 18 verification passes 477 distinct tests without skips: eight new
+browser tests, 433 related browser/keyboard/detail/overlay/fullscreen/sample
+regressions, and 36 existing pointer-resize and KVM model/browser regressions.
+The public samples retain all five JSON payloads (excluding generated build
+time), complete Text chunks and attributes, and 739/1,504 rows with 485/714
+recorded calls. Four normal sample/detail screenshots remain byte-identical;
+the help screenshot is regenerated for the updated keyboard instructions.
+Real mixed-sample probes in both themes confirm the denied-storage 80px drag
+now grows details from 307px to 387px, resets to 307px, retains complete recorded
+data and reports no page errors. Local logs, screenshots and fidelity checks
+are retained under `build/detail-ux-audit/`.
+
+原有横条支持 Tab 聚焦、上下箭头微调、Home/End 到边界及 Enter 恢复默认；没有新增入口。
+尺寸读数随布局更新，调整不会改变调用选择、时间范围、筛选或记录数据。存储受限时，
+当前报告仍可调整，但未保存的变化不能跨刷新保留。详见中英文指南的底部面板说明。
+
 ## Text handoff and full-screen focus / 文本跳转与全屏焦点
 
 **Open in Text**, the Timeline **Enter** shortcut, and recorded trace-line links

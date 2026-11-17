@@ -211,11 +211,12 @@
 /* drag handle between the canvas and the detail panel */
 .tl-resizer { display: none; flex: 0 0 auto; height: 8px; cursor: row-resize; position: relative; touch-action: none; }
 .tl-resizer.show { display: block; }
+.tl-resizer:focus-visible { outline: 2px solid var(--link-color); outline-offset: -2px; border-radius: 4px; }
 .tl-resizer::after {
     content: ""; position: absolute; left: 50%; top: 2px; width: 44px; height: 4px; margin-left: -22px;
     border-radius: 2px; background: var(--border-color);
 }
-.tl-resizer:hover::after, .tl-resizer.drag::after { background: #3b6fd8; }
+.tl-resizer:hover::after, .tl-resizer.drag::after, .tl-resizer:focus-visible::after { background: #3b6fd8; }
 body.tl-resizing { cursor: row-resize; user-select: none; }
 /* maximized: the timeline takes the whole window */
 body.tl-max.tl-active { padding: 2px; }

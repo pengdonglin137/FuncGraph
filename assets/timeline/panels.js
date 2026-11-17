@@ -812,7 +812,7 @@ elResizer.addEventListener('pointerdown', ev => {
     let pend = 0;
     const move = e => {
         const h = clampDetailH(h0 + (y0 - e.clientY));
-        prefSet('detailFrac', (h / window.innerHeight).toFixed(4));
+        saveDetailFraction((h / window.innerHeight).toFixed(4));
         if (!pend) pend = requestAnimationFrame(() => { pend = 0; resize(); });
     };
     const up = () => {
@@ -831,7 +831,34 @@ elResizer.addEventListener('pointerdown', ev => {
     elResizer.addEventListener('pointercancel', up, { once: true });
     elResizer.addEventListener('lostpointercapture', up, { once: true });
 });
-elResizer.addEventListener('dblclick', () => { prefSet('detailFrac', null); resize(); });
+elResizer.addEventListener('dblclick', () => { saveDetailFraction(null); resize(); });
+function resizeDetailKey(event) {
+    if (event.target !== elResizer || !elDetail.classList.contains('show') || detailExpanded) return false;
+    const current = elDetail.offsetHeight;
+    let height = current;
+    switch (event.key) {
+        case 'ArrowUp': height += 16; break;
+        case 'ArrowDown': height -= 16; break;
+        case 'Home': height = 60; break;
+        case 'End': height = Infinity; break;
+        case 'Enter':
+            event.preventDefault();
+            saveDetailFraction(null);
+            resize();
+            return true;
+        case 'ArrowLeft': case 'ArrowRight':
+            event.preventDefault();
+            return true;
+        default: return false;
+    }
+    event.preventDefault();
+    height = clampDetailH(height);
+    if (height !== current) {
+        saveDetailFraction((height / window.innerHeight).toFixed(4));
+        resize();
+    }
+    return true;
+}
 
 // Notes strip (hidden state remembered) and maximized layout (no page header / tabs).
 function updateNotes(on) {
@@ -1599,7 +1626,7 @@ ${N ? '' : '<p>No function calls were recorded. Search has no call matches; shar
 <li><b>Explore all children</b> in call details: complete parent-scoped groups/calls, longest-call navigation and full CSV</li>
 <li><kbd>I</kbd>: show / hide inlined functions as dashed frames (extent = first to last traced call inside)</li>
 <li><kbd>M</kbd> or <b>Full screen</b>: give Timeline the whole screen; <b>Exit full screen</b> or <kbd>Escape</kbd> restores the page. If the browser disallows native full screen, the page viewport is used instead. Zoom, selection, filters and the panel split stay unchanged.</li>
-<li>Drag the bar above the bottom panel to resize it; double-click it to reset.</li>
+<li>Drag the bar above the bottom panel to resize it, or focus it and use <kbd>↑</kbd>/<kbd>↓</kbd> (16px), <kbd>Home</kbd>/<kbd>End</kbd> (limits). <kbd>Enter</kbd> or double-click resets it.</li>
 <li>In a very short detail panel, the expand icon next to Close borrows the chart area. Press it again to restore the split; closing the panel restores the chart too. The saved panel height, query and current task page are not changed.</li>
 <li><kbd>O</kbd>: durations as measured / with the tracing overhead subtracted</li>
 <li><kbd>H</kbd>: duration distribution of the selected function · toolbar <b>Errors</b> / <b>Scheduling latency</b>: summaries</li>

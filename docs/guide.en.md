@@ -1045,6 +1045,8 @@ The list contents retain complete context independently of the shared filter. A 
 
 The detail panel and the analysis panels share the bottom area. Drag the bar above the panel to change its height; the canvas grows or shrinks accordingly. Double-click the bar to restore the default (32% of the window height, between 180 and 400 px). The height is stored in the browser as a fraction of the window, so other reports and other window sizes keep the same split.
 
+Alternatively, Tab to the bar and use Up / Down to grow / shrink details by 16px, Home / End for the available minimum / maximum, or Enter to reset. The separator has a visible keyboard focus indicator and exposes its current height and bounds through accessibility attributes. These keys do not navigate calls, pan the Timeline or open Text. Details remain at least 60px high and the chart retains at least 160px. A key that cannot change a clamped height does not overwrite the saved split. If preference storage is unavailable, dragging, keyboard resizing and reset still work within the current report, but cannot persist across reloads.
+
 Resizing preserves the current selection, time range and complete recorded data. Canvas resizing and repainting share the same animation frame, avoiding a blank chart during dragging; repeated same-size updates do not clear the canvas. This fixes the resize path, not the initial DOM cost of large single-file Text/source reports. Existing standalone HTML embeds its own runtime and needs regeneration to receive UI fixes; this does not require dropping calls, arguments, flags or source information.
 
 When the panel is shorter than 140px, such as phone landscape or a manually reduced split, a subdued **expand icon** appears beside Close. It temporarily borrows the chart area for details; press it again to restore the split, or close the panel / press Esc to restore the chart. Unlike **Full screen / M**, this does not hide the page header. It does not change the saved split, query, current task page or call selection. Expansion survives view changes, resizing and panel navigation in this session, but is not saved for the next report load. Help remains available, and extremely short windows can still scroll the details.
@@ -1162,6 +1164,7 @@ Inline and untraced details cache the selected frame's raw extent facts, so refr
 | `I` | hide / show inline frames |
 | `M` | enter / exit full screen; Escape also exits |
 | drag / double-click the bar above the panel | resize the bottom panel / reset it |
+| with the bar focused: Up / Down, Home / End, Enter | details ±16px, available minimum / maximum, reset |
 | Enter | open the selected call in the text view |
 | Esc | close an open menu/help first; otherwise exit full screen, or clear selection and range in normal mode |
 | `?` | help and legend |

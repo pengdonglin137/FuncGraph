@@ -865,8 +865,8 @@ ${N ? '' : '<div class="tl-event-only" role="note">No recorded function calls. S
   <div class="tl-scroll"><canvas class="tl-canvas" tabindex="0" aria-label="Interactive function timeline. Press question mark for keyboard shortcuts."></canvas><div class="tl-spacer"></div></div>
   <div class="tl-help" id="timelineHelp" role="dialog" aria-label="Timeline help"></div>
 </div>
-<div class="tl-resizer" title="Drag to resize the panel, double-click to reset"></div>
-<div class="tl-detail"></div>
+<div class="tl-resizer" role="separator" tabindex="0" aria-label="Resize details" aria-orientation="horizontal" aria-controls="tlDetail" aria-valuemin="60" title="Drag or use Up/Down to resize details; Home/End for limits; Enter or double-click to reset"></div>
+<div class="tl-detail" id="tlDetail"></div>
 <div class="tl-call-actions-panel" id="tlCallActions" role="menu" aria-label="Selected call actions"${D.no_text ? ' aria-describedby="tlCallActionsNote"' : ''} hidden>
   <button type="button" role="menuitem" tabindex="-1" data-call-action="distribution"><span>Duration distribution</span><kbd>H</kbd></button>
   <button type="button" role="menuitem" tabindex="-1" data-call-action="text"${D.no_text ? ' disabled' : ''}><span>Open in Text</span><kbd>Enter</kbd></button>

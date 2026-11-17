@@ -207,17 +207,24 @@ function densePixelAt(row, pixel, start, scale) {
 
 // ---- detail panel height (drag handle between canvas and panel) ----
 function prefGet(k) { try { return localStorage.getItem('fgTl.' + k); } catch (e) { return null; } }
-function prefSet(k, v) { try { if (v === null) localStorage.removeItem('fgTl.' + k); else localStorage.setItem('fgTl.' + k, v); } catch (e) { /* private mode */ } }
+function prefSet(k, v) { try { if (v === null) localStorage.removeItem('fgTl.' + k); else localStorage.setItem('fgTl.' + k, v); return true; } catch (e) { return false; } }
 function detailDefault() { return Math.round(Math.min(400, Math.max(180, window.innerHeight * 0.32))); }
+let detailFracFallback = null;
 // stored as a fraction of the window height, so the split looks the same on other screens
-function detailPx() { const v = +prefGet('detailFrac'); return v > 0 && v < 1 ? Math.round(v * window.innerHeight) : detailDefault(); }
+function detailPx() { const v = detailFracFallback ?? +prefGet('detailFrac'); return v > 0 && v < 1 ? Math.round(v * window.innerHeight) : detailDefault(); }
+function saveDetailFraction(value) {
+    detailFracFallback = prefSet('detailFrac', value) ? null : value === null ? 0 : +value;
+}
 let detailExpanded = false;
-function clampDetailH(h) {
+function maxDetailH() {
     const controlsHeight = elToolbar.offsetHeight + (compactToolbar.matches ? 0 : elNotes.offsetHeight) +
         (tlRoot.querySelector('.tl-event-only')?.offsetHeight || 0);
     const style = getComputedStyle(tlRoot);
     const padding = parseFloat(style.paddingTop) + parseFloat(style.paddingBottom);
-    return Math.round(Math.max(60, Math.min(h, tlRoot.clientHeight - padding - 160 - controlsHeight - elResizer.offsetHeight)));
+    return Math.round(Math.max(60, tlRoot.clientHeight - padding - 160 - controlsHeight - elResizer.offsetHeight));
+}
+function clampDetailH(height, maximum = maxDetailH()) {
+    return Math.round(Math.max(60, Math.min(height, maximum)));
 }
 
 // ---- main canvas ----
@@ -235,8 +242,12 @@ function resize() {
         return;
     }
     if (elDetail.classList.contains('show')) {
-        elDetail.style.height = clampDetailH(detailPx()) + 'px';
+        const maximum = maxDetailH(), height = clampDetailH(detailPx(), maximum);
+        elDetail.style.height = height + 'px';
         elDetail.classList.toggle('tl-detail-short', elDetail.clientHeight < 140);
+        elResizer.setAttribute('aria-valuemax', maximum);
+        elResizer.setAttribute('aria-valuenow', height);
+        elResizer.setAttribute('aria-valuetext', 'Details ' + height + ' pixels');
     }
     W = elScroll.clientWidth;
     H = elScroll.clientHeight;

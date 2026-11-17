@@ -924,6 +924,7 @@ window.addEventListener('keydown', ev => {
     if (elHelp.classList.contains('show') && elHelp.contains(ev.target instanceof Node ? ev.target : document.activeElement)) return;
     if (savedViewsDialog?.open) { ev.stopPropagation(); return; }
     if (callActionsKey(ev)) { ev.stopPropagation(); return; }
+    if (resizeDetailKey(ev)) { ev.stopPropagation(); return; }
     if (elPosition.open) {
         ev.stopPropagation();
         if (ev.key === 'Tab') {
