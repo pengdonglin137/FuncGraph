@@ -445,6 +445,7 @@ table.tl-sum td.err { color: #c62828; }
     max-height: calc(100% - 82px);
     box-sizing: border-box;
     overflow: auto;
+    overscroll-behavior: contain;
     background: var(--container-bg);
     border: 1px solid var(--border-color);
     border-radius: 8px;

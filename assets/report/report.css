@@ -1114,6 +1114,7 @@
             max-height: calc(100vh - 40px);
             box-sizing: border-box;
             overflow: auto;
+            overscroll-behavior: contain;
             display: none;
         }
         .keyboard-hint h3 {

@@ -47,7 +47,7 @@ change trace data, source expansion state, selection rules outside help, or the
 default renderer. It also does not add a per-row help index or scan the full Text
 DOM for help controls: the two entry buttons use direct ID lookup.
 
-## Evidence and verification
+## Original lifecycle evidence and verification
 
 A real generated sample reproduced both original issues: opening help left focus
 on the header entry, Tab moved to the information button rather than into help,
@@ -98,3 +98,48 @@ Wheel and source-distribution builds succeed. Installed-wheel smoke checks run
 **14 tests**, passing with **4 optional native/extras checks skipped**. Default
 sample images and the selected-call detail image remain byte-identical; only the
 help screenshot changes to reflect the reachable close control.
+
+## Native scroll boundaries (November 18, 2026)
+
+Wheel scrolling could still escape the help panel even though keyboard scrolling
+was already local. In generated reports, another downward wheel movement at the
+panel's bottom moved the underlying Text page by 500px. A narrow Compare report
+moved by its remaining 92px. This also happened when the entire help text fitted
+without a scrollbar. The local observations are in
+`build/help-scroll-audit/baseline.json`; the wheel regression fails in eight
+Text/Compare configurations against the unchanged stylesheet baseline.
+
+Both the shared Text/Compare hint and Timeline help now use native
+`overscroll-behavior: contain`, consistent with Tools and Actions. Their own
+contents still scroll normally, but overscroll stays inside the help scroll
+container rather than chaining to the page. The fix adds no wheel/touch event
+cancellation, JavaScript listener, body-scroll lock, button or preference.
+Help remains non-modal: scrolling outside it and normal scrolling after closing
+it continue to work. Focus return, Escape, deferred view preparation and existing
+keyboard behavior are unchanged. Browsers without this CSS property retain
+their previous native behavior; no JavaScript compatibility layer is added.
+
+The additional regressions use trusted browser wheel events and CDP touch input,
+not synthetic events that skip native scrolling. They cover both scroll edges,
+interior movement, short help with no overflow, closing/outside positive
+controls, plain Text, Timeline-only and all three views in single/sidecar
+reports. Wide/narrow windows, emulated portrait/landscape touch and both themes
+are included. Wheel events remain uncanceled; page/text/track scroll positions
+and Timeline selection/time range stay unchanged while reading help. Touch
+positive controls verify that the injected gesture can still scroll the page
+after help closes. Sidecar cases run under the actual viewer CSP.
+
+These checks use Chromium 145.0.7632.6. Emulated touch does not certify physical
+devices or other browser engines, and this change is not a new startup-speed
+or memory-use claim. The correction adds only two CSS declarations; it does not
+scan trace rows, fetch report data or change the renderer. Older reports need
+regeneration. Detailed local logs are in `build/help-scroll-audit/` and are not
+release assets.
+
+The final scroll-boundary follow-up passes **307 distinct tests**: 192
+help/overlay/focus/detail/preparation/sidecar cases and 115 sample, source,
+documentation, parser and Timeline/uftrace cases, including three real captures.
+Without Playwright, all 12 help tests skip cleanly. Both regenerated samples
+retain all five JSON payloads except build time, and complete HTML matches after
+substituting only the two changed stylesheets and generation metadata. All five
+regenerated public screenshots remain byte-identical.

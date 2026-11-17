@@ -753,7 +753,9 @@ The top-right header **?** is the shared help entry, with content specific to th
 Help no longer disappears on a timer. Opening it focuses the close button; Escape,
 the help entry, an outside click or a view change dismisses it. Closing returns
 focus to the opener, while outside clicks and view changes keep the new focus
-destination. Long help keeps its close button visible while scrolling, and its
+destination. Wheel and touch scrolling at a help panel's top or bottom no longer
+move the page behind it; scrolling outside or after closing help remains native.
+Long help keeps its close button visible while scrolling, and its
 reading keys do not navigate the trace behind it. Escape, Tab, a repeated entry
 activation or an outside click can cancel pending Timeline help without canceling
 chart preparation or stealing focus later. See [help interaction and verification](help-interaction.md).

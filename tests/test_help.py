@@ -66,6 +66,130 @@ class HelpLifecycleTest(unittest.TestCase):
         self.assertEqual(button.get_attribute('aria-controls'), panel.get_attribute('id'))
         return panel, close
 
+    def reading_position(self, page):
+        return page.evaluate('''() => {
+            const timeline = typeof fgCurrentView === 'function' && fgCurrentView() === 'timeline'
+                ? fgView('timeline').probe() : null;
+            return {page:[scrollX,scrollY], text:document.getElementById('textViewport')?.scrollLeft || 0,
+                tracks:document.querySelector('.tl-scroll')?.scrollTop || 0,
+                view:timeline?.view() || null, selected:timeline?.sel() ?? null};
+        }''')
+
+    def test_wheel_stays_inside_help_at_both_boundaries_even_when_it_fits(self):
+        for report, views in [('index.html', ['text', 'compare', 'timeline']),
+                              ('sidecar/index.html', ['text', 'compare', 'timeline']),
+                              ('plain.html', ['text']), ('timeline.html', ['timeline'])]:
+            for view in views:
+                for width, height, theme in [(390, 500, 'dark'), (1500, 900, 'light')]:
+                    with self.subTest(report=report, view=view, width=width):
+                        page = self.open_report(view, report=report, width=width, height=height, theme=theme)
+                        panel, close = self.show_help(page, view)
+                        page.evaluate('''() => {
+                            scrollTo(0, Math.min(300, (document.documentElement.scrollHeight - innerHeight) / 2));
+                            window.helpWheelEvents = [];
+                        }''')
+                        panel.evaluate('''element => {
+                            element.scrollTop = 0;
+                            element.addEventListener('wheel', event => helpWheelEvents.push(event.defaultPrevented), {passive:true});
+                        }''')
+                        maximum = panel.evaluate('element => element.scrollHeight - element.clientHeight')
+                        before = self.reading_position(page)
+                        bounds = panel.bounding_box()
+                        page.mouse.move(bounds['x'] + bounds['width'] / 2, bounds['y'] + bounds['height'] * 0.7)
+                        steps = [(-400, 0), (60, min(60, maximum)), (4000, maximum),
+                                 (400, maximum), (-60, max(0, maximum - 60)), (-4000, 0), (-400, 0)]
+                        for ordinal, (delta, target) in enumerate(steps, 1):
+                            page.mouse.wheel(0, delta)
+                            page.wait_for_function('count => helpWheelEvents.length === count', arg=ordinal, timeout=5000)
+                            page.evaluate('''async () => {
+                                for (let frame = 0; frame < 8; frame++) await new Promise(requestAnimationFrame);
+                            }''')
+                            self.assertTrue(panel.is_visible())
+                            self.assertAlmostEqual(panel.evaluate('element => element.scrollTop'), target, delta=1)
+                            self.assertEqual(self.reading_position(page), before)
+                            self.assertTrue(close.evaluate('button => button === document.activeElement'))
+                        self.assertEqual(page.evaluate('helpWheelEvents'), [False] * len(steps))
+                        if view == 'text':
+                            self.assertEqual(maximum > 0, width == 390)
+                        close.press('Escape')
+                        self.assertFalse(panel.is_visible())
+                        self.assertEqual(self.reading_position(page), before)
+
+    def test_help_does_not_lock_report_scrolling_outside_or_after_close(self):
+        for report, views in [('index.html', ['text', 'compare']),
+                              ('sidecar/index.html', ['text', 'compare']), ('plain.html', ['text'])]:
+            for view in views:
+                with self.subTest(report=report, view=view):
+                    page = self.open_report(view, report=report, width=390, height=500)
+                    panel, close = self.show_help(page, view)
+                    self.assertGreater(page.evaluate('document.documentElement.scrollHeight - innerHeight'), 0)
+                    page.mouse.move(387, 250)
+                    page.mouse.wheel(0, 300)
+                    page.wait_for_function('() => scrollY > 0', timeout=5000)
+                    page.evaluate('''async () => {
+                        for (let frame = 0; frame < 8; frame++) await new Promise(requestAnimationFrame);
+                    }''')
+                    self.assertTrue(panel.is_visible())
+                    after = self.reading_position(page)
+                    bounds = panel.bounding_box()
+                    close.press('Escape')
+                    self.assertFalse(panel.is_visible())
+                    self.assertEqual(self.reading_position(page), after)
+                    page.evaluate('scrollTo(0,0)')
+                    page.mouse.move(bounds['x'] + bounds['width'] / 2, bounds['y'] + bounds['height'] * 0.7)
+                    page.mouse.wheel(0, 300)
+                    page.wait_for_function('() => scrollY > 0', timeout=5000)
+
+    def test_touch_swipes_at_help_edges_do_not_drag_the_reading_position(self):
+        for report, views in [('index.html', ['text', 'compare', 'timeline']),
+                              ('sidecar/index.html', ['text', 'compare', 'timeline']),
+                              ('plain.html', ['text']), ('timeline.html', ['timeline'])]:
+            for view in views:
+                for width, height in [(390, 500), (844, 390)]:
+                    with self.subTest(report=report, view=view, width=width):
+                        page = self.open_report(view, report=report, width=width, height=height, touch=True)
+                        panel, close = self.show_help(page, view)
+                        page.evaluate('scrollTo(0, Math.min(300, (document.documentElement.scrollHeight - innerHeight) / 2))')
+                        before = self.reading_position(page)
+                        bounds = panel.bounding_box()
+                        horizontal = bounds['x'] + bounds['width'] / 2
+                        vertical = bounds['y'] + bounds['height'] / 2
+                        distance = min(45, bounds['height'] / 4)
+                        client = page.context.new_cdp_session(page)
+                        try:
+                            def swipe(offset):
+                                client.send('Input.dispatchTouchEvent', dict(type='touchStart',
+                                    touchPoints=[dict(id=0, x=horizontal, y=vertical)]))
+                                for step in range(1, 9):
+                                    client.send('Input.dispatchTouchEvent', dict(type='touchMove',
+                                        touchPoints=[dict(id=0, x=horizontal,
+                                            y=vertical + offset * step / 8)]))
+                                client.send('Input.dispatchTouchEvent', dict(type='touchEnd', touchPoints=[]))
+                                page.evaluate('''async () => {
+                                    for (let frame = 0; frame < 8; frame++) await new Promise(requestAnimationFrame);
+                                }''')
+
+                            for bottom in [False, True]:
+                                panel.evaluate('(element, bottom) => { element.scrollTop = bottom ? element.scrollHeight : 0; }', bottom)
+                                swipe(-distance if bottom else distance)
+                                self.assertTrue(panel.is_visible())
+                                self.assertEqual(self.reading_position(page), before)
+                            if panel.evaluate('element => element.scrollHeight > element.clientHeight'):
+                                panel.evaluate('element => { element.scrollTop = 0; }')
+                                swipe(-distance)
+                                self.assertGreater(panel.evaluate('element => element.scrollTop'), 0)
+                                self.assertEqual(self.reading_position(page), before)
+                            close.press('Escape')
+                            self.assertFalse(panel.is_visible())
+                            if page.evaluate('document.documentElement.scrollHeight > innerHeight'):
+                                page.evaluate('scrollTo(0,0)')
+                                horizontal = width - 3
+                                vertical = height / 2
+                                swipe(-distance)
+                                page.wait_for_function('() => scrollY > 0', timeout=5000)
+                        finally:
+                            client.detach()
+
     def test_explicit_help_stays_open_beyond_the_old_timeout_in_all_views(self):
         pages = []
         for view in ['text', 'compare', 'timeline']:
