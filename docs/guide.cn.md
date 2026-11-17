@@ -347,6 +347,27 @@ python3 funcgraph.py --timeline --pid 1234 --graph vfs_read --vmlinux vmlinux --
 --source-url 'https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git/plain/{path}?h={rev}' --source-rev v6.18.5
 ```
 
+**没有本地内核源码树时，无需下载整个仓库。** 提供与采集匹配、带 DWARF 行号信息的
+`vmlinux`，用内置 `--fast` 解析文件路径/行号，再由 `--source-url` 只下载这些位置涉及的
+文件，按完整下载 URL 缓存，并将命中行前后各 5 行合成到离线报告。不需要传
+`--kernel-src`；多个调用点或内联帧引用同一文件时共用已下载内容。
+
+```bash
+KERNEL_REV=COMMIT_MATCHING_VMLINUX
+funcgraph trace.txt --vmlinux /path/to/vmlinux --fast --func-links \
+  --timeline --filter --enable-fold \
+  --source-url 'https://raw.githubusercontent.com/torvalds/linux/{rev}/{path}' \
+  --source-rev "$KERNEL_REV" --source-browser github --source-browser-rev "$KERNEL_REV" \
+  --output trace.html
+```
+
+将 `KERNEL_REV` 换成构建该镜像时对应的提交 SHA 或标签，不依据分析主机版本或 `latest`
+猜测；自定义补丁应使用对应源码仓库。只有 `System.map`、`kallsyms` 或剥离 DWARF 的符号表，
+不能可靠恢复指令到源码行的映射，下载源码也不能补出该映射。未找到的位置不猜测行号；
+文件下载失败时保留已解析的位置，已有缓存仍可用于重建。`--source-browser` 只设置网页跳转，
+不自动联网下载源码。无本地树、按文件请求、缓存重建和缺失信息的回归测试见
+[Text 功能验收](text-validation.md)。
+
 `--source-url` 只编码替换进去的 `{path}` 与 `{rev}`，保留模板本身的查询参数和已有编码；
 路径中的 `/` 保持目录分隔含义，版本值按单个 URL 组成部分编码。文件名里的 `#`、`?` 或 `%`
 不会截断下载地址或与其他文件共用错误的缓存。
@@ -622,6 +643,10 @@ ftrace 按时间输出所有 CPU 的事件。同时运行的任务越多、切�
 
 在过滤框中输入 `字段:值`，可以用 `AND`、`OR`、`NOT` 和括号组合，按 Enter 或 Apply 生效。也可以点下面的字段按钮，从下拉列表里选。
 
+优先级是 `NOT` 高于 `AND`、`AND` 高于 `OR`；相邻条件之间省略运算符等同于 `AND`，
+可以与显式 `AND` / `&&` 混用，不会忽略后续条件。`!` / `||` 分别等同于 `NOT` / `OR`。
+例如 `cpu:="1" pid:="7" AND comm:="worker"` 必须同时满足三个条件。
+
 字段弹窗打开后，焦点进入首个复选框或输入框，可直接用 Space、Tab 和 Enter 操作。
 **Add / OK** 追加条件并应用；**Cancel / Escape** 放弃尚未应用的选择，回到原字段按钮，
 不清空已有过滤。再次点击同一字段也可关闭。手机上第一次 Escape 只关字段弹窗，
@@ -669,7 +694,7 @@ uftrace 的混合/单地址空间报告中，`ret` 使用与 Timeline 一致的�
 
 ```
 comm:cat AND graph:anon_pipe_read             cat 进程里 anon_pipe_read 的完整调用树
-graph:vfs_read AND NOT notrace:security_      vfs_read 调用树，但去掉 security_ 开头的子树
+graph:vfs_read AND notrace:security_          vfs_read 调用树，但去掉 security_ 开头的子树
 ret:all AND comm:ls                           ls 进程里所有返回错误码的行
 irqs:d AND duration:>50                       关中断状态下耗时超过 50 us 的调用
 ```

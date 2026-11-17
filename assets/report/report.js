@@ -1080,13 +1080,10 @@
 
             function parseAnd() {
                 let left = parseNot();
-                while (peek() && peek().type === 'AND') {
-                    advance();
-                    const right = parseNot();
-                    left = { type: 'AND', left, right };
-                }
-                // Implicit AND: two conditions without operator
-                while (peek() && (peek().type === 'COND' || peek().type === 'NOT' || peek().type === 'LPAREN')) {
+                while (peek()) {
+                    const type = peek().type;
+                    if (type === 'AND') advance();
+                    else if (type !== 'COND' && type !== 'NOT' && type !== 'LPAREN') break;
                     const right = parseNot();
                     left = { type: 'AND', left, right };
                 }

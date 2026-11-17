@@ -397,6 +397,32 @@ encoding in a custom base URL is preserved.
 --source-url 'https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git/plain/{path}?h={rev}' --source-rev v6.18.5
 ```
 
+**Without a local kernel source tree, do not download the whole repository.**
+Provide a matching `vmlinux` with DWARF line information. The bundled `--fast`
+resolver finds file/line positions; `--source-url` downloads only the referenced
+files, caches each complete download URL, and embeds five context lines on each
+side of the resolved line in the offline report. No `--kernel-src` is required;
+call sites and inline frames referring to the same file reuse its contents.
+
+```bash
+KERNEL_REV=COMMIT_MATCHING_VMLINUX
+funcgraph trace.txt --vmlinux /path/to/vmlinux --fast --func-links \
+  --timeline --filter --enable-fold \
+  --source-url 'https://raw.githubusercontent.com/torvalds/linux/{rev}/{path}' \
+  --source-rev "$KERNEL_REV" --source-browser github --source-browser-rev "$KERNEL_REV" \
+  --output trace.html
+```
+
+Replace `KERNEL_REV` with the commit SHA or tag used to build that image, not
+the analysis host's version or `latest`; custom patches need their own matching
+repository. `System.map`, `kallsyms`, or a symbol table stripped of DWARF cannot
+reliably map instructions to source lines; downloading sources cannot recover
+that missing mapping. Unresolved positions are not assigned guessed lines.
+Download failures retain resolved positions, and cached files remain usable
+for rebuilds. `--source-browser` only sets external links and does not implicitly
+download sources. See [Text validation](text-validation.md) for the source-less
+tree, requested-file, cached-rebuild and missing-information regression checks.
+
 `--source-url` encodes only the substituted `{path}` and `{rev}`, preserving the
 template's own query syntax and existing escapes. Path slashes remain directory
 separators; revisions are encoded as one URL component. Filename characters such
@@ -685,6 +711,11 @@ layout can still block. See [measurements and limits](performance-text-order.md)
 
 Type `field:value` in the filter box, combine with `AND`, `OR`, `NOT` and parentheses, and press Enter or Apply. The field buttons below open drop-down lists of values.
 
+Precedence is `NOT`, then `AND`, then `OR`. Adjacent conditions imply `AND` and
+can be interleaved with explicit `AND` / `&&` without discarding later conditions.
+`!` / `||` are aliases for `NOT` / `OR`. For example,
+`cpu:="1" pid:="7" AND comm:="worker"` must satisfy all three conditions.
+
 Opening a field popup focuses its first native checkbox or input for Space, Tab
 and Enter. **Add / OK** appends and applies conditions; **Cancel / Escape**
 discards unapplied choices and returns to the field button without clearing the
@@ -739,7 +770,7 @@ Examples:
 
 ```
 comm:cat AND graph:anon_pipe_read             the complete anon_pipe_read call trees of cat
-graph:vfs_read AND NOT notrace:security_      vfs_read call trees without the security_* subtrees
+graph:vfs_read AND notrace:security_          vfs_read call trees without the security_* subtrees
 ret:all AND comm:ls                           every line of ls returning an error code
 irqs:d AND duration:>50                       calls longer than 50 us with irqs disabled
 ```
