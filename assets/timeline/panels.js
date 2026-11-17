@@ -204,7 +204,8 @@ function detailContextData(root) {
         const path = detailParents(root), first = path.ids[0];
         const outside = path.status === 'complete' && sDepth[first] > 0 ? sDepth[first] : 0;
         let count = outside ? 1 : 0;
-        for (const index of path.ids) count += 1 + Math.max(0, gapOf(index)) + Math.max(0, (detailSourceChain(index) || []).length - 1);
+        for (const index of path.ids) count += 1 + Math.max(0, gapOf(index)) +
+            (returnSiteOwner(index) === index ? Math.max(0, (detailSourceChain(index) || []).length - 1) : 0);
         data.lists.set('stack', detailList('stack', 'Call stack (' + path.ids.length + ' recorded frames)', count, function* () {
             let level = 0;
             if (outside) yield { kind: 'outside', name: '… ' + outside + ' frame(s) outside trace window', owner: first, level: 0, missing: outside };
@@ -217,7 +218,7 @@ function detailContextData(root) {
                 for (let offset = 0; offset < gap; offset++) yield withBoundary({ kind: 'untraced', name: offset === gap - 1 ? callerFn(index) : '?',
                     owner: index, depth: sDepth[index] - gap + offset, level: level++,
                     ...detailSourceFields(offset === gap - 1 && chain && chain[0][0] === callerFn(index) ? chain[0].slice(1) : null, 'call_site') });
-                if (chain) for (let frameIndex = 1; frameIndex < chain.length; frameIndex++) {
+                if (chain && returnSiteOwner(index) === index) for (let frameIndex = 1; frameIndex < chain.length; frameIndex++) {
                     const frame = chain[frameIndex];
                     yield withBoundary({ kind: 'inline', name: frame[0], owner: index, level: level++, ...detailSourceFields(frame.slice(1), 'call_site') });
                 }
@@ -315,7 +316,8 @@ function exportDetailCsv(kind) {
         'trace_line', 'exit_trace_line', 'task_index', 'pid', 'comm', 'cpu', 'return', 'call_site', 'args', 'module', 'source_file', 'source_line',
         'outside_frame_count', 'duration_' + unit, 'self_' + unit, 'start_' + unit, 'end_' + unit, 'time_mode', 'duration_basis', 'position_basis',
         'selected_slice_index', 'chain_index', 'chain_origin_slice', 'chain_top_slice', 'chain_reported_frames', 'errno', 'fate', 'path_status',
-        'source_kind', 'source_url', 'relationship', 'relationship_basis', 'tail_jump_sites', 'trace_binary_version_verified'];
+        'source_kind', 'source_url', 'relationship', 'relationship_basis', 'tail_jump_sites', 'trace_binary_version_verified',
+        'source_context_owner_slice_index', 'source_context_basis'];
     if (D.uftrace) columns.push('space', 'address_space_boundary');
     function* rows() {
         let position = 0;
@@ -336,7 +338,9 @@ function exportDetailCsv(kind) {
                 evidence ? 'tail_jump_evidence' : traced && sFlags[index] & FL.MISMATCH ? 'caller_mismatch_unresolved' : '',
                 evidence ? 'supplied_binary_static' : '',
                 evidence ? evidence.sites.map(site => site.symbol || site.address).join('; ') : '',
-                evidence ? 'false' : '', ...(D.uftrace ? [traced ? spaceOf(index) : '', traced && (sFlags[index] & FL.BOUNDARY) ? 'user_to_kernel' : ''] : [])];
+                evidence ? 'false' : '', traced && sCaller && sCaller[index] >= 0 ? returnSiteOwner(index) : '',
+                traced && sCaller && sCaller[index] >= 0 ? returnSiteOwner(index) === index ? 'recorded_return_site' : 'shared_recorded_return_site' : '',
+                ...(D.uftrace ? [traced ? spaceOf(index) : '', traced && (sFlags[index] & FL.BOUNDARY) ? 'user_to_kernel' : ''] : [])];
         }
     }
     downloadTimelineCsv('funcgraph-context-' + kind + '-' + (MODE === 'count' ? 'count' : adjOn ? 'adjusted' : 'raw') + '.csv', columns, rows());
@@ -473,7 +477,8 @@ function showDetail(i) {
     if (userDetail) h += kv('recorded address', detailToken('raw', userDetail.address) + '<div class="tl-context-note">Function entry address, not the call site.</div>');
     h += kv('trace lines', lineLink(sLine[i]) + (sEline && sEline[i] && sEline[i] !== sLine[i] ? ' → ' + lineLink(sEline[i]) : ''));
     h += '</div>' +
-        '<details class="tl-cs" open><summary class="tl-sec">' + (f & FL.USER ? userCallSite(i) ? 'User call site source' : 'User function source (entry)' : D.uftrace && !D.sources?.callers?.[sCaller?.[i]]?.length ? 'Kernel function source' : 'Call site source') + '</summary><div class="tl-cs-src"></div></details></div><div>';
+        '<details class="tl-cs" open><summary class="tl-sec">' + (returnSiteOwner(i) !== i ? 'Shared return-site source' : f & FL.USER ? userCallSite(i) ? 'User call site source' : 'User function source (entry)' : D.uftrace && !D.sources?.callers?.[sCaller?.[i]]?.length ? 'Kernel function source' : 'Call site source') + '</summary>' +
+        (returnSiteOwner(i) !== i ? '<div class="tl-context-note">' + esc(sharedReturnSiteText(i)) + '</div>' : '') + '<div class="tl-cs-src"></div></details></div><div>';
     h += breakdownHtml(i);
     if (context.lists.has('error')) h += detailListHtml('error');
     h += detailListHtml('stack') + detailContextHint();

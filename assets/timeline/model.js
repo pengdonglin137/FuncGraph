@@ -82,6 +82,23 @@ yield 'Building inline frames…';
 const INL = D.inline || {};
 const HAS_INL = Object.keys(INL).length > 0;
 function inlChain(i) { return i < N && sCaller && sCaller[i] >= 0 ? (INL[sCaller[i]] || null) : null; }
+const sReturnSiteOwner = new Int32Array(N);
+function returnSiteOwner(index) { return index >= 0 && index < N ? sReturnSiteOwner[index] : index; }
+function sharesReturnSite(index, parent) {
+    if (parent < 0 || parent >= index || !sCaller || sCaller[index] < 0 || sCaller[index] !== sCaller[parent]) return false;
+    if ((sFlags[index] | sFlags[parent]) & (FL.ORPHAN | FL.BOUNDARY) || sName[index] === sName[parent]) return false;
+    const chain = inlChain(index);
+    if (!(sFlags[index] & FL.MISMATCH) && (!chain || chain[0][0].split('.')[0] === nameOf(parent).split('.')[0])) return false;
+    return sTask[index] === sTask[parent] &&
+        sDepth[index] === sDepth[parent] + 1 && (!sMod || sMod[index] === sMod[parent]) &&
+        (sFlags[index] & (FL.USER | FL.CTX | FL.CTXINF)) === (sFlags[parent] & (FL.USER | FL.CTX | FL.CTXINF)) &&
+        sStart[index] >= sStart[parent] && sEnd[index] <= sEnd[parent];
+}
+function sharedReturnSiteText(index) {
+    const owner = returnSiteOwner(index);
+    return owner === index ? '' : 'Same recorded return site as ' + nameOf(owner) +
+        '; its source/inline context is displayed once; no additional inline entry is inferred.';
+}
 const SYN = [];               // per synthetic slice: {k, chain, kids: [real child indices], p}
 let NA = N;
 const sLd = new Int32Array(N);  // depth in the inline view (traced frames + inline frames above)
@@ -113,8 +130,9 @@ yield* (function* buildInline() {
     for (let i = 0; i < N; i++) {
         if ((++prepared & (PREPARE_BATCH - 1)) === 0) yield 'Building inline frames…';
         const p = sParent[i];
+        sReturnSiteOwner[i] = sharesReturnSite(i, p) ? sReturnSiteOwner[p] : i;
         const ch = inlChain(i);
-        const n = ch ? ch.length - 1 : 0;
+        const n = ch && returnSiteOwner(i) === i ? ch.length - 1 : 0;
         // levels the kernel skipped (untraced frames, see buildGhosts) sit between parent and call site
         const base = p >= 0 ? sLd[p] + (sDepth[i] - sDepth[p] - 1) : sDepth[i] - 1;
         sLd[i] = base + 1 + n;
@@ -173,9 +191,10 @@ function tailJumpOf(index) {
 }
 function callerRelationText(index) {
     const evidence = tailJumpOf(index);
-    if (evidence) return 'Supplied binary has a direct tail jump from ' + nameOf(sParent[index]) + ' to ' + nameOf(index) +
+    const shared = sharedReturnSiteText(index);
+    if (evidence) return (shared ? shared + ' ' : '') + 'Supplied binary has a direct tail jump from ' + nameOf(sParent[index]) + ' to ' + nameOf(index) +
         '. Static evidence, not a captured branch; trace/binary version is not verified. Recorded nesting and durations are unchanged.';
-    let text = 'Caller differs from recorded parent; tail calls, inlining or untraced code may explain the difference. Cause unresolved.';
+    let text = (shared ? shared + ' ' : '') + 'Caller differs from recorded parent; tail calls, inlining or untraced code may explain the difference. Cause unresolved.';
     if (!D.tail_calls) text += ' Use --tail-calls with the matching --vmlinux for static evidence.';
     else {
         const parent = sParent[index];

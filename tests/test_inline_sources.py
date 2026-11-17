@@ -35,7 +35,7 @@ class InlineSourceBrowserTest(unittest.TestCase):
                 "       printf ' (inlined by) traced_outer")
             Path(kernel.ksrc, 'scripts/faddr2line').write_text(resolver)
             trace = Path(kernel.dir, 'trace.txt')
-            trace.write_text(TRACE)
+            trace.write_text(TRACE.replace('parent() { /* <-root+0x1/0x20 */', 'parent() {'))
             extra = [] if text else ['--no-text-view', '--keep-source']
             destination = 'report.html' if mode == 'single' else 'report'
             kernel.run(str(trace), '--no-config', '--no-btf', '--timeline', '--enable-fold',

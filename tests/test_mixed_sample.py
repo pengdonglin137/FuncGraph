@@ -339,6 +339,37 @@ class MixedSampleBrowserTest(unittest.TestCase):
                 self.assertEqual(page.locator('[data-trace-event="1"]:visible').count(), events)
                 self.assertEqual(errors, [])
 
+    def test_published_read_paths_share_one_inline_context_without_losing_recorded_calls(self):
+        for report in (ROOT / 'sample.html', REPORT):
+            with self.subTest(report=report.name):
+                page, errors, _requests = self.open_page(report.as_uri())
+                page.evaluate("async () => { await fgSwitchView('timeline'); fgView('timeline').probe().inline(true); }")
+                snapshot = page.evaluate("JSON.stringify(fgData.read('tlData'))")
+                result = page.evaluate('''() => {
+                    const model = fgView('timeline').probe();
+                    const frames = model.SYN.map((frame,offset) => ({frame,index:model.N+offset}))
+                        .filter(({frame}) => frame.chain?.[frame.k][0] === 'new_sync_read');
+                    const calls = ['ext4_file_read_iter','generic_file_read_iter','filemap_read']
+                        .map(name => Array.from(model.sName).slice(0,model.N).findIndex(index => model.S[index] === name));
+                    model.select(calls[2]);
+                    return {frames:frames.map(({index}) => index),calls};
+                }''')
+                self.assertEqual(len(result['frames']), 1)
+                self.assertTrue(all(index >= 0 for index in result['calls']))
+                names = page.locator('[data-context-list=stack] .tl-code-symbol').all_text_contents()
+                self.assertEqual(names.count('new_sync_read'), 1)
+                for name in ('ext4_file_read_iter', 'generic_file_read_iter', 'filemap_read'):
+                    self.assertIn(name, names)
+                for name in ('generic_file_read_iter', 'filemap_read'):
+                    row = page.locator('[data-context-list=stack] [data-context-kind=traced]').filter(
+                        has=page.locator('.tl-code-symbol', has_text=name))
+                    self.assertEqual(row.locator('.tl-tail-tag').count(), 1 if report.name == 'sample.html' else 0)
+                page.evaluate("index => fgView('timeline').probe().select(index)", result['frames'][0])
+                page.locator('.tl-cs .source-line').first.wait_for(state='attached')
+                self.assertEqual(page.locator('.tl-cs .src-frame[open] summary b').all_text_contents(), ['new_sync_read'])
+                self.assertEqual(page.evaluate("JSON.stringify(fgData.read('tlData'))"), snapshot)
+                self.assertEqual(errors, [])
+
     def test_offline_report_timeline_text_filter_fold_and_source(self):
         page, errors, requests = self.open_page(REPORT.as_uri(), dpr=1.25)
         page.get_by_role('button', name='Timeline', exact=True).click()

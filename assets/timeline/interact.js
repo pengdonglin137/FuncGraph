@@ -192,7 +192,7 @@ function tipSlice(i) {
     const userSource = f & FL.USER ? userSite || userPosition(i) : null;
     if (userSource) h += row(userSite ? 'call site' : 'function entry', esc(userSource[0] + ':' + userSource[1]));
     const il = inlineLine(i);
-    if (il) h += row('inlined in', esc(il));
+    if (il) h += row(returnSiteOwner(i) === i ? 'inlined in' : 'return-site inline context', esc(il));
     const a = argsOf(i);
     const namedArgs = namedArgsOf(i) || a;
     if (namedArgs) h += row('args', esc(namedArgs.length > 180 ? namedArgs.slice(0, 180) + '…' : namedArgs));
