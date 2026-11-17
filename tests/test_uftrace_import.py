@@ -117,7 +117,7 @@ class UftraceImportTest(unittest.TestCase):
             self.assertFalse(cols['flags'][index] & timeline.F_HAS_LAT)
             self.assertIsNone(builder.parsed[cols['line'][index] - 1].preempt_depth)
         for lineno, expected in ((cols['line'][2], ('D', 'n', '.', '3')),
-                                 (cols['line'][3], ('.', '.', 'Z', '0')),
+                                 (cols['line'][3], ('.', '.', 'Z', '.')),
                                  (cols['eline'][3], ('d', '.', 's', '1'))):
             row = builder.parsed[lineno - 1]
             self.assertEqual((row.irqs_off, row.need_resched, row.hardirq_softirq, row.preempt_depth), expected)
@@ -144,8 +144,7 @@ class UftraceImportTest(unittest.TestCase):
                 for preempt in range(256):
                     expected = linux_latency(raw, preempt, lazy)
                     flags, context, latency = uftrace._latency(dict(common_flags=raw, common_preempt_count=preempt), lazy)
-                    self.assertEqual(latency[:3], expected[:3])
-                    self.assertEqual(latency[3:], f'{preempt & 15:x}{preempt >> 4:x}')
+                    self.assertEqual(latency, expected)
                     self.assertEqual((flags, context), timeline.TimelineBuilder._lat_flags(expected))
 
     def test_kernel_release_disambiguates_reused_flag_bit_and_missing_data(self):

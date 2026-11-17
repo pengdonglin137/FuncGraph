@@ -229,7 +229,8 @@ def _latency(record, lazy_resched):
         irq_char = 'X'
     resched = bool(raw & 0x04) + 2 * bool(raw & 0x20) + 4 * bool(lazy_resched and raw & 0x02)
     ctx_char = ('Z' if hard else 'z') if nmi else '.hsH'[hard + 2 * soft]
-    lat = irq_char + '.npNlbLB'[resched] + ctx_char + f'{preempt & 0xf:x}{preempt >> 4:x}'
+    depths = '.123456789abcdef'
+    lat = irq_char + '.npNlbLB'[resched] + ctx_char + depths[preempt & 0xf] + depths[preempt >> 4]
     flags, context = TimelineBuilder._lat_flags(lat)
     return flags, context, lat
 

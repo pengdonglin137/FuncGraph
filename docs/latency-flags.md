@@ -63,8 +63,10 @@ slice flags describe its recorded entry, not every flag change during the call.
   libtraceevent latency formatter does not preserve all current combinations,
   so it is not used to normalize these columns. Event payload formatting still
   uses libtraceevent.
-- Patched uftrace streams decode the same common fields. User calls without
-  recorded kernel latency data do not gain invented kernel flags.
+- Patched uftrace streams decode the same common fields and use the same
+  five-character format, including dots for zero depth and lowercase hexadecimal
+  digits for nonzero depth. User calls without recorded kernel latency data do
+  not gain invented kernel flags.
 - In the upstream flag layout, bit `0x02` was reused for lazy rescheduling from
   Linux 6.13; older captures use it for unavailable IRQ support. Binary inputs
   use the **recorded** kernel release, never the analysis host's version. An
@@ -81,7 +83,8 @@ slice flags describe its recorded entry, not every flag change during the call.
   independent expectations for IRQ/BH, all eight reschedule states, nested
   contexts and both depth nibbles.
 - uftrace decoding: the same full Cartesian product for both legacy and modern
-  interpretations of bit `0x02`.
+  interpretations of bit `0x02`, checking the complete five-character string
+  as well as the decoded Timeline flags.
 - Text parsing: every flag byte, every value in each depth nibble and representative
   combined depths, with/without absolute timestamps and with four/five columns.
 - Native raw containers: the same flag/nibble cases in both endiannesses and
