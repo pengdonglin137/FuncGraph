@@ -53,6 +53,173 @@ class TimelineFullscreenTest(unittest.TestCase):
         self.page.evaluate("async () => { await fgSwitchView('timeline'); }")
         self.page.locator('.tl-canvas').wait_for()
 
+    def open_short_report(self, url, native, touch, theme, height=240):
+        self.context.close()
+        self.context = self.browser.new_context(viewport={'width': 320, 'height': height},
+                                                has_touch=touch, is_mobile=touch)
+        self.page = self.context.new_page()
+        self.page.set_default_timeout(5000)
+        self.page.on('pageerror', lambda error: self.errors.append(str(error)))
+        if not native:
+            self.page.add_init_script('Element.prototype.requestFullscreen = undefined;')
+        self.page.goto(url)
+        self.page.evaluate('''async theme => {
+            document.documentElement.dataset.theme = theme;
+            await fgSwitchView('timeline');
+            fgView('timeline').probe().select(0);
+            window.shortViewportInput = JSON.stringify(fgData.read('tlData'));
+        }''', theme)
+        before = self.remember_state()
+        self.page.locator('[data-act=max]').click()
+        self.wait_mode(True)
+        self.assertEqual(self.page.evaluate('!!document.fullscreenElement'), native)
+        self.page.locator('#timelineView').evaluate('element => element.scrollTop = 0')
+        return before
+
+    def wait_for_root_scroll(self):
+        from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
+
+        try:
+            self.page.wait_for_function('() => document.getElementById("timelineView").scrollTop > 0', timeout=2000)
+        except PlaywrightTimeoutError:
+            pass
+        self.assertGreater(self.page.locator('#timelineView').evaluate('element => element.scrollTop'), 0,
+                           'The short full-screen report must be scrollable without programmatic scrolling')
+
+    def test_short_fullscreen_wheel_reaches_detail_controls_without_shrinking_chart(self):
+        mixed = str(Path(helpers.ROOT) / 'samples/sample_mixed.jsonl')
+        for population, trace, mode in [('kernel', helpers.fixture('pi4_sched'), 'single'),
+                                        ('kernel', helpers.fixture('pi4_sched'), 'sidecar'),
+                                        ('mixed', mixed, 'single'), ('mixed', mixed, 'sidecar')]:
+            output = 'short-' + population + ('.html' if mode == 'single' else '-sidecar')
+            self.kernel.run(trace, '--timeline', '--filter', '--enable-fold', '--report-mode', mode, out=output)
+            with create_server(Path(self.kernel.dir) / output) as server:
+                thread = threading.Thread(target=server.serve_forever, daemon=True)
+                thread.start()
+                try:
+                    for native, touch, theme in product((True, False), (True, False), ('light', 'dark')):
+                        with self.subTest(population=population, mode=mode, native=native, touch=touch, theme=theme):
+                            before = self.open_short_report(server.url, native, touch, theme)
+                            root = self.page.locator('#timelineView')
+                            self.assertGreater(root.evaluate('element => element.scrollHeight - element.clientHeight'), 0)
+                            requests = []
+                            self.page.on('request', lambda request: requests.append(request.url))
+                            self.page.mouse.move(3, 120)
+                            self.page.mouse.wheel(0, 600)
+                            self.wait_for_root_scroll()
+                            self.assertGreaterEqual(self.page.locator('.tl-stage').bounding_box()['height'], 160)
+                            self.assert_state(before)
+                            expand = self.page.locator('[data-detail-expand]')
+                            expand.scroll_into_view_if_needed()
+                            expand.click()
+                            self.assertTrue(root.evaluate('element => element.classList.contains("tl-detail-expanded")'))
+                            self.assert_state(before)
+                            expand.click()
+                            self.assertGreaterEqual(self.page.locator('.tl-stage').bounding_box()['height'], 160)
+                            self.assert_state(before)
+                            self.assertTrue(self.page.evaluate("JSON.stringify(fgData.read('tlData')) === shortViewportInput"))
+                            self.assertEqual(requests, [])
+                            close = self.page.locator('.tl-detail .tl-close')
+                            close.scroll_into_view_if_needed()
+                            close.click()
+                            self.assertFalse(self.page.locator('.tl-detail').is_visible())
+                            exit_button = self.page.locator('[data-act=max]')
+                            exit_button.scroll_into_view_if_needed()
+                            exit_button.click()
+                            self.wait_mode(False)
+                            self.assertEqual(root.evaluate('element => element.scrollTop'), 0)
+                finally:
+                    server.shutdown()
+                    thread.join(timeout=5)
+
+    def test_short_fullscreen_touch_scroll_preserves_view_and_stops_at_boundaries(self):
+        for native in (True, False):
+            with self.subTest(native=native):
+                before = self.open_short_report(self.url, native, True, 'dark')
+                session = self.context.new_cdp_session(self.page)
+                def swipe(distance):
+                    start = 120 - distance / 2
+                    session.send('Input.dispatchTouchEvent', dict(type='touchStart',
+                        touchPoints=[dict(id=0, x=3, y=start)]))
+                    for step in range(1, 9):
+                        session.send('Input.dispatchTouchEvent', dict(type='touchMove',
+                            touchPoints=[dict(id=0, x=3, y=start + distance * step / 8)]))
+                    session.send('Input.dispatchTouchEvent', dict(type='touchEnd', touchPoints=[]))
+                    self.page.evaluate('''async () => {
+                        for (let frame = 0; frame < 8; frame++) await new Promise(requestAnimationFrame);
+                    }''')
+                swipe(-160)
+                self.wait_for_root_scroll()
+                self.assertEqual(self.page.evaluate('scrollY'), 0)
+                self.assert_state(before)
+                for repeat in range(3):
+                    swipe(-160)
+                self.assertEqual(self.page.evaluate('scrollY'), 0)
+                for repeat in range(4):
+                    swipe(160)
+                self.page.wait_for_function('() => document.getElementById("timelineView").scrollTop === 0')
+                self.assert_state(before)
+                self.assertTrue(self.page.evaluate("JSON.stringify(fgData.read('tlData')) === shortViewportInput"))
+                session.detach()
+
+    def test_fullscreen_root_scroll_dismisses_stale_hover_and_moved_actions(self):
+        self.open_short_report(self.url, False, False, 'light', height=320)
+        coordinates = self.page.evaluate('fgView("timeline").probe().xyOf(0)')
+        self.page.mouse.move(*coordinates)
+        self.page.locator('.tl-tip').wait_for(state='visible')
+        self.page.locator('#timelineView').evaluate('element => element.scrollTop = 12')
+        self.page.locator('.tl-tip').wait_for(state='hidden')
+        trigger = self.page.locator('[data-call-actions]')
+        trigger.scroll_into_view_if_needed()
+        trigger.click()
+        menu = self.page.locator('.tl-call-actions-panel')
+        self.assertTrue(menu.is_visible())
+        self.page.locator('#timelineView').evaluate('element => element.scrollTop = element.scrollTop > 0 ? 0 : 12')
+        menu.wait_for(state='hidden')
+        self.assertEqual(trigger.get_attribute('aria-expanded'), 'false')
+        self.assertTrue(trigger.evaluate('element => element === document.activeElement'))
+        self.page.locator('#timelineView').evaluate('element => element.scrollTop = 0')
+        self.page.locator('[data-act=options]').click()
+        self.page.locator('#timelineView').evaluate('element => element.scrollTop = 12')
+        self.page.evaluate('''async () => {
+            await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+        }''')
+        tools = self.page.locator('.tl-options')
+        bounds = tools.bounding_box()
+        self.assertGreaterEqual(bounds['y'], 0)
+        self.assertLessEqual(bounds['y'] + bounds['height'], 320)
+        self.assertTrue(tools.evaluate('''element => { const bounds = element.getBoundingClientRect();
+            return element.contains(document.elementFromPoint(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2)); }'''))
+
+    def test_short_fullscreen_tab_reaches_expand_and_native_keyboard_activation(self):
+        before = self.open_short_report(self.url, True, False, 'dark')
+        for attempt in range(30):
+            if self.page.evaluate('document.activeElement.matches("[data-detail-expand]")'):
+                break
+            self.page.keyboard.press('Tab')
+        self.assertTrue(self.page.evaluate('document.activeElement.matches("[data-detail-expand]")'))
+        self.page.keyboard.press('Enter')
+        self.assertTrue(self.page.locator('#timelineView').evaluate('element => element.classList.contains("tl-detail-expanded")'))
+        self.assert_state(before)
+        self.page.keyboard.press('Space')
+        self.assertFalse(self.page.locator('#timelineView').evaluate('element => element.classList.contains("tl-detail-expanded")'))
+        self.assert_state(before)
+
+    def test_regular_fullscreen_does_not_gain_an_unnecessary_outer_scrollbar(self):
+        self.open_report()
+        before = self.remember_state()
+        self.page.locator('[data-act=max]').click()
+        self.wait_mode(True)
+        root = self.page.locator('#timelineView')
+        self.assertLessEqual(root.evaluate('element => element.scrollHeight - element.clientHeight'), 1)
+        self.page.mouse.move(3, 400)
+        self.page.mouse.wheel(0, 400)
+        self.page.evaluate('''async () => {
+            await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+        }''')
+        self.assertEqual(root.evaluate('element => element.scrollTop'), 0)
+        self.assert_state(before)
+
     def wait_mode(self, active):
         self.page.wait_for_function('active => document.getElementById("timelineView").classList.contains("tl-fullscreen") === active', arg=active)
         self.page.wait_for_function('() => !document.querySelector("[data-act=max]").disabled')

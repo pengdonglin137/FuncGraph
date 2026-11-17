@@ -979,6 +979,8 @@ Timeline 的 **Open in Text**、**Enter** 和真实 trace 行号链接统一聚�
 不会覆盖新的跳行、输入或焦点选择。原生焦点恢复可能晚于 `fullscreenElement`
 清空的时刻，见[文本跳转与全屏焦点](detail-layout.md#text-handoff-and-full-screen-focus--文本跳转与全屏焦点)。
 
+窗口极矮、工具栏与最小图表/详情高度无法同时容纳时，全屏 Timeline 区域允许整体竖向滚动，让详情及其展开、关闭入口仍可访问；不自动隐藏图表，也不把图表压缩到 160px 以下。普通窗口的分屏方式不变。滚动会清理旧悬窗和已移位的 Actions 菜单，Tools 会重新定位，不改变选择、时间范围、筛选或保存的分屏比例。参见[短窗口全屏说明与验证](fullscreen-short-viewports.md)。
+
 ### 6.6 搜索和过滤
 
 选中一个真实调用，打开详情的 **Actions → Focus this task / Focus this function**，

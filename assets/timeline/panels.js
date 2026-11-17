@@ -1681,6 +1681,11 @@ new MutationObserver(() => { palette(); draw(); scheduleDistHistogram(); })
     .observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
 window.addEventListener('resize', () => { if (window.fgCurrentView() === 'timeline') { resize(); sizeDetailHead(); } });
 window.addEventListener('scroll', scheduleToolbarOverlays, { passive: true });
+tlRoot.addEventListener('scroll', () => {
+    hideTip();
+    closeMovedCallActions();
+    scheduleToolbarOverlays();
+}, { passive: true });
 window.visualViewport?.addEventListener('resize', scheduleToolbarOverlays);
 window.visualViewport?.addEventListener('scroll', scheduleToolbarOverlays);
 if (typeof ResizeObserver !== 'undefined') {

@@ -1064,6 +1064,8 @@ or input/focus choice. Native focus restoration may follow the full-screen exit
 event rather than the first frame where `fullscreenElement` is null. See
 [Text handoff details](detail-layout.md#text-handoff-and-full-screen-focus--文本跳转与全屏焦点).
 
+When a very short viewport cannot fit the toolbar and minimum chart/detail heights, the full-screen Timeline region can scroll vertically so details and their expand/close controls remain reachable. It does not automatically hide the chart or shrink it below 160px. Ordinary split layouts remain unchanged. Scrolling dismisses stale hover and moved Actions menus and repositions Tools without changing selection, time range, filters or the saved split. See [short full-screen behavior and validation](fullscreen-short-viewports.md).
+
 ### 6.6 Search and filter
 
 Select a real call, then choose **Actions → Focus this task / Focus this function**

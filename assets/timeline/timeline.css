@@ -91,7 +91,7 @@
 .tl-fullscreen-button { order: 2; }
 .tl-primary [data-act=help] { order: 3; }
 .tl-fullscreen-button[aria-pressed=true] { color: var(--link-color); border-color: currentColor; }
-#timelineView.tl-fullscreen { position: fixed; inset: 0; z-index: 1000; box-sizing: border-box; width: 100%; max-width: none; margin: 0; padding: 8px; overflow: hidden; background: var(--container-bg); }
+#timelineView.tl-fullscreen { position: fixed; inset: 0; z-index: 1000; box-sizing: border-box; width: 100%; max-width: none; margin: 0; padding: 8px; overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; background: var(--container-bg); }
 #timelineView:fullscreen { box-sizing: border-box; background: var(--container-bg); }
 #timelineView.tl-fullscreen .tl-space-key { display: none; }
 .tl-label { color: var(--text-muted); font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
