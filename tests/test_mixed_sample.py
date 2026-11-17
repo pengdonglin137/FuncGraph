@@ -310,6 +310,34 @@ class MixedSampleBrowserTest(unittest.TestCase):
         page.goto(url)
         return page, errors, requests
 
+    def test_published_samples_keep_preempt_correction_internal_without_losing_flags(self):
+        for report in (ROOT / 'sample.html', REPORT):
+            with self.subTest(report=report.name):
+                page, errors, _ = self.open_page(report.as_uri())
+                page.evaluate("async () => { await fgSwitchView('timeline'); }")
+                original = page.evaluate('JSON.stringify(fgData.read("tlData"))')
+                indices = page.evaluate('''() => {
+                    const data = fgData.read('tlData'), base = data.preempt_base || 0;
+                    return [false, true].map(disabled => data.cols.flags.findIndex(flags =>
+                        (flags & (1 << 15)) && !(flags & (1 << 17)) &&
+                        ((((flags >> 7) & 15) > base) === disabled)));
+                }''')
+                for index, disabled in zip(indices, (False, True)):
+                    self.assertGreaterEqual(index, 0)
+                    page.evaluate("index => fgView('timeline').probe().select(index)", index)
+                    flags = page.locator('.tl-call-facts > .k').filter(has_text='flags')
+                    value = flags.locator('xpath=following-sibling::span[1]').inner_text()
+                    self.assertIn('preempt ', value)
+                    self.assertNotIn('baseline', value)
+                    self.assertNotIn('preemptible', value)
+                    badge = page.locator('.tl-slice-head .tl-pill').filter(has_text='preempt off')
+                    self.assertEqual(badge.count(), int(disabled))
+                    if disabled:
+                        self.assertIn('(inferred)', badge.get_attribute('title'))
+                    self.assertNotIn('baseline', ' '.join(page.locator('.tl-note').all_text_contents()))
+                self.assertEqual(page.evaluate('JSON.stringify(fgData.read("tlData"))'), original)
+                self.assertEqual(errors, [])
+
     def test_published_samples_toggle_events_without_changing_calls_or_evidence(self):
         for report, rows, events in ((ROOT / 'sample.html', 739, 10), (REPORT, 1504, 74)):
             with self.subTest(report=report.name):

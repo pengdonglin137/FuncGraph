@@ -1670,7 +1670,7 @@ function showSections() {
     if (!D.caps.latency) {
         openWindowPanel(h + '<div class="an-hint">Needs <code>options/latency-format</code> (irqs-off / preempt-depth / BH flags).</div>'); return;
     }
-    h += windowTimeHint() + '<div class="an-hint" style="padding:6px 12px 0">Regions where a task ran with ' + SEC_NAMES[AN.secKind] + ' (task context; preempt depth above the trace baseline ' + (D.preempt_base || 0) + '). ' +
+    h += windowTimeHint() + '<div class="an-hint" style="padding:6px 12px 0">Regions where a task ran with ' + SEC_NAMES[AN.secKind] + ' (task context; preempt depth excludes inferred tracing overhead). ' +
         'The flag changes inside untraced code, so start/end are the traced frames around the change. ' +
         'Self times are proportional overlap estimates from matching calls, not exact on-CPU or causal attribution. Overhead changes self estimates, not section positions or lengths.</div>';
     if (!order.rows.length) {

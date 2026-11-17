@@ -4174,8 +4174,13 @@ class BrowserSmokeTest(unittest.TestCase):
         self.assertTrue(label.is_visible())
         value = label.locator('xpath=following-sibling::span[1]').inner_text()
         for expected in ['irqs off', 'BH off', 'need-resched + preempt (N)', 'preempt 3',
-                         'migrate-off 2', 'baseline 1', 'preemption disabled 2 levels']:
+                         'migrate-off 2']:
             self.assertIn(expected, value)
+        self.assertNotIn('baseline', value)
+        self.assertNotIn('preemptible', value)
+        badge = self.page.locator('.tl-slice-head .tl-pill').filter(has_text='preempt off')
+        self.assertEqual(badge.inner_text(), 'preempt off ×2')
+        self.assertEqual(badge.get_attribute('title'), 'Recorded preempt count 3; tracing-adjusted depth 2 (inferred)')
         self.assertEqual(self.page.locator('[data-trace-metadata], .tl-metadata').count(), 0)
         self.assertEqual(self.page.get_by_text('Trace metadata', exact=True).count(), 0)
         self.assertEqual(self.page.locator('.tl-call-facts > .k').all_text_contents(),
@@ -4193,6 +4198,33 @@ class BrowserSmokeTest(unittest.TestCase):
         self.assertTrue(label.is_visible())
         self.assertEqual(label.locator('xpath=following-sibling::span[1]').inner_text(), 'none')
 
+    def test_timeline_preempt_correction_stays_internal_without_changing_recorded_flags(self):
+        for entry_base, raw_depth, corrected_depth in ((0, 0, 0), (0, 1, 1), (1, 1, 0), (1, 3, 2)):
+            with self.subTest(entry_base=entry_base, raw_depth=raw_depth):
+                self.ev("fgSwitchView('text')")
+                self.page.reload()
+                self.open_range_data(['recorded'], columns={'flags': [(1 << 15) | (raw_depth << 7)]},
+                                     extra={'preempt_base': entry_base, 'preempt_exit_base': entry_base})
+                original = self.ev('JSON.stringify(fgData.read("tlData"))')
+                self.ev("fgView('timeline').probe().select(0)")
+                label = self.page.locator('.tl-call-facts > .k').filter(has_text='flags')
+                self.assertEqual(label.locator('xpath=following-sibling::span[1]').inner_text(),
+                                 'preempt ' + str(raw_depth) if raw_depth else 'none')
+                facts = self.page.locator('.tl-call-facts').inner_text()
+                self.assertNotIn('baseline', facts)
+                self.assertNotIn('preemptible', facts)
+                self.assertNotIn('baseline', ' '.join(self.page.locator('.tl-note').all_text_contents()))
+                badge = self.page.locator('.tl-slice-head .tl-pill').filter(has_text='preempt off')
+                self.assertEqual(badge.count(), int(corrected_depth > 0))
+                if corrected_depth:
+                    self.assertEqual(badge.get_attribute('title'),
+                                     f'Recorded preempt count {raw_depth}; tracing-adjusted depth {corrected_depth} (inferred)')
+                self.ev("fgView('timeline').probe().sections()")
+                hints = ' '.join(self.page.locator('.an-hint').all_text_contents())
+                self.assertNotIn('baseline', hints)
+                self.assertIn('preempt depth excludes inferred tracing overhead', hints)
+                self.assertEqual(self.ev('JSON.stringify(fgData.read("tlData"))'), original)
+
     def test_timeline_schedule_ignores_event_and_return_offsets_without_hiding_atomic_calls(self):
         path = os.path.join(self.k.dir, 'preempt-record-kinds.txt')
         text = ('1000.000100 |   0)   sh-7 |  ..... |               |  /* sched_process_exec: filename=/bin/sh pid=7 */\n'
@@ -4208,13 +4240,15 @@ class BrowserSmokeTest(unittest.TestCase):
         data = self.ev('fgData.read("tlData")')
         self.assertEqual((data['preempt_base'], data['preempt_exit_base']), (1, 0))
         self.ev("fgView('timeline').probe().select(0)")
-        self.assertIn('preempt 1 (baseline 1: preemptible)', self.page.locator('.tl-call-facts').inner_text())
+        self.assertIn('preempt 1', self.page.locator('.tl-call-facts').inner_text())
+        self.assertNotIn('baseline', self.page.locator('.tl-call-facts').inner_text())
+        self.assertNotIn('preemptible', self.page.locator('.tl-call-facts').inner_text())
         self.assertEqual(self.page.locator('.tl-call-facts > .v.err').count(), 0)
         self.assertNotIn('preempt off', self.page.locator('.tl-slice-head').inner_text())
-        self.assertIn('entry 1, return 0',
-                      self.page.locator('.tl-note').filter(has_text='Inferred function_graph preempt baseline').inner_text())
+        self.assertNotIn('baseline', ' '.join(self.page.locator('.tl-note').all_text_contents()))
         self.ev("fgView('timeline').probe().select(1)")
-        self.assertIn('preemption disabled 1 level', self.page.locator('.tl-call-facts').inner_text())
+        self.assertIn('preempt 2', self.page.locator('.tl-call-facts').inner_text())
+        self.assertIn('preempt off', self.page.locator('.tl-slice-head').inner_text())
         self.assertIn('sleeping function in atomic context', self.page.locator('.tl-call-facts').inner_text())
         self.assertEqual(self.ev('fgData.read("tlData")'), data)
 
@@ -4226,11 +4260,12 @@ class BrowserSmokeTest(unittest.TestCase):
                                      columns={'flags': [(1 << 15) | (1 << 7), (1 << 15) | (1 << 7) | (1 << 17)]},
                                      extra={'preempt_base': 1, 'preempt_exit_base': exit_base})
                 self.ev("fgView('timeline').probe().select(0)")
-                self.assertIn('baseline 1: preemptible', self.page.locator('.tl-call-facts').inner_text())
+                self.assertIn('preempt 1', self.page.locator('.tl-call-facts').inner_text())
+                self.assertNotIn('preempt off', self.page.locator('.tl-slice-head').inner_text())
                 self.ev("fgView('timeline').probe().select(1)")
-                expected = 'preemption disabled 1 level' if expected_depth else 'preemptible'
-                self.assertIn('baseline ' + str(1 if exit_base is None else exit_base) + ': ' + expected,
-                              self.page.locator('.tl-call-facts').inner_text())
+                self.assertIn('preempt 1', self.page.locator('.tl-call-facts').inner_text())
+                self.assertNotIn('baseline', self.page.locator('.tl-call-facts').inner_text())
+                self.assertNotIn('preemptible', self.page.locator('.tl-call-facts').inner_text())
                 self.assertEqual('preempt off' in self.page.locator('.tl-slice-head').inner_text(), bool(expected_depth))
                 self.ev('async () => { await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))); }')
                 self.page.mouse.move(0, 0)

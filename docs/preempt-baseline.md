@@ -9,6 +9,13 @@ not turn a normal `schedule()` entry into an atomic-sleep warning. The warning i
 FuncGraph's interpretation of captured flags and its sleep-capable function list,
 not evidence that the kernel emitted a BUG message.
 
+The correction is internal: call details and Notes do not display baseline
+values. Flags retain their recorded counts, and a `preempt off` badge appears
+only when extra depth remains after correction. Its tooltip identifies the
+adjusted depth as inferred. Zero adjusted depth is not labeled `preemptible`,
+because it does not establish the complete execution context. Sections describe
+the tracing correction without exposing the internal numeric baseline.
+
 ## Reproduced failure
 
 The preserved Linux 6.8 recording
@@ -58,6 +65,33 @@ interrupt-context checks remain independent.
 Regenerate an older HTML report to apply corrected calibration; a browser reload
 alone cannot repair a model embedded by an earlier generator.
 
+## QEMU verification
+
+On November 17, 2026, a separate tracefs instance on the supplied QEMU guest
+verified the behavior of its running Linux 7.4.0-rc2 kernel with full preemption.
+The running kernel's build ID matched `/vol_1t/Qemu/linux/x86_64/vmlinux`:
+`0610f676d5858c29282a4a1a63a5a0aa0644f4e2`.
+
+The same read operation produced the following flags (other columns omitted):
+
+```text
+..... | /* sys_read(fd: 3, buf: ..., count: 0x10) */
+...1. | vfs_read();
+..... | /* sys_read -> 0x10 */
+```
+
+The function-graph recording callback retained its extra preemption level.
+The syscall trace-event path instead used `trace_event_buffer_reserve()`, which
+calls `tracing_gen_ctx_dec()` and subtracts the tracing level before storing the
+event. Printing does not perform a universal correction. `schedule()` entry and
+return records both retained count 1 in this capture; scheduling events retained
+count 2. This verifies why events must not calibrate function baselines, without
+making all historical function return paths use a correction of 1.
+
+The complete capture is retained locally at
+`build/preempt-qemu-check/trace.txt`. The global trace configuration and contents
+were unchanged, and the temporary instance was removed.
+
 ## Regression checks
 
 The same 142,240-call recording now yields entry baseline 1, return baseline 0,
@@ -89,10 +123,26 @@ Validation on November 16, 2026:
   is now available. The errors screenshot also refreshes an older CPU-header
   label to the current recorded-scheduling wording; it is not a trace-data change.
 
+Validation on November 17, 2026:
+
+- 124 distinct model/import/raw, browser, published-sample and detail-layout/color
+  tests passed. The model run included `write4.log`, the QEMU verification capture
+  above, and the preserved Linux 6.8 host recording; none were skipped.
+- Browser coverage checks zero/one entry corrections, independent return
+  corrections, orphan and legacy fallback, genuine atomic-sleep warnings, raw
+  flags, warning tooltips, Notes and Sections. Numeric baselines and the
+  unsupported `preemptible` assertion are absent from the affected UI.
+- Both public reports and affected screenshots were refreshed. All five JSON
+  payloads in each report match their previous versions except `stats.build_time`;
+  all 739 native and 1504 mixed Text rows remain unchanged.
+
 ```bash
 PYTHONPATH=tests python3 -m unittest test_timeline test_uftrace_import -v
 FG_RAW_REQUIRED=1 PYTHONPATH=tests python3 -m unittest test_raw -v
 PYTHONPATH=tests python3 -m unittest \
+  test_browser.BrowserSmokeTest.test_timeline_preempt_correction_stays_internal_without_changing_recorded_flags \
   test_browser.BrowserSmokeTest.test_timeline_schedule_ignores_event_and_return_offsets_without_hiding_atomic_calls \
   test_browser.BrowserSmokeTest.test_timeline_orphan_preempt_flags_use_return_baseline_with_legacy_fallback -v
+FG_SAMPLE_BROWSER_REQUIRED=1 PYTHONPATH=tests python3 -m unittest \
+  test_mixed_sample.MixedSampleBrowserTest.test_published_samples_keep_preempt_correction_internal_without_losing_flags -v
 ```
