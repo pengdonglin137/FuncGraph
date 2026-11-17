@@ -873,7 +873,7 @@ ${N ? '' : '<div class="tl-event-only" role="note">No recorded function calls. S
   ${document.getElementById('filterInput') ? '<button type="button" role="menuitem" tabindex="-1" data-call-action="focus-task">Focus this task</button><button type="button" role="menuitem" tabindex="-1" data-call-action="focus-function">Focus this function</button>' : ''}
   ${D.no_text ? '<p id="tlCallActionsNote" class="tl-context-note">Text view is not included in this report.</p>' : ''}
 </div>
-<div class="tl-tip"></div>
+<div class="tl-tip"><div class="tl-tip-body"></div><div class="tl-tip-more" hidden>Select for full details</div></div>
 <dialog class="tl-position" aria-labelledby="tlPositionTitle" aria-describedby="tlPositionHint">
   <form novalidate>
     <h3 id="tlPositionTitle">Go to position</h3>
@@ -895,6 +895,8 @@ const elDetail = tlRoot.querySelector('.tl-detail');
 const elCallActions = tlRoot.querySelector('.tl-call-actions-panel');
 let callActionsTrigger = null, callActionsSelection = -1, callActionsLayout = null;
 const elTip = tlRoot.querySelector('.tl-tip');
+const elTipBody = elTip.querySelector('.tl-tip-body');
+const elTipMore = elTip.querySelector('.tl-tip-more');
 const elHelp = tlRoot.querySelector('.tl-help');
 const elNotes = tlRoot.querySelector('.tl-notes');
 const elToolbar = tlRoot.querySelector('.tl-toolbar');

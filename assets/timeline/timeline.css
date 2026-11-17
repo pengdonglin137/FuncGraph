@@ -246,6 +246,8 @@ body.tl-max.tl-active { padding: 2px; }
     box-sizing: border-box;
     width: max-content;
     max-width: min(480px, calc(100vw - 8px));
+    max-height: calc(100vh - 8px);
+    max-height: calc(100dvh - 8px);
     background: rgba(22, 25, 32, .96);
     color: #e9edf3;
     border-radius: 7px;
@@ -253,8 +255,11 @@ body.tl-max.tl-active { padding: 2px; }
     font: 12px system-ui, -apple-system, "Segoe UI", sans-serif;
     box-shadow: 0 6px 22px rgba(0, 0, 0, .28);
     display: none;
+    flex-direction: column;
     line-height: 1.45;
 }
+.tl-tip-body { min-height: 0; min-width: 0; overflow: hidden; overflow-wrap: anywhere; }
+.tl-tip-more { flex: 0 0 auto; padding-top: 5px; margin-top: 5px; border-top: 1px solid rgba(255, 255, 255, .16); color: #b8c1ce; font-size: 11px; }
 .tl-tip .t-name { font: 600 12.5px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; color: #fff; word-break: break-all; }
 .tl-tip .t-dur { color: #9fd0ff; font-weight: 600; }
 .tl-tip .t-row { display: flex; gap: 8px; }

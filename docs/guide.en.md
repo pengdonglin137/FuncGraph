@@ -984,6 +984,12 @@ Without that analysis, the detail heading uses a restrained **caller mismatch** 
 
 New reports use the compact call-site position index for this tooltip, including the innermost position of an inline chain. Hovering a known resolved or unavailable call site does not parse the full source-code pool or Text source-line map. Unavailable call sites do not borrow a function-entry line. Legacy or unsupported position metadata retains the existing source-HTML fallback; opening source-code details still loads/parses the embedded code pool on demand. This does not introduce external source chunks or virtualize Text.
 
+Hover is a preview: when a short viewport or long content cannot fit, its height
+is bounded and **Select for full details** explicitly offers the complete
+selected details. Recorded data is not trimmed. Same-slice moves reuse stable
+tooltip dimensions; content, viewport and font changes invalidate them. See
+[tooltip measurements and limits](performance-tooltips.md). Regenerate older reports.
+
 **Hovering an off-CPU segment**: wait time, function it waited in, state at switch-out, CPU it left and CPU it resumed on, waker.
 
 **Clicking a slice** opens the detail panel below:

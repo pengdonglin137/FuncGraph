@@ -285,31 +285,70 @@ function loadCallSitePosition(index, source) {
         showTip(tipSlice(index) + (dense ? tipDense(dense) : ''), event);
     }).catch(error => {
         if (hoverSourceRequest !== request || error.name === 'AbortError' || hov !== index) return;
-        elTip.insertAdjacentHTML('beforeend', '<div class="t-warn">Source not loaded: ' + esc(error.message) + '. Select the call to retry.</div>');
-        tipHtml = null;
+        if (hoverSourcePointer) showTip(elTipBody.innerHTML + '<div class="t-warn">Source not loaded: ' +
+            esc(error.message) + '. Select the call to retry.</div>', hoverSourcePointer.event);
     });
 }
-let tipHtml = null, pendingHover = null;
+let tipHtml = null, tipSize = null, tipPointer = null, pendingHover = null;
 function showTip(html, ev) {
     if (tipHtml !== html) {
-        elTip.innerHTML = html;
+        elTipBody.innerHTML = html;
         tipHtml = html;
+        tipSize = null;
     }
-    elTip.style.display = 'block';
-    const r = elTip.getBoundingClientRect();
+    if (elTip.style.display !== 'flex') elTip.style.display = 'flex';
+    tipPointer = ev;
+    positionTip(ev);
+}
+function positionTip(ev) {
+    const viewport = window.visualViewport;
+    const left = viewport?.offsetLeft || 0, top = viewport?.offsetTop || 0;
+    const width = viewport?.width || window.innerWidth, height = viewport?.height || window.innerHeight;
+    const edge = 4;
+    if (!tipSize || tipSize.viewportWidth !== width || tipSize.viewportHeight !== height) {
+        elTip.style.maxWidth = Math.max(1, Math.min(480, width - edge * 2)) + 'px';
+        elTip.style.maxHeight = Math.max(1, height - edge * 2) + 'px';
+        elTipMore.hidden = true;
+        elTipMore.hidden = elTipBody.scrollHeight <= elTipBody.clientHeight &&
+            elTipBody.scrollWidth <= elTipBody.clientWidth;
+        const bounds = elTip.getBoundingClientRect();
+        tipSize = { width: bounds.width, height: bounds.height, viewportWidth: width, viewportHeight: height };
+    }
     let x = ev.clientX + 14, y = ev.clientY + 16;
-    if (x + r.width > window.innerWidth - 6) x = ev.clientX - r.width - 14;
-    if (y + r.height > window.innerHeight - 6) y = ev.clientY - r.height - 12;
-    elTip.style.transform = 'translate(' + Math.max(4, x) + 'px, ' + Math.max(4, y) + 'px)';
+    if (x + tipSize.width > left + width - edge) x = ev.clientX - tipSize.width - 14;
+    if (y + tipSize.height > top + height - edge) y = ev.clientY - tipSize.height - 12;
+    x = Math.max(left + edge, Math.min(x, left + width - tipSize.width - edge));
+    y = Math.max(top + edge, Math.min(y, top + height - tipSize.height - edge));
+    const transform = 'translate(' + x + 'px, ' + y + 'px)';
+    if (elTip.style.transform !== transform) elTip.style.transform = transform;
 }
 function hideTip() {
     pendingHover = null;
     elTip.style.display = 'none';
     tipHtml = null;
+    tipSize = null;
+    tipPointer = null;
     hoverSourceRequest?.controller.abort();
     hoverSourceRequest = null;
     hoverSourcePointer = null;
 }
+if (typeof ResizeObserver !== 'undefined') {
+    const tipObserver = new ResizeObserver(() => {
+        if (!tipPointer) return;
+        tipSize = null;
+        positionTip(tipPointer);
+    });
+    tipObserver.observe(elTip);
+}
+window.addEventListener('resize', hideTip, { passive: true });
+window.addEventListener('scroll', hideTip, { passive: true });
+window.visualViewport?.addEventListener('resize', hideTip, { passive: true });
+window.visualViewport?.addEventListener('scroll', hideTip, { passive: true });
+document.fonts?.addEventListener('loadingdone', () => {
+    if (!tipPointer) return;
+    tipSize = null;
+    positionTip(tipPointer);
+});
 
 // ---- mouse ----
 let drag = null;   // {mode:'pan'|'range'|'ov', x0, s0, e0, moved, track}
