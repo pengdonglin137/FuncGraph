@@ -212,12 +212,12 @@ fgcapture.sh -n __schedule -d 1                      # 不跟踪调度器内部�
 | `-b KB` | 每个 CPU 的环形缓冲区大小，默认 16384 KB |
 | `--sched` | 同时记录可用的 switch / waking / wakeup 及 exec / exit 事件，用于等待链和生命周期 |
 | `--calibrate` | 先用相同的选项测量跟踪开销，结果写进输出文件的第一行 |
-| `--args` | 记录函数参数（见 3.3 节） |
-| `--no-args` | 禁用参数并跳过自动能力探测 |
+| `--args` | 内核支持时开启函数参数（默认行为，见 3.3 节） |
+| `--no-args` | 仅禁用函数参数，保留 retval、retaddr 等其他选项 |
 | `--keep` | 采集后不恢复 tracefs 的原有设置 |
 | `-- CMD ...` | 运行 CMD 并只跟踪它和它的子进程。命令启动时先暂停，把 pid 写入 `set_ftrace_pid` 后再继续运行 |
 
-默认开启的 ftrace 选项是 `funcgraph-abstime`、`funcgraph-proc`、`funcgraph-retval`、`funcgraph-retaddr`、`funcgraph-tail`、`latency-format`、`funcgraph-duration`、`funcgraph-cpu`、`funcgraph-overhead` 和 `funcgraph-irqs`。
+内核支持时默认开启的 ftrace 选项是 `funcgraph-abstime`、`funcgraph-proc`、`funcgraph-args`、`funcgraph-retval`、`funcgraph-retaddr`、`funcgraph-tail`、`latency-format`、`funcgraph-duration`、`funcgraph-cpu`、`funcgraph-overhead` 和 `funcgraph-irqs`。不支持的选项提示后跳过。
 
 采集结束后脚本会检查有没有丢事件。如果出现 `WARNING: events were lost`，说明环形缓冲区写满被覆盖了，可以加大 `-b`、缩短 `-d`，或者用 `-p`/`-g` 缩小跟踪范围。
 
@@ -256,12 +256,12 @@ FuncGraph 能处理任意的选项组合，缺少的信息会在报告顶部用�
 
 **关于 `funcgraph-args`，不同内核差别很大：**
 
-- **6.18 及没有合入 BTF 打印优化的内核**：读取 `trace` 时格式化参数非常慢，树莓派 4 上实测约 36ms 一行；而且同时开着 `funcgraph-retaddr` 时参数根本不会输出。所以采参数时必须先用 `set_graph_function`、`set_ftrace_filter` 或 `set_ftrace_pid` 缩小范围，并且关掉 retaddr。
+- **6.18 及没有合入 BTF 打印优化的内核**：读取 `trace` 时格式化参数可能非常慢，树莓派 4 上实测约 36ms 一行；该环境同时开启 `funcgraph-retaddr` 时没有输出参数。这是内核限制，脚本不再自动关闭 retaddr 或强制缩小范围。需要控制开销时可自行选择 `-g/-p` 或 `--no-args`；需要单独调整字段组合时自行配置 tracefs。
 - **带 BTF 打印优化的内核**（例如 7.2 的 trim_retval 补丁）：参数和返回地址可以同时输出，11.7 万行读出来约 1.1 秒。
 
-`fgcapture.sh` 现在默认在单函数上探测，快速且 args / retaddr 兼容时自动开启参数；
-否则保留调用点并解释原因。`--args` 显式要求采参数，旧内核仍需限定范围；
-`--no-args` 完全跳过探测。用户态 / 混合采集可用 `fgcapture --user` / `--mixed`，
+`fgcapture.sh` 默认将可用的 args、retval、retaddr 一起开启，不运行参数探测，
+不根据耗时、参数文本或内核版本自动降级。`--args` 与默认开启行为一致，
+`--no-args` 仅关闭参数；实际字段由内核输出决定。用户态 / 混合采集可用 `fgcapture --user` / `--mixed`，
 自动配置常见 uftrace 选项，详见[统一采集指南](capture.cn.md)。
 
 ### 3.4 跟踪开销
@@ -1517,7 +1517,9 @@ CPU 轨道的运行区间收集、稳定排序、边界裁剪、列填充及中�
 
 **开了 `funcgraph-args` 但参数没有输出**
 
-在 6.18 等内核上，开着 `funcgraph-retaddr` 时参数不会输出。用 `fgcapture.sh --args` 采集，它会自动处理。
+已测的 6.18 环境在开启 `funcgraph-retaddr` 时没有输出参数。脚本默认将可用的 args 和
+retaddr 一起开启，`--args` 不会自动改变该组合，也不能补齐内核未输出的字段。
+请核对目标内核的能力；需要不同字段组合时自行配置 tracefs，或换用支持同时输出的内核。
 
 **源码行看起来对不上**
 

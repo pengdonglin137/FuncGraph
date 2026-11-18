@@ -143,3 +143,44 @@ path `/tmp/fg-doc-examples.K8tIUg5U/pigz case/` is kept because recorded absolut
 paths are not automatically relocated. HTML embeds the inspected snippets and
 can be opened independently. Large binaries are Git-ignored; this is not a new
 Release or an update to the public Pages samples.
+
+## Kernel-only argument defaults — 2026-11-18
+
+The authorized QEMU guest still runs Linux `7.4.0-rc2` build `#3` from
+November 10, 2026. Kernel-only `fgcapture.sh` now enables each available graph
+option independently: no argument-speed probe, automatic retaddr/latency
+fallback, or mandatory `-g`/`-p` scope. A command containing tracefs reads and
+ordinary file reads was captured without a function filter in three modes:
+
+| Mode | args | retval | retaddr | latency-format | Named read/write arguments |
+| --- | ---: | ---: | ---: | ---: | --- |
+| No argument flag | 1 | 1 | 1 | 1 | Present |
+| Explicit `--args` | 1 | 1 | 1 | 1 | Present |
+| Explicit `--no-args` | 0 | 1 | 1 | 1 | Absent |
+
+The workload checks the live option values while tracing, rather than inferring
+them from the restored state afterward. All three text traces contain return
+values and caller addresses, with no reported event loss. All **73** snapshotted
+tracefs settings match after each capture, including all available options,
+tracer state, buffers, filters and scheduler-event state. Unsupported-option
+behavior is covered with fake tracefs, not claimed as a real old-kernel test.
+
+The regression suite also checks unscoped default/explicit captures, a selected
+graph that does not include `vfs_read`, independent `--no-args`, last-option-wins
+compatibility, missing args/retaddr options, and restoration after output failure
+or interruption. User/mixed defaults and kernel-mode delegation remain covered.
+Local artifacts under `build/capture-args-default-audit/` retain real text traces,
+live-option records, before/after snapshots, generated HTML and validation logs.
+No existing version tag, public sample or Pages deployment is changed.
+
+For a small manual check on a supported, idle target:
+
+```bash
+sudo ./fgcapture.sh -o /tmp/args-default.txt -- cat /proc/version
+sudo ./fgcapture.sh --args -o /tmp/args-explicit.txt -- cat /proc/version
+sudo ./fgcapture.sh --no-args -o /tmp/args-disabled.txt -- cat /proc/version
+```
+
+The script still restores the original settings by default. Enabling an option
+cannot supply fields the target kernel does not output; this change makes no
+universal performance or args/retaddr compatibility guarantee for older kernels.

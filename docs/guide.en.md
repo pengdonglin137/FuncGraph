@@ -252,12 +252,12 @@ fgcapture.sh -n __schedule -d 1                      # without the scheduler's i
 | `-b KB` | per-CPU ring buffer size, default 16384 KB |
 | `--sched` | also record available switch / waking / wakeup and exec / exit events for wait chains and lifecycle |
 | `--calibrate` | measure the tracing overhead with the same options first; the result goes into the first line of the output |
-| `--args` | record function arguments (see 3.3) |
-| `--no-args` | disable arguments and skip the automatic capability probe |
+| `--args` | enable function arguments when supported (the default; see 3.3) |
+| `--no-args` | disable only arguments; retain retval, retaddr and other options |
 | `--keep` | do not restore the previous tracefs settings |
 | `-- CMD ...` | run CMD and trace only it and its children: it starts stopped, its pid is written to `set_ftrace_pid`, then it continues |
 
-Options enabled by default: `funcgraph-abstime`, `funcgraph-proc`, `funcgraph-retval`, `funcgraph-retaddr`, `funcgraph-tail`, `latency-format`, `funcgraph-duration`, `funcgraph-cpu`, `funcgraph-overhead` and `funcgraph-irqs`.
+Options enabled by default when supported: `funcgraph-abstime`, `funcgraph-proc`, `funcgraph-args`, `funcgraph-retval`, `funcgraph-retaddr`, `funcgraph-tail`, `latency-format`, `funcgraph-duration`, `funcgraph-cpu`, `funcgraph-overhead` and `funcgraph-irqs`. Unsupported options are reported and skipped.
 
 After capturing, the script checks for lost events. `WARNING: events were lost` means the ring buffer wrapped: increase `-b`, shorten `-d`, or narrow the capture with `-p`/`-g`.
 
@@ -298,13 +298,13 @@ FuncGraph accepts any combination of options; missing information is explained b
 
 **`funcgraph-args` behaves very differently between kernels:**
 
-- **6.18 and other kernels without the BTF print optimizations**: formatting arguments while reading `trace` is very slow (about 36 ms per line on a Raspberry Pi 4), and with `funcgraph-retaddr` enabled no arguments are printed at all. Narrow the capture with `set_graph_function`, `set_ftrace_filter` or `set_ftrace_pid` first and disable retaddr.
+- **6.18 and other kernels without the BTF print optimizations**: argument formatting can be very slow (about 36 ms per line on the tested Raspberry Pi 4), and that environment prints no arguments with `funcgraph-retaddr` enabled. This is a kernel limitation; the script no longer disables retaddr or requires a smaller scope. Choose `-g`/`-p` or `--no-args` to control overhead, or configure tracefs yourself for a different field combination.
 - **Kernels with the BTF print optimizations** (for example the 7.2 trim_retval patches): arguments and return addresses can be printed together; 117k lines are read in about 1.1 s.
 
-`fgcapture.sh` now probes one function by default and enables arguments only
-when fast and compatible with return addresses. Otherwise it retains call
-sites and explains the fallback. `--args` explicitly requests arguments using
-the old-kernel scoped behavior; `--no-args` skips the probe.
+`fgcapture.sh` enables available args, retval and retaddr together by default.
+It does not probe arguments or downgrade based on timing, formatted output or
+kernel version. `--args` matches the default; `--no-args` disables only arguments.
+The kernel determines which fields actually appear in its output.
 
 ### 3.4 Tracing overhead
 
@@ -1654,7 +1654,11 @@ Leftover register values of void functions. Give a vmlinux with a `.BTF` section
 
 **`funcgraph-args` is on but no arguments appear**
 
-On 6.18 and similar kernels arguments are not printed while `funcgraph-retaddr` is on. Capture with `fgcapture.sh --args`, which handles this.
+The tested 6.18 environment prints no arguments with `funcgraph-retaddr` on.
+The script enables available args and retaddr together; `--args` does not change
+that combination or recover fields the kernel never prints. Check the target
+kernel's capabilities, configure tracefs yourself for different field combinations,
+or use a kernel supporting simultaneous output.
 
 **Source lines do not match**
 

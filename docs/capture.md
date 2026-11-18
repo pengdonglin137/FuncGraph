@@ -223,10 +223,12 @@ event rows; unrelated open source panels and pending source work stay untouched.
 ## Defaults and controls
 
 - Kernel-only mode forwards the existing duration/PID/graph/calibration options
-  to `fgcapture.sh`. Arguments now use a small automatic probe: enable them only
-  when fast and compatible with return addresses. Otherwise retain call sites
-  and explain the fallback. `--args` requires arguments (and a scope on slow
-  kernels); `--no-args` skips the probe entirely.
+  to `fgcapture.sh`. Enable `funcgraph-args` by default whenever the kernel
+  provides it, just like retval and retaddr. There is no argument-formatting
+  speed probe, automatic disabling of other options or mandatory function/PID
+  scope. Unsupported options are reported and skipped. `--args` remains an
+  explicit enable; `--no-args` disables only arguments. Actual output fields
+  still depend on the kernel. Previous tracefs settings are restored on exit.
 - User recording selects automatic arguments/returns, DWARF source positions,
   call-site events and the `mono` clock. ARM64 adds `-P .` automatically; build
   the program and relevant libraries with instrumentation and debugging data.

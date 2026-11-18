@@ -386,7 +386,7 @@ uftrace 的原生导出为内核入口增加可选 `retaddr_symbol`：仅解析�
 - **时间轴内联视图**（`model.js` 的 `buildInline`）：同一父切片下连续、内联链前缀相同的子调用合并为一个内联帧，追加为合成切片（下标 ≥ N，`FL.INL`），范围是第一个到最后一个子调用。逻辑深度 `sLd = 父的 sLd + 1 + 内联层数`，两套行索引 `rowsT`（只有被跟踪帧）和 `rowsI`（含内联帧）通过 `applyView()` 切换；所有绘制和命中用 `rowOf(i)`，导航、子树和统计始终用 `rowsT` 和 `sDepth`，合成切片不参与任何统计（循环只到 N）。
 - **源码来源**（`sources.py`）：`GitProvider`（`git show REV:path`）和 `UrlProvider`（URL 模板，本地缓存）重新生成 faddr2line 输出中每个位置的上下文行。版本检查：内联链里外层帧的那一行就是调用（内联）内层函数的地方，所以内层函数名必须出现在该行 ±1 行；比例低于 75% 时警告。实测：正确版本 86–94%，错误版本 26–59%。
 - **BTF 感知 retval 的内核**（7.2 `trim_retval`）：内核用 BTF 判断返回类型，void 不打印、截断到类型宽度、bool 打印为 true/false、无符号用十进制、超宽类型加 `(trunc)`、ERR_PTR 打印为负 errno。出现 `true/false/(trunc)` 时设置 `caps.retval_btf`，没有主机 BTF 时把负的十进制返回值直接视为已验证的 errno。该内核上 `funcgraph-args` 与 `funcgraph-retaddr` 可以同时输出，读取 11.7 万行仅约 1.1 秒（6.18 上约 36ms/行）。
-- **采集辅助的探测**：`fgcapture.sh --args` 先用 `set_ftrace_filter=vfs_read` 做一次小探测，测每行读取耗时和参数是否与 retaddr 共存，再决定保留 retaddr/latency-format 还是关掉，以及是否必须指定 `-g/-p`。
+- **采集选项的一致性**：`fgcapture.sh` 将 args 与 retval、retaddr、latency-format 等选项分别配置，内核提供即默认开启，不运行参数探测，不因耗时或文本格式自动关掉其他字段，也不强制 `-g/-p`。`--args` 保留为显式开启，`--no-args` 仅关闭参数；不支持的选项统一提示并跳过，实际字段由内核输出决定。
 
 ## 7d. 调度频繁时的可读性
 
@@ -717,7 +717,7 @@ python3 tests/golden.py --update   # 修改代码前先记录基线
 | `test_tailcalls.py` | x86/arm64 真实小 ELF + objdump、去重与原始数据不变、循环/间接/普通调用排除、工具/依赖/预算/符号歧义降级、raw retaddr 流程、精确指令源码位置与 no-text 源码策略；浏览器测试补充主题/窄屏、全部静态点、安全链接、CSV、未知版本与深度缺口 |
 | `test_sources.py` | git 正确/错误版本、URL 获取与缓存、缺失文件、路径归一化 |
 | `test_flex.py` | 无 vmlinux、stdin/gzip 与普通文件结果一致、多文件按时间合并、配置文件与预设、导出 JSON/CSV |
-| `test_fgcapture.py` | 脚本语法、帮助、非 root 拒绝运行、`--args` 探测前清空 `set_graph_function`（实际采集在树莓派 4 和 QEMU 上手工验证） |
+| `test_fgcapture.py` | 脚本语法、帮助、非 root 拒绝运行；默认与显式 args、缺失选项、无探测/强制范围、参数独立开关，以及成功、失败和中断后的 tracefs 恢复（另在 QEMU 上实际采集验证） |
 | `golden.py` | 6 种配置（x86 完整/最少/时间轴，pi4 完整/默认选项/sched 且不用 BTF），去掉耗时等动态字段后逐字节比较 |
 
 `tests/data/` 中的夹具来自树莓派 4（6.18 arm64）和 QEMU（7.2 x86_64），每份取前 1500 行，说明见 `tests/helpers.py` 的 `FIXTURES`。`FG_GOLDEN_KEEP=1` 时 `golden.py` 保留本次输出（`$FG_GOLDEN_DIR/current`），便于比较 `tlData` 的具体字段。
