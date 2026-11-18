@@ -17,10 +17,11 @@ window.fgViews.compare = { el: 'compareView', data: ['cmpData'], init: function 
         const x = side === 'b' ? col.b : col.c;
         return typeof x === 'function' ? x(r) : r[x];
     };
-    let sortKey = 'self', sortBy = 'absdiff', query = null, onlyChanged = true, limit = 400;
+    const PAGE_SIZE = 400;
+    let sortKey = 'self', sortBy = 'absdiff', query = null, onlyChanged = true, page = 0;
     let ROWS = D.rows;
-    let matchingRows = [], maxDelta = 1, renderedCount = 0, adjustedMode = false;
-    let filterTimer = 0, queryText = '', queryNames = null, pendingQuery = null, nameIndex = null, composing = false;
+    let matchingRows = [], maxDelta = 1, adjustedMode = false;
+    let filterTimer = 0, queryText = '', queryNames = null, pendingQuery = null, nameIndex = null, composing = false, controlsOpen = false;
     const fmt = ns => {
         const a = Math.abs(ns);
         if (a < 1000) return ns.toFixed(0) + ' ns';
@@ -40,6 +41,8 @@ window.fgViews.compare = { el: 'compareView', data: ['cmpData'], init: function 
         <div class="cmp-sum"></div>
       </div>
       <div class="cmp-bar">
+        <button class="cmp-toggle" type="button" aria-controls="cmpControls" aria-expanded="false" hidden>Filters</button>
+        <div class="cmp-controls" id="cmpControls">
         <input class="cmp-q" placeholder="filter function (regex)" spellcheck="false" aria-label="Filter function names by regular expression" aria-describedby="cmpFilterError">
         <label><input type="checkbox" class="cmp-changed" checked> changed only</label>
         <span class="cmp-label">sort</span>
@@ -48,6 +51,7 @@ window.fgViews.compare = { el: 'compareView', data: ['cmpData'], init: function 
           <button data-v="pct">Δ%</button><button data-v="cur">current</button><button data-v="base">base</button>
         </span>
         <label class="cmp-adj" style="display:none"><input type="checkbox"> subtract tracing overhead</label>
+        </div>
         <button class="cmp-export" type="button">Export CSV</button>
         <span class="cmp-count"></span>
       </div>
@@ -55,7 +59,10 @@ window.fgViews.compare = { el: 'compareView', data: ['cmpData'], init: function 
       <div class="cmp-filter-status" hidden><span role="status"></span> <button class="cmp-cancel" type="button">Cancel</button></div>
       <div id="cmpFilterError" class="cmp-filter-error" role="alert" hidden></div>
       <div class="cmp-empty" role="status" hidden>No functions match the current filters.</div>
-      <div class="cmp-wrap" tabindex="0" role="region" aria-label="Function comparison table"><table class="cmp-table"><thead></thead><tbody></tbody></table></div>`;
+      <div class="cmp-wrap" tabindex="0" role="region" aria-label="Function comparison table"><table class="cmp-table"><thead></thead><tbody></tbody></table></div>
+      <div class="cmp-pages" hidden><span class="cmp-page-status" role="status" aria-live="polite" aria-atomic="true"></span>
+        <span role="group" aria-label="Comparison result pages"><button class="cmp-prev" type="button" aria-label="Previous comparison page">Previous</button>
+        <button class="cmp-next" type="button" aria-label="Next comparison page">Next</button></span></div>`;
     const tot = (i) => D.rows.reduce((s, r) => s + r[i], 0);
     const pill = (label, b, c, time) => {
         const d = c - b, p = pct(b, c);
@@ -70,13 +77,27 @@ window.fgViews.compare = { el: 'compareView', data: ['cmpData'], init: function 
 
     const thead = root.querySelector('thead'), tbody = root.querySelector('tbody');
     const wrap = root.querySelector('.cmp-wrap');
+    const pages = root.querySelector('.cmp-pages'), previousPage = root.querySelector('.cmp-prev'), nextPage = root.querySelector('.cmp-next');
+    const controls = root.querySelector('.cmp-controls'), controlsToggle = root.querySelector('.cmp-toggle');
+    const compactControls = window.matchMedia('(max-width: 700px), (pointer: coarse)');
     const filterInput = root.querySelector('.cmp-q'), filterError = root.querySelector('.cmp-filter-error');
     const exportButton = root.querySelector('.cmp-export');
     const filterStatus = root.querySelector('.cmp-filter-status');
     const note = root.querySelector('.cmp-note'), measuredNote = note.textContent;
     function resize() {
+        const hideControls = compactControls.matches && !controlsOpen;
+        const focusedControl = hideControls && controls.contains(document.activeElement);
+        const focusedToggle = !compactControls.matches && document.activeElement === controlsToggle;
+        if (hideControls && !controls.hidden) composing = false;
+        controlsToggle.hidden = !compactControls.matches;
+        controlsToggle.setAttribute('aria-expanded', String(!hideControls));
+        controlsToggle.textContent = 'Filters' + (queryText || filterInput.value || !onlyChanged || adjustedMode || sortKey !== 'self' || sortBy !== 'absdiff' ? ' · active' : '');
+        controls.hidden = hideControls;
+        if (focusedControl && window.fgCurrentView() === 'compare') controlsToggle.focus({preventScroll:true});
+        if (focusedToggle && window.fgCurrentView() === 'compare') filterInput.focus({preventScroll:true});
         const top = Math.max(0, wrap.getBoundingClientRect().top);
-        wrap.style.maxHeight = Math.max(160, window.innerHeight - top - 12) + 'px';
+        const footer = pages.hidden ? 0 : pages.getBoundingClientRect().height;
+        wrap.style.maxHeight = Math.max(64, window.innerHeight - top - footer - 12) + 'px';
     }
     function header() {
         let h = '<tr><th rowspan="2" data-k="name" class="l">function</th>';
@@ -111,13 +132,16 @@ window.fgViews.compare = { el: 'compareView', data: ['cmpData'], init: function 
         if (col.k !== 'name') {
             for (const row of matchingRows) maxDelta = Math.max(maxDelta, Math.abs(val(col, row, 'c') - val(col, row, 'b')));
         }
+        page = 0;
         render();
     }
-    function render(append) {
-        if (!append) header();
+    function render() {
+        header();
+        page = Math.max(0, Math.min(page, Math.ceil(matchingRows.length / PAGE_SIZE) - 1));
+        const first = page * PAGE_SIZE, last = Math.min(first + PAGE_SIZE, matchingRows.length);
         const col = COLS.find(column => column.k === sortKey) || COLS[2];
         let h = '';
-        for (const r of matchingRows.slice(append ? renderedCount : 0, limit)) {
+        for (const r of matchingRows.slice(first, last)) {
             h += `<tr><td class="l" title="${esc(r[0])}">${esc(r[0])}${r[11] ? ' <span class="cmp-tag">' + esc(r[11]) + '</span>' : ''}${!r[1] ? ' <span class="cmp-tag new">new</span>' : !r[6] ? ' <span class="cmp-tag gone">gone</span>' : ''}</td>`;
             for (const c of COLS.slice(1)) {
                 const b = val(c, r, 'b'), v = val(c, r, 'c'), d = v - b;
@@ -129,13 +153,16 @@ window.fgViews.compare = { el: 'compareView', data: ['cmpData'], init: function 
             }
             h += '</tr>';
         }
-        if (matchingRows.length > limit) h += `<tr><td class="l more" colspan="${1 + 3 * (COLS.length - 1)}">… ${matchingRows.length - limit} more (click to show)</td></tr>`;
-        if (append) {
-            const more = tbody.querySelector('.more');
-            if (more) more.parentElement.remove();
-            tbody.insertAdjacentHTML('beforeend', h);
-        } else tbody.innerHTML = h;
-        renderedCount = Math.min(limit, matchingRows.length);
+        tbody.innerHTML = h;
+        wrap.scrollTop = 0;
+        const focused = document.activeElement;
+        pages.querySelector('.cmp-page-status').textContent = 'Rows ' + (matchingRows.length ? first + 1 : 0) + '–' + last + ' of ' + matchingRows.length;
+        pages.hidden = matchingRows.length <= PAGE_SIZE;
+        previousPage.disabled = first === 0;
+        nextPage.disabled = last >= matchingRows.length;
+        if ((focused === previousPage || focused === nextPage) && focused.disabled) {
+            (!previousPage.disabled ? previousPage : !nextPage.disabled ? nextPage : wrap).focus({preventScroll:true});
+        }
         root.querySelector('.cmp-count').textContent = matchingRows.length + ' of ' + ROWS.length + ' functions';
         root.querySelector('.cmp-empty').hidden = matchingRows.length !== 0;
         updateExportState();
@@ -292,7 +319,9 @@ window.fgViews.compare = { el: 'compareView', data: ['cmpData'], init: function 
         sortKey = th.dataset.k;
         updateRows();
     });
-    tbody.addEventListener('click', ev => { if (ev.target.closest('.more')) { limit += 1000; render(true); } });
+    previousPage.addEventListener('click', () => { page--; render(); });
+    nextPage.addEventListener('click', () => { page++; render(); });
+    controlsToggle.addEventListener('click', () => { controlsOpen = !controlsOpen; resize(); });
     root.querySelector('.cmp-sortby').addEventListener('click', ev => {
         const b = ev.target.closest('button');
         if (!b) return;
@@ -325,9 +354,10 @@ window.fgViews.compare = { el: 'compareView', data: ['cmpData'], init: function 
         if (ev.key === 'Enter') { ev.preventDefault(); applyQuery(); }
         else if (ev.key === 'Escape') { ev.preventDefault(); stopFilter(true); }
     });
-    root.querySelector('.cmp-cancel').addEventListener('click', () => { stopFilter(true); filterInput.focus(); });
+    root.querySelector('.cmp-cancel').addEventListener('click', () => { stopFilter(true); (controls.hidden ? controlsToggle : filterInput).focus(); });
     exportButton.addEventListener('click', exportCsv);
     window.addEventListener('resize', () => { if (window.fgCurrentView() === 'compare') resize(); });
+    compactControls.addEventListener('change', () => { if (window.fgCurrentView() === 'compare') resize(); });
     updateRows();
     return { resize: resize, suspend: () => { composing = false; stopFilter(true); } };
 } };

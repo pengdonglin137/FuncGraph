@@ -123,9 +123,12 @@ class CompareRegexTest(unittest.TestCase):
                 self.start(query)
                 self.settled()
                 self.assertEqual(self.page.locator('.cmp-count').inner_text().split(' of ')[0], str(len(expected)))
-                if self.page.locator('.cmp-table .more').count():
-                    self.page.locator('.cmp-table .more').click()
-                actual = self.page.locator('.cmp-table td.l[title]').evaluate_all('nodes => nodes.map(node => node.title)')
+                actual = []
+                while True:
+                    actual.extend(self.page.locator('.cmp-table td.l[title]').evaluate_all('nodes => nodes.map(node => node.title)'))
+                    if self.page.locator('.cmp-next').is_disabled():
+                        break
+                    self.page.locator('.cmp-next').click()
                 self.assertEqual(sorted(actual), sorted(expected))
                 self.unchanged()
         self.assertTrue(self.page.locator('.cmp-empty').is_visible())
@@ -308,7 +311,7 @@ class CompareRegexTest(unittest.TestCase):
         self.assertEqual(len(rows), 654)
         self.assertEqual(sum(row[0] == 'same' for row in rows[1:]), 2)
         self.assertIn('child+symbol', [row[0] for row in rows[1:]])
-        self.assertEqual(self.page.locator('.cmp-table tbody tr').count(), 401)
+        self.assertEqual(self.page.locator('.cmp-table tbody tr').count(), 400)
         self.unchanged()
 
     def test_adjusted_rows_use_names_not_row_positions_and_do_not_restart_matcher(self):

@@ -11,13 +11,19 @@
 .cmp-pill.warn { border-color: rgba(245, 158, 11, .6); background: rgba(245, 158, 11, .12); }
 .cmp-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; padding: 0 2px 8px; }
 .cmp-sortby { display: inline-flex; border: 1px solid var(--border-color); border-radius: 6px; overflow: hidden; }
-.cmp-sortby button, .cmp-export, .cmp-cancel { appearance: none; border: none; background: var(--container-bg); color: var(--text-color);
+.cmp-sortby button, .cmp-export, .cmp-cancel, .cmp-toggle, .cmp-pages button { appearance: none; border: none; background: var(--container-bg); color: var(--text-color);
     font: 12px system-ui, -apple-system, "Segoe UI", sans-serif; padding: 4px 9px; cursor: pointer; white-space: nowrap; }
 .cmp-sortby button + button { border-left: 1px solid var(--border-color); }
-.cmp-sortby button:hover, .cmp-export:hover, .cmp-cancel:hover { background: var(--container-bg-hover); }
+.cmp-sortby button:hover, .cmp-export:hover, .cmp-cancel:hover, .cmp-toggle:hover, .cmp-pages button:hover { background: var(--container-bg-hover); }
 .cmp-sortby button.on { background: #3b6fd8; color: #fff; }
-.cmp-export, .cmp-cancel { border: 1px solid var(--border-color); border-radius: 6px; }
-.cmp-export:disabled { opacity: .45; cursor: default; }
+.cmp-export, .cmp-cancel, .cmp-toggle, .cmp-pages button { border: 1px solid var(--border-color); border-radius: 6px; }
+.cmp-controls { display: contents; }
+.cmp-controls[hidden], .cmp-toggle[hidden] { display: none; }
+.cmp-export:disabled, .cmp-pages button:disabled { opacity: .45; cursor: default; }
+.cmp-pages { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 2px 0; color: var(--text-muted); font-size: 11px; }
+.cmp-pages[hidden] { display: none; }
+.cmp-pages [role=group] { display: inline-flex; gap: 6px; }
+.cmp-pages button:focus-visible { outline: 2px solid var(--link-color); outline-offset: 2px; }
 .cmp-q { border: 1px solid var(--border-color); border-radius: 6px; background: var(--container-bg); color: var(--text-color);
     padding: 4px 8px; width: 240px; font: 12px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
 .cmp-q.bad { border-color: #d64545; }
@@ -26,7 +32,19 @@
 .cmp-empty { color: var(--text-muted); padding: 0 2px 8px; }
 .cmp-filter-error { color: #c62828; padding: 0 2px 8px; }
 .cmp-filter-status { color: var(--text-muted); padding: 0 2px 8px; }
-@media (pointer: coarse) { .cmp-cancel { min-height: 44px; min-width: 44px; } }
+@media (pointer: coarse) { .cmp-cancel, .cmp-toggle, .cmp-export, .cmp-pages button { min-height: 44px; min-width: 44px; } }
+@media (max-width: 700px), (pointer: coarse) {
+    .cmp-controls { display: flex; flex-wrap: wrap; flex-basis: 100%; order: 1; align-items: center; gap: 8px 14px; }
+    .cmp-q { max-width: 100%; box-sizing: border-box; }
+}
+@media (max-width: 500px) {
+    .cmp-head { gap: 6px; padding-bottom: 8px; }
+    .cmp-sum { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); width: 100%; gap: 4px; }
+    .cmp-pill { min-width: 0; padding: 3px 6px; border-radius: 8px; font-size: 11px; overflow-wrap: anywhere; }
+    .cmp-pill .k { display: block; margin: 0 0 2px; }
+    .cmp-pill:first-child, .cmp-pill.warn { grid-column: 1 / -1; }
+    .cmp-pill:first-child .k { display: inline; margin-right: 4px; }
+}
 [data-theme="dark"] .cmp-filter-error { color: #ff8a80; }
 .cmp-wrap { border: 1px solid var(--border-color); border-radius: 8px; overflow: auto; max-height: calc(100vh - 220px); background: var(--container-bg); }
 .cmp-wrap:focus-visible { outline: 2px solid var(--link-color); outline-offset: 2px; }
@@ -48,7 +66,6 @@ table.cmp-table td.d.small { color: var(--text-muted); }
 [data-theme="dark"] table.cmp-table td.d.up, [data-theme="dark"] .cmp-pill.up b { color: #ff8a80; }
 [data-theme="dark"] table.cmp-table td.d.down, [data-theme="dark"] .cmp-pill.down b { color: #81c784; }
 table.cmp-table tr:hover td { background: var(--container-bg-hover); }
-table.cmp-table td.more { cursor: pointer; color: var(--link-color); }
 .cmp-dbar { display: inline-block; height: 7px; border-radius: 2px; margin-right: 6px; vertical-align: middle; opacity: .6; }
 .cmp-dbar.up { background: #e53935; }
 .cmp-dbar.down { background: #43a047; }

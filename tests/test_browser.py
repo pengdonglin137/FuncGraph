@@ -3716,7 +3716,8 @@ class BrowserSmokeTest(unittest.TestCase):
         self.assertEqual(exported[0]['base_self_ns'], '50')
         self.assertEqual(exported[0]['current_self_ns'], '704')
         self.assertEqual(exported[0]['delta_self_ns'], '654')
-        self.assertEqual(self.page.locator('.cmp-table tbody tr').count(), 401)
+        self.assertEqual(self.page.locator('.cmp-table tbody tr').count(), 400)
+        self.assertEqual(self.page.locator('.cmp-page-status').inner_text(), 'Rows 1–400 of 605')
         self.assertEqual(self.page.locator('.cmp-count').inner_text(), '605 of 606 functions')
 
     def test_compare_csv_adjusted_values_and_escaping(self):
@@ -3764,7 +3765,7 @@ class BrowserSmokeTest(unittest.TestCase):
         self.page.press('.cmp-q', 'Enter')
         self.assertFalse(self.page.locator('.cmp-export').is_disabled())
 
-    def test_compare_load_more_reuses_sorted_rows_and_existing_nodes(self):
+    def test_compare_paging_reuses_sorted_rows_without_retaining_old_nodes(self):
         rows = [[f'worker_{index:04d}', 2, 100, 50, 70, 0,
                  2, 200 + index, 100 + index, 120 + index, 0] for index in range(1205)]
         self.open_compare(rows)
@@ -3778,10 +3779,11 @@ class BrowserSmokeTest(unittest.TestCase):
                 return originalSort.apply(this, args);
             };
         }""")
-        self.page.click('.cmp-table .more')
-        self.assertEqual(self.page.locator('.cmp-table tbody tr').count(), 1205)
+        self.page.click('.cmp-next')
+        self.assertEqual(self.page.locator('.cmp-table tbody tr').count(), 400)
         self.assertEqual(self.ev('window.compareSortCalls'), 0)
-        self.assertTrue(self.ev("window.firstCompareRow === document.querySelector('.cmp-table tbody tr')"))
+        self.assertFalse(self.ev('window.firstCompareRow.isConnected'))
+        self.assertEqual(self.page.locator('.cmp-page-status').inner_text(), 'Rows 401–800 of 1205')
 
     def test_compare_cached_results_follow_every_sort_mode(self):
         self.open_compare([

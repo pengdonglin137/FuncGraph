@@ -340,6 +340,7 @@ Canvas 的 `sliceLabel()` 只对显示文字去除已识别的末尾 GCC/LLVM �
 
 - **预过滤**（`prefilter.py`）在原始行上工作。每个任务维护一个三态栈：KEEP（在保留的调用树内）、DROP、PENDING（`--graph` 尚未匹配，子调用仍可能匹配）。`--time-range` 按调用的开始时间判断，开始在窗口内的调用连同所有子调用都保留，不会截断。保留的上下文切换标记会带上前后的分隔线。
 - **对比**（`compare.py`）对两份 trace 都走时间轴模型，按函数汇总调用次数、总耗时、自身耗时（总耗时减去直接子调用）、最大值、错误源头数。两份都有开销估计时额外生成 `rows_adj`。
+- **对比浏览**（`assets/compare/`）完整过滤、排序后缓存匹配行，按每页 400 行替换表格 DOM；翻页不重跑匹配或排序，差值条沿用完整结果的统一比例，CSV 仍导出全部匹配行。新筛选、排序或开销设置回到第一页，切换视图和 resize 保留页码。窄屏（≤700 px）或粗指针将查询、changed-only、排序和开销控件收进 Filters，不隐藏摘要指标或导出；切换布局、收起控件、取消后台筛选和到达页边界时保持可见焦点。隐藏输入框时重置组字状态，避免缺少 compositionend 后 Enter 失效。见[分页验证与测量边界](performance-compare-paging.md)。
 - **唤醒**：优先使用 `sched_waking`，它在唤醒者的上下文里触发；`sched_wakeup` 可能在目标 CPU 的 IPI 里触发，唤醒者会变成 idle。记录为 `wakeups[] = [waker_task, ts, target_task, ctx, waker_slice, offcpu_index]`。前端在显示唤醒点时跳过 `try_to_wake_up`、`__wake_up*` 等内部函数，显示唤醒者实际在做的事，例如 `anon_pipe_write`。
 - **开销修正**：function_graph 的入口和出口 hook 都计入函数耗时。`fgcapture.sh --calibrate` 用相同选项跟踪 3000 次 `vfs_read`，一次用 `set_graph_function`（跟踪子调用），一次用 `set_ftrace_filter`（只跟踪 vfs_read 本身），由两者中位数之差除以子孙调用数得到每个被跟踪子调用的开销 `child`，叶子耗时的 p1 作为每次调用的测量开销 `self`。修正值 = 实测 − child × 子孙调用数 − self（不小于 0），存为 `cols.adj`。树莓派 4（6.18、lockdep）实测 child ≈ 1.1 us、self ≈ 0.46 us；`vfs_read` 修正后的中位数 1.2 us，与不跟踪子调用时的 0.94 us 接近。开销随 CPU、频率和内核配置变化，修正值只是估计，默认显示实测值。
 

@@ -75,6 +75,19 @@ class HelpLifecycleTest(unittest.TestCase):
                 view:timeline?.view() || null, selected:timeline?.sel() ?? null};
         }''')
 
+    def test_compare_help_explains_paging_and_compact_controls(self):
+        for report in ('index.html', 'sidecar/index.html'):
+            with self.subTest(report=report):
+                page = self.open_report('compare', report=report, width=390, height=500, touch=True)
+                panel, close = self.show_help(page, 'compare')
+                text = panel.inner_text()
+                self.assertIn('Previous / Next browse 400-row pages', text)
+                self.assertIn('Export CSV includes all matching rows', text)
+                self.assertIn('Filters expands the query and sort controls without clearing settings', text)
+                self.assertNotIn('Load more', text)
+                close.press('Escape')
+                self.assertFalse(panel.is_visible())
+
     def test_wheel_stays_inside_help_at_both_boundaries_even_when_it_fits(self):
         for report, views in [('index.html', ['text', 'compare', 'timeline']),
                               ('sidecar/index.html', ['text', 'compare', 'timeline']),
@@ -121,6 +134,9 @@ class HelpLifecycleTest(unittest.TestCase):
             for view in views:
                 with self.subTest(report=report, view=view):
                     page = self.open_report(view, report=report, width=390, height=500)
+                    if view == 'compare':
+                        page.set_viewport_size(dict(width=390, height=350))
+                        page.locator('.cmp-toggle').click()
                     panel, close = self.show_help(page, view)
                     self.assertGreater(page.evaluate('document.documentElement.scrollHeight - innerHeight'), 0)
                     page.mouse.move(387, 250)

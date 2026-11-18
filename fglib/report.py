@@ -341,7 +341,8 @@ class HtmlGenerator:
                 <li>Complex filters run in the background; Cancel or Escape restores the previous complete result.</li>
                 <li>Click a metric heading to sort; choose |Δ|, Δ, Δ%, current or base.</li>
                 <li>Turn off Changed only to include unchanged functions.</li>
-                <li>Load more appends rows; Export CSV includes all matching rows.</li>
+                <li>Previous / Next browse 400-row pages; Export CSV includes all matching rows.</li>
+                <li>On narrow or touch screens, Filters expands the query and sort controls without clearing settings.</li>
                 <li>Measured durations include tracing overhead; subtraction is an estimate.</li>
             </ul>
         </div>
