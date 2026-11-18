@@ -30,6 +30,9 @@
 升版本身不会发布；仍须按下方清单核对实际标签、工作流与附件，不把源码版本当成发布成功。
 已发布的 `v0.9.4`、`v0.9.3`、`v0.9.2` 标签与更早的验收记录均保留为历史，不能重新使用。
 
+`v0.9.5` 为本地准备的版本，改动见 [版本说明](releases/v0.9.5.md)。
+本地提交和标签不表示已经推送、发布 Release 或更新 Pages；远端发布仍须完成下方验收流程。
+
 ## 1. 先区分 push、标签和 Release
 
 | 操作 | 自动执行的工作 |
@@ -77,11 +80,11 @@ git log -5 --oneline
 
 ### 选择版本并更新版本号
 
-以下以 **`0.9.5` 为下一次发布的示例**，并不表示已经升级或发布该版本。
+以下以 **`0.9.6` 为下一次发布的示例**，并不表示已经升级或发布该版本。
 每次都应先检查是否已使用；`v0.9.4` 已经发布，不能重新创建或移动到新提交。
 
 ```bash
-next_version=0.9.5
+next_version=0.9.6
 release_tag="v${next_version}"
 git tag --list "$release_tag"
 git ls-remote --tags origin "refs/tags/$release_tag" "refs/tags/$release_tag^{}"

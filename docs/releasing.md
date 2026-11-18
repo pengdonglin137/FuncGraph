@@ -49,10 +49,14 @@ when present, followed by generated GitHub notes. A version change alone does
 not publish anything: verify the actual tag, workflow and attachments below.
 Keep the published `v0.9.4`, `v0.9.3`, `v0.9.2` tags and earlier verification records as history; do not reuse them.
 
+`v0.9.5` is prepared locally; see its [release notes](releases/v0.9.5.md).
+A local commit or tag does not mean a push, GitHub Release or Pages update has
+completed. Remote publication still requires the acceptance steps below.
+
 ## Release checklist
 
 Run commands from the repository root in the same Bash session. **Stop if any
-command fails.** `0.9.5` below is an example for a future release, not an upgrade
+command fails.** `0.9.6` below is an example for a future release, not an upgrade
 or publication of that version. Always check availability; published tags such as `v0.9.4` must not be moved or overwritten.
 
 ### 1. Prepare the release commit
@@ -81,7 +85,7 @@ git log -5 --oneline
 Choose an unused version; the following future-version example must not be copied blindly:
 
 ```bash
-next_version=0.9.5
+next_version=0.9.6
 release_tag="v${next_version}"
 git tag --list "$release_tag"
 git ls-remote --tags origin "refs/tags/$release_tag" "refs/tags/$release_tag^{}"
