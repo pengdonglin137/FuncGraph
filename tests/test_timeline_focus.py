@@ -1,6 +1,7 @@
 """Selected-call filter drafts, exact symbols and one-step focus undo."""
 
 from itertools import product
+import json
 from pathlib import Path
 import shutil
 import subprocess
@@ -418,17 +419,41 @@ class TimelineFocusTest(unittest.TestCase):
         self.assertIsNone(self.page.evaluate('window.focusInjected'))
         self.page.evaluate('''name => {
             const input=document.getElementById('filterInput');
-            input.value='(pid:^42$ OR pid:^142$) AND (func:=' + JSON.stringify(name) + ' AND space:user) sort:desc';
+            input.value='(pid:^42$ OR pid:^142$) AND func:=' + JSON.stringify(name) + ' AND space:user sort:desc';
             applyFilter();
         }''', name)
         self.page.locator('[data-act=options]').click()
         self.page.evaluate("fgSwitchView('text')")
+        self.assertEqual(self.page.locator('#filterTags .filter-tag').count(), 3)
         self.page.locator('#filterTags .filter-tag-logic').first.click()
         self.assertTrue(self.page.evaluate('name => fgFilterState.text.includes(JSON.stringify(name))', name))
         self.assertIn('sort:desc', self.page.evaluate('fgFilterState.text'))
         self.page.locator('#filterTags .filter-tag').filter(has_text='space:user').locator('.tag-remove').click()
         self.assertNotIn('space:user', self.page.evaluate('fgFilterState.text'))
         self.assertTrue(self.page.evaluate('name => fgFilterState.text.includes(JSON.stringify(name))', name))
+        self.assertIn('(pid:^42$ OR pid:^142$)', self.page.evaluate('fgFilterState.text'))
+        self.assertIn('sort:desc', self.page.evaluate('fgFilterState.text'))
+        self.assertIsNone(self.page.evaluate('window.focusInjected'))
+
+    def test_grouped_literal_tags_are_removed_as_one_condition(self):
+        self.open()
+        name = '<img src=x onerror="window.focusInjected=1"> AND OR'
+        query = '(pid:^42$ OR pid:^142$) AND (func:=' + json.dumps(name) + ' AND space:user) sort:desc'
+        self.page.evaluate('''query => {
+            document.getElementById('filterInput').value = query;
+            applyFilter();
+        }''', query)
+        self.page.evaluate("async () => { await fgSwitchView('text'); }")
+        labels = self.page.locator('#filterTags .filter-tag-label').all_text_contents()
+        self.assertEqual(len(labels), 2)
+        self.assertIn('space:user', labels[1])
+        self.assertIn(json.dumps(name), labels[1])
+        self.page.locator('#filterTags .filter-tag-logic').first.click()
+        self.assertEqual(self.page.locator('#filterTags .filter-tag-label').all_text_contents(), labels)
+        self.assertEqual(self.page.locator('#filterTags img').count(), 0)
+        self.page.locator('#filterTags .filter-tag').filter(has_text='space:user').locator('.tag-remove').click()
+        self.assertEqual(self.page.evaluate('fgFilterState.text'), '(pid:^42$ OR pid:^142$) sort:desc')
+        self.assertEqual(self.page.locator('#filterTags .filter-tag-label').all_text_contents(), labels[:1])
         self.assertIsNone(self.page.evaluate('window.focusInjected'))
 
     def test_keyboard_mobile_and_fullscreen_keep_focus_inside_existing_controls(self):

@@ -136,7 +136,7 @@ int main(int count, char **values)
 
 @unittest.skipIf(ff is None or not os.environ.get('FG_VMLINUX'), 'set FG_VMLINUX (and FG_KERNEL_SRC) to compare with scripts/faddr2line')
 class AgainstKernelTest(unittest.TestCase):
-    ADDRS = ['vfs_read+0x10/0x328', 'mutex_unlock+0x20/0x38', 'path_lookupat+0x84/0x180']
+    ADDRS = ['vfs_read+0x10', 'mutex_unlock+0x8', 'path_lookupat+0x84']
 
     def test_same_file_line_as_kernel_tool(self):
         vml = os.environ['FG_VMLINUX']
@@ -144,14 +144,21 @@ class AgainstKernelTest(unittest.TestCase):
         kernel_tool = os.path.join(src, 'scripts', 'faddr2line')
         if not os.path.exists(kernel_tool):
             self.skipTest('no scripts/faddr2line')
-        for a in self.ADDRS:
-            with self.subTest(addr=a):
-                fast = subprocess.run([sys.executable, os.path.join(helpers.ROOT, 'fastfaddr2line.py'), vml, a],
+        def last_source(output):
+            return [line.rsplit(' at ', 1)[-1].split('/')[-1].split()[0]
+                    for line in output.splitlines() if ' at ' in line][-1:]
+
+        for address in self.ADDRS:
+            with self.subTest(addr=address):
+                ref = subprocess.run([kernel_tool, vml, address], check=True,
+                                     capture_output=True, text=True).stdout
+                selector = re.search(r'^' + re.escape(address) + r'/0x[0-9a-fA-F]+:$', ref, re.M)
+                self.assertIsNotNone(selector, f'kernel faddr2line supplied no symbol bounds: {ref!r}')
+                fast = subprocess.run([sys.executable, os.path.join(helpers.ROOT, 'fastfaddr2line.py'),
+                                       vml, selector.group(0)[:-1]], check=True,
                                       capture_output=True, text=True).stdout
-                ref = subprocess.run([kernel_tool, vml, a], capture_output=True, text=True).stdout
-                last = lambda out: [l.rsplit(' at ', 1)[-1].split('/')[-1].split()[0] for l in out.splitlines() if ' at ' in l][-1:]  # noqa: E731
-                self.assertTrue(last(ref), f'kernel faddr2line resolved nothing: {ref!r}')
-                self.assertEqual(last(fast), last(ref), f'fast={fast!r} ref={ref!r}')
+                self.assertTrue(last_source(ref), f'kernel faddr2line resolved nothing: {ref!r}')
+                self.assertEqual(last_source(fast), last_source(ref), f'fast={fast!r} ref={ref!r}')
 
 
 if __name__ == '__main__':
