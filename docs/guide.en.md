@@ -435,6 +435,23 @@ are never read as cache entries. Offline rebuilds are not guaranteed after cache
 failures. If the download also fails, resolved positions remain without invented
 source code.
 
+For native `function_graph` calls without a recorded call-site selector
+(`function+offset/size`), `--func-links` can also reuse the resolved function-entry
+position for Text source expansion and Timeline source details. Source still
+comes from a local tree or an explicitly selected, matching provider. The
+`kernel function entry` / `Kernel function source` labels distinguish it from a
+call site; no caller or inline frame is invented. Existing native call-site
+source, including partial resolver output, retains precedence. Return-only rows
+do not gain duplicate entry controls. No usable excerpt means no new expansion
+button; existing position links keep their normal behavior. Lightweight
+`--no-text-view` remains source-free unless `--keep-source` is requested.
+
+The header keeps original line counts, recorded calls and the applicable address
+space, without labeling parser candidates as `expandable` or distinct call-site
+selectors as `kernel funcs`. The Info panel's `Call-site rows` counts rows with
+recorded caller selectors, not source excerpts or unique functions. A call
+without a recorded caller can still have an entry excerpt.
+
 `--source-url` encodes only the substituted `{path}` and `{rev}`, preserving the
 template's own query syntax and existing escapes. Path slashes remain directory
 separators; revisions are encoded as one URL component. Filename characters such

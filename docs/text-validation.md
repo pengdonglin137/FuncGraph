@@ -168,8 +168,8 @@ The real-CLI tests additionally compare all embedded JSON payloads against
 successful-cache output, verify sidecar and auto resources and their digests,
 retain locations when cache and network both fail, check verbose diagnostics,
 and check a structured kernel entry with no recorded call site. This entry
-fixture uses FuncGraph's uftrace JSONL schema; it does not assert a new fallback
-for ordinary ftrace rows lacking call sites. The original full-URL cache keys
+fixture uses FuncGraph's uftrace JSONL schema; native-entry coverage is described
+in the following section. The original full-URL cache keys
 remain unchanged, so existing cache entries are still usable.
 
 Filesystem collisions and HTTP exchanges use real temporary files and loopback
@@ -195,6 +195,84 @@ repeated cache tests are not counted twice. Native raw tests run with
 sample digest. Public reports, PNGs and frontend assets remain unchanged; this
 cache-only change does not require regenerating healthy existing samples.
 These results overlap earlier audits and are not added to their totals.
+
+## Native entry-source fallback / 原生入口源码回退
+
+Native `function_graph` calls without a recorded caller selector already had
+resolved function-entry positions with `--func-links`, but Text could not
+expand them. The initial seven-test baseline in `build/entry-source-audit/`
+records four failures, including a real-CLI remote-source case. The fallback
+now exposes existing entry excerpts without changing parsed rows, recorded
+caller fields, inline evidence or Timeline geometry. Native recorded call-site
+output, including partial inline resolution, keeps its existing precedence.
+Return-only rows do not acquire duplicate entry buttons, and user functions
+never read the kernel source tree as a fallback.
+
+Timeline labels entry excerpts as `Kernel function source`, both when the
+caller column is absent entirely and when an individual call has no caller.
+The excerpt itself says `kernel function entry`; neither is a recorded call
+site. The header drops the ambiguous `expandable` / `kernel funcs` counters,
+retaining line/call counts and address-space scope. Info's `Call-site rows`
+counts actual recorded caller-selector rows, not available source excerpts or
+unique functions. Source lookup remains opt-in with `--func-links` and the
+existing local/versioned-provider options; no extra resolver pass is added.
+
+Entry lookup is cached by position and module identity, including unavailable
+excerpts. Structured kernel call-site validation is also reused per selector.
+Unit tests request the same position/selector 100 times and require one
+conversion/validation, while keeping different module URLs distinct. These
+are bounded lookup checks, not wall-clock performance claims.
+
+`test_entry_sources`, `test_entry_source_browser` and `test_remote_sources`
+cover native entry excerpts, unchanged native caller/partial-chain evidence,
+structured fallback precedence, invalid/missing/out-of-root sources, source
+links, keyboard/mouse controls, filtering and original call-data preservation.
+Chromium checks Text-only, embedded Timeline, full sidecar, opt-in Windowed
+Text, Timeline-only with kept source, desktop/light and emulated-touch/dark.
+The remote fixture still compiles a real debug ELF and removes the original
+source tree, requesting only its one referenced file, and checks the entry line
+against independent binutils addr2line output. Regenerate existing HTML
+to receive the new source controls and source-kind labels.
+
+入口源码只表示已解析的函数入口位置，不冒充调用行；已有调用点及部分解析信息不丢失。
+返回行不重复堆按钮，没有源码时不补造内容。测试覆盖完整/按需交付、键盘、模拟触控和
+筛选，不宣称真实移动设备或所有浏览器都已验证。中间诊断和中断日志不计作通过。
+
+```bash
+GMON_OUT_PREFIX=/tmp/funcgraph-entry-source PYTHONPATH=tests \
+  python3 -m unittest test_entry_sources test_entry_source_browser test_remote_sources -v
+```
+
+The completed follow-up passes **708 distinct tests** across seven batches;
+709 executions include one repeated test identity. The optional extra-trace
+check was initially skipped, then passed with the real local `write4`,
+host-QEMU-functions and kernel-default captures supplied through `FG_TRACES`.
+No skip remains unresolved. Native raw checks run with `FG_RAW_REQUIRED=1`.
+The two focused browser methods exercise twelve configurations, not twelve
+additional test identities. Final batch logs, source/asset hashes, individual
+outcomes and diagnostic exclusions are recorded in
+`build/entry-source-audit/summary.json`; these overlapping checks are not added
+to earlier audit totals.
+
+Both public HTML reports are regenerated with the matching kernel image and
+source commit `7475ea8b58616b33c04afb976cf0fbaad9dd63fb`, with GitHub source
+links pinned to `v7.4-rc2`. Independent comparison preserves all five JSON
+payloads, excluding only Timeline build timing, and every complete Text row:
+739 rows / 485 calls in `sample.html`, 1,504 rows / 714 calls in
+`sample_mixed.html`. Recorded sample inputs remain byte-identical. Both reports
+embed the current detail-panel asset. Public screenshots and all 29 guide
+screenshot recipes are refreshed; the dense-view and task-analysis recipes now
+open the existing Tools menu before interacting with its controls.
+
+Three additional real-kernel entry probes (`vfs_read`, `mutex_unlock`,
+`path_lookupat`) match the kernel's own faddr2line file/line chains. Their
+selectors use the actual image's emitted symbol spans, not ELF symbol sizes or
+hardcoded selectors from another build. These manual probes and intermediate
+incompatible-selector diagnostics are not counted as unit-test passes.
+
+本轮 708 项不同测试通过；最初跳过的真实 trace 检查随后实测通过，不重复计数。
+样例原始输入、全部调用数据及完整 Text 行保持不变；顶栏和入口源码标签的展示变化是
+预期改动。更新公开截图和全部 29 个指南截图，不代表新增采集能力或已验证所有设备。
 
 ## Reproduce / 复现
 

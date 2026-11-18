@@ -215,6 +215,26 @@ class RemoteSourceReportTest(unittest.TestCase):
         self.assertEqual(self.last_result.stderr.count('Warning: source cache'), 1)
         self.assertEqual(blocked.read_text(), 'keep this file')
 
+    def test_native_function_without_call_site_fetches_and_embeds_its_entry_source(self):
+        self.trace.write_text('# tracer: function_graph\n'
+                              ' 0)   1.000 us    |  remote_target(value=5);\n')
+        report = self.report('native-entry')
+        self.assertEqual(self.requests, ['/' + REVISION + '/kernel/demo.c'])
+        sources = self.payload(report, 'fgSrc')
+        self.assertEqual(len(sources), 1)
+        self.assertIn('kernel function entry', sources[0])
+        self.assertIn('return value + 17;', sources[0])
+        location = subprocess.check_output(['addr2line', '-e', str(self.vmlinux), self.target_address], text=True).strip()
+        number = int(location.rsplit(':', 1)[1])
+        self.assertIn('/kernel/demo.c#L' + str(number), sources[0])
+        self.assertEqual(self.payload(report, 'fgSrcLines'), {'2': 0})
+        timeline = self.payload(report, 'tlData')
+        self.assertEqual(timeline['n'], 1)
+        self.assertEqual(timeline['sources']['callers'], {})
+        self.assertNotIn('0 expandable', report)
+        self.assertNotIn('kernel funcs</span>', report)
+        self.assertIn('Call-site rows:</div><div class="info-value">0</div>', report)
+
     def test_missing_remote_source_preserves_locations_without_fabricated_code(self):
         self.available = False
         report = self.report('missing')

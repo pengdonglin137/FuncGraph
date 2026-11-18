@@ -197,8 +197,10 @@ def tl_dense(b, rep):
         probe.select(best.index); probe.select(-1);
         return best;
     }""")
+    pg.locator('[data-act="options"]').click()
     pg.fill('.tl-ftext', 'func:' + candidate['name'].split('.')[0])
     pg.press('.tl-ftext', 'Enter')
+    pg.locator('[data-act="options"]').click()
     pg.wait_for_timeout(400)
     point = pg.evaluate("""index => {
         const probe = fgView('timeline').probe(), canvas = document.querySelector('.tl-canvas');
@@ -406,6 +408,7 @@ def an_children(b, rep, calls=False):
 
 def an_tasks(b, rep):
     pg = open_page(b, rep['sample'], 'timeline', height=1000)
+    pg.click('[data-act=options]')
     pg.click('[data-act=an-tasks]')
     handle = box(pg, '.tl-resizer')
     pg.mouse.move(handle['x'] + handle['width'] / 2, handle['y'] + handle['height'] / 2)

@@ -143,7 +143,7 @@ class HtmlGenerator:
 
         # 计算统计数据
         total_lines = len(self.parsed_lines)
-        expandable_entries = sum(1 for l in self.parsed_lines if l['expandable'])
+        caller_rows = sum(bool(line.get('expandable') and line.get('func_info')) for line in self.parsed_lines)
         call_stats = ''
         if self.timeline_json is not None:
             call_stats = ('<span class="header-sep">·</span> '
@@ -151,14 +151,10 @@ class HtmlGenerator:
                           'excludes inline and untraced context frames. Not a count of unique functions or trace lines.">'
                           f'{self.timeline_json.get("n", 0):,} recorded calls</span>')
         line_stats = f'<span>{total_lines} lines</span>'
-        source_stats = (f'<span class="header-sep">·</span>\n'
-                        f'                <span>{expandable_entries} expandable</span>\n'
-                        f'                <span class="header-sep">·</span>\n'
-                        f'                <span>{len(self.vmlinux_funcs)} kernel funcs</span>')
+        source_stats = ''
         if self.address_spaces:
             spaces = (self.timeline_json or {}).get('uftrace', {}).get('spaces', [])
             scope = {'kernel': 'Kernel space', 'user': 'User space', 'kernel,user': 'User + kernel'}.get(','.join(spaces), 'uftrace')
-            source_stats = ''
             if (self.timeline_json or {}).get('no_text'):
                 line_stats = f'<span>{scope}</span>'
             else:
@@ -189,7 +185,7 @@ class HtmlGenerator:
             if self.total_time > 0:
                 info_content_html += f'                <div class="info-item"><div class="info-label">Total Time:</div><div class="info-value">{self.total_time:.2f}s</div></div>\n'
             info_content_html += f'                <div class="info-item"><div class="info-label">Total Lines:</div><div class="info-value">{len(self.parsed_lines)}</div></div>\n'
-            info_content_html += f'                <div class="info-item"><div class="info-label">Expandable:</div><div class="info-value">{sum(1 for l in self.parsed_lines if l["expandable"])}</div></div>\n'
+            info_content_html += f'                <div class="info-item"><div class="info-label">Call-site rows:</div><div class="info-value">{caller_rows}</div></div>\n'
             if self.enable_fold:
                 foldable_count = sum(1 for l in self.parsed_lines if l.get('fold_id') and l.get('fold_type') in ['entry', 'exit', 'inner'])
                 info_content_html += f'                <div class="info-item"><div class="info-label">Foldable:</div><div class="info-value">{foldable_count}</div></div>\n'
@@ -1185,15 +1181,40 @@ class HtmlGenerator:
         label = basis if basis and basis.startswith('user call site') else 'recorded user source · function entry (not call site)'
         return self._position_source_index(position, self.user_src, label)
 
+    def _line_source_index(self, line):
+        func_info = line.get('func_info')
+        if line.get('expandable') and func_info:
+            if line.get('space') is None:
+                return self._source_index(func_info)
+            if line.get('space') == 'kernel':
+                key = ('kernel call site', func_info)
+                if key not in self._src_calls:
+                    chain = parse_chain(self.func_locations_map.get(
+                        self._adjust_func_info(func_info, remove_suffix=False)))
+                    self._src_calls[key] = (self._source_index(func_info) if chain and
+                                            all(frame[1] != '??' and frame[2] > 0 for frame in chain) else None)
+                if self._src_calls[key] is not None:
+                    return self._src_calls[key]
+        position = line.get('source')
+        return (self._user_source_index(position, line.get('source_kind')) if position else
+                self._kernel_source_index(line))
+
     def _kernel_source_index(self, line):
         position = line.get('func_name_info')
-        if line.get('space') != 'kernel' or not line.get('raw_func_name') or not position:
+        if line.get('space', 'kernel') != 'kernel' or not line.get('raw_func_name') or not position:
+            return None
+        if line.get('record_type') is None and not re.search(
+                r'\|\s*[A-Za-z_$][\w.$]*(?:\s+\[[\w-]+\])?\(', line.get('raw_line', '')):
             return None
         if not position[0] or position[0] == '??' or not re.fullmatch(r'[1-9][0-9]*', str(position[1])):
             return None
-        file, number, url = self._timeline_position(*position, line.get('module_name'))
-        root = Path(self.kernel_src).resolve() if self.kernel_src else None
-        return self._position_source_index((file, number), root, 'kernel function entry', url, self.source_provider)
+        key = ('kernel entry', line.get('module_name'), *position)
+        if key not in self._src_calls:
+            file, number, url = self._timeline_position(*position, line.get('module_name'))
+            root = Path(self.kernel_src).resolve() if self.kernel_src else None
+            self._src_calls[key] = self._position_source_index(
+                (file, number), root, 'kernel function entry', url, self.source_provider)
+        return self._src_calls[key]
 
     def _position_source_index(self, position, root, basis, url='', provider=None):
         key = (basis, *position, url)
@@ -1307,12 +1328,7 @@ class HtmlGenerator:
                     fold_ends[line.get('fold_id')] = index + 1
         for idx, line_data in enumerate(self.parsed_lines):
             position = line_data.get('source')
-            call_chain = parse_chain(self.func_locations_map.get(
-                self._adjust_func_info(line_data['func_info'], remove_suffix=False))) if (
-                    line_data.get('space') == 'kernel' and line_data['expandable'] and line_data['func_info']) else []
-            position_src_idx = (self._source_index(line_data['func_info']) if call_chain and
-                                all(frame[1] != '??' and frame[2] > 0 for frame in call_chain) else
-                                self._user_source_index(position, line_data.get('source_kind')) if position else self._kernel_source_index(line_data))
+            position_src_idx = self._line_source_index(line_data)
             if self.omit_text:
                 if position_src_idx is not None:
                     self._src_lines[idx + 1] = position_src_idx

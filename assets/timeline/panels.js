@@ -477,7 +477,7 @@ function showDetail(i) {
     if (userDetail) h += kv('recorded address', detailToken('raw', userDetail.address) + '<div class="tl-context-note">Function entry address, not the call site.</div>');
     h += kv('trace lines', lineLink(sLine[i]) + (sEline && sEline[i] && sEline[i] !== sLine[i] ? ' → ' + lineLink(sEline[i]) : ''));
     h += '</div>' +
-        '<details class="tl-cs" open><summary class="tl-sec">' + (returnSiteOwner(i) !== i ? 'Shared return-site source' : f & FL.USER ? userCallSite(i) ? 'User call site source' : 'User function source (entry)' : D.uftrace && !D.sources?.callers?.[sCaller?.[i]]?.length ? 'Kernel function source' : 'Call site source') + '</summary>' +
+        '<details class="tl-cs" open><summary class="tl-sec">' + (returnSiteOwner(i) !== i ? 'Shared return-site source' : f & FL.USER ? userCallSite(i) ? 'User call site source' : 'User function source (entry)' : !sCaller || sCaller[i] < 0 || D.uftrace && !D.sources?.callers?.[sCaller[i]]?.length ? 'Kernel function source' : 'Call site source') + '</summary>' +
         (returnSiteOwner(i) !== i ? '<div class="tl-context-note">' + esc(sharedReturnSiteText(i)) + '</div>' : '') + '<div class="tl-cs-src"></div></details></div><div>';
     h += breakdownHtml(i);
     if (context.lists.has('error')) h += detailListHtml('error');
