@@ -257,7 +257,7 @@ class InstalledPackageTest(unittest.TestCase):
         names = [model['strings'][index] for index in model['cols']['name']]
         self.assertEqual({names[index]: reasons for index, reasons in model['atomic']}, {'mutex_lock': 2})
         self.assertEqual((model['cols']['flags'][names.index('schedule')] >> 7) & 15, 1)
-        self.assertIn('Inferred function_graph preempt baseline', report)
+        self.assertNotIn('Inferred function_graph preempt baseline', report)
 
     def test_command_help(self):
         for command in ('funcgraph', 'fgreport', 'fgcapture', 'fgcapture.sh'):
