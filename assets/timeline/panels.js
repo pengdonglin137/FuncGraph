@@ -2,13 +2,13 @@
 function pill(cls, txt, title) { return '<span class="tl-pill ' + cls + '"' + (title ? ' title="' + esc(title) + '"' : '') + '>' + esc(txt) + '</span>'; }
 function kv(k, v, cls) { return '<span class="k">' + k + '</span><span class="v' + (cls ? ' ' + cls : '') + '">' + v + '</span>'; }
 function lineLink(n, label) { return '<a class="tl-link" data-line="' + n + '">' + (label || 'line ' + n) + '</a>'; }
-function detailToken(kind, value) { return '<span class="tl-code-' + kind + '">' + esc(value) + '</span>'; }
+function detailToken(kind, value, title) { return '<span class="tl-code-' + kind + '"' + (title ? ' title="' + esc(title) + '"' : '') + '>' + esc(value) + '</span>'; }
 function detailSymbolHtml(value) {
     const site = value.match(/^(.+?)(\+0[xX][\da-fA-F]+\/0[xX][\da-fA-F]+)(.*)$/);
-    if (site) return detailToken('symbol', site[1]) + detailToken('offset', site[2]) + esc(site[3]);
+    if (site) return detailToken('symbol', symbolLabel(site[1]), site[1]) + detailToken('offset', site[2]) + esc(site[3]);
     const address = value.match(/^(0[xX][\da-fA-F]+)(.*)$/);
     if (address) return detailToken('raw', address[1]) + esc(address[2]);
-    return detailToken('symbol', value);
+    return detailToken('symbol', symbolSiteLabel(value), value);
 }
 function detailValueHtml(value, parameters = false) {
     const tokens = /"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|\b[A-Za-z_]\w*(?=\s*=(?!=))|(?<![\w.])[-+]?(?:0[xX][\da-fA-F]+|\d+(?:\.\d*)?(?:[eE][-+]?\d+)?)(?![\w.])|\b(?:NULL|nullptr|true|false|void)\b/g;

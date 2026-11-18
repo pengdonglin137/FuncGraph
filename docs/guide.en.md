@@ -926,10 +926,15 @@ Canvas labels and detail titles hide recognized trailing compiler suffixes: for 
 `.cold`/`.hot`, LLVM `.llvm.<hex hash>` and known demangled `[clone ...]` suffixes
 are supported. Unknown suffixes, embedded dots and `.plt`/`.ifunc` remain.
 **Only display names change**: recorded-call, inline/untraced-frame and function
-distribution titles use the same rules. Title tooltips, canvas hover and CALL STACK
-preserve the exact symbol. Regex search, source resolution, parameter types, function
+distribution titles, hover previews, CALL STACK and detail call sites use the same
+rules. Native title/symbol tooltips preserve the exact symbol. Call-site offsets,
+sizes, module names and `offset unavailable` states remain unchanged. CSV, raw
+records, regex search, exact filters, source resolution, parameter types, function
 colors and statistics keep original identities; clones are not merged.
+Offsets remain relative to the original clone; use its full name, not the short
+display label, for manual address resolution.
 Regenerate older HTML reports to use the readable labels.
+See [symbol display validation](symbol-display-validation.md) for evidence and limits.
 
 ### 6.3 Color modes (Color)
 

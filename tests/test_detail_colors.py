@@ -26,6 +26,7 @@ class Tokens(HTMLParser):
         super().__init__(convert_charrefs=True)
         self.text = ''
         self.spans = []
+        self.titles = []
         self.current = None
         self.feed(html)
 
@@ -33,6 +34,7 @@ class Tokens(HTMLParser):
         if tag != 'span':
             raise AssertionError('unexpected generated element: ' + tag)
         self.current = [dict(attributes)['class'], '']
+        self.titles.append(dict(attributes).get('title'))
         self.spans.append(self.current)
 
     def handle_endtag(self, tag):
@@ -51,10 +53,12 @@ class DetailTokenTest(unittest.TestCase):
         root = Path(helpers.ROOT) / 'assets' / 'timeline'
         panels = (root / 'panels.js').read_text()
         model = (root / 'model.js').read_text()
+        render = (root / 'render.js').read_text()
         cls.script = (model[model.index('function esc('):model.index('function nameOf(')] +
+                      render[render.index('const COMPILER_SUFFIX'):render.index('const nameHash')] +
                       panels[panels.index('function detailToken('):panels.index('const PROCESS_PAGE')])
 
-    def render(self, values, symbol=False, parameters=True):
+    def render(self, values, symbol=False, parameters=True, expected=None):
         script = self.script + '''
             const request = JSON.parse(require('node:fs').readFileSync(0, 'utf8'));
             console.log(JSON.stringify(request.values.map(value => request.symbol ?
@@ -64,7 +68,7 @@ class DetailTokenTest(unittest.TestCase):
                                 input=json.dumps(dict(values=values, symbol=symbol, parameters=parameters)))
         self.assertEqual(result.returncode, 0, result.stderr)
         output = json.loads(result.stdout)
-        for value, html in zip(values, output):
+        for value, html in zip(values if expected is None else expected, output):
             self.assertEqual(Tokens(html).text, value)
         return [Tokens(html) for html in output]
 
@@ -103,6 +107,19 @@ class DetailTokenTest(unittest.TestCase):
                   'name="<img src=x onerror=alert(1)>&"', "'onfocus=alert(1)'", '<>&"\'']
         self.render(values)
         self.render(values, symbol=True)
+
+    def test_compiler_labels_keep_raw_titles_offsets_and_module_trailers(self):
+        values = ['caller.isra.0+0x33/0x80 [driver.isra.7]',
+                  'work<"&>.llvm.deadbeef+0XAB/0XCD',
+                  'caller.constprop.2 (offset unavailable)',
+                  'caller.isra.0.extra+0x4/0x80']
+        expected = ['caller+0x33/0x80 [driver.isra.7]', 'work<"&>+0XAB/0XCD',
+                    'caller (offset unavailable)', values[3]]
+        results = self.render(values, symbol=True, expected=expected)
+        self.assertEqual(results[0].spans, [['tl-code-symbol', 'caller'], ['tl-code-offset', '+0x33/0x80']])
+        self.assertEqual(results[0].titles, ['caller.isra.0', None])
+        self.assertEqual(results[1].titles, ['work<"&>.llvm.deadbeef', None])
+        self.assertEqual(results[2].titles, [values[2]])
 
 
 def contrast(first, second):

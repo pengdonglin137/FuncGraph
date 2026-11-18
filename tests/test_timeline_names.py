@@ -71,6 +71,27 @@ class SliceLabelTest(unittest.TestCase):
         self.check([('work', 'work'), ('work.isra.0', 'work'), ('work.isra.1', 'work'),
                     ('work.constprop.0', 'work'), ('work.isra.0', 'work')])
 
+    def test_call_site_labels_keep_exact_offsets_sizes_and_non_symbol_text(self):
+        pairs = [
+            ('work.isra.0+0x4/0x80', 'work+0x4/0x80'),
+            ('work.llvm.deadbeef+0XAB/0XCD [driver.isra.7]', 'work+0XAB/0XCD [driver.isra.7]'),
+            ('work<int>(int) [clone .isra.0]+0x4/0x80', 'work<int>(int)+0x4/0x80'),
+            ('work.constprop.2 (offset unavailable)', 'work (offset unavailable)'),
+            ('work.isra.0.extra+0x4/0x80', 'work.isra.0.extra+0x4/0x80'),
+            ('work.plt+0x4/0x80', 'work.plt+0x4/0x80'),
+            ('0x1043 (symbol unavailable)', '0x1043 (symbol unavailable)'),
+            ('std::operator++', 'std::operator++'),
+        ]
+        script = 'const assert = require("node:assert/strict");\n' + self.source + '''
+            const pairs = ''' + json.dumps(pairs) + ''';
+            for (const [raw, expected] of pairs) {
+                assert.equal(symbolSiteLabel(raw), expected, raw);
+                assert.equal(symbolSiteLabel(raw), expected, raw);
+            }
+        '''
+        result = subprocess.run(['node', '-e', script], capture_output=True, text=True, timeout=10)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
 
 @unittest.skipIf(sync_playwright is None, 'playwright not installed')
 class SliceLabelBrowserTest(unittest.TestCase):
@@ -152,11 +173,14 @@ class SliceLabelBrowserTest(unittest.TestCase):
                 }''')
                 self.assertEqual(names, ['inode_has_perm.isra.0', 'work.constprop.1', 'work.constprop.2'])
                 page.mouse.move(*page.evaluate('fgView("timeline").probe().xyOf(0)'))
-                self.assertEqual(page.locator('.tl-tip .t-name').inner_text(), names[0])
+                self.assertEqual(page.locator('.tl-tip .t-name').inner_text(), 'inode_has_perm')
+                self.assertEqual(page.locator('.tl-tip .t-name').get_attribute('title'), names[0])
                 page.evaluate('fgView("timeline").probe().select(1)')
                 self.assertEqual(page.locator('.tl-detail-title').inner_text(), 'work')
                 self.assertEqual(page.locator('.tl-detail-title').get_attribute('title'), names[1])
-                self.assertIn(names[0], page.locator('.tl-context-row').all_inner_texts()[0])
+                stack = page.locator('.tl-context-row').first
+                self.assertEqual(stack.locator('.tl-code-symbol').inner_text(), 'inode_has_perm')
+                self.assertIn(names[0], stack.locator('.tl-context-select').get_attribute('title'))
                 for index in [2, 1]:
                     page.locator('.tl-search').fill('^' + names[index].replace('.', r'\.') + '$')
                     page.locator('.tl-search').press('Enter')
@@ -203,9 +227,64 @@ class SliceLabelBrowserTest(unittest.TestCase):
                         self.assertEqual(page.locator('.tl-detail-title').inner_text(), expected)
                         raw = 'unknown frame' if frame['name'] == '?' else frame['name']
                         self.assertEqual(page.locator('.tl-detail-title').get_attribute('title'), raw)
+                        page.mouse.move(*page.evaluate('index => fgView("timeline").probe().xyOf(index)', frame['index']))
+                        self.assertTrue(page.locator('.tl-tip .t-name').inner_text().startswith(expected + ' '))
+                        self.assertEqual(page.locator('.tl-tip .t-name').get_attribute('title'), raw)
                         if not frame['ghost']:
                             self.assertIn('into inode_has_perm', page.locator('.tl-slice-head .tl-pill').all_inner_texts())
                             self.assertEqual(page.locator('.tl-slice-head .tl-pill[title]').get_attribute('title'), names[0])
+                    self.assertEqual(page.evaluate('JSON.stringify(fgData.read("tlData"))'), original)
+
+    def test_kernel_caller_display_keeps_offsets_module_names_raw_data_and_exports(self):
+        caller = 'inode_has_perm.isra.0+0x4/0x80 [driver.isra.7]'
+        names = ['inode_has_perm.isra.0', 'work.constprop.1', 'work.constprop.2', caller]
+        configuration = dict(columns=dict(name=[0, 1, 2], caller=[-1, 3, 3]), extra=dict(strings=names))
+        for mode in ('single', 'sidecar'):
+            for theme in ('light', 'dark'):
+                with self.subTest(mode=mode, theme=theme):
+                    page = self.open_report(mode, theme, configuration)
+                    original = page.evaluate('JSON.stringify(fgData.read("tlData"))')
+                    page.mouse.move(*page.evaluate('fgView("timeline").probe().xyOf(1)'))
+                    tip = page.locator('.tl-tip .t-row').filter(has=page.locator('.t-k', has_text='caller')).locator('.t-v')
+                    self.assertEqual(tip.inner_text(), 'inode_has_perm+0x4/0x80 [driver.isra.7]')
+                    self.assertEqual(tip.get_attribute('title'), caller)
+                    page.evaluate('fgView("timeline").probe().select(1)')
+                    site = page.locator('.tl-kv .k').filter(has_text='caller site').locator('xpath=following-sibling::span[1]')
+                    self.assertEqual(site.locator('.tl-code-symbol').inner_text(), 'inode_has_perm')
+                    self.assertEqual(site.locator('.tl-code-symbol').get_attribute('title'), 'inode_has_perm.isra.0')
+                    self.assertEqual(site.locator('.tl-code-offset').inner_text(), '+0x4/0x80')
+                    self.assertIn('[driver.isra.7]', site.inner_text())
+                    with page.expect_download() as download:
+                        page.locator('[data-context-export=stack]').click()
+                    with open(download.value.path(), encoding='utf-8-sig', newline='') as source:
+                        rows = list(csv.DictReader(source))
+                    self.assertEqual([row['function'] for row in rows], names[:2])
+                    self.assertEqual(rows[1]['call_site'], caller)
+                    self.assertEqual(page.evaluate('JSON.stringify(fgData.read("tlData"))'), original)
+
+    def test_user_caller_display_keeps_recorded_offset_and_unavailable_offset_state(self):
+        names = ['inode_has_perm.isra.0', 'work.constprop.1', 'work.constprop.2']
+        for mode in ('single', 'sidecar'):
+            for bounded in (False, True):
+                with self.subTest(mode=mode, bounded=bounded):
+                    site = dict(name=names[0], retaddr='0x1045')
+                    if bounded:
+                        site['symbol'] = dict(offset=68, size=128)
+                    configuration = dict(columns=dict(name=[0, 1, 2], flags=[1 << 25] * 3), extra=dict(
+                        strings=names, uftrace=dict(spaces=['user'], user_details={
+                            '3': dict(address='0x2000', callsite=site)})))
+                    page = self.open_report(mode, configuration=configuration)
+                    original = page.evaluate('JSON.stringify(fgData.read("tlData"))')
+                    page.evaluate('fgView("timeline").probe().select(1)')
+                    value = page.locator('.tl-kv .k').filter(has_text='caller site').locator('xpath=following-sibling::span[1]')
+                    symbol = value.locator('.tl-code-symbol')
+                    self.assertTrue(symbol.inner_text().startswith('inode_has_perm'))
+                    self.assertNotIn('.isra.0', value.inner_text())
+                    if bounded:
+                        self.assertEqual(value.locator('.tl-code-offset').inner_text(), '+0x44/0x80')
+                    else:
+                        self.assertIn('(offset unavailable)', value.inner_text())
+                        self.assertEqual(value.locator('.tl-code-offset').count(), 0)
                     self.assertEqual(page.evaluate('JSON.stringify(fgData.read("tlData"))'), original)
 
     def test_kernel_user_and_module_titles_keep_original_identity_and_exports(self):
@@ -243,5 +322,10 @@ class SliceLabelBrowserTest(unittest.TestCase):
                         self.assertEqual(page.locator('.tl-detail-title').inner_text(), expected)
                         self.assertEqual(page.locator('.tl-detail-title').get_attribute('title'), raw)
                         self.assertEqual(page.locator('.tl-detail-title img').count(), 0)
+                        self.assertEqual(page.locator('.tl-context-row img').count(), 0)
+                        page.mouse.move(*page.evaluate('index => fgView("timeline").probe().xyOf(index)', index))
+                        self.assertEqual(page.locator('.tl-tip .t-name').inner_text(), expected)
+                        self.assertEqual(page.locator('.tl-tip .t-name').get_attribute('title'), raw)
+                        self.assertEqual(page.locator('.tl-tip img').count(), 0)
                     self.assertTrue(page.evaluate('window.titleInjected === undefined'))
                     self.assertEqual(page.evaluate('JSON.stringify(fgData.read("tlData"))'), original)

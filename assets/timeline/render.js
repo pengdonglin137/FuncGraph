@@ -58,6 +58,10 @@ function symbolLabel(name) {
     return label;
 }
 function sliceLabel(index) { return symbolLabel(nameOf(index)); }
+function symbolSiteLabel(value) {
+    const site = value.match(/^(.+?)(\+0[xX][\da-fA-F]+\/0[xX][\da-fA-F]+.*| \(offset unavailable\))$/);
+    return site ? symbolLabel(site[1]) + site[2] : symbolLabel(value);
+}
 const nameHash = new Int32Array(S.length).fill(-1);
 function hashOf(si) {
     let h = nameHash[si];

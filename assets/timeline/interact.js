@@ -132,12 +132,14 @@ function tipDense(summary) {
     return '<div class="t-sep"></div><div class="t-warn">Dense pixel: ' + summary.count + ' frames in this task/depth row; ' + summary.matches +
         ' match the current search/filter. Showing the ' + (summary.matches ? 'first matching' : 'first') + ' representative frame, not every call. Zoom in to separate them.</div>';
 }
+function tipSymbol(value) { return '<span title="' + esc(value) + '">' + esc(symbolSiteLabel(value)) + '</span>'; }
 function tipGhost(i) {
     const f = ghostFacts(i);
     const row = (k, v) => '<div class="t-row"><span class="t-k">' + k + '</span><span class="t-v">' + v + '</span></div>';
-    let h = '<div class="t-name">' + esc(f.y.name === '?' ? 'unknown frame' : f.y.name) + ' <span class="t-warn">(not traced)</span></div>';
+    const name = f.y.name === '?' ? 'unknown frame' : f.y.name;
+    let h = '<div class="t-name" title="' + esc(name) + '">' + esc(symbolLabel(name)) + ' <span class="t-warn">(not traced)</span></div>';
     h += '<div>extent of the calls inside <span class="t-dur">' + fmtDur(f.span) + '</span></div><div class="t-sep"></div>';
-    h += row('inside', esc(nameOf(f.y.p)));
+    h += row('inside', tipSymbol(nameOf(f.y.p)));
     h += row('traced calls', f.kids.length + ' (' + fmtDur(f.covered) + ')');
     h += '<div class="t-warn">The trace skips ' + f.y.gap + ' call level' + (f.y.gap > 1 ? 's' : '') + ' here: the entry was not recorded. ' +
         (f.y.name === '?' ? 'Name unknown.' : 'Name from the return address of the calls inside.') + '</div>';
@@ -146,9 +148,9 @@ function tipGhost(i) {
 function tipInline(i) {
     const f = inlineFacts(i);
     const row = (k, v) => '<div class="t-row"><span class="t-k">' + k + '</span><span class="t-v">' + v + '</span></div>';
-    let h = '<div class="t-name">' + esc(f.fn) + ' <span class="t-warn">(inlined)</span></div>';
+    let h = '<div class="t-name" title="' + esc(f.fn) + '">' + esc(symbolLabel(f.fn)) + ' <span class="t-warn">(inlined)</span></div>';
     h += '<div>traced extent <span class="t-dur">' + fmtDur(f.span) + '</span></div><div class="t-sep"></div>';
-    h += row('inlined into', esc(f.intoFn) + ' at ' + esc(f.atFile) + ':' + f.atLine);
+    h += row('inlined into', tipSymbol(f.intoFn) + ' at ' + esc(f.atFile) + ':' + f.atLine);
     h += row('defined in', esc(f.file));
     h += row('traced calls', f.kids.length + ' (' + fmtDur(f.covered) + ')');
     h += row('between them', fmtDur(f.gap) + ' (own inlined code or untraced work)');
@@ -159,15 +161,15 @@ function tipInline(i) {
 function inlineLine(i) {
     // "a > b > c" path of inline frames around the call site of real slice i
     const ch = inlChain(i);
-    return ch && ch.length > 1 ? ch.slice(1).map(f => f[0]).join(' › ') : '';
+    return ch && ch.length > 1 ? ch.slice(1).map(frame => symbolLabel(frame[0])).join(' › ') : '';
 }
 function tipSlice(i) {
     if (i >= N) return isGhost(i) ? tipGhost(i) : tipInline(i);
     const d = durOf(i), f = sFlags[i];
-    let h = '<div class="t-name">' + esc(nameOf(i)) + (modOf(i) ? ' [' + esc(modOf(i)) + ']' : '') + '</div>';
+    let h = '<div class="t-name" title="' + esc(nameOf(i)) + '">' + esc(sliceLabel(i)) + (modOf(i) ? ' [' + esc(modOf(i)) + ']' : '') + '</div>';
     h += '<div><span class="t-dur">' + fmtDur(d) + '</span>' + (f & FL.EST ? ' <span class="t-warn">(estimated)</span>' : '') +
         ' &nbsp;self ' + fmtDur(sSelf[i]) + '</div><div class="t-sep"></div>';
-    const row = (k, v, cls) => '<div class="t-row"><span class="t-k">' + k + '</span><span class="t-v' + (cls ? ' ' + cls : '') + '">' + v + '</span></div>';
+    const row = (k, v, cls, title) => '<div class="t-row"><span class="t-k">' + k + '</span><span class="t-v' + (cls ? ' ' + cls : '') + '"' + (title ? ' title="' + esc(title) + '"' : '') + '>' + v + '</span></div>';
     h += row('start', fmtDur(sStart[i]) + (MODE === 'abs' ? ' &nbsp;(' + fmtAbs(sStart[i]) + ')' : ''));
     const t = TRACKS[sTask[i]];
     h += row('task', esc(trackLabel(t)) + (cpuOf(i) >= 0 ? ' &nbsp;CPU ' + cpuOf(i) : ''));
@@ -185,7 +187,7 @@ function tipSlice(i) {
         else h += row(field, esc(r) + (f & FL.NULLRET ? ' (NULL)' : ''));
     }
     const c = callerOf(i);
-    if (c) h += row('caller', esc(c) + (f & FL.MISMATCH ? '<div class="tl-tail-note">' + esc(callerRelationText(i)) + '</div>' : ''));
+    if (c) h += row('caller', esc(symbolSiteLabel(c)) + (f & FL.MISMATCH ? '<div class="tl-tail-note">' + esc(callerRelationText(i)) + '</div>' : ''), '', c);
     const csp = c ? callSitePos(i) : null;
     if (csp) h += row('source', esc(csp.at));
     const userSite = f & FL.USER ? userCallSite(i) : null;
