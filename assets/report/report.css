@@ -992,6 +992,20 @@
             font-size: 10px;
             margin-left: auto;
         }
+        .field-event-summary {
+            padding: 5px 8px;
+            color: var(--text-secondary);
+            font-size: 11px;
+        }
+        .field-event-item > span:first-of-type { overflow-wrap: anywhere; min-width: 0; }
+        .field-event-item progress {
+            flex: 0 1 4em;
+            min-width: 1em;
+            margin-left: auto;
+            height: .65em;
+            accent-color: var(--btn-primary);
+        }
+        .field-event-item .hint-text { min-width: 3ch; margin-left: 0; text-align: right; font-variant-numeric: tabular-nums; }
         .field-dropdown-actions {
             display: flex;
             gap: 4px;

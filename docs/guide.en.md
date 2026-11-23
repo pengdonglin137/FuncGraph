@@ -50,6 +50,16 @@ of measuring every chunk again on each toggle. Filter, fold or layout changes
 still require fresh measurements; long content is not clipped. See
 [native-width measurements and limits](performance-text-event-widths.md).
 
+When filtering is enabled and the report has named events, choose **Event type**
+in the Text toolbar (under **More** on phones). Browse event types by count, check
+one or more types and click **Apply**. Selected types match with OR and can be
+combined with CPU, PID and other conditions. Reopen the picker to change the
+selection or uncheck all types to remove it. Applying a selection reveals hidden events.
+Counts cover all named event rows in the report, regardless of display filters,
+folding or scroll position. Task-switch hint rows are not counted as extra events.
+This is the shared Text/Timeline line filter, not the event visibility toggle.
+Clear it to restore the full call view.
+
 Single-file reports with at least 4,096 rows briefly show **Preparing trace text…**
 on initial Text startup instead of repeatedly painting partial Text during parsing.
 All original rows remain; this does not automatically enable windowing or bound

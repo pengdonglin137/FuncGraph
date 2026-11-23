@@ -18,7 +18,7 @@ from .inline import parse_chain, timeline_inline_map
 from .modules import ModuleIndex
 from .output import ReportSpool
 from .sources import rewrite as rewrite_sources
-from .textindex import is_trace_event
+from .textindex import is_trace_event, trace_event
 from .highlight import highlight_c_code, highlight_ftrace_line
 from .resolver import call_faddr2line_batch, call_faddr2line_for_func_names, create_source_link, parse_list_output, parse_module_url
 from .util import build_source_url, clean_file_path, escape_html_preserve_spaces, format_args_info, get_environment_info, get_relative_path, remove_compiler_suffix, verbose_print
@@ -124,6 +124,7 @@ class HtmlGenerator:
         self.vmlinux_time = 0
         self.module_time = 0
         self.filter_html = ""
+        self.event_picker_html = ""
         self.combined_module_url_map = {}
         self.default_module_url = base_url
         self.func_name_results = {}
@@ -279,6 +280,7 @@ class HtmlGenerator:
                 <button type="button" class="control-btn btn-tool" id="textWindowBtn" hidden onclick="fgToggleTextRenderer()" aria-label="Windowed Text" title="Render only the visible Text window"><span class="text-window-label">Windowed Text</span><span class="text-window-short" aria-hidden="true">Windowed</span></button>
                 <div class="text-toolbar-options" id="textToolbarOptions">
                 {event_button}
+                {self.event_picker_html}
                 <div class="btn-group">
                     {tree_button}
                     <button class="control-btn btn-expand" onclick="expandAll()">Expand All</button>
@@ -345,6 +347,7 @@ class HtmlGenerator:
             <li>On a phone, tap the left gutter to fold without scrolling to the function name</li>
             <li>On a phone, <strong>Filter</strong> opens the query editor; <strong>More</strong> contains Tree guides and other Text tools</li>
             <li><strong>Events: shown / hidden</strong> toggles Text event rows only; calls, loss warnings and Timeline evidence remain</li>
+            <li><strong>Event type</strong> shows counts and filters by recorded event name; clear the filter to restore the full call view</li>
             <li><kbd>1</kbd>-<kbd>9</kbd>: Fold to depth N (hide calls deeper than N)</li>
             <li><kbd>0</kbd>: Unfold all fold blocks</li>
             <li>Folded blocks show summary: call count, total time, return value</li>
@@ -646,11 +649,15 @@ class HtmlGenerator:
             has_params = False
             has_duration = False
             has_funcs = False
+            event_counts = {}
 
             for line_data in self.parsed_lines:
                 cpu = line_data.get('cpu')
                 pid = line_data.get('pid')
                 comm = line_data.get('comm')
+                event = trace_event(line_data)
+                if event:
+                    event_counts[event] = event_counts.get(event, 0) + 1
 
                 if cpu is not None:
                     cpu_str = str(cpu)
@@ -691,6 +698,13 @@ class HtmlGenerator:
 
             def field_values(values):
                 return html.escape(json.dumps(values, ensure_ascii=False, separators=(',', ':')), quote=True)
+
+            if event_counts and not self.omit_text:
+                events = sorted(event_counts, key=lambda event: (-event_counts[event], event))
+                self.event_picker_html = (f'<button type="button" class="control-btn btn-tool" id="textEventTypeBtn" '
+                                          f'title="Browse event counts and filter by type" data-field="event" '
+                                          f'data-values="{field_values(events)}" '
+                                          f'data-counts="{field_values([event_counts[event] for event in events])}">Event type</button>')
 
             if unique_cpus:
                 vals = field_values(sorted(unique_cpus, key=lambda x: int(x)))
@@ -747,7 +761,7 @@ class HtmlGenerator:
                 field_buttons.append('<button class="field-btn" data-field="graph" data-values="">graph</button>')
                 field_buttons.append('<button class="field-btn" data-field="notrace" data-values="">notrace</button>')
 
-            if field_buttons:
+            if field_buttons or self.event_picker_html:
                 # 将所有错误码值存储在隐藏属性中（用于 ret:all 过滤）
                 error_values_json = ''
                 if unique_error_codes:
@@ -774,6 +788,7 @@ class HtmlGenerator:
                             <div class="syntax-example">field:value</div>
                             <div class="syntax-desc">e.g. <code>cpu:3</code> <code>comm:bash</code> <code>pid:1234</code></div>
                             <div class="syntax-desc">Dropdowns choose exact, case-sensitive values: <code>cpu:="3"</code> <code>comm:="worker[0]"</code>. Plain <code>field:value</code> keeps regex matching.</div>
+                            <div class="syntax-desc"><code>event:="kvm:kvm_entry"</code> matches a recorded event name. Event type counts are for the entire report, before display filters.</div>
                         </div>
                         <div class="syntax-section">
                             <div class="syntax-title">Logic</div>
@@ -1524,8 +1539,11 @@ class HtmlGenerator:
 
     def _text_attributes(self, line, raw_line, fold_ends, fold_starts):
         attributes = {name: str(line.get(name)) if line.get(name) is not None else '' for name in ('cpu', 'pid', 'comm')}
-        if is_trace_event(line):
+        event = trace_event(line)
+        if event is not None:
             attributes['trace-event'] = '1'
+            if event:
+                attributes['event'] = event
         if line.get('space') is not None:
             attributes['space'] = line.space
         if line.get('boundary'):

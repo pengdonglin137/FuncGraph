@@ -12,12 +12,16 @@
     const foldModels = new WeakMap();
     const orderModels = new WeakMap();
     class TextRecord {
-        constructor(row, version, event = false) { this.row = row; this.version = version; this.event = event; }
+        constructor(row, version, event = false, eventName = null) {
+            this.row = row; this.version = version; this.event = event;
+            if (eventName !== null) this.eventName = eventName;
+        }
         get textContent() { return this.row[1]; }
         get source() { return this.version >= 2 ? this.row[this.row.length - 1] : undefined; }
         getAttribute(name) {
             if (name === 'data-line-number') return String(this.row[0]);
             if (name === 'data-trace-event') return this.event ? '1' : null;
+            if (name === 'data-event') return this.eventName ?? null;
             if (this.version >= 4) {
                 const position = (this.version === 6 ? outcomeColumns : this.version === 5 ? symbolColumns : presentationColumns).get(name);
                 return position === undefined ? null : this.row[position];
@@ -40,6 +44,11 @@
             if (!Array.isArray(events) || events.some((number, index) => !Number.isSafeInteger(number) || number <= 0 ||
                 index && number <= events[index - 1])) throw new Error('Invalid Text event index');
             const eventNumbers = new Set(events);
+            const names = data.eventNames === undefined ? [] : data.eventNames;
+            if (!Array.isArray(names) || names.some((entry, index) => !Array.isArray(entry) || entry.length !== 2 ||
+                !eventNumbers.has(entry[0]) || typeof entry[1] !== 'string' || !entry[1] ||
+                index && entry[0] <= names[index - 1][0])) throw new Error('Invalid Text event names');
+            let named = 0;
             const attributeEnd = expected.length + 2;
             const hasSource = data.version >= 2;
             const rowLength = attributeEnd + Number(hasSource);
@@ -57,7 +66,8 @@
                     if (attribute !== null && typeof attribute !== 'string') throw new Error('Invalid Text filter index row ' + (index + 1));
                 }
                 previous = row[0];
-                const record = new TextRecord(row, data.version, eventNumbers.delete(row[0]));
+                const eventName = names[named]?.[0] === row[0] ? names[named++][1] : null;
+                const record = new TextRecord(row, data.version, eventNumbers.delete(row[0]), eventName);
                 records.push(record);
                 if (record.event) eventRecords.push(record);
                 if (index % 1024 === 0) yield 'Checking full-trace filter index…';

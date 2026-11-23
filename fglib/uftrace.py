@@ -31,10 +31,10 @@ class UftraceInputError(ValueError):
 
 
 class UftraceLine(FtraceLine):
-    __slots__ = ('space', 'boundary', 'source', 'source_kind', 'record_type', 'ret_errno', 'ret_failure')
+    __slots__ = ('space', 'boundary', 'source', 'source_kind', 'record_type', 'ret_errno', 'ret_failure', 'event_name')
 
     def __init__(self, *, record_type, space=None, boundary=False, source=None, source_kind=None, ret_errno=None,
-                 ret_failure=None, **kwargs):
+                 ret_failure=None, event_name=None, **kwargs):
         super().__init__(**kwargs)
         self.space = space
         self.boundary = boundary
@@ -43,6 +43,7 @@ class UftraceLine(FtraceLine):
         self.record_type = record_type
         self.ret_errno = ret_errno
         self.ret_failure = ret_failure
+        self.event_name = event_name
 
 
 def _uint(value, maximum=(1 << 64) - 1):
@@ -693,6 +694,7 @@ class UftraceTimeline(TimelineBuilder):
                                      duration=duration, sort_duration=duration, fold_id=fold_id, fold_type=fold_type,
                                      fold_ancestors=path, call_depth=depth, space=space, boundary=boundary, source=source,
                                      source_kind=source_kind, record_type=kind,
+                                     event_name=record.get('name') if kind == 'event' else None,
                                      irqs_off=lat[0] if lat else None, need_resched=lat[1] if lat else None,
                                      hardirq_softirq=lat[2] if lat else None, preempt_depth=lat[3] if lat else None))
         return lines

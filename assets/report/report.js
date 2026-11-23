@@ -1317,10 +1317,8 @@
             if (filter) filter.style.display = panel === 'filter' ? 'flex' : 'none';
             filterButton.setAttribute('aria-expanded', String(panel === 'filter'));
             moreButton.setAttribute('aria-expanded', String(panel === 'more'));
-            if (panel !== 'filter') {
-                fgCloseFieldDropdowns();
-                fgCloseFilterHelp();
-            }
+            if (panel !== previous) fgCloseFieldDropdowns();
+            if (panel !== 'filter') fgCloseFilterHelp();
             if (panel) fgFitTextControlPanel(controls);
             if (restoreFocus) (previous === 'filter' ? filterButton : moreButton).focus({preventScroll: true});
         }
@@ -1392,10 +1390,11 @@
             }
             function sync() {
                 const active = document.activeElement;
+                const dropdownOwner = fgFieldDropdown?.panel.contains(active) ? fgFieldDropdown.owner : null;
                 const editingFilter = active.closest('#filterSyntaxHelp') ? document.getElementById('filterHelpToggle') :
                     filter?.contains(active) ? active :
-                    fgFieldDropdown?.panel.contains(active) ? fgFieldDropdown.owner : null;
-                const editingOptions = options?.contains(active);
+                    filter?.contains(dropdownOwner) ? dropdownOwner : null;
+                const editingOptions = options?.contains(active) || options?.contains(dropdownOwner);
                 const compact = fgTextCompactMedia.matches;
                 controls.classList.toggle('text-compact', compact);
                 filterButton.hidden = compact && !filter;
@@ -1416,7 +1415,8 @@
             });
             document.addEventListener('focusin', event => {
                 if (controls.dataset.panel === 'more' && event.target !== moreButton &&
-                        event.target !== fgClipboardProxy && !options.contains(event.target))
+                        event.target !== fgClipboardProxy && !options.contains(event.target) &&
+                        !fgFieldDropdown?.panel.contains(event.target))
                     fgSetTextControlPanel('');
             });
             document.addEventListener('keydown', event => {
@@ -1495,7 +1495,7 @@
                     i += sortMatch[0].length;
                     continue;
                 }
-                const literalField = text.slice(i).match(/^(func|cpu|pid|comm|ret|irqs|resched|hirq|preempt):="/i);
+                const literalField = text.slice(i).match(/^(func|event|cpu|pid|comm|ret|irqs|resched|hirq|preempt):="/i);
                 if (literalField) {
                     const literal = text.slice(i).match(/^[a-z]+:=("(?:[^"\\]|\\.)*")(?=$|[\s()])/i);
                     let value = null;
@@ -1611,7 +1611,7 @@
 
             // Map field names to data attributes
             const fieldAttrMap = {
-                'cpu': 'data-cpu', 'pid': 'data-pid', 'comm': 'data-comm',
+                'cpu': 'data-cpu', 'pid': 'data-pid', 'comm': 'data-comm', 'event': 'data-event',
                 'ret': 'data-ret', 'params': 'data-params',
                 'duration': 'data-duration',
                 'irqs': 'data-irqs', 'resched': 'data-resched',
@@ -1801,6 +1801,28 @@
                 default:
                     return '';
             }
+        }
+
+        function fgEventFacet(node) {
+            if (node?.type === 'COND' && node.field === 'event' && node.literal && !node.invalid) return [node.value];
+            if (node?.type !== 'OR') return null;
+            const left = fgEventFacet(node.left), right = fgEventFacet(node.right);
+            return left && right ? [...left, ...right] : null;
+        }
+
+        function fgReadEventFacet(text) {
+            const { ast, sortDir } = parseFilterExpr(text, true), values = new Set();
+            function remove(node) {
+                const selected = fgEventFacet(node);
+                if (selected) {
+                    for (const value of selected) values.add(value);
+                    return null;
+                }
+                if (node?.type !== 'AND' || node.grouped) return node;
+                const left = remove(node.left), right = remove(node.right);
+                return left && right ? { ...node, left, right } : left || right;
+            }
+            return { remaining: astToText(remove(ast), 2), sortDir, values };
         }
 
         // ====== Filter Tags Management ======
@@ -2032,7 +2054,7 @@
             let data;
             if (fgData.ready('fgTextIndex')) data = fgData.read('fgTextIndex');
             else {
-                const rows = [], events = [];
+                const rows = [], events = [], eventNames = [];
                 const hasUserErrors = root.hasAttribute('data-user-errors');
                 const fields = hasUserErrors ? fgTextModel.outcomeFields : fgTextModel.symbolFields;
                 for (const line of lines) {
@@ -2056,11 +2078,16 @@
                     }
                     rows.push([+line.getAttribute('data-line-number'), text,
                         ...fields.map(field => line.getAttribute('data-' + field)), source]);
-                    if (line.getAttribute('data-trace-event') === '1') events.push(+line.getAttribute('data-line-number'));
+                    if (line.getAttribute('data-trace-event') === '1') {
+                        const number = +line.getAttribute('data-line-number'), name = line.getAttribute('data-event');
+                        events.push(number);
+                        if (name) eventNames.push([number, name]);
+                    }
                     if (rows.length % 512 === 0) yield 'Reading complete Text rows: ' + rows.length + ' / ' + lines.length + '…';
                 }
                 rows.sort((left, right) => left[0] - right[0]);
-                data = { version: hasUserErrors ? 6 : 5, fields, rows, events: events.sort((left, right) => left - right) };
+                data = { version: hasUserErrors ? 6 : 5, fields, rows, events: events.sort((left, right) => left - right),
+                    eventNames: eventNames.sort((left, right) => left[0] - right[0]) };
             }
             const model = yield* fgTextModel.prepare(data);
             if (model.records.length !== lines.length) throw new Error('Text model does not cover mounted rows');
@@ -2103,6 +2130,9 @@
                 const lineNumber = String(record.row[0]);
                 if (row.id !== 'L' + lineNumber || row.getAttribute('data-line-number') !== lineNumber) {
                     throw new Error('Text paint block line identity mismatch');
+                }
+                if (row.getAttribute('data-event') !== record.getAttribute('data-event')) {
+                    throw new Error('Text paint block event metadata mismatch');
                 }
                 const expandable = model.version >= 2 && row.classList.contains('expandable');
                 if (model.version >= 2 && (expandable !== (record.source !== null) ||
@@ -2336,7 +2366,7 @@
             });
 
             // Field button click handlers
-            document.querySelectorAll('.field-btn').forEach(btn => {
+            document.querySelectorAll('.field-btn, #textEventTypeBtn').forEach(btn => {
                 btn.type = 'button';
                 btn.setAttribute('aria-haspopup', 'dialog');
                 btn.setAttribute('aria-controls', 'textFieldDropdown');
@@ -2370,7 +2400,8 @@
                     dropdown.id = 'textFieldDropdown';
                     dropdown.className = 'field-dropdown';
                     dropdown.setAttribute('role', 'dialog');
-                    dropdown.setAttribute('aria-label', 'Filter by ' + field);
+                    const isEvent = field === 'event';
+                    dropdown.setAttribute('aria-label', 'Filter by ' + (isEvent ? 'event type' : field));
                     fgFieldDropdown = {panel: dropdown, owner: this};
 
                     if (field === 'params' || field === 'duration' || values.length === 0) {
@@ -2411,8 +2442,17 @@
                             }
                         });
                     } else {
+                        let currentEvents, counts;
+                        if (isEvent) {
+                            currentEvents = fgReadEventFacet(filterInput.value).values;
+                            counts = JSON.parse(this.dataset.counts);
+                            const summary = document.createElement('div');
+                            summary.className = 'field-event-summary';
+                            summary.textContent = `${values.length} types · ${counts.reduce((sum, count) => sum + count, 0).toLocaleString()} named event rows in this report`;
+                            dropdown.appendChild(summary);
+                        }
                         // Checkbox multi-select for enumerable fields
-                        values.forEach(val => {
+                        values.forEach((val, index) => {
                             const item = document.createElement('label');
                             item.className = 'field-dropdown-item';
                             const checkbox = document.createElement('input');
@@ -2421,6 +2461,17 @@
                             const label = document.createElement('span');
                             label.textContent = val;
                             item.append(checkbox, label);
+                            if (isEvent) {
+                                checkbox.checked = currentEvents.has(val);
+                                item.classList.add('field-event-item');
+                                const bar = document.createElement('progress'), count = document.createElement('span');
+                                bar.max = counts[0];
+                                bar.value = counts[index];
+                                bar.setAttribute('aria-hidden', 'true');
+                                count.className = 'hint-text';
+                                count.textContent = counts[index].toLocaleString();
+                                item.append(bar, count);
+                            }
                             if (hints[val]) {
                                 const hint = document.createElement('span');
                                 hint.className = 'hint-text';
@@ -2432,7 +2483,7 @@
 
                         const actionsDiv = document.createElement('div');
                         actionsDiv.className = 'field-dropdown-actions';
-                        actionsDiv.innerHTML = '<button class="cancel-btn">Cancel</button><button>OK</button>';
+                        actionsDiv.innerHTML = '<button class="cancel-btn">Cancel</button><button>' + (isEvent ? 'Apply' : 'OK') + '</button>';
                         dropdown.appendChild(actionsDiv);
 
                         actionsDiv.querySelector('.cancel-btn').addEventListener('click', () => {
@@ -2443,6 +2494,19 @@
                             const checked = Array.from(dropdown.querySelectorAll('input[type="checkbox"]:checked'))
                                 .map(cb => cb.value);
                             const condition = value => field === 'ret' && value === 'all' ? 'ret:all' : field + ':=' + JSON.stringify(value);
+                            if (isEvent) {
+                                const { remaining, sortDir } = fgReadEventFacet(filterInput.value);
+                                const facet = checked.map(condition).join(' OR ');
+                                const combined = [remaining, checked.length > 1 ? '(' + facet + ')' : facet].filter(Boolean).join(' AND ');
+                                filterInput.value = [combined, sortDir && 'sort:' + sortDir].filter(Boolean).join(' ');
+                                if (checked.length && !fgTextEventsVisible) fgSetTextEventsVisible(true);
+                                fgCloseFieldDropdowns(true);
+                                if (fgTextCompactMedia.matches && this.closest('.controls').dataset.panel === 'more') {
+                                    fgSetTextControlPanel('', true);
+                                }
+                                fgSubmitTextFilter();
+                                return;
+                            }
                             if (checked.length > 0) {
                                 if (checked.length === 1) {
                                     appendToFilter(condition(checked[0]));
@@ -2477,7 +2541,7 @@
 
             // Global click to close dropdowns
             document.addEventListener('click', function(e) {
-                if (!e.target.closest('.field-btn') && !e.target.closest('.field-dropdown')) {
+                if (!e.target.closest('.field-btn, #textEventTypeBtn, .field-dropdown')) {
                     fgCloseFieldDropdowns();
                 }
             });

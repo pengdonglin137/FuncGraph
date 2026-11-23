@@ -6,7 +6,7 @@ import threading
 import unittest
 
 import helpers
-from fglib.textindex import is_trace_event, TextIndexWriter
+from fglib.textindex import is_trace_event, trace_event, TextIndexWriter
 from fglib.viewer import create_server
 from test_kvm import event
 from test_uftrace_import import call, stream
@@ -32,13 +32,22 @@ class TextEventModelTest(unittest.TestCase):
         output = io.BytesIO()
         writer = TextIndexWriter(output, include_raw_functions=True)
         writer.append(2, {}, 'root() {')
-        writer.append(5, {'trace-event': '1'}, '/* event: payload */')
+        writer.append(5, {'trace-event': '1', 'event': 'kvm:kvm_entry'}, '/* event: payload */')
+        writer.append(7, {'trace-event': '1'}, '/* raw: switch-in */')
         writer.append(9, {}, 'CPU:0 [LOST 2 EVENTS]')
         writer.finish('index.json')
         data = json.loads(output.getvalue())
         self.assertEqual(data['version'], 5)
-        self.assertEqual(data['events'], [5])
-        self.assertEqual([row[0] for row in data['rows']], [2, 5, 9])
+        self.assertEqual(data['events'], [5, 7])
+        self.assertEqual(data['eventNames'], [[5, 'kvm:kvm_entry']])
+        self.assertEqual([row[0] for row in data['rows']], [2, 5, 7, 9])
+
+    def test_event_names_do_not_count_rendered_switch_markers(self):
+        self.assertEqual(trace_event({'raw_line': '0) | /* kvm:kvm_entry: reason: test */'}), 'kvm:kvm_entry')
+        self.assertEqual(trace_event({'raw_line': '0) | /* sched_switch: prev_comm=a */'}), 'sched_switch')
+        self.assertEqual(trace_event({'raw_line': '0) | /* raw: switch-in */'}), '')
+        self.assertEqual(trace_event({'raw_line': '0) c-42 => other-43'}), '')
+        self.assertIsNone(trace_event({'raw_line': 'CPU:0 [LOST 5 EVENTS]'}))
 
 
 class TextEventBrowserTest(unittest.TestCase):
@@ -94,6 +103,87 @@ class TextEventBrowserTest(unittest.TestCase):
         self.page.goto(url)
         self.page.evaluate("async () => { await fgSwitchView('text'); }")
         self.page.locator('#textEventsBtn').wait_for(state='attached')
+
+    def check_event_picker(self, mode, windowed=False):
+        from playwright.sync_api import expect
+
+        records = [event('kvm_entry', 10), event('kvm_exit', 20),
+                   event('kvm_entry', 30, cpu=3), event('kvm_exit', 40, cpu=3), event('kvm_entry', 50)]
+        self.open_report(mode, windowed=windowed, records=records)
+        self.page.locator('#textEventsBtn').click()
+        picker = self.page.get_by_role('button', name='Event type', exact=True)
+        picker.click()
+        dropdown = self.page.get_by_role('dialog', name='Filter by event type')
+        expect(dropdown.locator('.field-event-summary')).to_have_text('2 types · 5 named event rows in this report')
+        self.assertEqual(dropdown.locator('progress').evaluate_all('bars => bars.map(bar => [bar.value, bar.max])'),
+                         [[3, 3], [2, 3]])
+        entry = dropdown.get_by_role('checkbox', name='kvm:kvm_entry 3')
+        exit_event = dropdown.get_by_role('checkbox', name='kvm:kvm_exit 2')
+        apply = dropdown.get_by_role('button', name='Apply', exact=True)
+        entry.check()
+        apply.click()
+        expect(self.page.locator('#textEventsBtn')).to_have_text('Events: shown')
+        expect(self.page.locator('[data-event="kvm:kvm_entry"]:visible')).to_have_count(3)
+        expect(self.page.locator('[data-event="kvm:kvm_exit"]:visible')).to_have_count(0)
+
+        self.page.locator('.field-btn[data-field="cpu"]').click()
+        cpu = self.page.get_by_role('dialog', name='Filter by cpu')
+        cpu.get_by_role('checkbox', name='4', exact=True).check()
+        cpu.get_by_role('button', name='OK', exact=True).click()
+        expect(self.page.locator('[data-event="kvm:kvm_entry"]:visible')).to_have_count(2)
+
+        picker.click()
+        expect(entry).to_be_checked()
+        exit_event.check()
+        apply.click()
+        expect(self.page.locator('[data-event="kvm:kvm_exit"]:visible')).to_have_count(1)
+        picker.click()
+        entry.uncheck()
+        apply.click()
+        expect(self.page.locator('[data-event="kvm:kvm_entry"]:visible')).to_have_count(0)
+        expect(self.page.locator('[data-event="kvm:kvm_exit"]:visible')).to_have_count(1)
+        picker.click()
+        exit_event.uncheck()
+        apply.click()
+        expect(self.page.locator('#filterInput')).to_have_value('cpu:="4"')
+        expect(self.page.locator('[data-event="kvm:kvm_entry"]:visible')).to_have_count(2)
+
+    def test_event_type_picker_in_full_text(self):
+        self.check_event_picker('single')
+
+    def test_event_type_picker_in_offline_windowed_text(self):
+        self.check_event_picker('single-windowed')
+
+    def test_event_type_picker_in_sidecar_windowed_text(self):
+        self.check_event_picker('sidecar', windowed=True)
+
+    def test_event_type_picker_in_mobile_more_menu(self):
+        from playwright.sync_api import expect
+
+        self.open_report()
+        page = self.browser.new_page(viewport={'width': 320, 'height': 560}, has_touch=True, is_mobile=True)
+        self.addCleanup(page.close)
+        page.on('pageerror', lambda error: self.errors.append(str(error)))
+        page.goto(self.page.url)
+        page.get_by_role('button', name='Text', exact=True).tap()
+        more = page.get_by_role('button', name='More', exact=True)
+        picker = page.get_by_role('button', name='Event type', exact=True)
+        dropdown = page.get_by_role('dialog', name='Filter by event type')
+        expect(picker).to_be_hidden()
+        more.tap()
+        picker.tap()
+        expect(dropdown).to_be_visible()
+        page.keyboard.press('Escape')
+        expect(dropdown).to_be_hidden()
+        expect(picker).to_be_focused()
+        picker.tap()
+        dropdown.get_by_text('kvm:kvm_entry', exact=True).tap()
+        dropdown.get_by_role('button', name='Apply', exact=True).tap()
+        expect(dropdown).to_be_hidden()
+        expect(more).to_be_focused()
+        expect(picker).to_be_hidden()
+        expect(page.locator('[data-event="kvm:kvm_entry"]:visible')).to_have_count(1)
+        expect(page.locator('[data-event="kvm:kvm_exit"]:visible')).to_have_count(0)
 
     def test_short_touch_fullscreen_keeps_prior_call_and_return_reachable(self):
         from playwright.sync_api import expect

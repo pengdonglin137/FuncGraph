@@ -10,18 +10,33 @@ FIELDS = ('cpu', 'pid', 'comm', 'ret', 'params', 'duration', 'func',
           'fold-id', 'fold-type', 'fold-ancestors', 'irqs', 'resched', 'hirq', 'preempt')
 PRESENTATION_FIELDS = ('sort-duration', 'fold-ret', 'call-depth')
 _TEXT_WRAPPERS = re.compile(r'</(?:span|button|a)>|<(?:span|button|a)(?: [a-z][a-z0-9-]*="[^"<>]*")*>')
+_EVENT_COMMENT = re.compile(r'\|\s*/\*\s*([A-Za-z_][\w.-]*(?::[\w.-]+)*?)\s*:(?=\s|\*/|$)')
+_COMPACT_EVENT_COMMENT = re.compile(r'\|\s*/\*\s*[A-Za-z_][\w.:-]*\s*:')
+_SWITCH_MARKER = re.compile(r'(?:^\s*\d+\)|\|)\s*[^|]*-\d+\s+=>\s+[^|]*-\d+\s*$')
+
+
+def trace_event(line):
+    """Return an event label, an empty label for a display marker, or None for other rows."""
+    kind = line.get('record_type')
+    if kind is not None:
+        return _dom_text(line.get('event_name') or '') if kind == 'event' else None
+    if line.get('raw_func_name') or line.get('display_func_name'):
+        return None
+    raw = line.get('raw_line', '')
+    if raw.lstrip().startswith('#') or ('|' not in raw and re.search(r'\bLOST\b.*\bEVENTS\b', raw)):
+        return None
+    match = _EVENT_COMMENT.search(raw)
+    if match:
+        if match[1] == 'raw' and raw[match.end():].strip() == 'switch-in */':
+            return ''
+        return match[1]
+    if _SWITCH_MARKER.search(raw) or _COMPACT_EVENT_COMMENT.search(raw):
+        return ''
+    return None
 
 
 def is_trace_event(line):
-    if line.get('record_type') is not None:
-        return line.get('record_type') == 'event'
-    if line.get('raw_func_name') or line.get('display_func_name'):
-        return False
-    raw = line.get('raw_line', '')
-    if raw.lstrip().startswith('#') or re.search(r'\bLOST\b.*\bEVENTS\b', raw):
-        return False
-    return bool(re.search(r'\|\s*/\*\s*[A-Za-z_][\w.:-]*\s*:', raw) or
-                re.search(r'(?:^\s*\d+\)|\|)\s*[^|]*-\d+\s+=>\s+[^|]*-\d+\s*$', raw))
+    return trace_event(line) is not None
 
 
 def _dom_text(value):
@@ -60,6 +75,7 @@ class TextIndexWriter:
         self.byte_count = 0
         self.rows = 0
         self.events = []
+        self.event_names = []
         self.parser = _LineText()
         self.fields = FIELDS + ('space',) if include_space or include_presentation or include_raw_functions or include_user_errors else FIELDS
         if include_presentation or include_raw_functions or include_user_errors:
@@ -84,11 +100,18 @@ class TextIndexWriter:
         text = self.parser.read(markup)
         if attributes.get('trace-event') == '1':
             self.events.append(line_number)
+            if attributes.get('event'):
+                self.event_names.append((line_number, _dom_text(attributes['event'])))
         row = ([line_number, text] + [_dom_text(attributes[field]) if field in attributes else None for field in self.fields]
                + [source])
         self._write((',' if self.rows else '') + json.dumps(row, ensure_ascii=False, separators=(',', ':')))
         self.rows += 1
 
     def finish(self, filename):
-        self._write(']' + (',"events":' + json.dumps(self.events, separators=(',', ':')) if self.events else '') + '}')
+        self._write(']')
+        if self.events:
+            self._write(',"events":' + json.dumps(self.events, separators=(',', ':')))
+        if self.event_names:
+            self._write(',"eventNames":' + json.dumps(self.event_names, ensure_ascii=False, separators=(',', ':')))
+        self._write('}')
         return dict(file=filename, bytes=self.byte_count, sha256=self.digest.hexdigest(), format='json')
