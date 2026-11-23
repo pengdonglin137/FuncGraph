@@ -262,6 +262,20 @@ class CaptureTest(unittest.TestCase):
         self.assertEqual(result, 7)
         self.assertEqual(run.call_args.args[0][-5:], ['-d', '0', '--', '/app', '--kernel'])
 
+    def test_installed_kernel_wrapper_prefers_sibling_script_to_path(self):
+        launcher = self.root / 'venv' / 'bin' / 'fgcapture'
+        launcher.parent.mkdir(parents=True)
+        script = launcher.with_name('fgcapture.sh')
+        script.touch()
+        module = self.root / 'site-packages' / 'fglib' / 'capture.py'
+        with patch.object(capture, '__file__', str(module)), \
+                patch.object(capture.sys, 'argv', [str(launcher)]), \
+                patch.object(capture.shutil, 'which', return_value='/usr/local/bin/fgcapture.sh') as locate, \
+                patch.object(capture.subprocess, 'call', return_value=0) as run:
+            self.assertEqual(capture.kernel_command(['--', '/app']), 0)
+        locate.assert_not_called()
+        run.assert_called_once_with(['bash', str(script), '--', '/app'])
+
     def test_user_main_never_opens_tracefs_and_resolves_bundled_recorder(self):
         output = self.root / 'user.data'
         with patch.object(capture.uftrace_runtime, 'command', return_value=['/bundled', '--libmcount-path=/libs']) as locate, \

@@ -293,5 +293,6 @@ if [ "$LOST" != 0 ] || [ "${OVR:-0}" != 0 ]; then
     echo "           Increase -b (now $BUF KB per CPU), shorten -d, or narrow with -p/-g." >&2
 fi
 [ "$LINES" = 0 ] && echo "fgcapture: WARNING: the trace is empty (did the filter match anything?)" >&2
-echo "fgcapture: convert with: python3 funcgraph.py --timeline --fast --filter --enable-fold --vmlinux <vmlinux> $OUT"
+case "$OUT" in -*) OUT=./$OUT ;; esac
+printf 'fgcapture: generate HTML with: fgreport %q\n' "$OUT"
 exit 0

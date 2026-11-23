@@ -301,7 +301,10 @@ def build_command(args, tracer, tracefs=None):
 
 def kernel_command(arguments):
     source = Path(__file__).resolve().parent.parent / 'fgcapture.sh'
-    script = str(source) if source.is_file() else shutil.which('fgcapture.sh')
+    installed = Path(sys.argv[0]).resolve().with_name('fgcapture.sh')
+    script = next((str(path) for path in (source, installed) if path.is_file()), None)
+    if not script:
+        script = shutil.which('fgcapture.sh')
     if not script:
         raise OSError('fgcapture.sh is unavailable; reinstall FuncGraph')
     boundary = arguments.index('--') if '--' in arguments else len(arguments)
@@ -356,7 +359,7 @@ def main(argv=None):
                            not (args.output / 'funcgraph-clock').is_file() or
                            not any(path.stat().st_size for path in args.output.glob('kernel-cpu*.dat'))):
             raise OSError('uftrace did not save kernel data; refusing to claim a mixed capture')
-        print('fgcapture: generate HTML with: funcgraph --uftrace {} --timeline --enable-fold --filter --output report.html'.format(shlex.quote(str(args.output))), file=sys.stderr)
+        print('fgcapture: generate HTML with: fgreport --uftrace {}'.format(shlex.quote(str(args.output))), file=sys.stderr)
         return 0
     except CaptureInterrupted as error:
         print('fgcapture: interrupted; partial recording retained', file=sys.stderr)

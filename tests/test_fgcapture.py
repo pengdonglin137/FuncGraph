@@ -1,6 +1,7 @@
 """fgcapture.sh: static checks (capturing itself needs root + tracefs; tested manually on a Pi 4)."""
 import os
 from pathlib import Path
+import shlex
 import subprocess
 import tempfile
 import unittest
@@ -106,6 +107,8 @@ fi
         result = self.run_capture('--sched')
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn('args=1 retaddr=1 exec=1 exit=1 retval=1 latency=1', self.output.read_text())
+        command = result.stdout.split('generate HTML with: ')[1].strip()
+        self.assertEqual(shlex.split(command), ['fgreport', str(self.output)])
         self.assertEqual(self.trace_reads.read_text().splitlines(), ['read'])
         self.assert_restored()
 
