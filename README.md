@@ -136,6 +136,8 @@ fgreport -P -o build/examples/task.html samples/sample_io.txt -- --no-config --p
 | User and kernel calls from the same run | `fgcapture --mixed` | uftrace directory; user-mode requirements plus root and idle dedicated tracefs. |
 
 For scheduling and wakeup analysis, add `--sched` before `--` in the kernel-only capture command. For user or mixed capture, use a new recording directory for each run and open it with `fgreport --open --uftrace DIR`.
+On Android kernels exposing `sched:sched_blocked_reason`, scheduling capture also records it automatically. Click an off-CPU segment in Timeline to see the recorded blocking function and I/O-wait flag in **Wait chain**.
+If the device has no `function_graph` tracer, [record scheduling events alone](docs/raw-input.md#android-scheduling-without-function_graph) to inspect waits without kernel call stacks.
 See the [user and mixed capture walkthrough](docs/capture.md#quick-start) for commands from build and instrumentation through report generation, or [recording extra events](docs/capture.md#record-functions-and-extra-events-together) for event selection.
 
 ## Source and type information

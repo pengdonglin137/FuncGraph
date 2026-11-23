@@ -40,6 +40,23 @@ fgview trace-report
 
 支持 `.gz/.xz/.lzma/.bz2` 和二进制标准输入。压缩容器与 stdin 会先写入私有临时文件，以满足 libtracecmd 的随机访问要求；多输入按纳秒时间戳合并。`fgreport trace.dat -- --raw-instance NAME` 可透传参数；它不会把二进制中的换行字节当作文本行数。大型 raw 报告请显式预过滤或使用 `--no-text-view`。
 
+## Android 纯调度采集
+
+设备没有 `function_graph`，但有 `sched:sched_blocked_reason` 时，仍可用
+`trace-cmd` 录制等待原因。以下命令需要设备端有 `trace-cmd`，并在没有其它
+tracing 会话的专用测试设备上以 root 执行；在短采集窗口内运行要分析的负载：
+
+```bash
+trace-cmd record -p nop -C mono -o /data/local/tmp/fg-sched.dat \
+  -e sched:sched_switch -e sched:sched_waking -e sched:sched_wakeup \
+  -e sched:sched_blocked_reason -- sleep 2
+```
+
+用 `adb pull /data/local/tmp/fg-sched.dat` 把文件拉到分析主机；安装下文的 raw
+解码依赖后，运行 `funcgraph fg-sched.dat --timeline --output fg-sched.html`。
+在 Timeline 点 off-CPU 段查看 **Wait chain**。保留 `sched_switch`，否则只有阻塞
+原因事件，无法重建等待区间。报告仅显示已录制的调度和等待，不包含内核函数调用栈。
+
 ## Host KVM 事件
 
 也支持只有 Host KVM 事件的容器：现有 Timeline 展示 vCPU 边界区间和原始证据，

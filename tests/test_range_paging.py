@@ -261,7 +261,8 @@ class RangePagingTest(unittest.TestCase):
             const canvas = document.querySelector('.tl-canvas'), bounds = canvas.getBoundingClientRect();
             const left = Math.ceil(bounds.left) + 1, right = Math.floor(bounds.right) - 1;
             const send = (target, type, clientX) => target.dispatchEvent(new MouseEvent(type, {
-                button:0, shiftKey:true, altKey:true, bubbles:true, cancelable:true, clientX, clientY:bounds.top+12,
+                button:0, buttons:type === 'mouseup' ? 0 : 1, shiftKey:true, altKey:true,
+                bubbles:true, cancelable:true, clientX, clientY:bounds.top+12,
             }));
             send(canvas, 'mousedown', left);
             send(window, 'mousemove', right);

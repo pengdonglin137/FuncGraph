@@ -17,6 +17,50 @@ def build(text, db=None):
     return timeline.build_timeline(text.split('\n'), rettypes=db).to_data()
 
 
+class BlockedReasonTest(unittest.TestCase):
+    def test_outgoing_task_reason_before_or_after_graph_switch_marker(self):
+        reason = '1.000000102 |  0) worker-42 |  /* sched_blocked_reason: pid=42 iowait=1 caller=folio_wait */'
+        switch = ' 0) worker-42 => idle-0'
+        for marker in ((reason, switch), (switch, reason)):
+            with self.subTest(marker=marker):
+                data = build('\n'.join([
+                    '1.000000010 |  0) worker-42 |  work() {',
+                    '1.000000100 |  0) worker-42 |  /* sched_switch: prev_comm=worker prev_pid=42 prev_prio=120 prev_state=D ==> next_comm=idle next_pid=0 */',
+                    *marker,
+                    '1.000000200 |  0) idle-0 |  idle();',
+                    ' 0) idle-0 => worker-42',
+                    '1.000000500 |  0) worker-42 |  }',
+                ]))
+                wait, = data['offcpu']
+                self.assertEqual(wait[2] - wait[1], 400)
+                self.assertEqual((data['strings'][wait[10]], wait[11]), ('folio_wait', 1))
+
+    def test_reason_annotates_only_matching_non_runnable_wait(self):
+        builder = timeline.TimelineBuilder([])
+        waker = builder._task(43, 'waker', 1)
+        sleep = '/* sched_switch: prev_comm=worker prev_pid=42 prev_prio=120 prev_state={} ==> next_comm=idle next_pid=0 */'
+        for state, start in [('D', 100), ('D', 200), ('R', 300)]:
+            builder._on_comment(sleep.format(state), waker, start, 0)
+            builder._switch(0, 42, 0, 'worker', 'idle', start)
+            if start == 100:
+                builder._on_comment('/* sched_blocked_reason: pid=42 iowait=0 caller=early */', waker, 99, 1)
+                builder._on_comment('/* sched_blocked_reason: pid=77 iowait=0 caller=wrong */', waker, 110, 1)
+                builder._on_comment('/* sched_blocked_reason: pid=42 iowait=1 caller=folio_wait+0x4/0x8 [ext4] */', waker, 111, 1)
+            if start == 200:
+                builder._on_comment('sched:sched_blocked_reason: pid=42 iowait=0 caller=(null)', waker, 211, 1)
+            if start == 300:
+                builder._on_comment('sched_blocked_reason: pid=42 iowait=1 caller=ignored', waker, 311, 1)
+            builder._resolve_switch_in(builder.tasks[42], 0, start + 50)
+            builder._on_comment('sched_blocked_reason: pid=42 iowait=1 caller=late', waker, start + 55, 1)
+        waits = builder.offcpu
+        self.assertEqual([(wait[1], wait[2]) for wait in waits], [(100, 150), (200, 250), (300, 350)])
+        self.assertEqual((builder.strings[waits[0][10]], waits[0][11]), ('folio_wait+0x4/0x8 [ext4]', 1))
+        self.assertEqual(waits[1][10:], [-1, 0])
+        self.assertEqual(waits[2][10:], [])
+        self.assertTrue(builder.caps['sched_blocked_reason'])
+        self.assertNotIn(77, builder.tasks)
+
+
 class LatencyFlagsTest(unittest.TestCase):
     def test_all_flag_bytes_and_depth_bytes_preserve_the_printed_columns(self):
         codes = {'.': 0, 'n': 1, 'N': 2, 'p': 3, 'l': 4, 'L': 5, 'b': 6, 'B': 7}

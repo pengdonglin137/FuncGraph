@@ -1569,6 +1569,7 @@ class DetailActionsBrowserTest(unittest.TestCase):
                 self.assertEqual(back.inner_text(), '← Text' if width < 700 else 'Return to Text')
                 self.assert_return_target(back, touch)
                 row.evaluate('''row => {
+                    document.getElementById('fgTreeGuides').sheet.disabled = true;
                     const bounds = row.getBoundingClientRect.bind(row);
                     window.returnRowGeometryReads = 0;
                     row.getBoundingClientRect = () => { returnRowGeometryReads++; return bounds(); };

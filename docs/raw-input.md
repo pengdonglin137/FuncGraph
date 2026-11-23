@@ -38,6 +38,26 @@ Serve the directory with `fgview` instead of opening its `index.html` through `f
 
 Normal compressed inputs (`.gz`, `.xz`, `.lzma`, `.bz2`) and binary stdin work. Compressed containers/stdin are spooled into a private temporary file because libtracecmd needs seekable input. Multiple inputs use the existing chronological merge with nanosecond timestamp keys. `fgreport trace.dat -- --raw-instance NAME` passes decoder options through; its line-count shortcut deliberately does not count binary newline bytes. For large raw reports use pre-filtering or `--no-text-view` explicitly.
 
+## Android scheduling without function_graph
+
+If an Android device exposes `sched:sched_blocked_reason` but not
+`function_graph`, use `trace-cmd` to record scheduling events alone. Run as root
+on a dedicated test device with `trace-cmd` installed and no other active tracing
+session. Exercise the workload during the short capture:
+
+```bash
+trace-cmd record -p nop -C mono -o /data/local/tmp/fg-sched.dat \
+  -e sched:sched_switch -e sched:sched_waking -e sched:sched_wakeup \
+  -e sched:sched_blocked_reason -- sleep 2
+```
+
+Pull the file with `adb pull /data/local/tmp/fg-sched.dat`. Install the raw input
+dependencies below on the analysis host, then run
+`funcgraph fg-sched.dat --timeline --output fg-sched.html`. Click an off-CPU
+interval in Timeline to open **Wait chain**. Keep `sched_switch`: a blocked
+reason alone does not establish a wait interval. The report shows scheduling
+and waits, not kernel function calls or stacks.
+
 ## Host KVM events
 
 Host KVM event-only containers are supported too: the existing Timeline displays

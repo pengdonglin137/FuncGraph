@@ -114,7 +114,9 @@ class MixedSampleTest(unittest.TestCase):
             generate(TRACE, rebuilt)
             rebuilt_html = rebuilt.read_text(encoding='utf-8')
             rebuilt_data = helpers.json_script(rebuilt_html, 'tlData')
-            for key in data.keys() - {'btf', 'cols', 'errs', 'chains', 'errnames', 'sources', 'stats', 'inline', 'uftrace'}:
+            self.assertTrue(data['btf_detail']['functions'])
+            self.assertNotIn('btf_detail', rebuilt_data)
+            for key in data.keys() - {'btf', 'btf_detail', 'cols', 'errs', 'chains', 'errnames', 'sources', 'stats', 'inline', 'uftrace'}:
                 self.assertEqual(data[key], rebuilt_data[key], key)
             self.assertTrue(data['uftrace']['kernel_arg_names'])
             self.assertTrue(data['uftrace']['kernel_types'])
@@ -447,6 +449,7 @@ class MixedSampleBrowserTest(unittest.TestCase):
         return_evidence.locator('summary').click()
         self.assertEqual(return_evidence.locator('.tl-code-raw').inner_text(), '0x200')
         stack.locator('.tl-source-open', has_text='demo_mixed.c:33').click()
+        page.locator('.tl-cs > summary').scroll_into_view_if_needed()
         page.locator('.tl-cs-src .current-line', has_text='return dispatch_datagram').wait_for(state='visible')
         page.evaluate('''() => {
             const model = fgView('timeline').probe();
@@ -503,6 +506,7 @@ class MixedSampleBrowserTest(unittest.TestCase):
         }''')
         summary = page.locator('.tl-cs > summary', has_text='Call site source')
         summary.wait_for(state='visible')
+        page.locator('.tl-cs > summary').scroll_into_view_if_needed()
         page.locator('.tl-cs-src .current-line', has_text='regs->ax = x64_sys_call').wait_for(state='visible')
         source = page.locator('[data-context-list=stack] [data-context-kind=traced]', has_text='__x64_sys_sendto').locator('.tl-context-source a')
         self.assertEqual(source.get_attribute('href'), 'https://github.com/torvalds/linux/blob/v7.4-rc2/net/socket.c#L2286')
@@ -571,7 +575,7 @@ class MixedSampleBrowserTest(unittest.TestCase):
                 model.select(indices[occurrence]);
                 return fgData.read('tlData').cols.line[indices[occurrence]];
             }''', occurrence)
-            page.locator('.tl-cs > summary', has_text='User call site source').wait_for(state='visible')
+            page.locator('.tl-cs > summary', has_text='User call site source').scroll_into_view_if_needed()
             self.assertIn(f'demo_mixed.c:{number}', page.locator('.tl-cs-src [data-source-position]').inner_text())
             stack = page.locator('[data-context-list=stack]')
             caller = stack.locator('[data-context-kind=traced]', has_text='exchange_loopback')

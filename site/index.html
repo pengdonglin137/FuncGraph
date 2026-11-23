@@ -54,6 +54,7 @@
     <a class="btn primary" href="sample_mixed.html"><span lang="en">Open the mixed sample</span><span lang="zh">打开用户态 + 内核态示例</span></a>
     <a class="btn" href="sample.html"><span lang="en">Open the kernel sample</span><span lang="zh">打开纯内核态示例</span></a>
     <a class="btn" href="https://github.com/pengdonglin137/FuncGraph">GitHub</a>
+    <a class="btn" href="https://github.com/pengdonglin137/FuncGraph/releases/latest"><span lang="en">Download</span><span lang="zh">下载</span></a>
     <a class="btn" href="https://github.com/pengdonglin137/FuncGraph/blob/master/docs/guide.en.md" lang="en">User guide</a>
     <a class="btn" href="https://github.com/pengdonglin137/FuncGraph/blob/master/docs/guide.cn.md" lang="zh">使用指南</a>
   </div>
@@ -83,6 +84,7 @@
   <h2 lang="en">What it shows</h2>
   <h2 lang="zh">能看到什么</h2>
   <div class="grid" lang="en">
+    <div><b>Text filters</b><p>Choose a CPU, task or recorded event type from the report's menus, and combine those selections with text search.</p></div>
     <div><b>Timeline</b><p>Per-task flame chart over time, CPU tracks, off-CPU periods, wakeup arrows and wait chains.</p></div>
     <div><b>Where the time went</b><p>Each call split into own code, traced callees, interrupts and blocked/preempted time, with an overhead estimate.</p></div>
     <div><b>Error paths</b><p>Errnos from <code>funcgraph-retval</code> followed from their origin to user space, checked against BTF return types.</p></div>
@@ -91,6 +93,7 @@
     <div><b>Compare and export</b><p>Per-function differences between two traces; JSON/CSV export for scripts and CI.</p></div>
   </div>
   <div class="grid" lang="zh">
+    <div><b>Text 筛选</b><p>从报告的菜单中选择 CPU、任务或已记录的事件类型，还可以叠加文本搜索。</p></div>
     <div><b>时间轴</b><p>按任务的时序火焰图、CPU 轨道、off-CPU 时段、唤醒箭头和等待链。</p></div>
     <div><b>时间花在哪里</b><p>每次调用拆分为自身代码、被跟踪的子调用、中断、阻塞/被抢占时间，并估算跟踪开销。</p></div>
     <div><b>错误路径</b><p>根据 <code>funcgraph-retval</code> 从错误源头一路追到用户态，并用 BTF 返回类型校验。</p></div>

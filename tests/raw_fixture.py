@@ -6,7 +6,7 @@ def container(endian='<', width=8, clock='mono', lost=0, retaddr=False,
               symbols=True, bad_depth=False, args=True, module=False,
               sched=False, retval=True, dynamic_args=False, relative_args=False, fixed_args=False,
               address_base=0, kvm=False, kvm_only=False, entry_preempt=1, exit_preempt=1,
-              wakeup_preempt=1, release=None, flag_cases=None):
+              wakeup_preempt=1, release=None, flag_cases=None, blocked_reason=False):
     def packed(layout, *values):
         return struct.pack(endian + layout, *values)
 
@@ -59,7 +59,13 @@ def container(endian='<', width=8, clock='mono', lost=0, retaddr=False,
                              ('int', 'pid', 24, 4), ('int', 'prio', 28, 4), ('int', 'target_cpu', 32, 4)],
                              '"comm=%s pid=%d prio=%d target_cpu=%d", REC->comm, '
                              'REC->pid, REC->prio, REC->target_cpu')
-        system_formats.append(b'sched\0' + packed('I', 2) + sized(switching) + sized(wakeup))
+        sched_formats = [switching, wakeup]
+        if blocked_reason:
+            sched_formats.append(event_format('sched_blocked_reason', 17,
+                [('int', 'pid', 8, 4), ('unsigned long', 'caller', 8 + width, width),
+                 ('bool', 'io_wait', 8 + 2 * width, 1)],
+                '"pid=%d iowait=%d caller=%pS", REC->pid, REC->io_wait, REC->caller'))
+        system_formats.append(b'sched\0' + packed('I', len(sched_formats)) + b''.join(map(sized, sched_formats)))
     if kvm or kvm_only:
         kvm_fields = [('unsigned int', 'vcpu_id', 8, 4)]
         kvm_entry = event_format('kvm_entry', 15, kvm_fields, '"vcpu %u, rip 0x1234", REC->vcpu_id')
@@ -126,6 +132,9 @@ def container(endian='<', width=8, clock='mono', lost=0, retaddr=False,
         records.extend([(200, switching_data(42, 43, 2)), (250, switching_data(43, 42, 0)),
                         (225, packed('HBBi', 14, 0, wakeup_preempt, 43) + b'worker\0'.ljust(16, b'\0') +
                          packed('iii', 42, 120, 0))])
+        if blocked_reason:
+            records.append((220, packed('HBBii' + ('4x' if width == 8 else '') + word + 'B3x',
+                                        17, 0, 1, 42, 42, address_base + 0x1100, 1)))
         records.sort(key=lambda item: item[0])
     payload = b''
     previous = 0

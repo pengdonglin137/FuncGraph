@@ -134,6 +134,8 @@ fgreport -P -o build/examples/task.html samples/sample_io.txt -- --no-config --p
 | 同一次运行中关联用户态与内核态 | `fgcapture --mixed` | uftrace 目录；在用户态要求之外，还需要 root 和空闲的专用 tracefs。 |
 
 需要分析调度和唤醒时，在纯内核采集命令的 `--` 前加 `--sched`。用户态和混合模式每次使用新的采集目录，录完用 `fgreport --open --uftrace DIR` 打开。
+Android 内核若提供 `sched:sched_blocked_reason`，开启调度采集时会自动记录。点击 Timeline 的 off-CPU 段，在 **Wait chain** 查看内核记录的阻塞位置和 I/O wait 标记。
+设备没有 `function_graph` 时，可改用 [纯调度事件采集](docs/raw-input.cn.md#android-纯调度采集)，不需要函数调用栈也能查看等待原因。
 从编译、插桩到生成报告的可执行命令见[用户态与混合采集示例](docs/capture.cn.md#最短流程)；跟踪额外事件见[函数调用与额外事件一起采集](docs/capture.cn.md#函数调用与额外事件一起采集)。
 
 ## 源码与类型信息

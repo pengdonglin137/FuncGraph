@@ -175,6 +175,16 @@ fi
         self.assertIn('command exited with 0', result.stdout)
         self.assert_restored()
 
+    def test_sched_enables_supported_blocked_reason_and_restores_it(self):
+        path = self.add_event('sched/sched_blocked_reason')
+        result = self.run_capture('--sched', '--', '/bin/sh', '-c',
+                                  'test "$(cat "$FG_TRACEFS/events/sched/sched_blocked_reason/enable")" = 1')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('command exited with 0', result.stdout)
+        self.assertEqual((path / 'enable').read_text().strip(), '0')
+        self.assertEqual((path / 'filter').read_text().strip(), 'common_pid == 123')
+        self.assert_restored()
+
     def test_bad_event_selector_fails_before_mutating_tracefs(self):
         for selector in ('kvm:absent', '../kvm', 'kvm:entry@kernel', 'kvm:entry;exit', ''):
             with self.subTest(selector=selector):

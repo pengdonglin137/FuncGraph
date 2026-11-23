@@ -61,6 +61,7 @@ class FilterControlsTest(unittest.TestCase):
 
     def open_field(self, page, field='cpu', activation='Enter'):
         owner = page.locator('.field-btn[data-field=' + field + ']')
+        owner.scroll_into_view_if_needed()
         owner.press(activation)
         popup = page.locator('.field-dropdown')
         popup.wait_for(state='visible')
@@ -216,7 +217,7 @@ class FilterControlsTest(unittest.TestCase):
                     for target in popup.locator('label, button').all():
                         self.assertGreaterEqual(target.bounding_box()['height'], 44)
                     cancel = popup.get_by_role('button', name='Cancel', exact=True)
-                    self.assertTrue(cancel.evaluate('button => getComputedStyle(button).color === getComputedStyle(document.body).color'))
+                    self.assertTrue(cancel.evaluate('button => getComputedStyle(button).color === getComputedStyle(button.closest(".field-dropdown")).color'))
                     if field == 'func':
                         self.assertEqual(popup.locator('input').evaluate('input => getComputedStyle(input).fontSize'), '16px')
                         self.assertGreaterEqual(popup.locator('input').bounding_box()['height'], 44)
@@ -259,6 +260,7 @@ class FilterControlsTest(unittest.TestCase):
         page.evaluate('setFilterViewport()')
         self.assertAlmostEqual(panel.bounding_box()['height'], original_height, delta=1)
         owner, popup = self.open_field(page, 'func')
+        popup.locator('input').fill('worker.*')
         page.evaluate('setFilterViewport({offsetTop:100,height:150}, "scroll")')
         bounds = popup.bounding_box()
         self.assertGreaterEqual(bounds['y'], 100)
@@ -267,6 +269,7 @@ class FilterControlsTest(unittest.TestCase):
             const bounds = input.getBoundingClientRect();
             return document.activeElement === input && bounds.top >= 100 && bounds.bottom <= 250;
         }'''))
+        self.assertEqual(popup.locator('input').input_value(), 'worker.*')
         page.evaluate('setFilterViewport()')
         page.keyboard.press('Escape')
         self.assertFalse(popup.is_visible())

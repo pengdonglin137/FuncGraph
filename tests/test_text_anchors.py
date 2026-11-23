@@ -119,9 +119,14 @@ class TextAnchorTest(unittest.TestCase):
         page = self.open_report()
         self.mock_clipboard(page)
         row = page.locator('#L3')
+        position = '''() => ({top: scrollY, left: document.getElementById('textViewport').scrollLeft,
+            expanded: JSON.stringify(expandedLines)})'''
+        before = page.evaluate(position)
         row.locator('.line-number').dblclick()
-        page.wait_for_function('() => anchorWrites.length === 2')
         page.wait_for_timeout(350)
+        self.assertTrue(page.url.endswith('#L3'))
+        self.assertEqual(page.evaluate('anchorWrites'), [page.url] * 2)
+        self.assertEqual(page.evaluate(position), before)
         line_id = row.get_attribute('data-line-id')
         self.assertEqual(page.locator('#' + line_id + '_content').evaluate('node => node.style.display'), 'none')
 
@@ -337,13 +342,16 @@ class TextAnchorTest(unittest.TestCase):
                     self.assertTrue(facts['trace'])
 
     def test_windowed_line_link_preserves_bounded_dom_and_does_not_load_timeline_or_sources(self):
-        page = self.open_report('sidecar/index.html?text=windowed')
+        page = self.open_report('sidecar/index.html?text=windowed#L3')
         self.mock_clipboard(page)
         self.assertTrue(page.evaluate('!!fgTextWindow'))
+        self.assertFalse(page.evaluate("fgData.ready('tlData')"))
         requests = []
         page.on('request', lambda request: requests.append(request.url))
-        page.locator('#L3 > .line-number').click()
+        page.locator('#L4 > .line-number').click()
         page.wait_for_function('() => anchorWrites.length === 1')
+        self.assertTrue(page.url.endswith('#L4'))
+        self.assertEqual(page.evaluate('anchorWrites'), [page.url])
         self.assertLessEqual(page.locator('#content .line-container').count(), 160)
         self.assertFalse(page.evaluate("fgData.ready('tlData')"))
         self.assertFalse(page.evaluate("fgData.ready('fgSrc')"))

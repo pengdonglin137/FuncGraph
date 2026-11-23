@@ -139,7 +139,13 @@ class HelpLifecycleTest(unittest.TestCase):
                         page.locator('.cmp-toggle').click()
                     panel, close = self.show_help(page, view)
                     self.assertGreater(page.evaluate('document.documentElement.scrollHeight - innerHeight'), 0)
-                    page.mouse.move(387, 250)
+                    outside = page.evaluate('''panel => {
+                        const x = document.documentElement.clientWidth - 3, y = 250;
+                        const target = document.elementFromPoint(x, y);
+                        if (!target || panel.contains(target)) throw Error('No content outside help');
+                        return [x, y];
+                    }''', panel.element_handle())
+                    page.mouse.move(*outside)
                     page.mouse.wheel(0, 300)
                     page.wait_for_function('() => scrollY > 0', timeout=5000)
                     page.evaluate('''async () => {
@@ -152,9 +158,12 @@ class HelpLifecycleTest(unittest.TestCase):
                     self.assertFalse(panel.is_visible())
                     self.assertEqual(self.reading_position(page), after)
                     page.evaluate('scrollTo(0,0)')
-                    page.mouse.move(bounds['x'] + bounds['width'] / 2, bounds['y'] + bounds['height'] * 0.7)
+                    point = [bounds['x'] + bounds['width'] / 2, bounds['y'] + bounds['height'] * 0.7]
+                    on_table = page.evaluate('([x,y]) => !!document.elementFromPoint(x,y)?.closest(".cmp-wrap")', point)
+                    page.mouse.move(*point)
                     page.mouse.wheel(0, 300)
-                    page.wait_for_function('() => scrollY > 0', timeout=5000)
+                    page.wait_for_function('() => document.querySelector(".cmp-wrap").scrollTop > 0' if on_table
+                                           else '() => scrollY > 0', timeout=5000)
 
     def test_touch_swipes_at_help_edges_do_not_drag_the_reading_position(self):
         for report, views in [('index.html', ['text', 'compare', 'timeline']),

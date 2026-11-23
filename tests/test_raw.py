@@ -289,6 +289,18 @@ class NativeRawTest(unittest.TestCase):
                                           for flags in data['cols']['flags']], [1, 1])
                         self.assertFalse(any(section[1] == timeline.SEC_PREEMPT for section in data['sections']))
 
+    def test_raw_android_blocked_reason_preserves_symbol_and_io_wait(self):
+        for width in (4, 8):
+            with self.subTest(width=width):
+                lines = self.decode(sched=True, blocked_reason=True, width=width)
+                self.assertTrue(any('sched_blocked_reason: pid=42 iowait=1 caller=child' in line for line in lines), lines)
+                data = timeline.build_timeline(lines).to_data()
+                record = data['offcpu'][0]
+                self.assertEqual(data['tasks'][record[0]]['pid'], 42)
+                self.assertEqual(record[2] - record[1], 50)
+                self.assertEqual(record[11], 1)
+                self.assertTrue(data['strings'][record[10]].startswith('child'))
+
     def test_all_flag_bytes_and_depth_nibbles_match_linux_without_library_formatting(self):
         cases = [(flags, preempt) for flags in range(256) for preempt in DEPTH_BYTES]
         for endian in ('<', '>'):

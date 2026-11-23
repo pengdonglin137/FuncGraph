@@ -420,8 +420,9 @@ class UftraceTimeline(TimelineBuilder):
             self.caps['cpu'] = True
             self.caps['latency'] |= lat is not None
             previous = task.last_ts
-            self._resolve_switch_in(task, cpu, timestamp)
-            self._track_run(task, cpu, timestamp)
+            if kind != 'event' or record.get('name') != 'sched:sched_blocked_reason':
+                self._resolve_switch_in(task, cpu, timestamp)
+                self._track_run(task, cpu, timestamp)
             if lat is not None and kind != 'event':
                 self._track_lat(task, lat, flags, timestamp, lineno, previous, is_exit=kind == 'exit')
             if kind == 'event':
@@ -500,12 +501,12 @@ class UftraceTimeline(TimelineBuilder):
                 prev_comm, prev_pid, state, next_comm, next_pid = match.groups()
                 self.caps['switch_markers'] = True
                 self.caps['sched_events'] = True
-                self.pending_state[int(prev_pid)] = state
+                self.pending_state[int(prev_pid)] = (state, timestamp, cpu, int(next_pid), None)
                 self._switch(cpu, int(prev_pid), int(next_pid), prev_comm, next_comm, timestamp)
                 next_task = self._task(int(next_pid), next_comm, cpu)
                 self._resolve_switch_in(next_task, cpu, timestamp)
                 self._track_run(next_task, cpu, timestamp)
-        elif name in ('sched:sched_waking', 'sched:sched_wakeup', 'sched:sched_wakeup_new'):
+        elif name in ('sched:sched_waking', 'sched:sched_wakeup', 'sched:sched_wakeup_new', 'sched:sched_blocked_reason'):
             self._on_comment(name.split(':', 1)[1] + ': ' + payload, task, timestamp, cpu, context)
         elif name.startswith('kvm:'):
             if self.kvm.event(name.split(':', 1)[1], payload, task, timestamp, cpu, lineno, flags):

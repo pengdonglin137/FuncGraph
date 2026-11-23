@@ -1628,7 +1628,9 @@ function waitRows(data, start, end) {
         const latency = wake && !open ? record[2] - wake[1] : null;
         html += '<tr data-wait="' + OFF_IDX.get(record) + '"><td><button class="an-site-btn" title="' + esc(label) + '" aria-label="Show wait ' + (index + 1) + ': ' + esc(label) + '">' +
             (index + 1) + '. ' + esc(label) + '</button></td><td>' + (open ? '≥ ' : '') + fmtDur(record[2] - record[1]) + '</td><td>' +
-            (record[4] >= 0 ? esc(S[record[4]]) : '') + (record[5] >= 0 ? ' <span class="d">[' + esc(S[record[5]]) + ']</span>' : '') + '</td><td>' +
+            (record[4] >= 0 ? esc(S[record[4]]) : '') + (record[5] >= 0 ? ' <span class="d">[' + esc(S[record[5]]) + ']</span>' : '') +
+            (record[10] >= 0 ? '<br><span class="d">Recorded: </span>' + esc(S[record[10]]) : '') +
+            (record[11] !== undefined ? '<br><span class="d">I/O wait: ' + (record[11] ? 'yes' : 'no') + '</span>' : '') + '</td><td>' +
             who + '</td><td>' + (wake && wake[4] >= 0 ? esc(wakeSite(wake[4])) : '') + '</td><td class="' +
             (TIMED && latency > 1e6 ? 'err' : '') + '">' + (latency === null ? 'not recorded' : fmtDur(latency)) + '</td><td>' +
             (!open && record[7] >= 0 ? 'CPU ' + record[7] : 'not recorded') + '</td><td>' + (step.gap === null ? 'selected wait' : fmtDur(step.gap)) + '</td></tr>';
@@ -1674,6 +1676,8 @@ function showWaitChain(off, denseOff = AN.kind === 'wait' && AN.off === off ? AN
         '<span class="an-wait-context">' +
         pill(off[8] ? 'warn' : 'mute', (off[8] ? 'preempted ' : 'blocked ') + (OPEN_OFF.has(off) ? '≥ ' : '') + fmtDur(off[2] - off[1])) +
         (off[4] >= 0 ? pill('mute an-wait-site', 'in ' + S[off[4]], S[off[4]]) : '') +
+        (off[10] >= 0 ? pill('mute an-wait-site', 'recorded: ' + S[off[10]], S[off[10]]) : '') +
+        (off[11] !== undefined ? pill('mute', off[11] ? 'I/O wait' : 'not I/O wait') : '') +
         (off[5] >= 0 ? pill('mute an-wait-state', 'state ' + S[off[5]], S[off[5]]) : '') + '</span>' +
         '<span class="an-wait-actions"><button class="tl-btn" type="button" data-act="wait-csv">Export chain CSV</button>' +
         '<button class="tl-close" title="Close (Esc)">×</button></span>' +
@@ -1761,18 +1765,21 @@ function exportWaitCsv(button) {
         'end_status', 'waiting_function', 'state', 'preempted', 'waker_task_index', 'waker_pid', 'waker_comm', 'wake_time_' + unit,
         'waker_context', 'waker_function', 'wake_latency_' + unit, 'resume_cpu', 'link_kind', 'prior_resume_to_wake_' + unit,
         'max_link_gap_' + unit, 'terminal_reason', 'time_mode', 'duration_basis', 'filter_scope'];
+    if (D.caps.sched_blocked_reason) columns.push('blocked_function', 'io_wait');
     function* rows() {
         for (let index = 0; index < data.steps.length || data.next; index++) {
             if (index === data.steps.length) yield* extendWaitChain(data, index + 1);
             const step = data.steps[index], record = step.off, wake = step.wake, task = TRACKS[record[0]];
             const waker = wake ? TRACKS[wake[0]] : null, open = OPEN_OFF.has(record);
-            yield [index + 1, OFF_IDX.get(record), record[0], task.pid, task.comm, record[1] / scale, open ? '' : record[2] / scale,
+            const row = [index + 1, OFF_IDX.get(record), record[0], task.pid, task.comm, record[1] / scale, open ? '' : record[2] / scale,
                 (record[2] - record[1]) / scale, open ? 'trace_end_lower_bound' : 'recorded_resume', record[4] >= 0 ? S[record[4]] : '',
                 record[5] >= 0 ? S[record[5]] : '', record[8], wake ? wake[0] : '', waker ? waker.pid : '', waker ? waker.comm : '',
                 wake ? wake[1] / scale : '', wake ? CTX_NAMES[wake[3]] : '', wake && wake[4] >= 0 ? wakeSite(wake[4]) : '',
                 wake && !open ? (record[2] - wake[1]) / scale : '', !open && record[7] >= 0 ? record[7] : '', index ? 'temporal' : 'selected',
                 step.gap === null ? '' : step.gap / scale, TIMED ? WAIT_MAX_GAP : '', !data.next && index === data.steps.length - 1 ? data.stop[0] : '',
                 MODE, MODE === 'count' ? 'call_order' : 'recorded_timestamps', 'all_tasks'];
+            if (D.caps.sched_blocked_reason) row.push(record[10] >= 0 ? S[record[10]] : '', record[11] ?? '');
+            yield row;
         }
     }
     if (total !== null && total < WAIT_CSV_DEFER_ROWS) {

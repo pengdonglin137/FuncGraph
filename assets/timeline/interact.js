@@ -396,6 +396,8 @@ function tipOff(r) {
     h += '<div><span class="t-dur">' + fmtDur(r[2] - r[1]) + '</span></div><div class="t-sep"></div>';
     const row = (k, v) => '<div class="t-row"><span class="t-k">' + k + '</span><span class="t-v">' + v + '</span></div>';
     if (r[4] >= 0) h += row('waiting in', esc(S[r[4]]));
+    if (r[10] >= 0) h += row('blocked at (recorded)', esc(S[r[10]]));
+    if (r[11] !== undefined) h += row('I/O wait (recorded)', r[11] ? 'yes' : 'no');
     if (r[5] >= 0) h += row('state', esc(S[r[5]]));
     h += row('switch', 'CPU ' + (r[6] >= 0 ? r[6] : '?') + ' → ' + (r[7] >= 0 ? 'CPU ' + r[7] : 'not back in window'));
     if (r[9] >= 0) h += row('woken by', esc(trackLabel(TRACKS[r[9]])));

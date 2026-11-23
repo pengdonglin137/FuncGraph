@@ -87,6 +87,19 @@ class CaptureTest(unittest.TestCase):
         self.assertNotIn('--no-sched', command)
         self.assertNotIn('-E', command)
 
+    def test_mixed_automatically_records_supported_android_blocked_reason(self):
+        name = 'sched:sched_blocked_reason'
+        args = self.arguments('--mixed')
+        self.assertNotIn(name + '@kernel', capture.build_command(args, ['/recorder'], self.tracefs))
+        self.add_event(name)
+        self.assertIn(name + '@kernel', capture.build_command(args, ['/recorder'], self.tracefs))
+        args = self.arguments('--mixed', '--event', name)
+        self.assertEqual(capture.build_command(args, ['/recorder'], self.tracefs).count(name + '@kernel'), 1)
+        args = self.arguments('--mixed', '--no-sched')
+        self.assertNotIn(name + '@kernel', capture.build_command(args, ['/recorder'], self.tracefs))
+        session = capture.TracefsSession(self.tracefs, self.evidence)
+        self.assertEqual(session.snapshot()['events/sched/sched_blocked_reason/enable'], '0')
+
     def test_extra_events_expand_groups_globs_and_deduplicate_defaults(self):
         for name in ('kvm:kvm_entry', 'kvm:kvm_exit', 'kvm:vcpu_match_mmio'):
             self.add_event(name)

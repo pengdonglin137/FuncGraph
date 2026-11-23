@@ -61,6 +61,25 @@ def invoke(*args):
 
 
 class UftraceImportTest(unittest.TestCase):
+    def test_android_blocked_reason_targets_payload_pid_not_event_context(self):
+        def event(name, time, pid, cpu, text):
+            return dict(type='event', space='kernel', time_ns=ORIGIN + time,
+                        tid=pid, cpu=cpu, name='sched:' + name, text=text)
+
+        for event_pid, event_cpu in ((42, 0), (43, 1)):
+            with self.subTest(event_pid=event_pid, event_cpu=event_cpu):
+                records = capture()[:4] + [
+                    event('sched_switch', 240, 42, 0, 'prev_comm=demo prev_pid=42 prev_prio=120 prev_state=D ==> next_comm=idle next_pid=0'),
+                    event('sched_blocked_reason', 320, event_pid, event_cpu, 'pid=42 iowait=1 caller=io_schedule+0x4/0x8'),
+                    event('sched_switch', 500, 0, 0, 'prev_comm=idle prev_pid=0 prev_prio=120 prev_state=R ==> next_comm=demo next_pid=42'),
+                ]
+                data = build(records).to_data()
+                self.assertEqual(len(data['offcpu']), 1)
+                wait = data['offcpu'][0]
+                self.assertEqual(data['tasks'][wait[0]]['pid'], 42)
+                self.assertEqual(wait[2] - wait[1], 260)
+                self.assertEqual((data['strings'][wait[10]], wait[11]), ('io_schedule+0x4/0x8', 1))
+
     def test_kernel_preempt_entry_exit_baselines_ignore_user_and_event_counts(self):
         for exit_depth in (0, 1):
             with self.subTest(exit_depth=exit_depth):

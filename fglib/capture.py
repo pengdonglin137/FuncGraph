@@ -19,6 +19,7 @@ from . import uftrace_runtime
 
 
 SCHED_EVENTS = ('sched_switch', 'sched_waking', 'sched_wakeup')
+OPTIONAL_SCHED_EVENTS = ('sched_blocked_reason',)
 LIFECYCLE_EVENTS = ('sched_process_exec', 'sched_process_exit')
 FILTERS = ('set_ftrace_pid', 'set_event_pid', 'set_graph_function', 'set_graph_notrace',
            'set_ftrace_filter', 'set_ftrace_notrace')
@@ -72,7 +73,7 @@ class TracefsSession:
         names += [str(path.relative_to(self.root)) for path in sorted(self.root.glob('options/*'))]
         names += [str(path.relative_to(self.root))
                   for path in sorted(self.root.glob('per_cpu/cpu*/buffer_size_kb'))]
-        names += ['events/sched/' + event + '/enable' for event in SCHED_EVENTS + LIFECYCLE_EVENTS]
+        names += ['events/sched/' + event + '/enable' for event in SCHED_EVENTS + OPTIONAL_SCHED_EVENTS + LIFECYCLE_EVENTS]
         names += ['events/' + event.replace(':', '/') + '/' + field
                   for event in self.events for field in ('enable', 'filter')]
         return {name: normalized(name, (self.root / name).read_text())
@@ -275,6 +276,9 @@ def build_command(args, tracer, tracefs=None):
                 selected.append('sched:' + event)
             else:
                 print('fgcapture: kernel event unavailable: ' + event, file=sys.stderr)
+        if args.sched is not False:
+            selected.extend('sched:' + event for event in OPTIONAL_SCHED_EVENTS
+                            if (tracefs / 'events/sched' / event / 'enable').exists())
         selected.extend(event for event in resolve_events(tracefs, args.event) if event not in selected)
         for event in selected:
             command += ['-E', event + '@kernel']

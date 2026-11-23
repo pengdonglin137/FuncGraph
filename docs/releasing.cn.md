@@ -22,17 +22,12 @@
 **默认顺序：准备 → 本地验证 → push master → CI / Pages 验收 → push tag → Release 验收 → 留档。**
 任一关失败都先停止，不把“已触发”“部分 job 通过”或“网页刷新了”视为发布完成。
 
-## 最近完成的发布：v0.9.4
+## 已发布版本
 
-`v0.9.4` 已于 2026 年 11 月 14 日发布，包含保存分析现场、精确过滤草稿、内联展示优化、
-详情标题统一和 BTF 编译器克隆参数安全解析，详见 [版本说明](releases/v0.9.4.md)。
-发布 job 会将匹配的 `docs/releases/vTAG.md` 写入 Release 正文，再附 GitHub 生成的说明。
-升版本身不会发布；仍须按下方清单核对实际标签、工作流与附件，不把源码版本当成发布成功。
-已发布的 `v0.9.4`、`v0.9.3`、`v0.9.2` 标签与更早的验收记录均保留为历史，不能重新使用。
-
-`v0.9.6` 为本次候选发布版本，改动见 [版本说明](releases/v0.9.6.md)，包含本地准备的
-v0.9.5 改进和内核参数默认开启修正。已有本地 `v0.9.5` 标签保留在原提交，不移动，
-也不作为本次候选发布。本地提交和标签不表示发布已完成，仍须完成下方全部验收流程。
+当前正式版以 [GitHub Releases](https://github.com/pengdonglin137/FuncGraph/releases/latest)
+为准。发布 job 会将匹配的 `docs/releases/vTAG.md` 写入 Release 正文，再附 GitHub 生成的说明。
+本地升版或打标签不等于发布，仍须按下方流程核对远端标签、工作流和附件。
+已有标签和验收记录保留为历史，不移动、不复用。
 
 ## 1. 先区分 push、标签和 Release
 
@@ -81,11 +76,11 @@ git log -5 --oneline
 
 ### 选择版本并更新版本号
 
-以下以 **`0.9.7` 为下一次发布的示例**，并不表示已经升级或发布该版本。
+以下以 **`0.9.8` 为下一次发布的示例**，并不表示已经升级或发布该版本。
 每次都应先检查是否已使用；`v0.9.4` 已经发布，不能重新创建或移动到新提交。
 
 ```bash
-next_version=0.9.7
+next_version=0.9.8
 release_tag="v${next_version}"
 git tag --list "$release_tag"
 git ls-remote --tags origin "refs/tags/$release_tag" "refs/tags/$release_tag^{}"

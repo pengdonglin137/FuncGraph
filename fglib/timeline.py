@@ -67,6 +67,8 @@ RE_OVERHEAD = re.compile(r'^# fgcapture: overhead child=(\d+)ns self=(\d+)ns')
 RE_SCHED_SWITCH = re.compile(r'sched_switch: prev_comm=(.*?) prev_pid=(\d+) .*?prev_state=(\S+) ==> next_comm=(.*?) next_pid=(\d+)')
 # sched_waking fires in the waker's context; sched_wakeup may fire on the target CPU (TTWU_QUEUE IPI)
 RE_SCHED_WAKEUP = re.compile(r'sched_(waking|wakeup|wakeup_new): comm=(.*?) pid=(\d+)')
+RE_BLOCKED_REASON = re.compile(r'(?:/\*\s*)?(?:sched:)?sched_blocked_reason:\s+pid=(\d+)\s+'
+                               r'(?:iowait|io_wait)=([01])\s+caller=(.*?)(?:\s*\*/)?\s*')
 
 # hardirq/softirq char -> context code
 CTX_TASK, CTX_SOFTIRQ, CTX_HARDIRQ, CTX_NMI = 0, 1, 2, 3
@@ -196,7 +198,7 @@ class TimelineBuilder:
         self.cpu_last_ts = {}
         self.cpu_irq_depth = {}   # cpu -> nesting count of ==========> markers
         self.pending_switch = {}  # cpu -> (prev_key, next_key)
-        self.pending_state = {}   # pid -> prev_state from sched_switch
+        self.pending_state = {}   # prev_pid -> (state, timestamp, cpu, next_pid, blocked reason)
         self.offcpu = []          # [task, start, end, depth, reason_idx, state_idx, cpu_out, cpu_in, preempted, waker_idx]
         self.resched = []         # [task, start, end, max_preempt, irqoff, closed_by]
         self.irqoff = []          # [task, start, end]
@@ -444,6 +446,11 @@ class TimelineBuilder:
                 continue
 
             self._cur_cpu = cpu if cpu is not None else -1
+            if stripped.startswith('/*') and 'sched_blocked_reason:' in stripped:
+                reason = RE_BLOCKED_REASON.fullmatch(stripped)
+                if reason:
+                    self._blocked_reason(reason, ts, cpu, pid)
+                    continue
             task = self._task(pid, comm, cpu)
             self._resolve_switch_in(task, cpu, ts)
             prev_ts = task.last_ts
@@ -686,8 +693,13 @@ class TimelineBuilder:
         m = RE_SCHED_SWITCH.search(stripped)
         if m:
             self.caps['sched_events'] = True
-            self.pending_state[int(m.group(2))] = m.group(3)
+            self.pending_state[int(m.group(2))] = (m.group(3), ts, cpu, int(m.group(5)), None)
             return
+        if 'sched_blocked_reason:' in stripped:
+            reason = RE_BLOCKED_REASON.fullmatch(stripped)
+            if reason:
+                self._blocked_reason(reason, ts, cpu, task.pid)
+                return
         m = RE_SCHED_WAKEUP.search(stripped)
         if m and ts is not None:
             self.caps['sched_events'] = True
@@ -703,6 +715,28 @@ class TimelineBuilder:
                 waker_slice = task.stack[-1].idx if task.stack else -1
                 self.wake_events.append([task.tid, ts, target.tid, ctx, waker_slice, target.off_open])
 
+    def _blocked_reason(self, reason, timestamp, cpu, context_pid):
+        if timestamp is None:
+            return
+        pid = int(reason.group(1))
+        target = self.tasks.get(pid)
+        record = target.off_open if target is not None else None
+        caller = reason.group(3)
+        evidence = (None if caller in ('', '(null)', '(nil)', '0', '0x0') else caller,
+                    int(reason.group(2)))
+        if record is not None:
+            if not record[8] and timestamp >= record[1] and len(record) == 10:
+                self._annotate_blocked_wait(record, evidence)
+        elif pid == context_pid and cpu is not None and pid in self.pending_state:
+            state, switch_ts, switch_cpu, next_pid, prior = self.pending_state[pid]
+            if prior is None and switch_cpu == cpu and switch_ts is not None and switch_ts <= timestamp and not state.startswith('R'):
+                self.pending_state[pid] = (state, switch_ts, switch_cpu, next_pid, evidence)
+
+    def _annotate_blocked_wait(self, record, evidence):
+        caller, io_wait = evidence
+        record.extend((self._s(caller), io_wait))
+        self.caps['sched_blocked_reason'] = True
+
     def _on_switch(self, m):
         self.caps['switch_markers'] = True
         cpu = int(m.group(1)) if m.group(1) else None
@@ -716,6 +750,7 @@ class TimelineBuilder:
             self.cpu_current[cpu] = nxt.key
         # Switch-out time: last timestamp of prev (on this CPU)
         t_out = prev.last_ts if timestamp is None else timestamp
+        pending = self.pending_state.pop(prev_pid, None)
         if prev.kind == 0 and t_out is not None:
             # stack at switch-out explains why the task left the CPU
             names = [self.strings[self.s_name[f.idx]] for f in prev.stack]
@@ -725,12 +760,14 @@ class TimelineBuilder:
                 if not RE_SCHED_INTERNAL.match(n):
                     reason = n
                     break
-            state = self.pending_state.pop(prev_pid, None)
+            state = pending[0] if pending else None
             if state is not None:
                 preempted = state.startswith('R')
             depth = prev.stack[-1].depth + 1 if prev.stack else 0
             rec = [prev.tid, t_out, None, depth, self._s(reason), self._s(state), cpu, None,
                    1 if preempted else 0, -1]
+            if pending and pending[2:4] == (cpu, next_pid) and pending[4] is not None:
+                self._annotate_blocked_wait(rec, pending[4])
             self.offcpu.append(rec)
             prev.off_open = rec
         if prev.resched_open is not None and t_out is not None:
@@ -1152,7 +1189,7 @@ class TimelineBuilder:
             'chains': [[remap[c[0]], remap[c[1]]] + c[2:] for c in self.chains],
             'errnames': errnames,
             'offcpu': [[r[0], rel(r[1]), rel(r[2]), r[3], r[4], r[5], r[6] if r[6] is not None else -1,
-                        r[7] if r[7] is not None else -1, r[8], r[9]]
+                        r[7] if r[7] is not None else -1] + r[8:]
                        for r in self.offcpu if timed and r[1] is not None],
             'resched': [[r[0], rel(r[1]), rel(r[2])] + r[3:] for r in self.resched] if timed else [],
             # [waker_task, ts, target_task, ctx, waker_slice, offcpu_index|-1]

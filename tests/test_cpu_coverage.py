@@ -185,18 +185,17 @@ class CpuCoverageBrowserTest(unittest.TestCase):
         self.page = self.context.new_page()
         self.page.set_default_timeout(5000)
         self.page.on('pageerror', lambda error: self.errors.append(str(error)))
-        self.page.goto(self.urls[kind, mode])
-        self.page.evaluate("async () => { await fgSwitchView('timeline'); }")
-        self.page.evaluate('theme => document.documentElement.dataset.theme = theme', theme)
-        self.page.evaluate('''() => {
+        self.page.add_init_script('''(() => {
             window.cpuDashCalls = 0;
             const original = CanvasRenderingContext2D.prototype.setLineDash;
             CanvasRenderingContext2D.prototype.setLineDash = function(segments) {
-                if (segments.join(',') === '3,3') cpuDashCalls++;
+                if (segments.join(',') === '3,3') window.cpuDashCalls++;
                 return original.call(this, segments);
             };
-            fgView('timeline').resize();
-        }''')
+        })()''')
+        self.page.goto(self.urls[kind, mode])
+        self.page.evaluate("async () => { await fgSwitchView('timeline'); }")
+        self.page.evaluate('theme => document.documentElement.dataset.theme = theme', theme)
 
     def hover_cpu_segment(self):
         point = self.page.evaluate('''() => {

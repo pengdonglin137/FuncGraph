@@ -112,7 +112,7 @@ done
 SAVE=$(mktemp -d /tmp/fgcapture.XXXXXX)
 OPTS="funcgraph-abstime funcgraph-proc funcgraph-retval funcgraph-retaddr funcgraph-tail funcgraph-args
       funcgraph-duration funcgraph-cpu funcgraph-overhead funcgraph-irqs latency-format function-fork"
-EVENTS="sched_switch sched_wakeup sched_waking sched_process_exec sched_process_exit"
+EVENTS="sched_switch sched_wakeup sched_waking sched_blocked_reason sched_process_exec sched_process_exit"
 save() {
     cat $T/current_tracer > $SAVE/tracer
     cat $T/tracing_on > $SAVE/on

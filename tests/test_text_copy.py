@@ -296,7 +296,11 @@ class TextCopyTest(unittest.TestCase):
                     page = self.open_report()
                     facts = page.locator(BUTTON).evaluate('''async (button, options) => {
                         Object.defineProperty(navigator, 'clipboard', {value:undefined});
-                        document.execCommand = () => options.copied;
+                        document.execCommand = () => {
+                            window.scrollTo({top:0, behavior:'instant'});
+                            document.getElementById('textViewport').scrollLeft = 0;
+                            return options.copied;
+                        };
                         button.focus();
                         const line = document.querySelectorAll('#content .line-content')[200];
                         const selection = getSelection(), range = document.createRange();

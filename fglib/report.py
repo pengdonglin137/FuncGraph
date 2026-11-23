@@ -287,7 +287,7 @@ class HtmlGenerator:
                     <button class="control-btn btn-collapse" onclick="collapseAll()">Collapse All</button>
                 </div>
                 <div class="btn-group">
-                    <button type="button" class="control-btn btn-tool" onclick="copyVisibleContent(event)" title="Copy non-hidden trace rows as plain text, without line numbers or expanded source">Copy</button>
+                    <button type="button" class="control-btn btn-tool text-copy-btn" onclick="copyVisibleContent(event)" title="Copy non-hidden trace rows as plain text, without line numbers or expanded source">Copy</button>
                     <button class="control-btn btn-tool" id="heatmapBtn" onclick="toggleHeatmap()">Heatmap</button>
                     <button class="control-btn btn-tool" id="textOrderBtn" onclick="fgToggleTextOrder()" title="Line order: as captured (all CPUs interleaved by time) or grouped by task with context switches summarized">Order: time</button>
                     <button class="control-btn btn-tool" id="srcModeBtn" onclick="fgToggleSrcMode()" title="Source blocks: inline chain (outer to inner, collapsible) or flat faddr2line order">Source: chain</button>

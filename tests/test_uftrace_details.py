@@ -548,7 +548,7 @@ class UftraceDetailBrowserTest(unittest.TestCase):
                         self.assertIsNone(evidence.get_attribute('open'))
                         self.assertEqual(original.text_content(), raw)
                         self.assertFalse(original.is_visible())
-                        fields = panel.locator('.tl-call-facts > .k').all_text_contents()
+                        fields = panel.locator('.tl-call-facts > .k, .tl-call-facts > .tl-recorded-field > .k').all_text_contents()
                         return_field = 'return type' if returned is None else 'return (BTF)'
                         self.assertLess(fields.index(return_field), fields.index('depth'))
                         if returned is None:

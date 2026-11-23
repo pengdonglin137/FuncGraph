@@ -962,6 +962,7 @@
             max-height: 200px;
             overflow-y: auto;
             background: var(--container-bg);
+            color: var(--text-color);
             border: 1px solid var(--border-color);
             border-radius: 4px;
             box-shadow: 0 -2px 8px rgba(0,0,0,0.2);
@@ -1204,6 +1205,7 @@
         /* Tool buttons - indigo */
         .btn-tool { background: #4f46e5; }
         .btn-tool:hover { background: #4338ca; }
+        .text-copy-btn { min-inline-size: 11em; white-space: nowrap; }
         .btn-guides {
             background: transparent;
             color: var(--summary-text);

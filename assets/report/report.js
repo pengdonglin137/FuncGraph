@@ -1239,8 +1239,7 @@
             return {left: left + 4, top: top + 4, right: left + (visual?.width ?? innerWidth) - 4,
                 bottom: top + (visual?.height ?? innerHeight) - 4};
         }
-        function fgRevealOverlayFocus(panel) {
-            const active = document.activeElement;
+        function fgRevealOverlayFocus(panel, active = document.activeElement) {
             if (!panel.contains(active)) return;
             const top = panel.getBoundingClientRect().top + panel.clientTop;
             const bounds = active.getBoundingClientRect();
@@ -1291,8 +1290,10 @@
             }
             panel.style.setProperty('--text-panel-top', top - anchor.top - controls.clientTop + 'px');
             panel.style.setProperty('--text-panel-room', room + 'px');
-            fgRevealOverlayFocus(panel);
-            if (fgFieldDropdown) fgPositionFieldDropdown(fgFieldDropdown.panel, fgFieldDropdown.owner);
+            const dropdown = fgFieldDropdown;
+            const active = document.activeElement;
+            fgRevealOverlayFocus(panel, dropdown?.panel.contains(active) ? dropdown.owner : active);
+            if (dropdown) fgPositionFieldDropdown(dropdown.panel, dropdown.owner);
         }
         function fgCloseFieldDropdowns(restoreFocus = false) {
             const state = fgFieldDropdown;
@@ -3253,6 +3254,9 @@
 
         function fallbackCopy(text) {
             const active = document.activeElement;
+            const {scrollX, scrollY} = window;
+            const viewport = document.getElementById('textViewport');
+            const scrollLeft = viewport?.scrollLeft;
             const inputSelection = typeof active?.selectionStart === 'number' ?
                 [active.selectionStart, active.selectionEnd, active.selectionDirection] : null;
             const selection = window.getSelection();
@@ -3285,6 +3289,10 @@
                     }
                 }
                 if (inputSelection && active.isConnected) active.setSelectionRange(...inputSelection);
+                if (window.scrollX !== scrollX || window.scrollY !== scrollY) {
+                    window.scrollTo({left: scrollX, top: scrollY, behavior: 'instant'});
+                }
+                if (viewport && viewport.scrollLeft !== scrollLeft) viewport.scrollLeft = scrollLeft;
             }
         }
         
@@ -3882,9 +3890,13 @@
                 event.button && event.button !== 0) return false;
             event.preventDefault();
             const generation = ++fgClipboardGeneration;
-            window.location.hash = anchorId;
-            const fullUrl = window.location.href;
-            return fgCopyPlainText(fullUrl, () => window.location.href === fullUrl, generation);
+            const url = new URL(location.href);
+            url.hash = anchorId;
+            if (url.href !== location.href) {
+                try { history.pushState(history.state, '', url.href); } catch {}
+            }
+            const currentUrl = location.href;
+            return fgCopyPlainText(url.href, () => location.href === currentUrl, generation);
         }
         
         // 处理锚点导航

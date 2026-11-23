@@ -1153,7 +1153,7 @@ class BrowserSmokeTest(unittest.TestCase):
                 trace_filter.fill('pid:1')
                 trace_filter.press('Enter')
                 page.wait_for_function("!!window.fgFilterState?.lines")
-                self.assertTrue(page.get_by_text('· Filter on', exact=True).is_visible())
+                page.get_by_role('button', name='Tools · Filter on', exact=True).wait_for(state='visible')
                 trace_filter.press('Escape')
                 self.assertFalse(options.is_visible())
                 self.assertEqual(more.get_attribute('aria-expanded'), 'false')
@@ -3529,6 +3529,24 @@ class BrowserSmokeTest(unittest.TestCase):
         self.assertEqual(self.page.locator('tr[data-wait]').count(), 1)
         self.assertIn('fgcapture.sh --sched', self.page.locator('.an-wait-hint').inner_text())
 
+    def test_wait_chain_shows_recorded_blocking_site_separately_and_exports_io_wait(self):
+        self.ev("fgSwitchView('text')")
+        self.page.reload()
+        caller = 'folio_wait+0x4/0x8 [<b>ext4</b>]'
+        self.open_range_data(['stack_guess'], durations=[1000000], extra={
+            'strings': ['stack_guess', caller], 'caps': {'sched_events': True, 'sched_blocked_reason': True},
+            'offcpu': [[0, 100, 1000, 0, 0, -1, 0, 1, 0, -1, 1, 0]],
+        })
+        self.ev("() => { const probe = fgView('timeline').probe(); probe.wait(probe.TRACKS[0].off[0]); }")
+        row = self.page.locator('tr[data-wait="0"] td').nth(2)
+        self.assertIn('stack_guess', row.inner_text())
+        self.assertIn('Recorded: ' + caller, row.inner_text())
+        self.assertIn('I/O wait: no', row.inner_text())
+        self.assertEqual(row.locator('b').count(), 0)
+        exported, = self.download_csv('[data-act=wait-csv]')
+        self.assertEqual((exported['waiting_function'], exported['blocked_function'], exported['io_wait']),
+                         ('stack_guess', caller, '0'))
+
     def test_wait_chain_many_intervals_resolves_only_requested_pages(self):
         self.open_wait_data(count=150000)
         status = self.page.locator('.an-wait-pager [role=status]')
@@ -5251,7 +5269,8 @@ class BrowserSmokeTest(unittest.TestCase):
             const trackContext = tracks.getContext('2d'), rulerContext = ruler.getContext('2d');
             const fill = trackContext.fillRect, trackImage = trackContext.drawImage, rulerImage = rulerContext.drawImage;
             trackContext.fillRect = function (...args) {
-                if (args[0] === 0 && args[1] === 0 && args[2] === tracks.width && args[3] === tracks.height) sceneWork.tracks++;
+                const {a: scaleX, d: scaleY} = this.getTransform();
+                if (args[0] === 0 && args[1] === 0 && args[2] * scaleX === tracks.width && args[3] * scaleY === tracks.height) sceneWork.tracks++;
                 return fill.apply(this, args);
             };
             trackContext.drawImage = function (...args) { sceneWork.trackCopies++; return trackImage.apply(this, args); };

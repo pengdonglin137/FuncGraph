@@ -1592,6 +1592,8 @@ The error navigator in the toolbar (`◀ N errors · to user ▶`): click the la
 
 ### 7.5 Wait chain (click an off-CPU segment)
 
+When the kernel exposes `sched:sched_blocked_reason`, kernel `--sched` and default mixed scheduling capture include it. The tooltip and Wait chain show the recorded blocking site and `I/O wait` flag separately from the stack-derived **waiting in** function. Only records that match an observed wait for the target PID annotate it. A missing flag is unknown, not `no`; `I/O wait: yes` does not make the entire off-CPU interval device I/O time. For reports with matched evidence, Wait chain CSV adds `blocked_function` and `io_wait` (`1`/`0`, blank if unknown).
+
 Narrow detail panes show the task, wait duration, waiting function, and waker without horizontal scrolling. Select **All columns** for the waker's function, wake latency, resume CPU, and link gap. The toggle keeps the current page, and CSV always includes all fields.
 
 At wide zoom levels, dense short waits starting in the same pixel and stack row can share a hatched marker. An exact-time hit still selects the original wait. Clicking a gap in the marker opens the first recorded wait in the group, as indicated in the tooltip and details. Zoom in to inspect individual waits. The markers do not change range statistics or CSV exports.

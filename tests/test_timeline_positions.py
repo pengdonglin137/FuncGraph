@@ -9,13 +9,12 @@ class TimelinePositionTest(unittest.TestCase):
     def run_position(self, assertions):
         path = Path(__file__).resolve().parents[1] / 'assets' / 'timeline' / 'panels.js'
         text = path.read_text()
-        helper = text[text.index('function safeSourceUrl('):text.index('function callNavigationHtml(')]
-        position = text[text.index('function callSitePos('):text.index('function fillCallSite(')]
+        helper = text[text.index('const DETAIL_SOURCE_URL_LIMIT'):text.index('function callNavigationHtml(')]
+        position = text[text.index('const CALL_SITE_POSITION_LIMIT'):text.index('const callSiteObserver')]
         model = (path.parent / 'model.js').read_text()
         user_position = model[model.index('function userCallSite('):model.index('function retOf(')]
         setup = '''
             const assert = require('node:assert/strict');
-            const csPosCache = new Map();
             const D = {sources:{callers:{}}};
             let sCaller = [0, 1, 2, 3];
             const sLine = [42, 43, 44, 45];

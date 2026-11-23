@@ -39,26 +39,19 @@ workflow must finish successfully.
 Push the tag with your normal authenticated Git connection, not another
 workflow's default `GITHUB_TOKEN`, which does not trigger new workflow runs.
 
-## Most recently completed release: v0.9.4
+## Published releases
 
-`v0.9.4` was published on November 14, 2026: saved analysis views, staged exact
-filters, inline-frame presentation, consistent detail titles and safe BTF
-compiler-clone arguments are listed in [the release notes](releases/v0.9.4.md). The
-publish job includes a matching `docs/releases/vTAG.md` file in the Release body
-when present, followed by generated GitHub notes. A version change alone does
-not publish anything: verify the actual tag, workflow and attachments below.
-Keep the published `v0.9.4`, `v0.9.3`, `v0.9.2` tags and earlier verification records as history; do not reuse them.
-
-`v0.9.6` is the current release candidate; see its [release notes](releases/v0.9.6.md).
-It includes the locally prepared v0.9.5 changes and the supported-by-default
-kernel argument capture update. The existing local `v0.9.5` tag is retained at
-its original commit, not moved or published as this candidate. A local commit or
-tag does not mean publication has completed; all acceptance steps still apply.
+Check [GitHub Releases](https://github.com/pengdonglin137/FuncGraph/releases/latest)
+for the current stable release. The publish job includes a matching
+`docs/releases/vTAG.md` file when present, followed by generated GitHub notes.
+A local version change or tag is not a publication; verify the remote tag,
+workflow and attachments below. Keep existing tags and acceptance records as
+history; do not move or reuse them.
 
 ## Release checklist
 
 Run commands from the repository root in the same Bash session. **Stop if any
-command fails.** `0.9.7` below is an example for a future release, not an upgrade
+command fails.** `0.9.8` below is an example for a future release, not an upgrade
 or publication of that version. Always check availability; published tags such as `v0.9.4` must not be moved or overwritten.
 
 ### 1. Prepare the release commit
@@ -87,7 +80,7 @@ git log -5 --oneline
 Choose an unused version; the following future-version example must not be copied blindly:
 
 ```bash
-next_version=0.9.7
+next_version=0.9.8
 release_tag="v${next_version}"
 git tag --list "$release_tag"
 git ls-remote --tags origin "refs/tags/$release_tag" "refs/tags/$release_tag^{}"
