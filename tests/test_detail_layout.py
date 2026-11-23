@@ -414,16 +414,23 @@ class DetailLayoutBrowserTest(unittest.TestCase):
                 self.assertEqual(main.locator('.k').all_text_contents(),
                                  ['duration', 'self', 'start', 'task', 'args (BTF)', 'return (BTF)',
                                   'depth', 'trace lines'])
-                prototype = main.locator('.tl-btf-prototype')
+                prototype = self.page.locator('.tl-recorded-call-head + .tl-btf-prototype')
+                opener = self.page.get_by_role('button', name='Function prototype: inner', exact=True)
                 self.assertIsNone(prototype.get_attribute('open'))
-                self.assertEqual(prototype.locator('summary').inner_text(), 'Function prototype · BTF')
-                self.assertEqual(prototype.evaluate('''node => [node.previousElementSibling.previousElementSibling.textContent,
-                                                                node.nextElementSibling.textContent]'''), ['start', 'task'])
-                self.assertTrue(prototype.locator('summary').evaluate('''summary => {
-                    const bounds = summary.getBoundingClientRect();
-                    const fields = summary.closest('.tl-call-facts').getBoundingClientRect();
-                    return Math.abs(bounds.left - fields.left) < 1 && Math.abs(bounds.right - fields.right) < 1;
-                }'''))
+                self.assertFalse(prototype.locator('summary').is_visible())
+                self.assertEqual(opener.get_attribute('aria-expanded'), 'false')
+                self.assertEqual(opener.get_attribute('aria-controls'), prototype.get_attribute('id'))
+                opener.press('Space')
+                self.assertTrue(prototype.locator('code').is_visible())
+                self.assertEqual(opener.get_attribute('aria-expanded'), 'true')
+                opener.press('Enter')
+                self.assertFalse(prototype.is_visible())
+                self.page.get_by_role('button', name='Selected call actions').click()
+                self.page.get_by_role('menuitem', name='Show recorded symbol').click()
+                symbol = self.page.get_by_role('region', name='Recorded symbol')
+                self.assertEqual(symbol.locator('code').text_content(), 'inner')
+                self.assertEqual(opener.get_attribute('aria-expanded'), 'false')
+                symbol.get_by_role('button', name='Hide symbol', exact=True).click()
                 self.assertTrue(self.value('return (BTF)').is_visible())
                 self.assertTrue(self.page.locator('.tl-pill.err').is_visible())
                 self.assertTrue(main.locator('.v.err').is_visible())

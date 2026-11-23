@@ -552,8 +552,8 @@ class BtfDetailBrowserTest(unittest.TestCase):
             self.assertTrue(pane.locator('[data-detail-return=""]').evaluate('node => node === document.activeElement'))
             self.assertEqual(page.evaluate('[scrollX, scrollY, document.querySelector(".tl-scroll").scrollTop]'), outer)
             geometry = '''node => {
-                const body = node.closest('.tl-detail-body'), [facts, context] = body.children;
-                const pane = body.closest('.tl-detail');
+                const pane = node.closest('.tl-detail');
+                const [facts, context] = pane.querySelector('.tl-detail-body').children;
                 return {above: facts.getBoundingClientRect().bottom <= context.getBoundingClientRect().top,
                         width: node.getBoundingClientRect().width, overflow: pane.scrollWidth > pane.clientWidth};
             }'''
@@ -641,8 +641,9 @@ class BtfDetailBrowserTest(unittest.TestCase):
                     page.evaluate("async () => (await fgSwitchView('timeline')).probe().select(0)")
                     disclosure = page.locator(selector).first
                     summary = disclosure.locator(':scope > summary')
-                    activate = (lambda: summary.press('Enter')) if keyboard else summary.tap
-                    summary.evaluate("node => node.scrollIntoView({block:'center', inline:'nearest'})")
+                    opener = summary if keyboard else page.locator('[data-prototype-toggle]')
+                    activate = (lambda: opener.press('Enter')) if keyboard else opener.tap
+                    opener.evaluate("node => node.scrollIntoView({block:'center', inline:'nearest'})")
                     before = page.evaluate(timeline_state)
                     self.assertFalse(disclosure.evaluate('node => node.open'))
                     if keyboard:
@@ -650,7 +651,7 @@ class BtfDetailBrowserTest(unittest.TestCase):
                         page.keyboard.press('Enter')
                         self.assertTrue(summary.evaluate('node => node === document.activeElement'))
                     else:
-                        summary.tap()
+                        opener.tap()
                     self.assertTrue(disclosure.evaluate('''node => {
                         const text = node.querySelector('pre code, .tl-enum-body .tl-code-raw');
                         const range = document.createRange();
@@ -675,11 +676,11 @@ class BtfDetailBrowserTest(unittest.TestCase):
                     self.assertTrue(disclosure.evaluate('node => node.open'))
 
                     summary.press('Enter')
-                    summary.evaluate("node => node.scrollIntoView({block:'center', inline:'nearest'})")
+                    opener.evaluate("node => node.scrollIntoView({block:'center', inline:'nearest'})")
                     scroll = page.evaluate("[scrollY, document.querySelector('.tl-detail').scrollTop]")
                     activate()
                     self.assertTrue(restore.is_visible())
-                    activate()
+                    summary.press('Enter')
                     self.assertFalse(disclosure.evaluate('node => node.open'))
                     self.assertEqual(page.locator('.tl-detail-reading').count(), 0)
                     self.assertEqual(page.evaluate(timeline_state), before)
@@ -697,16 +698,16 @@ class BtfDetailBrowserTest(unittest.TestCase):
                     self.assertEqual(page.locator('.tl-detail-reading').count(), 0)
                     self.assertEqual(page.evaluate(timeline_state), before)
                     self.assertEqual(page.evaluate("[scrollY, document.querySelector('.tl-detail').scrollTop]"), scroll)
-                    self.assertTrue(summary.evaluate('node => node === document.activeElement'))
+                    self.assertTrue(opener.evaluate('node => node === document.activeElement'))
 
                     page.get_by_role('button', name='Expand details into the chart area').tap()
-                    summary.press('Enter')
+                    opener.press('Enter')
                     self.assertTrue(disclosure.evaluate('node => node.open'))
                     summary.press('Enter')
                     self.assertTrue(restore.is_visible())
 
                     restore.tap()
-                    summary.evaluate("node => node.scrollIntoView({block:'center', inline:'nearest'})")
+                    opener.evaluate("node => node.scrollIntoView({block:'center', inline:'nearest'})")
                     activate()
                     self.assertEqual(page.locator('.tl-detail-reading').count(), 1)
                     page.evaluate("fgView('timeline').probe().select(1)")
@@ -736,9 +737,10 @@ class BtfDetailBrowserTest(unittest.TestCase):
                     page.wait_for_function('''native => !!document.fullscreenElement === native &&
                         document.querySelector('.tl-fullscreen') && !document.querySelector('[data-act=max]').disabled''', arg=native)
                     summary = page.locator('.tl-btf-prototype > summary')
-                    summary.evaluate("node => node.scrollIntoView({block:'center', inline:'nearest'})")
+                    opener = page.locator('[data-prototype-toggle]')
+                    opener.evaluate("node => node.scrollIntoView({block:'center', inline:'nearest'})")
                     before = page.evaluate(state)
-                    summary.tap()
+                    opener.tap()
                     observed = summary.evaluate('''node => {
                         const details = node.parentElement;
                         const pane = node.closest('.tl-detail');
@@ -759,12 +761,13 @@ class BtfDetailBrowserTest(unittest.TestCase):
                     self.assertFalse(summary.evaluate('node => node.parentElement.open'))
                     self.assertEqual(page.locator('.tl-detail-reading').count(), 0)
                     self.assertEqual(page.evaluate(state), before)
-                    summary.press('Enter')
+                    opener.press('Enter')
                     self.assertEqual(page.locator('.tl-detail-reading').count(), 1)
                     page.keyboard.press('Escape')
                     self.assertEqual(page.locator('.tl-fullscreen').count(), 1)
                     self.assertEqual(page.evaluate('!!document.fullscreenElement'), native)
-                    self.assertTrue(summary.evaluate('node => !node.parentElement.open && node === document.activeElement'))
+                    self.assertEqual(opener.get_attribute('aria-expanded'), 'false')
+                    self.assertTrue(opener.evaluate('node => node === document.activeElement'))
                     self.assertEqual(page.evaluate(state), before)
                     page.get_by_role('button', name='Exit full screen', exact=True).tap()
                     page.locator('.tl-fullscreen').wait_for(state='detached')
@@ -782,13 +785,14 @@ class BtfDetailBrowserTest(unittest.TestCase):
             page.evaluate("async () => (await fgSwitchView('timeline')).probe().select(0)")
             disclosure = page.locator('.tl-btf-prototype')
             summary = disclosure.locator(':scope > summary')
+            opener = page.locator('[data-prototype-toggle]')
             trigger = page.get_by_role('button', name='Selected call actions')
             back = page.get_by_role('button', name='Return to call details', exact=True)
-            summary.evaluate("node => node.scrollIntoView({block:'center', inline:'nearest'})")
+            opener.evaluate("node => node.scrollIntoView({block:'center', inline:'nearest'})")
             state = '''() => [scrollY, document.querySelector('.tl-detail').clientHeight,
                 fgView('timeline').probe().sel(), fgView('timeline').probe().view()]'''
             before = page.evaluate(state)
-            summary.tap()
+            opener.tap()
             self.assertTrue(page.locator('.tl-detail-reading').count())
 
             trigger.tap()
@@ -817,8 +821,7 @@ class BtfDetailBrowserTest(unittest.TestCase):
             before = page.evaluate(state)
             page.get_by_role('menuitem', name='Show call stack').tap()
             self.assertTrue(page.locator('.tl-canvas').is_visible())
-            summary.evaluate("node => node.scrollIntoView({block:'center', inline:'nearest'})")
-            summary.tap()
+            opener.tap()
             self.assertTrue(page.locator('.tl-detail-reading').count())
             back.tap()
             self.assertFalse(back.is_visible())
@@ -835,11 +838,11 @@ class BtfDetailBrowserTest(unittest.TestCase):
             page.evaluate('() => new Promise(done => requestAnimationFrame(() => requestAnimationFrame(done)))')
             page.evaluate("fgView('timeline').probe().select(3)")
             summary = page.locator('.tl-btf-prototype > summary')
+            opener = page.locator('[data-prototype-toggle]')
             position = '''node => {
                 const pane = node.closest('.tl-detail');
-                node.scrollIntoView({block:'end'});
-                const bottom = Math.min(innerHeight, pane.getBoundingClientRect().top + pane.clientTop + pane.clientHeight);
-                pane.scrollTop += node.getBoundingClientRect().bottom - bottom + 4;
+                node.scrollIntoView({block:'nearest'});
+                pane.scrollTop = 0;
                 node.focus({preventScroll:true});
                 return [scrollY, fgView('timeline').probe().view(), document.querySelector('.tl-scroll').scrollTop];
             }'''
@@ -863,7 +866,7 @@ class BtfDetailBrowserTest(unittest.TestCase):
                         first:vertical(lines[0]), last:vertical(lines.at(-1)), lastHits:hitTargets(lines.at(-1))},
                     unchanged:[scrollY, fgView('timeline').probe().view(), document.querySelector('.tl-scroll').scrollTop]};
             }'''
-            summary.evaluate(f'''node => addEventListener('resize', () => {{
+            opener.evaluate(f'''node => addEventListener('resize', () => {{
                 window.prototypePositionAtResize = ({position})(node);
                 node.click();
             }}, {{once:true, capture:true}})''')
@@ -876,12 +879,12 @@ class BtfDetailBrowserTest(unittest.TestCase):
             self.assertFalse(observed['expanded'], observed)
             self.assertEqual(observed['unchanged'], page.evaluate('window.prototypePositionAtResize'))
 
-            pane_height = observed['geometry']['last'][1] - observed['geometry']['heading'][0] + 5
+            pane_height = observed['geometry']['last'][1] - observed['geometry']['heading'][0] + 15
             summary.evaluate('''(node, height) => {
                 node.parentElement.open = false;
                 node.closest('.tl-detail').style.maxHeight = Math.ceil(height) + 'px';
             }''', pane_height)
-            before = summary.evaluate(position)
+            before = opener.evaluate(position)
             page.keyboard.press('Enter')
             tight = summary.evaluate(coverage)
             self.assertEqual(tight['visible'], tight['lines'], tight)
@@ -895,7 +898,7 @@ class BtfDetailBrowserTest(unittest.TestCase):
         viewport = page.viewport_size
         page.goto(page.url)
         page.evaluate("async () => { await fgSwitchView('timeline'); fgView('timeline').probe().select(0); }")
-        cases = (('.tl-btf-prototype', 'code'), ('.tl-enum-arg .tl-enum', '.tl-code-raw'),
+        cases = (('.tl-enum-arg .tl-enum', '.tl-code-raw'),
                  ('.tl-arguments > .tl-value-evidence', '.tl-code-raw'), ('.tl-return-evidence', '.tl-code-raw'))
         state = '''() => [scrollY, fgView('timeline').probe().sel(), ...fgView('timeline').probe().view(),
             document.querySelector('.tl-scroll').scrollTop]'''
@@ -978,9 +981,10 @@ class BtfDetailBrowserTest(unittest.TestCase):
     def assert_copy_prototype(self, page, index, expected):
         page.evaluate("index => fgView('timeline').probe().select(index)", index)
         declaration = page.locator('.tl-btf-prototype')
+        opener = page.locator('[data-prototype-toggle]')
         button = declaration.get_by_role('button', name='Copy declaration')
         self.assertEqual(declaration.locator('[data-copy-prototype]').count(), 0)
-        declaration.locator('summary').press('Enter')
+        opener.press('Enter')
         self.assertEqual(declaration.locator('code').inner_text(), expected)
         self.assertGreaterEqual(button.bounding_box()['height'], 44)
         status = declaration.get_by_role('status')
@@ -1006,7 +1010,18 @@ class BtfDetailBrowserTest(unittest.TestCase):
                                ('denied', 'Copy failed. Select the declaration to copy it.')):
             page.evaluate('mode => { window.prototypeCopyMode = mode; }', mode)
             if mode == 'success':
-                self.assert_copy_feedback_at_pane_edge(button, status, feedback)
+                max_height = button.evaluate('''button => {
+                    const pane = button.closest('.tl-detail');
+                    const previous = pane.style.maxHeight;
+                    pane.scrollTop = 0;
+                    const height = button.getBoundingClientRect().bottom - pane.getBoundingClientRect().top;
+                    pane.style.maxHeight = Math.ceil(height + pane.clientTop + 2) + 'px';
+                    return previous;
+                }''')
+                try:
+                    self.assert_copy_feedback_at_pane_edge(button, status, feedback)
+                finally:
+                    button.evaluate('(button, height) => button.closest(".tl-detail").style.maxHeight = height', max_height)
             else:
                 button.press('Enter')
                 status.get_by_text(feedback, exact=True).wait_for()
@@ -1025,7 +1040,7 @@ class BtfDetailBrowserTest(unittest.TestCase):
             await new Promise(resolve => requestAnimationFrame(resolve));
         }''')
         self.assertEqual(page.evaluate('prototypeFallbacks'), [expected] * 2)
-        declaration.locator('summary').press('Enter')
+        opener.press('Enter')
         self.assertEqual(status.inner_text(), '')
         page.evaluate('delete window.rejectPrototypeCopy')
         button.press('Enter')
@@ -1181,7 +1196,7 @@ class BtfDetailBrowserTest(unittest.TestCase):
         self.assertTrue(all(height >= 44 for top, height in buttons))
         self.assertLessEqual(navigation.bounding_box()['height'], 54)
 
-        for selector in ('.tl-btf-prototype', '.tl-arguments .tl-enum', '[data-recorded-field=return] .tl-enum'):
+        for selector in ('.tl-arguments .tl-enum', '[data-recorded-field=return] .tl-enum'):
             target = pane.locator(selector)
             summary = target.locator(':scope > summary')
             self.assertFalse(target.evaluate('node => node.open'))
@@ -1199,35 +1214,30 @@ class BtfDetailBrowserTest(unittest.TestCase):
                 self.assertEqual(target.evaluate('node => node.open'), opened)
 
         disclosure = pane.locator('.tl-btf-prototype > summary')
-        result = disclosure.evaluate('''summary => {
-            const pane = summary.closest('.tl-detail');
-            const hit = () => {
-                const rect = summary.getBoundingClientRect();
-                return summary.contains(document.elementFromPoint(rect.left + 4, rect.top + rect.height / 2));
-            };
-            pane.scrollTop += summary.getBoundingClientRect().top - pane.getBoundingClientRect().top - 18;
-            const obscured = !hit();
-            summary.focus();
-            return [obscured, hit(), summary === document.activeElement];
-        }''')
-        self.assertEqual(result, [True, True, True])
-        page.keyboard.press('Enter')
+        opener = heading.get_by_role('button', name='Function prototype: submit')
+        self.assertGreaterEqual(opener.bounding_box()['height'], 44)
+        self.assertFalse(disclosure.is_visible())
+        opener.press('Enter')
+        self.assertEqual(opener.get_attribute('aria-expanded'), 'true')
+        self.assertTrue(disclosure.evaluate('node => node === document.activeElement'))
         disclosure.locator('..').locator('code').wait_for(state='visible')
         viewport = page.viewport_size
         for width in (320, 390, 640, 1280):
             page.set_viewport_size({'width': width, 'height': viewport['height']})
             geometry = pane.locator('.tl-prototype-body pre').evaluate('''pre => {
-                const grid = pre.closest('.tl-call-facts');
+                const body = pre.closest('.tl-detail').querySelector('.tl-detail-body');
                 const copy = pre.parentElement.querySelector('[data-copy-prototype]').getBoundingClientRect();
                 const bounds = pre.getBoundingClientRect();
-                const fields = grid.getBoundingClientRect();
-                return {left: bounds.left, right: bounds.right, gridLeft: fields.left, gridRight: fields.right,
-                    copyAboveCode: copy.bottom <= bounds.top && copy.left >= fields.left && copy.right <= fields.right,
+                const bodyRect = body.getBoundingClientRect();
+                const start = bodyRect.left + parseFloat(getComputedStyle(body).paddingLeft);
+                const end = bodyRect.right - parseFloat(getComputedStyle(body).paddingRight);
+                return {left: bounds.left, right: bounds.right, start, end,
+                    copyAboveCode: copy.bottom <= bounds.top && copy.left >= bounds.left && copy.right <= bounds.right,
                     overflow: pre.scrollWidth > pre.clientWidth};
             }''')
             with self.subTest(width=width):
-                self.assertAlmostEqual(geometry['left'], geometry['gridLeft'], delta=1)
-                self.assertAlmostEqual(geometry['right'], geometry['gridRight'], delta=1)
+                self.assertAlmostEqual(geometry['left'], geometry['start'], delta=1)
+                self.assertAlmostEqual(geometry['right'], geometry['end'], delta=1)
                 self.assertTrue(geometry['copyAboveCode'], geometry)
                 self.assertFalse(geometry['overflow'])
                 self.assertTrue(disclosure.locator('..').evaluate('node => node.open'))
@@ -1256,7 +1266,7 @@ class BtfDetailBrowserTest(unittest.TestCase):
         prototype = page.locator('.tl-btf-prototype')
         self.assertFalse(prototype.evaluate('node => node.open'))
         self.assertEqual(prototype.locator('code').count(), 0)
-        prototype.locator('summary').press('Enter')
+        page.locator('[data-prototype-toggle]').press('Enter')
         self.assertEqual(prototype.locator('code').inner_text(), 'enum tx_status submit(mode_t mode);')
         self.assertEqual(pane.evaluate(container_name), 'none')
         argument = page.locator('.tl-enum-arg .tl-enum')
@@ -1288,11 +1298,11 @@ class BtfDetailBrowserTest(unittest.TestCase):
         page.evaluate("fgView('timeline').probe().select(2)")
         self.assertFalse(prototype.evaluate('node => node.open'))
         self.assertEqual(prototype.locator('code').count(), 0)
-        prototype.locator('summary').press('Enter')
+        page.locator('[data-prototype-toggle]').press('Enter')
         self.assertEqual(prototype.locator('code').text_content(), 'void unused(mode_t mode);')
         page.evaluate("fgView('timeline').probe().select(3)")
         self.assertFalse(prototype.evaluate('node => node.open'))
-        prototype.locator('summary').press('Enter')
+        page.locator('[data-prototype-toggle]').press('Enter')
         self.assertEqual(prototype.locator('code').text_content(),
                          'void mixed(\n    const char *label,\n    mode_t mode,\n    enum peer_mode peer\n);')
         self.assertEqual(page.locator('.tl-enum-arg .tl-enum summary .tl-code-symbol').all_text_contents(),
@@ -1363,13 +1373,14 @@ class BtfDetailBrowserTest(unittest.TestCase):
         facts = pane.locator('.tl-call-facts')
         duration = facts.locator('.v').first
         before = duration.inner_text()
-        for selector in ('.tl-btf-prototype', '.tl-arguments > details', '.tl-return-evidence'):
-            facts.locator(selector + ' > summary').press('Enter')
-        facts.locator('.tl-btf-prototype code').wait_for(state='visible')
+        pane.locator('[data-prototype-toggle]').press('Enter')
+        for selector in ('.tl-arguments > details', '.tl-return-evidence'):
+            pane.locator(selector + ' > summary').press('Enter')
+        pane.locator('.tl-btf-prototype code').wait_for(state='visible')
         toggle.focus()
         toggle.evaluate('node => { window.activeEvidenceControl = node; }')
         snapshot = '''pane => ({scroll: pane.scrollTop, focus: pane.contains(document.activeElement),
-            evidence: Array.from(pane.querySelectorAll('.tl-call-facts details[open]'), node => node.textContent),
+            evidence: Array.from(pane.querySelectorAll('.tl-btf-prototype[open], .tl-call-facts details[open]'), node => node.textContent),
             selected: fgView('timeline').probe().sel()})'''
         original = pane.evaluate(snapshot)
         self.assertGreater(original['scroll'], 0)

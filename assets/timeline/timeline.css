@@ -517,7 +517,8 @@ body.tl-max.tl-active { padding: 2px; }
 .tl-time-value { display: inline-block; inline-size: max-content; max-inline-size: 100%; vertical-align: top; word-break: normal; overflow-wrap: anywhere; }
 .tl-absolute-time { color: var(--tl-code-secondary); }
 .tl-kv .v.tl-arguments { word-break: normal; white-space: pre-wrap; overflow-wrap: anywhere; }
-.tl-btf-prototype { grid-column: 1 / -1; }
+.tl-btf-prototype { margin: 6px 12px 8px; }
+.tl-btf-prototype:not([open]):not(.tl-detail-jump > *) { display: none; }
 .tl-prototype-body { margin-block: 4px 6px; }
 .tl-recorded-field { display: contents; }
 .tl-recorded-field > .k { align-self: start; }
@@ -564,7 +565,7 @@ body.tl-max.tl-active { padding: 2px; }
 .tl-detail-short .tl-detail-jump [data-context-export=stack] { min-width: 44px; }
 .tl-detail-short .tl-detail-jump :is(.tl-stack-full, .tl-stack-csv-full) { display: none; }
 .tl-detail-short .tl-detail-jump :is(.tl-stack-short, .tl-stack-csv-short) { display: inline; }
-.tl-btf-prototype pre { margin: 4px 0 0; padding: 6px 8px; border-radius: 4px; background: var(--bg-color); white-space: pre-wrap; overflow-wrap: anywhere; word-break: normal; }
+.tl-btf-prototype pre { margin: 4px 0 0; padding: 6px 8px; border-radius: 4px; background: var(--bg-color); font-family: var(--tl-detail-code-font); white-space: pre-wrap; overflow-wrap: anywhere; word-break: normal; }
 .tl-prototype-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
 .tl-prototype-controls .tl-prototype-source { flex: 1 1 8ch; min-width: 0; margin-block: 0; }
 .tl-prototype-controls .tl-btn { max-width: 100%; word-break: normal; }
@@ -573,7 +574,7 @@ body.tl-max.tl-active { padding: 2px; }
 .tl-prototype-body .tl-copy-status { margin: 0; }
 .tl-prototype-body .tl-copy-status:not(:empty) { margin-block-start: 4px; }
 :is(.tl-btf-prototype, .tl-enum) > summary { cursor: pointer; width: fit-content; max-width: 100%; }
-.tl-btf-prototype > summary { box-sizing: border-box; width: 100%; padding: 3px 6px; border: 1px solid var(--border-color); border-radius: 6px; font-family: system-ui, sans-serif; }
+.tl-btf-prototype > summary { box-sizing: border-box; padding: 3px 6px; border: 1px solid var(--border-color); border-radius: 6px; font-family: system-ui, sans-serif; }
 .tl-enum { word-break: normal; overflow-wrap: anywhere; }
 .tl-enum :is(.tl-enum-number, .tl-enum-status) { display: inline-block; box-sizing: border-box; max-inline-size: 100%; white-space: normal; }
 .tl-enum-status { padding-inline: 4px; border-radius: 6px; background: var(--container-bg-hover); color: var(--tl-code-secondary); font: 600 11px/1.25 system-ui, sans-serif; }
@@ -1066,15 +1067,16 @@ table.tl-sum td.err { color: #c62828; }
     .tl-options [data-act=fitcalls] { min-height: 44px; }
     .tl-touch-zoom { display: inline-block; font-size: 16px; }
     .tl-recorded-call-nav .tl-btn { min-height: 44px; }
+    .tl-call-symbol-title[data-prototype-toggle] { min-height: 44px; }
     .tl-prototype-controls .tl-btn, .tl-enum .tl-btn, .tl-enum-filter { min-height: 44px; }
     .tl-enum-filter-row > .tl-btn { min-width: 44px; }
     .tl-enum-filter { font-size: 16px; width: 100%; }
     :is(.tl-btf-prototype, .tl-enum, .tl-value-evidence) > summary {
         box-sizing: border-box;
-        width: 100%;
         min-height: 44px;
         align-content: center;
     }
+    :is(.tl-enum, .tl-value-evidence) > summary { width: 100%; }
     .tl-cs > summary, .tl-cs .src-frame > summary {
         box-sizing: border-box;
         min-height: 44px;

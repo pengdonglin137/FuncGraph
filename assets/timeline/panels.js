@@ -345,6 +345,12 @@ function mountBtfPrototype(disclosure) {
     const signature = D.btf_detail?.functions?.[disclosure.dataset.btfPrototype];
     if (signature?.prototype) disclosure.insertAdjacentHTML('beforeend', btfPrototypeBody(signature));
 }
+function prototypeTitleButton() { return elDetail.querySelector('[data-prototype-toggle]'); }
+function setBtfPrototypeOpen(disclosure, open) {
+    disclosure.open = open;
+    prototypeTitleButton()?.setAttribute('aria-expanded', String(open));
+    if (open) mountBtfPrototype(disclosure);
+}
 function revealDisclosureStart(summary) {
     const content = summary.parentElement.querySelector('pre code, .tl-enum-body .tl-code-raw, .tl-value-evidence-body > :first-child');
     if (!content) return;
@@ -366,6 +372,18 @@ function revealDisclosureStart(summary) {
     }
     const top = Math.max(paneTop + detailHeadInset(), detailViewportTop());
     elDetail.scrollTop += summary.getBoundingClientRect().top - top - 4;
+}
+function toggleTitlePrototype() {
+    const disclosure = elDetail.querySelector('.tl-btf-prototype');
+    const summary = disclosure.querySelector('summary');
+    if (closeReadingDisclosure(summary)) return;
+    setBtfPrototypeOpen(disclosure, !disclosure.open);
+    if (!disclosure.open) return;
+    if (layoutViewportWidth !== innerWidth || layoutViewportHeight !== innerHeight) resize();
+    const offset = summary.getBoundingClientRect().top - detailReadingBounds().top;
+    if (offset < 0) elDetail.scrollTop += Math.floor(offset);
+    summary.focus({ preventScroll: true });
+    revealDisclosureStart(summary);
 }
 function revealDetailBelow(anchor, contentBottom, { priority = null, edge = 4, visibleAnchorOnly = false,
         preferredBottom = contentBottom } = {}) {
@@ -447,8 +465,9 @@ function mountBtfDisclosure(disclosure) {
 function loadBtfDisclosure(event) {
     const disclosure = event.target;
     if (!elDetail.contains(disclosure)) return;
-    if (disclosure.open) { mountBtfDisclosure(disclosure); return; }
     const {btfPrototype, enumType} = disclosure.dataset;
+    if (btfPrototype !== undefined) prototypeTitleButton()?.setAttribute('aria-expanded', String(disclosure.open));
+    if (disclosure.open) { mountBtfDisclosure(disclosure); return; }
     const status = btfPrototype !== undefined && disclosure.querySelector('.tl-copy-status');
     if (status) {
         prototypeCopyRequest++;
@@ -1272,8 +1291,13 @@ function showDetail(i, dense, revealOnOpen = null) {
     if (f & FL.EST) pills += pill('mute', 'estimated');
     if (f & FL.MISMATCH) pills += pill('mute', tailJumpOf(i) ? 'tail jump (static)' : 'caller mismatch', callerRelationText(i));
     const symbol = esc(nameOf(i)), module = modOf(i), moduleLabel = module ? ' [' + esc(module) + ']' : '';
+    const btf = btfDetailOf(i), key = btf?.prototype ? btfDetailKey(i) : null;
+    const previous = key !== null ? elDetail.querySelector('.tl-btf-prototype') : null;
+    const opened = previous?.dataset.btfPrototype === key && previous.open;
+    const titleDisclosure = key !== null ? 'data-prototype-toggle aria-controls="tlBtfPrototype" title="Function prototype (BTF)"' : 'data-call-symbol';
+    const titleLabel = (key !== null ? 'Function prototype: ' : 'Recorded symbol: ') + symbol + moduleLabel;
     let h = '<div class="tl-detail-head tl-slice-head tl-recorded-call-head" data-recorded-call="' + i + '">' +
-        '<button type="button" class="tl-call-symbol-title" data-call-symbol aria-expanded="false" aria-label="Recorded symbol: ' + symbol + moduleLabel + '">' +
+        '<button type="button" class="tl-call-symbol-title" aria-expanded="' + !!opened + '" ' + titleDisclosure + ' aria-label="' + titleLabel + '">' +
         '<span class="tl-detail-title" title="' + symbol + '">' + detailSymbolHtml(sliceLabel(i)) + moduleLabel + '</span>' +
         '<svg viewBox="0 0 12 12" width="12" height="12" aria-hidden="true" focusable="false"><path d="m2 4 4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.5"/></svg></button>' +
         (pills ? '<div class="tl-call-context">' + pills + '</div>' : '') + '<div class="tl-call-controls">' +
@@ -1283,18 +1307,15 @@ function showDetail(i, dense, revealOnOpen = null) {
         'aria-controls="tlCallActions" aria-expanded="false" aria-label="Selected call actions" title="Selected call actions">' +
         '<span class="tl-call-actions-full">Actions ▾</span><span class="tl-call-actions-short" aria-hidden="true">⋯</span></button>' +
         '<button class="tl-close" title="Close (Esc)">×</button></div></div>';
+    if (key !== null) {
+        h += '<details id="tlBtfPrototype" class="tl-btf-prototype" data-btf-prototype="' + key + '"' + (opened ? ' open' : '') +
+            '><summary>Function prototype <span class="tl-muted">· BTF' + (btf.clone ? ' · original function' : '') +
+            '</span></summary>' + (opened ? btfPrototypeBody(btf) : '') + '</details>';
+    }
     h += callNavigationHtml(i, navigation) + '<div class="tl-detail-body tl-recorded-call-body"><div class="tl-left"><div class="tl-kv tl-call-facts">';
     h += kv('duration', timing.duration, 'tl-call-duration');
     h += kv('self', timing.self, 'tl-call-self');
     h += kv('start', callStartHtml(i));
-    const btf = btfDetailOf(i);
-    if (btf?.prototype) {
-        const key = btfDetailKey(i), previous = elDetail.querySelector('.tl-btf-prototype');
-        const opened = previous?.dataset.btfPrototype === key && previous.open;
-        h += '<details class="v tl-btf-prototype" data-btf-prototype="' + key + '"' + (opened ? ' open' : '') +
-            '><summary>Function prototype <span class="tl-muted">· BTF' + (btf.clone ? ' · original function' : '') +
-            '</span></summary>' + (opened ? btfPrototypeBody(btf) : '') + '</details>';
-    }
     h += kv('task', esc(trackLabel(track)) + (cpuOf(i) >= 0 ? ' &nbsp;on CPU ' + cpuOf(i) : ''));
     if (f & FL.LAT) h += kv('flags', esc(ctxFlagText(f).replace(/^ · /, '').replace(' (preempt off)', '') || 'none'));
     if (ATOMIC.has(i)) h += kv('context', 'called with ' + esc(atomicText(ATOMIC.get(i))) + ' (sleeping function in atomic context)', 'err');
@@ -1787,7 +1808,7 @@ function callActionItems() {
 function updateCallSymbolAction(index) {
     const title = elDetail.querySelector('.tl-recorded-call-head .tl-detail-title');
     const action = elCallActions.querySelector('[data-call-action=symbol]');
-    const needed = nameOf(index) !== sliceLabel(index) || title &&
+    const needed = prototypeTitleButton() || nameOf(index) !== sliceLabel(index) || title &&
         (title.scrollHeight > title.clientHeight + 1 || title.scrollWidth > title.clientWidth + 1);
     if (!needed) action?.remove();
     else if (!action) elCallActions.querySelector('[data-call-action=text]').insertAdjacentHTML('afterend',
@@ -1870,9 +1891,12 @@ function restoreDetailOpener(opener, { top, left }) {
 function closeReadingDisclosure(summary = detailSplitScroll?.reading?.summary) {
     const reading = detailSplitScroll?.reading;
     if (!reading || callDetailReturn || summary !== reading.summary || !summary.parentElement?.open) return false;
-    summary.parentElement.open = false;
+    const disclosure = summary.parentElement;
+    const prototype = disclosure.hasAttribute('data-btf-prototype');
+    if (prototype) setBtfPrototypeOpen(disclosure, false);
+    else disclosure.open = false;
     setDetailExpanded(false, true);
-    restoreDetailOpener(summary, reading);
+    restoreDetailOpener(prototype ? prototypeTitleButton() : summary, reading);
     return true;
 }
 function syncCallChildrenAction(explorer) {
@@ -1945,7 +1969,8 @@ function showCallDetailSection(action, trigger) {
     if (control.matches('[data-stack-toggle]')) {
         if (control.getAttribute('aria-expanded') === 'false') toggleDetailStack(control);
     } else if (!field) {
-        control.parentElement.open = true;
+        if (action === 'detail-prototype') setBtfPrototypeOpen(control.parentElement, true);
+        else control.parentElement.open = true;
         if (control.parentElement === detailCallSite?.box) startCallSiteSource(detailCallSite);
     }
     if (!control.isConnected) { trigger?.focus(); return; }
@@ -2014,7 +2039,7 @@ function showRecordedSymbol(index, opener) {
         panel = body.previousElementSibling;
         recordedSymbolOrigins.set(panel, origin);
     }
-    elDetail.querySelector('[data-call-symbol]').setAttribute('aria-expanded', 'true');
+    elDetail.querySelector('[data-call-symbol]')?.setAttribute('aria-expanded', 'true');
     const heading = panel.querySelector('h3');
     const inset = detailHeadInset();
     elDetail.scrollTop += panel.getBoundingClientRect().top - elDetail.getBoundingClientRect().top - elDetail.clientTop - inset;
@@ -2754,6 +2779,7 @@ elDetail.addEventListener('click', ev => {
     if (denseZoom) { zoomIntoDensePixel(denseZoom); return; }
     const copyPrototype = ev.target.closest('[data-copy-prototype]');
     if (copyPrototype) { copyBtfPrototype(copyPrototype); return; }
+    if (ev.target.closest('[data-prototype-toggle]')) { toggleTitlePrototype(); return; }
     const summary = ev.target.closest(':is([data-btf-prototype], .tl-enum, .tl-value-evidence) > summary');
     if (summary && closeReadingDisclosure(summary)) {
         ev.preventDefault();
@@ -2766,6 +2792,13 @@ elDetail.addEventListener('click', ev => {
         disclosure.open = true;
         mountBtfDisclosure(disclosure);
         revealDisclosureStart(summary);
+        return;
+    }
+    if (summary?.parentElement.hasAttribute('data-btf-prototype') && !summary.closest('.tl-detail-jump')) {
+        ev.preventDefault();
+        const opener = prototypeTitleButton();
+        toggleTitlePrototype();
+        opener.focus();
         return;
     }
     const symbolTitle = ev.target.closest('[data-call-symbol]');

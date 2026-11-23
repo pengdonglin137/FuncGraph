@@ -3,20 +3,22 @@
 The selected recorded call keeps its two-column layout on wide screens and
 stacks vertically up to 960 CSS px wide. All recorded facts share one aligned field list;
 there is no general metadata heading or disclosure. The reading order is timing,
-the collapsed BTF prototype when available, task and execution context, call site
-and values, then low-level record references.
+task and execution context, call site and values, then low-level record references.
+When BTF provides a declaration, the arrow beside the function name opens it
+directly beneath the header. The declaration is collapsed by default and never
+interrupts the recorded fields. **Actions → Show recorded symbol** still shows the
+exact symbol; without a BTF declaration the title arrow shows the symbol as before.
 Call-stack alignment, source links, user/kernel boundaries and measured data
 are unchanged. This is a presentation change, not a new decoding mode.
 
 Compact Timeline uses a 72px label column instead of 88px, giving the values
 16px more without changing the pane width or wide-screen layout. In six
 `ping3` examples at 280 × 480, the recorded facts took 14–42px less height,
-with no additional label wrapping. The BTF prototype remains collapsed by
-default, and expanded enum and raw evidence still use the full facts width.
+with no additional label wrapping. Expanded enum and raw evidence still use
+the full facts width in compact layouts.
 
-On the same `ping3` call at 641 CSS px wide, the single-column layout gives
-the prototype 599 px rather than 260 px, changing the sample from three
-visual lines to one. At 1280 px the facts and context remain side by side.
+The BTF declaration uses the full detail pane width at every breakpoint.
+At 1280 px the recorded facts and context remain side by side below it.
 Opening a prototype scrolls the whole declaration into view when it fits
 with the disclosure heading and Copy button. On a tight fit it reduces the
 edge padding first; if the declaration still cannot fit, it starts at the
@@ -26,7 +28,8 @@ size instead of the previous split. `ping3` checks for `mprotect_fixup` and
 landscape resize, with the heading, Copy button, focus, and chart unchanged.
 
 已记录调用的详情在宽屏保留双栏，宽度不超过 960 CSS 像素时纵向排列。字段直接对齐展示，不另设通用元数据折叠区；
-按“耗时 → BTF 原型（可用时默认折叠）→ 任务与执行上下文 → 调用位置、参数和返回值 → 底层记录”安排阅读顺序。
+按“耗时 → 任务与执行上下文 → 调用位置、参数和返回值 → 底层记录”安排阅读顺序。
+有 BTF 原型时，点击函数名旁的箭头在标题下展开声明，默认不占空间。原始符号仍可从 **Actions → Show recorded symbol** 查看；没有原型时，标题箭头仍显示原始符号。
 调用栈对齐、源码链接、用户/内核分界及测量含义不变。本次只调整阅读层级，
 不增加解码或推断。
 
