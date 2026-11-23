@@ -18,6 +18,8 @@ Kernel paths are kept in presets of funcgraph's config file (~/.config/funcgraph
 The preset used without -p: $FG_PRESET, else the one marked with --default.
 Directory modes (--report-mode sidecar/auto) keep Text and use .report;
 auto needs --sidecar-threshold BYTES. Their --open runs fgview until Ctrl+C.
+Large offline reports default to gzip-windowed HTML without dropping Text.
+Use --report-mode single --text for eager Full Text even on large inputs.
 """
 import argparse
 import configparser
@@ -34,7 +36,7 @@ FUNCGRAPH = os.path.join(PROJECT_DIR, 'funcgraph.py')
 CONFIG = os.path.join(os.path.expanduser('~'), '.config', 'funcgraph', 'config.ini')
 BIG = 150000          # lines; above this the text view is too heavy for browsers
 PRESET_KEYS = ('vmlinux', 'kernel-src', 'base-url', 'source-browser', 'source-browser-rev', 'source-rev', 'source-url', 'cross-compile', 'llvm',
-               'module-dirs', 'module-srcs', 'path-prefix', 'btf', 'overhead', 'report-mode', 'sidecar-threshold')
+               'module-dirs', 'module-srcs', 'path-prefix', 'btf', 'overhead', 'report-mode', 'sidecar-threshold', 'windowed-compression')
 
 
 def die(msg):
@@ -152,10 +154,11 @@ def cmd_report(argv):
     ap.add_argument('-P', '--no-preset', action='store_true', help='use no preset (no vmlinux: no source, links or BTF)')
     ap.add_argument('-o', '--output', help='output HTML or report directory (default: next to the first trace, .html or .report)')
     ap.add_argument('--open', action='store_true', help='open the report; directory modes run fgview until Ctrl+C')
-    ap.add_argument('--report-mode', choices=('single', 'sidecar', 'auto'), help='override the configured output mode (default: single)')
+    ap.add_argument('--report-mode', choices=('single', 'single-windowed', 'sidecar', 'auto'), help='override the configured or automatic offline output mode')
+    ap.add_argument('--windowed-compression', choices=('none', 'gzip'), help='compress embedded data in single-windowed reports')
     ap.add_argument('--sidecar-threshold', type=int, metavar='BYTES', help='auto mode threshold in complete uncompressed HTML bytes')
     ap.add_argument('--lite', action='store_true', help='text view + timeline only: no source blocks, links, highlighting')
-    ap.add_argument('--text', action='store_true', help=f'keep the text view even above {BIG} lines')
+    ap.add_argument('--text', action='store_true', help=f'keep Full Text above {BIG} input lines in explicit single mode')
     ap.add_argument('-c', '--compare', metavar='BASE', help='add a Compare tab against this trace')
     ap.add_argument('-n', '--dry-run', action='store_true', help='print the funcgraph.py command and exit')
     a = ap.parse_args(argv)
@@ -171,43 +174,44 @@ def cmd_report(argv):
     if preset and not cp.has_section('preset ' + preset):
         die(f"no preset '{preset}' in {config_path()} (have: {', '.join(presets(cp)) or 'none'}); "
             f"create it with: fgreport init {preset} --vmlinux ... --kernel-src ...")
-    sec = cp['preset ' + preset] if preset else {}
-
     cmd = [sys.executable, FUNCGRAPH, '--timeline', '--enable-fold', '--filter']
     if os.path.isfile(config_path()):
         cmd += ['--config', config_path()]
     if preset:
         cmd += ['--preset', preset]
-    has_vmlinux = 'vmlinux' in sec or '--vmlinux' in extra
-    if has_vmlinux and not a.lite:
-        cmd += ['--func-links']
-        if have('elftools'):
-            cmd += ['--fast']
-        if have('pygments') and ('kernel-src' in sec or 'source-url' in sec or '--kernel-src' in extra):
-            cmd += ['--highlight-code']
     if a.compare:
         cmd += ['--compare', a.compare]
     if a.report_mode is not None:
         cmd += ['--report-mode', a.report_mode]
+    if a.windowed_compression is not None:
+        cmd += ['--windowed-compression', a.windowed_compression]
     if a.sidecar_threshold is not None:
         cmd += ['--sidecar-threshold', str(a.sidecar_threshold)]
 
     from fglib.cli import parse_args
     selection = parse_args(cmd[2:] + ['--output', a.output or ''] + extra + a.traces)
+    if selection.vmlinux and not a.lite:
+        if not selection.func_links:
+            cmd += ['--func-links']
+        if not selection.fast and not selection.use_external and have('elftools'):
+            cmd += ['--fast']
+        if not selection.highlight_code and (selection.kernel_src or selection.source_url) and have('pygments'):
+            cmd += ['--highlight-code']
     mode = selection.report_mode
-    if mode not in ('single', 'sidecar', 'auto'):
-        die('report mode must be single, sidecar or auto')
+    if mode not in (None, 'single', 'single-windowed', 'sidecar', 'auto'):
+        die('report mode must be single, single-windowed, sidecar or auto')
+    directory_mode = mode in ('sidecar', 'auto')
 
     big = False
-    if a.traces and not a.text and mode == 'single':
+    if a.traces and not a.text and not selection.no_text_view and mode == 'single':
         n = count_lines(a.traces[0], BIG) if os.path.isfile(a.traces[0]) else None
-        if n is not None and n > BIG and '--no-text-view' not in extra:
+        if n is not None and n > BIG:
             big = True
             cmd += ['--no-text-view']
 
     out = selection.output
     if not out:
-        suffix = '.html' if mode == 'single' else '.report'
+        suffix = '.report' if directory_mode else '.html'
         first = a.uftrace.rstrip(os.sep) if a.uftrace else a.traces[0]
         if first == '-':
             out = 'stdin' + suffix
@@ -221,15 +225,15 @@ def cmd_report(argv):
 
     print('fgreport: ' + ' '.join(shlex.quote(c) for c in cmd[1:]), file=sys.stderr)
     if big:
-        print(f'fgreport: more than {BIG} lines: building the timeline only (--text keeps the text view, '
-              f'or narrow it: -- --pid N / --time-range A:B / --graph FUNC)', file=sys.stderr)
+        print(f'fgreport: explicit single mode with more than {BIG} input lines: building Timeline only. '
+              'Use --text for Full Text or --report-mode single-windowed to keep Text on demand.', file=sys.stderr)
     if a.dry_run:
         return 0
     rc = subprocess.call(cmd)
     if rc == 0:
         print(f'fgreport: {os.path.abspath(out)}', file=sys.stderr)
         if a.open:
-            if mode != 'single':
+            if directory_mode:
                 from fglib.viewer import main as view_report
                 return view_report([out, '--open'])
             webbrowser.open('file://' + os.path.abspath(out))

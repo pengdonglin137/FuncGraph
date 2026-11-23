@@ -84,12 +84,13 @@
             --fg-text-font-size: 13px;
             --fg-text-pad-y: 1px;
             --fg-text-pad-x: 2px;
+            --fg-text-source-row-min: 21px;
             width: fit-content;
             min-width: 100%;
             background: var(--container-bg);
         }
         #textWindowBtn[hidden], .fg-window-notice button[hidden] { display: none; }
-        .fg-window-notice {
+        :is(.fg-window-notice, .fg-window-full-loading) {
             display: flex;
             align-items: center;
             gap: 8px;
@@ -100,7 +101,7 @@
             border-bottom: 1px solid var(--border-color);
             font: 12px system-ui, sans-serif;
         }
-        .fg-window-notice button {
+        :is(.fg-window-notice, .fg-window-full-loading) button {
             font: inherit;
             color: var(--text-color);
             background: var(--bg-secondary);
@@ -109,9 +110,32 @@
             padding: 3px 7px;
             cursor: pointer;
         }
+        .fg-window-full-loading {
+            position: fixed;
+            z-index: 1500;
+            inset-inline: 0;
+            bottom: max(8px, env(safe-area-inset-bottom));
+            width: max-content;
+            max-width: calc(100% - 16px);
+            box-sizing: border-box;
+            margin-inline: auto;
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+        }
+        :is(.fg-window-full-loading, .fg-window-full-loading progress)[hidden] { display: none; }
+        .fg-window-full-loading progress { width: 7rem; max-width: 100%; }
+        .fg-window-full-loading button { min-height: 44px; }
+        @media print { .fg-window-full-loading { display: none; } }
         #content.fg-windowed { overflow-anchor: none; }
         .fg-window-spacer { pointer-events: none; }
         .fg-window-rows > div { display: flow-root; }
+        .fg-window-jump-pending { visibility: hidden; }
+        @supports (content-visibility: hidden) and (contain-intrinsic-block-size: 1px) {
+            .fg-window-rows.fg-window-jump-pending {
+                content-visibility: hidden;
+                contain-intrinsic-block-size: var(--fg-window-pending-height);
+            }
+        }
         .fg-window-context {
             position: sticky;
             top: var(--ctl-h, 100px);
@@ -226,7 +250,7 @@
                 contain-intrinsic-block-size: calc(
                     var(--fg-text-plain-rows, 0) * (var(--fg-text-font-size) * 1.5 + 4px + var(--fg-text-pad-y) * 2) +
                     var(--fg-text-empty-rows, 0) * (var(--fg-text-font-size) * 1.5 + var(--fg-text-pad-y) * 2) +
-                    var(--fg-text-expandable-rows, 0) * (max(var(--fg-text-font-size) * 1.5 + 4px, 21px) + var(--fg-text-pad-y) * 2));
+                    var(--fg-text-expandable-rows, 0) * (max(var(--fg-text-font-size) * 1.5 + 4px, var(--fg-text-source-row-min)) + var(--fg-text-pad-y) * 2));
             }
             #content.text-layout-auto > .text-chunk.text-layout-reset {
                 content-visibility: hidden;
@@ -505,6 +529,10 @@
         }
         .expand-btn {
             display: inline-block;
+            box-sizing: border-box;
+            appearance: none;
+            padding: 0;
+            border: 0;
             width: 16px;
             height: 16px;
             background-color: var(--btn-primary);
@@ -528,6 +556,26 @@
         .expand-btn:hover {
             opacity: 1;
             background-color: var(--btn-primary-hover);
+        }
+        .expand-btn:focus-visible {
+            opacity: 1;
+            outline: 2px solid var(--summary-text);
+            outline-offset: 1px;
+        }
+        @media (any-pointer: coarse) and (max-width: 640px), (any-pointer: coarse) and (max-height: 480px) {
+            #content {
+                --fg-text-source-row-min: 24px;
+                --fg-text-source-touch-width: 28px;
+            }
+            .line-container > .line-content { order: 1; }
+            .line-container:not(.expandable) > .line-content { margin-inline-start: calc(var(--fg-text-source-touch-width) + 5px); }
+            .expand-btn {
+                width: var(--fg-text-source-touch-width);
+                height: var(--fg-text-source-row-min);
+                margin: 0;
+                margin-inline-end: 5px;
+                border-radius: 5px;
+            }
         }
         .fg-source-status {
             white-space: normal;
@@ -674,19 +722,21 @@
             border-left: 1px solid var(--border-color);
         }
         .text-startup-status { padding: 24px 10px; color: var(--text-muted); font-size: 13px; }
-        .text-more, #textFilterStatus { display: none; }
+        .text-more, #textFilterStatus, .text-window-short { display: none; }
         .text-toolbar-options { display: contents; }
+        .text-compact .toolbar { container: text-toolbar / inline-size; }
         .text-compact .text-more, .text-compact #textFilterStatus:not([hidden]) { display: inline-block; }
         .text-compact .toolbar > .btn-group .control-btn { min-width: 44px; min-height: 44px; }
+        .text-compact #textTimelineJump { min-height: 44px; }
         .text-compact .text-toolbar-options { display: none; }
         .text-compact[data-panel="more"] .text-toolbar-options { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 6px; }
         .text-compact[data-panel="more"] .btn-group { flex-wrap: wrap; }
         .text-compact[data-panel="more"] .text-toolbar-options .btn-group { margin: 0; padding: 0; border: 0; }
         .controls.text-compact .filter-box, .controls.text-compact .text-toolbar-options {
             position: absolute;
-            inset: 100% 0 auto;
+            inset: var(--text-panel-top, 100%) 0 auto;
             box-sizing: border-box;
-            max-height: min(52vh, 370px);
+            max-height: min(52vh, 370px, var(--text-panel-room, 100vh));
             padding: 10px;
             overflow: auto;
             overscroll-behavior: contain;
@@ -699,6 +749,68 @@
         .text-compact .filter-input-row input::placeholder { font-size: 12px; }
         .text-compact .filter-tags { flex-shrink: 0; max-height: none; overflow: visible; }
         .text-compact :is(.filter-box, .text-toolbar-options) button { min-height: 34px; }
+        .text-compact :is(.filter-input-row :is(input, button), #textEventsBtn, #textWindowBtn) { box-sizing: border-box; min-height: 44px; }
+        @media (any-pointer: coarse) {
+            .text-compact .text-toolbar-options button { box-sizing: border-box; min-width: 44px; min-height: 44px; }
+        }
+        @media (min-width: 361px) {
+            .text-compact .toolbar:has(> #textWindowBtn:not([hidden])) > #textTimelineJump {
+                display: inline-flex;
+                align-items: center;
+                flex: 1 1 0;
+                min-inline-size: 5.5em;
+                max-inline-size: max-content;
+                padding-inline: 6px;
+            }
+            .text-compact .toolbar:has(> #textWindowBtn:not([hidden])) .text-jump-target {
+                min-width: 0;
+                overflow: hidden;
+                white-space: pre;
+                text-overflow: ellipsis;
+            }
+        }
+        @media (max-width: 360px) {
+            .text-compact .toolbar:has(> #textWindowBtn:not([hidden])) > :is(#textTimelineJump, #textWindowBtn) {
+                padding-inline: 6px;
+            }
+            .text-compact .toolbar:has(> #textWindowBtn:not([hidden])) > #textTimelineJump {
+                display: inline-flex;
+                flex-direction: column;
+                justify-content: center;
+            }
+            .text-compact .toolbar:has(> #textWindowBtn:not([hidden])) .text-jump-target {
+                contain: inline-size;
+                overflow: hidden;
+                text-overflow: ellipsis;
+            }
+            .text-compact .toolbar:has(> #textWindowBtn:not([hidden])) :is(.text-filter-icon, .text-jump-separator) { display: none; }
+            .text-compact .toolbar:has(> #textWindowBtn:not([hidden])) #textFilterToggle { position: relative; padding-inline: 6px; }
+            .text-compact .toolbar:has(> #textWindowBtn:not([hidden])) #textFilterStatus:not([hidden]) {
+                position: absolute;
+                inset: 5px 4px auto auto;
+                width: 5px;
+                height: 5px;
+                border-radius: 50%;
+                background: currentColor;
+                font-size: 0;
+            }
+        }
+        @container text-toolbar (width < 298px) {
+            .text-window-label { display: none; }
+            .text-window-short { display: inline; }
+        }
+        @container text-toolbar (width < 276px) {
+            .text-compact .toolbar:has(> #textWindowBtn:not([hidden])) > :is(#textTimelineJump, #textWindowBtn) {
+                padding-inline: 3px;
+            }
+        }
+        @media (max-width: 420px) {
+            .text-compact .filter-input-row {
+                display: grid;
+                grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 44px;
+            }
+            .text-compact .filter-input-row input { grid-column: 1 / -1; width: 100%; }
+        }
 
         /* Filter box styles */
         .filter-box {
@@ -739,6 +851,8 @@
         .filter-input-row input::placeholder {
             color: var(--text-secondary);
         }
+        .text-filter-progress { color: var(--text-muted); font-size: 12px; }
+        .text-filter-progress:empty { position: absolute; }
         /* Filter tags */
         .filter-tags {
             display: flex;
@@ -944,16 +1058,27 @@
         }
         /* Filter syntax help panel */
         .filter-syntax-help {
-            display: none;
+            flex-shrink: 0;
+            max-height: min(240px, 34vh);
             border: 1px solid var(--border-color);
             border-radius: 6px;
             background: var(--container-bg);
-            overflow: hidden;
+            overflow: auto;
+            overscroll-behavior: contain;
         }
-        .filter-syntax-help.visible {
-            display: block;
+        .controls:not(.text-compact) .filter-syntax-help {
+            position: absolute;
+            inset: calc(100% + 4px) 0 auto;
+            box-shadow: 0 8px 20px rgba(0,0,0,.15);
+        }
+        .text-compact .filter-syntax-help {
+            max-height: none;
+            overflow: clip;
         }
         .syntax-help-header {
+            position: sticky;
+            top: 0;
+            z-index: 1;
             display: flex;
             justify-content: space-between;
             align-items: center;
@@ -965,18 +1090,30 @@
         }
         .syntax-help-close {
             cursor: pointer;
-            font-size: 16px;
+            width: 28px;
+            height: 28px;
+            flex-shrink: 0;
+            border: 0;
+            border-radius: 4px;
+            background: transparent;
+            color: inherit;
+            padding: 0;
+            font-size: 19px;
             line-height: 1;
-            opacity: 0.6;
         }
-        .syntax-help-close:hover {
-            opacity: 1;
+        .syntax-help-close:hover, .syntax-help-close:focus-visible {
+            background: var(--container-bg);
+        }
+        .text-compact .filter-box .syntax-help-close {
+            width: 44px;
+            height: 44px;
         }
         .syntax-help-body {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            grid-template-columns: repeat(auto-fit, minmax(min(200px, 100%), 1fr));
             gap: 6px;
             padding: 8px 10px;
+            overflow-wrap: anywhere;
         }
         .syntax-section {
             font-size: 11px;

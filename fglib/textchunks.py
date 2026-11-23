@@ -7,11 +7,13 @@ TEXT_NETWORK_ROWS = 4096
 
 
 class TextChunkRanges:
-    def __init__(self, paint_rows):
-        if type(paint_rows) is not int or paint_rows <= 0 or TEXT_NETWORK_ROWS % paint_rows:
+    def __init__(self, paint_rows, chunk_size=TEXT_NETWORK_ROWS):
+        if (type(chunk_size) is not int or chunk_size <= 0 or
+                type(paint_rows) is not int or paint_rows <= 0 or chunk_size % paint_rows):
             raise ValueError('Text paint rows must divide the network chunk size')
         self.marker = f'<div class="text-chunk" data-chunk-size="{paint_rows}">'.encode('ascii')
         self.paint_rows = paint_rows
+        self.chunk_size = chunk_size
         self.rows = 0
         self.ranges = []
         self.start = None
@@ -38,8 +40,8 @@ class TextChunkRanges:
                 raise ValueError('Invalid Text paint chunk closing')
             self.partial = self.open_rows < self.paint_rows
             self.open_rows = None
-            if self.rows % TEXT_NETWORK_ROWS == 0:
-                self.ranges.append((self.rows - TEXT_NETWORK_ROWS, TEXT_NETWORK_ROWS,
+            if self.rows % self.chunk_size == 0:
+                self.ranges.append((self.rows - self.chunk_size, self.chunk_size,
                                     SectionRange('text', self.start, end)))
                 self.start = None
         else:
@@ -53,7 +55,7 @@ class TextChunkRanges:
         if self.open_rows is not None or self.rows != expected_rows:
             raise ValueError('Text chunks do not match the complete filter index')
         if self.start is not None:
-            count = self.rows % TEXT_NETWORK_ROWS
+            count = self.rows % self.chunk_size
             self.ranges.append((self.rows - count, count, SectionRange('text', self.start, self.end)))
             self.start = None
         return self.ranges

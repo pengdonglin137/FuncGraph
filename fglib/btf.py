@@ -23,6 +23,7 @@ import os
 import re
 import struct
 import zlib
+from functools import lru_cache
 
 BTF_MAGIC = 0xEB9F
 
@@ -152,10 +153,12 @@ class BtfInfo:
         self.sizetype = []
         self.extra = []      # INT encoding / ENUM signedness
         self.vlens = []
+        self.enum_offsets = {}
         self._parse_types()
         self.next_id = self.start_id + len(self.kinds)
         self.func_ret = {}
         self.func_params = {}
+        self.func_proto = {}
         self._collect_functions()
 
     # -- strings ---------------------------------------------------
@@ -182,11 +185,18 @@ class BtfInfo:
             kflag = info >> 31
             pos += 12
             fixed, per = _KIND_EXTRA.get(kind, (0, 0))
+            if pos + fixed + per * vlen > n:
+                raise BtfError(f'{self.source}: truncated type record')
             extra = 0
             if kind == KIND_INT:
                 extra, = unpack(e + 'I', raw, pos)
             elif kind in (KIND_ENUM, KIND_ENUM64):
                 extra = kflag
+                self.enum_offsets[len(self.kinds)] = pos
+            elif kind == KIND_FWD:
+                extra = kflag
+            elif kind == KIND_ARRAY:
+                extra = unpack(e + 'III', raw, pos)
             elif kind == KIND_FUNC_PROTO:
                 extra = tuple(unpack(e + 'II', raw, pos + index * 8) for index in range(vlen))
             pos += fixed + per * vlen
@@ -224,26 +234,150 @@ class BtfInfo:
                 return ('sint', st)
             return ('uint', st)
         if kind in (KIND_ENUM, KIND_ENUM64):
-            return ('sint' if extra else 'enum', st)
+            return ('senum' if extra else 'enum', st)
         return ('other', st if kind in (KIND_STRUCT, KIND_UNION) else 0)
 
     def _collect_functions(self):
+        """Reuse shared layouts during this object's indexing pass."""
+        @lru_cache(maxsize=4096)
+        def parameter(offset, type_id):
+            return (self.string(offset), *self.classify(type_id), self.scalar_bits(type_id))
+
+        @lru_cache(maxsize=4096)
+        def return_layout(type_id):
+            kind_size = self.classify(type_id)
+            return kind_size, (*kind_size, self.scalar_bits(type_id, returning=True))
+
+        @lru_cache(maxsize=4096)
+        def prototype_layout(type_id):
+            kind, returned, fields = self._get(type_id)
+            if kind != KIND_FUNC_PROTO:
+                return None
+            kind_size, returned_layout = return_layout(returned)
+            return kind_size, (tuple(parameter(offset, field) for offset, field in fields),
+                               returned_layout, self.word_size)
+
         for i, kind in enumerate(self.kinds):
             if kind != KIND_FUNC:
                 continue
-            name = self.string(self.names[i])
             proto = self.sizetype[i]
-            pk, ret_tid, params = self._get(proto)
-            if pk != KIND_FUNC_PROTO:
+            layout = prototype_layout(proto)
+            if layout is None:
                 continue
-            self.func_ret[name] = self.classify(ret_tid)
-            parameters = (tuple((self.string(offset), *self.classify(tid), self.scalar_bits(tid))
-                                for offset, tid in params),
-                          (*self.classify(ret_tid), self.scalar_bits(ret_tid, returning=True)), self.word_size)
+            name = self.string(self.names[i])
+            if self.func_proto.setdefault(name, proto) != proto:
+                self.func_proto[name] = None
+            returned, parameters = layout
+            self.func_ret[name] = returned
             if name in self.func_params and self.func_params[name] != parameters:
                 self.func_params[name] = None
             else:
                 self.func_params[name] = parameters
+
+    def _owner(self, type_id):
+        owner = self
+        while owner is not None and type_id < owner.start_id:
+            owner = owner.base
+        return owner if owner is not None and type_id < owner.next_id else None
+
+    def enum_type(self, type_id):
+        for _ in range(33):
+            kind, target, _ = self._get(type_id)
+            if kind in (KIND_ENUM, KIND_ENUM64):
+                return self._owner(type_id), type_id
+            if kind not in _MODIFIERS:
+                break
+            type_id = target
+        return None
+
+    def enum_values(self, type_id):
+        kind, size, signed = self._get(type_id)
+        index = type_id - self.start_id
+        offset = self.enum_offsets[index]
+        bits = size * 8
+        payload_bits = 32 if kind == KIND_ENUM else 64
+        names = {}
+        for entry in range(self.vlens[index]):
+            fields = struct.unpack_from(self.end + ('II' if kind == KIND_ENUM else 'III'), self._types_raw,
+                                        offset + entry * (8 if kind == KIND_ENUM else 12))
+            value = fields[1] | (fields[2] << 32 if kind == KIND_ENUM64 else 0)
+            if signed and value & (1 << (payload_bits - 1)):
+                value -= 1 << payload_bits
+            value &= (1 << bits) - 1
+            if signed and value & (1 << (bits - 1)):
+                value -= 1 << bits
+            name = self.string(fields[0])
+            if name:
+                names.setdefault(str(value), []).append(name)
+        return {'name': self.string(self.names[index]), 'bits': bits, 'signed': bool(signed),
+                'enum64': kind == KIND_ENUM64, 'values': names}
+
+    def _parameters_text(self, proto, depth):
+        owner = self._owner(proto)
+        if owner is None:
+            return None
+        _, _, fields = self._get(proto)
+        parameters = []
+        for position, (offset, type_id) in enumerate(fields):
+            if not type_id:
+                if offset or not position or position != len(fields) - 1:
+                    return None
+                parameters.append('...')
+                continue
+            declaration = self._declare(type_id, owner.string(offset), depth + 1)
+            if declaration is None:
+                return None
+            parameters.append(declaration)
+        return parameters or ['void']
+
+    def _declare(self, type_id, declarator, depth=0, qualifiers=()):
+        if depth > 32:
+            return None
+        if type_id == 0:
+            return ' '.join((*qualifiers, 'void', declarator)).rstrip()
+        owner = self._owner(type_id)
+        if owner is None:
+            return None
+        kind, target, extra = self._get(type_id)
+        if kind in (KIND_CONST, KIND_VOLATILE, KIND_RESTRICT, KIND_TYPE_TAG):
+            qualifier = {KIND_CONST: 'const', KIND_VOLATILE: 'volatile', KIND_RESTRICT: 'restrict'}.get(kind)
+            return self._declare(target, declarator, depth + 1, (*qualifiers, qualifier) if qualifier else qualifiers)
+        if kind == KIND_PTR:
+            pointer = '* ' + ' '.join((*qualifiers, declarator)).rstrip() if qualifiers else '*' + declarator
+            return self._declare(target, pointer.rstrip(), depth + 1)
+        if kind in (KIND_ARRAY, KIND_FUNC_PROTO):
+            nested = f'({declarator})' if declarator.startswith('*') else declarator
+            if kind == KIND_ARRAY:
+                element, _, length = extra
+                return self._declare(element, f'{nested}[{length}]', depth + 1, qualifiers)
+            parameters = self._parameters_text(type_id, depth)
+            return self._declare(target, f'{nested}({", ".join(parameters)})', depth + 1) if parameters else None
+        name = owner.string(owner.names[type_id - owner.start_id])
+        if not name:
+            return None
+        tag = {KIND_STRUCT: 'struct', KIND_UNION: 'union', KIND_ENUM: 'enum', KIND_ENUM64: 'enum',
+               KIND_FWD: 'union' if extra else 'struct'}.get(kind)
+        if tag:
+            name = f'{tag} {name}'
+        elif kind not in (KIND_INT, KIND_TYPEDEF, KIND_FLOAT):
+            return None
+        return ' '.join((*qualifiers, name, declarator)).rstrip()
+
+    def _prototype_parts(self, proto):
+        parameters = self._parameters_text(proto, 0)
+        if not parameters:
+            return None
+        _, returned, _ = self._get(proto)
+        form = ',\n    '.join(parameters)
+        return returned, f'(\n    {form}\n)' if len(parameters) > 1 else f'({form})'
+
+    def prototype(self, proto, name, *, parts_reader=None):
+        parts = self._prototype_parts(proto) if parts_reader is None else parts_reader(self, proto)
+        if parts is None:
+            return None
+        returned, parameters = parts
+        declaration = self._declare(returned, name + parameters)
+        return declaration + ';' if declaration else None
 
     def scalar_bits(self, tid, returning=False, _depth=0):
         if tid == 0:
@@ -298,7 +432,7 @@ def format_scalar(value, kind, bits, returning=False):
         number = int(value, 16 if value.lower().startswith('0x') else 10) & ((1 << bits) - 1)
     except (ValueError, AttributeError):
         return value
-    if kind == 'sint':
+    if kind in ('sint', 'senum'):
         if number & (1 << (bits - 1)):
             number -= 1 << bits
         return str(number)
@@ -319,6 +453,8 @@ class ReturnTypeDB:
         self.errors = []
         self._argument_sources = []
         self._argument_prototypes = {}
+        self._prototype_owners = {}
+        self._prototype_modules = {}
 
     def add(self, info):
         if info is None:
@@ -331,6 +467,14 @@ class ReturnTypeDB:
                 self.params[name] = None
             else:
                 self.params[name] = params
+            owner = self._prototype_owners.get(name)
+            if owner is None:
+                self._prototype_owners[name] = info
+            elif isinstance(owner, list):
+                owner.append(info)
+            else:
+                self._prototype_owners[name] = [owner, info]
+        self._prototype_modules[info] = os.path.basename(info.source).split('.ko', 1)[0].replace('-', '_') if info.source else None
         self.sources.append(info.source)
         if info.elf_source:
             self._argument_sources.append((info.elf_source, info.func_params))
@@ -355,7 +499,7 @@ class ReturnTypeDB:
             fields, returned, word_size = params
             if returned[0] == 'other' or word_size is None or any(
                     not field or bits is None or not 0 < bits <= 64 or
-                    kind not in ('ptr', 'sint', 'uint', 'bool', 'enum') or not 0 < size <= word_size
+                    kind not in ('ptr', 'sint', 'uint', 'bool', 'enum', 'senum') or not 0 < size <= word_size
                     for field, kind, size, bits in fields):
                 continue
             paths = {path for path, prototypes in self._argument_sources if prototypes.get(base) == params}
@@ -385,7 +529,7 @@ class ReturnTypeDB:
             return ()
         names = []
         for name, kind, size, bits in fields[:count]:
-            if kind != 'ptr' and (kind not in ('sint', 'uint', 'bool', 'enum') or
+            if kind != 'ptr' and (kind not in ('sint', 'uint', 'bool', 'enum', 'senum') or
                                   not 0 < size <= (word_size or 4)):
                 break
             names.append(name)
@@ -410,6 +554,86 @@ class ReturnTypeDB:
         if exact and bits is not None and (kind == 'void' or kind == 'ptr' or size <= (word_size or 4)):
             result['ret'] = (kind, bits)
         return result or None
+
+    def display_prototype(self, name, module):
+        owner = self._prototype_owners.get(name)
+        exact = owner is not None
+        symbol = name
+        if not exact:
+            if not self._parameters(name)[0]:
+                return None
+            symbol = COMPILER_SUFFIX.sub('', name)
+            owner = self._prototype_owners.get(symbol)
+        if module:
+            module = module.replace('-', '_')
+            if isinstance(owner, list):
+                candidates = [info for info in owner if self._prototype_modules[info] == module]
+                owner = candidates[0] if len(candidates) == 1 else None
+            elif self._prototype_modules.get(owner) != module:
+                return None
+        if owner is None or isinstance(owner, list):
+            return None
+        proto = owner.func_proto[symbol]
+        return (owner, proto, symbol, exact) if proto is not None else None
+
+    def detail_data(self, symbols):
+        """Project prototypes and enum tables for fields with recorded values."""
+        symbols = tuple(symbols)
+        self.prepare_arguments(name for _, name, _, _, _ in symbols if name not in self._prototype_owners)
+        functions, enums, enum_ids = {}, [], {}
+        prototype_parts = lru_cache(maxsize=256)(BtfInfo._prototype_parts)
+        source_name = lru_cache(maxsize=128)(os.path.basename)
+
+        @lru_cache(maxsize=4096)
+        def enum_id(info, type_id):
+            identity = info.enum_type(type_id)
+            if identity is None:
+                return None
+            owner, enum_type_id = identity
+            if not owner.vlens[enum_type_id - owner.start_id]:
+                return None
+            if identity not in enum_ids:
+                enum_ids[identity] = len(enums)
+                enums.append(owner.enum_values(enum_type_id))
+            return enum_ids[identity]
+
+        for key, name, module, has_args, has_ret in symbols:
+            match = self.display_prototype(name, module)
+            if match is None:
+                continue
+            info, proto, symbol, exact = match
+            entry = {}
+            declaration = info.prototype(proto, symbol, parts_reader=prototype_parts)
+            if declaration:
+                entry['prototype'] = declaration
+                if not exact:
+                    entry['clone'] = True
+                if info.source:
+                    entry['source'] = source_name(info.source)
+            owner = info._owner(proto)
+            _, returned, parameters = info._get(proto)
+            return_kind, return_size = info.classify(returned)
+            word_size = info.word_size or 4
+            if has_ret and exact and return_kind in ('enum', 'senum') and 0 < return_size <= word_size:
+                ret = enum_id(info, returned)
+                if ret is not None:
+                    entry['ret'] = ret
+            args = {}
+            if has_args and return_kind != 'other':
+                for position, (offset, type_id) in enumerate(parameters):
+                    kind, size = info.classify(type_id)
+                    if kind != 'ptr' and (kind not in ('sint', 'uint', 'bool', 'enum', 'senum') or
+                                          not 0 < size <= word_size or not info.scalar_bits(type_id)):
+                        break
+                    if kind in ('enum', 'senum'):
+                        arg = enum_id(info, type_id)
+                        if arg is not None:
+                            args[position] = [owner.string(offset), arg]
+            if args:
+                entry['args'] = args
+            if entry:
+                functions[key] = entry
+        return {'functions': functions, 'enums': enums} if functions else None
 
     def lookup(self, func_name):
         """Look up a function, stripping GCC/LLVM clone suffixes (.isra.0, .constprop.0, .llvm.123)."""

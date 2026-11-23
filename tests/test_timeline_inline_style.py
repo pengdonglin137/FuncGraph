@@ -19,7 +19,7 @@ class InlineSliceDrawingTest(unittest.TestCase):
         drawing = source[source.index('function drawSlice('):source.index('function drawOff(')]
         setup = '''
             const assert = require('node:assert/strict');
-            let theme = 'light', dark = false, P = null, hatch = null, offHatch = null;
+            let theme = 'light', dark = false, P = null, hatch = null, offHatch = null, sliceStyles = null;
             const document = {documentElement:{getAttribute:() => theme}};
             const colorCache = new Map();
             function updateHeatLegend() {}
@@ -36,7 +36,7 @@ class InlineSliceDrawingTest(unittest.TestCase):
             const charW = 6.5;
             function isGhost(index) { return index === 3; }
             function isDim() { return dimmed; }
-            function baseColor() { return 'recorded-' + colorMode; }
+            function baseSliceStyle() { return ['recorded-' + colorMode, P.text, null]; }
             function sliceLabel(index) { return ['root', 'child', 'helper_inline', 'gap'][index]; }
             function errName() { return 'ENOENT'; }
             const operations = [];
@@ -90,6 +90,25 @@ class InlineSliceDrawingTest(unittest.TestCase):
                 fills.push(P.inlineFill);
             }
             assert.notEqual(fills[0], fills[1]);
+        ''')
+
+    def test_fixed_styles_reuse_their_tuple_until_the_palette_changes(self):
+        self.check_drawing('''
+            hov = 2;
+            const highlighted = sliceStyle(2);
+            assert.equal(sliceStyle(2), highlighted);
+            hov = -1;
+            assert.notEqual(sliceStyle(2), highlighted);
+            const gap = sliceStyle(3);
+            assert.equal(sliceStyle(3), gap);
+            ov.err = true;
+            eRole[0] = 0;
+            const error = sliceStyle(0);
+            assert.equal(sliceStyle(0), error);
+            theme = 'dark';
+            palette();
+            assert.notEqual(sliceStyle(3), gap);
+            assert.deepEqual(sliceStyle(0), [P.errO, '#ffffff', null]);
         ''')
 
     def test_inline_has_a_thin_complete_dashed_outline(self):

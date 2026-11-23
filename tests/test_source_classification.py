@@ -159,6 +159,47 @@ class SourceClassificationBrowserTest(unittest.TestCase):
         self.assertEqual(result['other'], 'diagnostic retained')
         self.assertTrue(result['idempotent'])
 
+    def test_text_roundtrip_preserves_flat_candidate_order_and_bounds_node_reuse(self):
+        page = self.browser.new_page()
+        self.addCleanup(page.close)
+        page.goto(self.reports[True, False, 'single'])
+        facts = page.evaluate('''() => {
+            const panel = document.querySelector('#content .expanded-content[data-src]');
+            panel.style.display = 'block';
+            const chain = name => `<div class="location-link"><strong>${name}:</strong></div>\n` +
+                `<a class="location-link" href="#${name}">${name}_inner at a.c:2</a>\n` +
+                `<div class="source-line">${name} inner</div>\n` +
+                `<a class="location-link" href="#${name}_outer">(inlined by) ${name}_outer at a.c:4</a>\n` +
+                `<div class="source-line">${name} outer</div>\n`;
+            const small = chain('first') + chain('second') + '<p>diagnostic</p>';
+            const large = small + '<div class="source-line">more code</div>'.repeat(300);
+            let html = small;
+            let reads = 0;
+            const sourceHtml = fgSourceHtml;
+            fgSourceHtml = () => { reads++; return html; };
+            try {
+                fgToggleSrcMode();
+                fgFill(panel, true);
+                const original = [...panel.childNodes];
+                const flatMarkup = panel.innerHTML;
+                fgToggleSrcMode();
+                const chainNames = [...panel.querySelectorAll('.src-frame summary b')].map(node => node.textContent);
+                fgToggleSrcMode();
+                const restored = panel.innerHTML === flatMarkup && panel.childNodes.length === original.length &&
+                    original.every((node, index) => node === panel.childNodes[index]);
+                const smallReads = reads;
+                html = large;
+                fgFill(panel, true);
+                fgToggleSrcMode();
+                const largeFrames = panel.querySelectorAll('.src-frame').length;
+                fgToggleSrcMode();
+                return {chainNames, restored, smallReads, largeFrames, largeReads: reads - smallReads,
+                    largeLines: panel.querySelectorAll('.source-line').length};
+            } finally { fgSourceHtml = sourceHtml; }
+        }''')
+        self.assertEqual(facts, dict(chainNames=['first_outer', 'first_inner', 'second_outer', 'second_inner'],
+                                     restored=True, smallReads=1, largeFrames=4, largeReads=3, largeLines=304))
+
     def test_unmarked_positions_and_isolated_inline_markers_keep_the_original_markup(self):
         page = self.browser.new_page()
         self.addCleanup(page.close)

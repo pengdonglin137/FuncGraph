@@ -4,9 +4,10 @@
 
 ## 使用
 
-新生成的分块 sidecar 报告自身还提供[实验性 Text 窗口 renderer](performance-text-window.md)。
-在 `fgview` 输出的完整 HTTP URL 后加 `?text=windowed` 再进入 Text，或使用报告中的
-**Windowed Text** 工具。这不是查看器的虚拟化功能，不改变默认输出或大小阈值。
+新生成的分块 sidecar 达到 65,536 条记录或 64 MiB Text 正文时默认使用
+[窗口化 Text](performance-text-window.md)。整篇查找、选择或打印可切换 **Full Text**。
+在 `fgview` 地址后加 `?text=windowed` 或 `?text=full` 可覆盖默认 renderer；这不改变
+默认输出格式或 `auto` 选择 sidecar 的阈值。
 
 安装 FuncGraph 后：
 
@@ -39,7 +40,29 @@ funcgraph trace.txt --timeline --report-mode sidecar --enable-fold --filter --ou
 fgview trace-report --open
 ```
 
-文本和二进制 raw 输入共用此输出模式；raw 仍需要原生依赖。默认 `--report-mode single`，不会自动切换。Sidecar 必须配合 `--timeline`，输出为独立目录而非文件，并通过 HTTP 打开。
+文本和二进制 raw 输入共用此输出模式；raw 仍需要原生依赖。Sidecar 必须配合 `--timeline`，输出为独立目录而非文件，并通过 HTTP 打开。默认离线输出不会自动创建 Sidecar 目录。
+
+### 离线窗口化 HTML
+
+未指定输出模式时，带 Timeline 且经过命令行预筛选后仍有至少 75,000 行 Text 的
+离线报告默认使用 gzip 窗口化 HTML。更小的报告、纯 Text 或省略 Text 的报告仍使用普通格式。
+`fgreport` 也使用这一默认策略，不会因为原始输入超过 150,000 行而省略 Text。
+显式 `--report-mode` 可覆盖默认选择：`--report-mode single` 直接挂载完整 Text（`fgreport`
+在纯文本输入超过 150,000 行时还需加 `--text`，才能绕过旧的省略规则）；
+目标浏览器不支持 gzip 解压时，可用 `--windowed-compression none` 保留自动窗口化但不压缩。
+
+```bash
+funcgraph trace.txt --timeline --report-mode single-windowed --enable-fold --filter --output trace-windowed.html
+```
+
+直接在浏览器打开或复制这个 HTML 文件；不需要 `fgview` 或配套目录。首次默认进入
+Timeline，打开 Text 时按需解析可见行，最多挂载 160 条。完整筛选索引和源码也在文件内。
+需要整篇浏览器查找或打印时选择 **Full Text**。该模式需要 `--timeline`，不与
+`--no-text-view` 同用；`fgreport --report-mode single-windowed --open` 默认输出 `.html`。
+索引和转义可能让文件更大。两条命令都可加 `--windowed-compression gzip`，压缩内嵌的
+Text 索引、正文分块和源码，浏览器通过 gzip `DecompressionStream` 按需解压。不支持
+该 API 的浏览器应使用不带该参数的版本。整个 HTML 仍会在打开时读入；如果希望磁盘读取也
+按视图进行，使用 sidecar。
 
 ### 超过显式字节阈值时自动切换
 
@@ -53,7 +76,7 @@ fgreport --report-mode auto --sidecar-threshold 67108864 --open trace.txt
 
 Auto 同样需要 `--timeline`，且两种结果的输出目标都为独立**目录**。按假想完整单文件 HTML 的未压缩 UTF-8 字节数判断，包含 Text、内嵌源码、视图数据和脚本；只有严格 `>` 才采用 sidecar，恰好相等或更小均为可离线打开的自包含 `index.html`。阈值是非负整数字节数；`0` 让任意非空报告进入 sidecar。**没有默认阈值**，auto 未指定阈值时在处理前报错。trace 行数、压缩文件体积、外壳大小不作为判断依据，避免相同行数但源码池大小不同的报告被误判。
 
-CLI 输出实际模式、完整 HTML 字节数、阈值和入口路径；进入 sidecar 时还会输出经过 shell 引号处理的 `fgview` 命令。两种结果均可用 `fgview` 打开。目录模式下 `fgreport --open` 在前台启动本机只读服务，按 Ctrl+C 结束，不再打开 `file://` 目录地址。两个选项均支持 INI 默认值/preset，也可用 `fgreport init NAME --report-mode auto --sidecar-threshold BYTES` 保存；显式 `--report-mode single` 覆盖配置的 auto，恢复普通 HTML 文件输出。包装脚本的 single 模式保留原有 15 万行省略 Text 规则（`--text` 可覆盖）；sidecar/auto 则保留 Text，除非显式省略。
+CLI 输出实际模式、完整 HTML 字节数、阈值和入口路径；进入 sidecar 时还会输出经过 shell 引号处理的 `fgview` 命令。两种结果均可用 `fgview` 打开。目录模式下 `fgreport --open` 在前台启动本机只读服务，按 Ctrl+C 结束，不再打开 `file://` 目录地址。两个选项均支持 INI 默认值/preset，也可用 `fgreport init NAME --report-mode auto --sidecar-threshold BYTES` 保存；显式 `--report-mode single` 覆盖配置的 auto，恢复普通 HTML 文件输出。显式选择 `single-windowed`、`sidecar` 或 `auto` 会默认保留 Text。
 
 生成仍完整渲染一次，并暂存过滤索引；未超限时丢弃该索引。临时磁盘需要容纳完整 HTML、索引，以及超限后的外置资源，不减少解析或符号解析工作。更新已托管目录可在两种模式间切换，入口路径不变；切回 single 也保留旧 sidecar 资源供已打开页面使用，不能仅凭历史资源目录判断当前模式。首次生成的小报告只发布 `index.html` 和隐藏归属标记。下述发布保护同样适用于两种结果。
 
@@ -72,7 +95,7 @@ Text 最多预取下一网络块，仍在全部准备后挂载；
 - 首次 Timeline 读取完整模型，不获取 Text/Compare/源码正文，不创建逐行 Text DOM。精简的 trace 行号 → source ID 索引仍内嵌；源码 HTML 按最多 64 条源码记录放入 `source-<首个ID>.json`。展开 Text 源码或已打开的 Timeline 调用点面板时只读取对应块；收起的调用点面板等到打开才请求。已解析的悬停位置直接使用 Timeline 紧凑位置，不请求源码 HTML；旧版/未知位置可读取对应块回退。
 - 源码块沿用大小/SHA-256 校验和共享请求；等待时显示 **Loading source…**，失败提供 **Retry**，不显示部分代码。收起、替换/关闭详情或离开视图会取消当前消费者，忽略迟到结果；离开时尚未加载完成的展开面板在返回后重新请求，同块的其他消费者可继续完成。新生成报告的 sidecar 源码资源缓存采用 LRU，最多保留 **8 块且合计不超过 16 MiB 的已校验 UTF-8 JSON 字节数**，实际读取或加载命中才刷新顺序。超限淘汰最久未读的块，已显示的源码不消失，需要时重新下载并校验；单块超过 16 MiB 仍可完整查看，但不保留在资源缓存，也不挤掉其他块。chain/flat 按钮继续同步。预算不是 JS heap、并发请求或完整报告的内存上限：单条大源码不会拆开，已填充 DOM 和完整模型仍可能累积。单文件和 auto 未超阈值的输出继续完整内嵌源码，保留离线行为；旧报告需重新生成才能使用此策略。
 - Timeline 统一过滤首次读取 `text-index.json`，按 Text 表达式和调用树语义扫描全部 trace 行，不创建 Text DOM。进度可用 Escape / Clear 取消，新查询替代旧查询；失败保留上次结果并提供 **Retry filter**。完整索引缓存至 Text 挂载；下载、解析和调用树准备仍占用主线程及内存。
-- 首次进入 Text、跳转 trace 行号或访问 `#L<number>` 时才准备完整 Text。新生成且超过 4,096 条原始记录（含表头）的 sidecar 使用 `text-<first>.html`，每块最多 4,096 条，逐块下载/校验并解析，不先构造一个完整 Text HTML 字符串。小型/旧报告仍使用完整 `text.html`。Text HTML 资源缓存独立限制为最多 4 块、合计 16 MiB 已校验 UTF-8 字节；真实读取刷新 LRU，单块超预算仍可加载但不缓存，预算不约束并发请求、JS heap 或完整报告内存。4,096 条只是 sidecar 内部传输规则，不改变 single/auto 的显式字节阈值。
+- 首次进入 Text、跳转 trace 行号或访问 `#L<number>` 时，按所选模式准备 Text。新生成且超过 4,096 条原始记录（含表头）的 sidecar 使用 `text-<first>.html`，每块最多 4,096 条。窗口模式读取完整索引及所需分块；完整模式逐块读取全部行，不先构造一个完整 Text HTML 字符串。小型/旧报告仍使用完整 `text.html`。Text HTML 资源缓存独立限制为最多 4 块、合计 16 MiB 已校验 UTF-8 字节；真实读取刷新 LRU，单块超预算仍可加载但不缓存，预算不约束并发请求、JS heap 或完整报告内存。
 - Text 在文档外累计全部行与元数据，显示加载/准备进度，期间可返回 Timeline、切换标签或按 Escape；取消会丢弃未挂载节点，不暴露半成品行。分块路径重入复用仍在缓存的资源，已淘汰的块需要重读；旧单资源路径保留原有完整 HTML 缓存行为。全部结果挂载前，**Finishing Text layout…** 先获得绘制机会；最后的初始化/布局仍同步执行，可能阻塞。使用前重新应用当前过滤，成功后释放索引及 Text HTML 资源缓存。完整 Text DOM 随后常驻，不是视口窗口化，也没有 DOM 上限；总打开时间不保证更短。保存的 Text 偏好和行号锚点直接打开 Text。没有索引的旧 sidecar 仍以完整 Text 过滤。
 - 资源请求/校验或文档外 Text 解析失败可 Retry；Escape/返回可取消当前视图的等待/准备，迟到结果不会激活旧视图。若最后的 Text 初始化中途失败，提供 **Reload report**，不复用半初始化的监听器/状态。已有报告需要重新生成才能使用新的准备流程。
 - 索引和已挂载 Text 的过滤共用完整记录模型。延后加载的 Text 复用已准备的索引模型，或在节点尚未挂载时快照全部原始行，不为准备 Text 额外请求索引。行快照、校验和完整折叠元数据都在准备阶段协作让出执行机会，保留状态反馈和取消入口；最终挂载时才发布完整模型，首次折叠直接复用。挂载前元数据失败可 Retry；取消丢弃部分工作，已校验 HTML 遵循上述资源缓存策略。内嵌 Text 仍保留惰性同步准备。生成的折叠摘要不属于 trace 输入，稳定元数据不受任务/耗时重排影响。释放 `fgData` 输入缓存并不释放这份逻辑模型：记录和完整 DOM 仍常驻。这是将工作纳入可见准备过程，并未移出主线程；完整就绪时间可能增加，初始化/实际布局仍可能阻塞，导航和展示也没有虚拟化。已有报告需重新生成，才能使用这些行为及修复后的 `sort:asc` / `sort:desc` 指令。

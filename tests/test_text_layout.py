@@ -53,7 +53,8 @@ class InlineTextLayoutTest(unittest.TestCase):
         Path(cls.kernel.dir, 'startup-error.html').write_text(original)
         event_rows = [
             ' 3)               |    /* sched_wakeup: pid=42 payload=' + ('宽🙂\t' * 400 if index == 1800 else str(index)) + ' */\n'
-            if index % 3 == 0 else ' 3)   0.050 us    |    leaf(value=' + (cls.argument if index == 3001 else str(index)) + '); /* <-root+0x4/0x80 */\n'
+            if index % 3 == 0 else (' 3)   0.050 us    |    ' + ('wide_leaf(value=' + cls.argument if index == 3001
+                else 'leaf(value=' + str(index)) + '); /* <-root+0x4/0x80 */\n')
             for index in range(4200)
         ]
         event_trace = Path(cls.kernel.dir, 'event-widths.txt')
@@ -307,6 +308,265 @@ class InlineTextLayoutTest(unittest.TestCase):
         self.assertGreater(page.evaluate('measuredChunkReads'), 0)
         self.check_event_widths(page)
 
+    def test_mounted_filter_measures_only_changed_chunks_until_layout_context_changes(self):
+        page = self.open_report(filename='event-widths.html')
+        self.observe_width_reads(page)
+        result = page.evaluate('''() => {
+            const root = document.getElementById('content');
+            const input = document.getElementById('filterInput');
+            input.value = 'sort:desc'; applyFilter();
+            measuredChunkReads = 0; applyFilter();
+            const repeatSortReads = measuredChunkReads;
+            clearFilter();
+            const chunks = Array.from(root.querySelectorAll('.text-chunk'));
+            const rowSnapshot = () => chunks.map(chunk => Array.from(chunk.querySelectorAll('.line-container'),
+                row => [row.id, row.style.display]));
+            const before = rowSnapshot();
+            input.value = 'NOT func:^wide_leaf$';
+            measuredChunkReads = 0; applyFilter();
+            const filtered = rowSnapshot();
+            const changed = filtered.filter((rows, index) => JSON.stringify(rows) !== JSON.stringify(before[index])).length;
+            const changedReads = measuredChunkReads;
+            measuredChunkReads = 0; applyFilter();
+            const repeatFilterReads = measuredChunkReads;
+            const beforeFont = root.querySelector('.text-chunk').style.getPropertyValue('--fg-text-inline-size');
+            root.style.setProperty('--fg-text-font-size', '17px');
+            measuredChunkReads = 0; applyFilter();
+            const fontChangedReads = measuredChunkReads;
+            const afterFont = root.querySelector('.text-chunk').style.getPropertyValue('--fg-text-inline-size');
+            return {repeatSortReads, changed, changedReads, repeatFilterReads, fontChangedReads,
+                chunks:chunks.length, widthsChanged:beforeFont !== afterFont};
+        }''')
+        self.assertEqual(result['changed'], 1)
+        self.assertGreater(result['chunks'], result['changed'])
+        self.assertEqual(result['repeatSortReads'], 0)
+        self.assertEqual(result['changedReads'], result['changed'])
+        self.assertEqual(result['repeatFilterReads'], 0)
+        self.assertEqual(result['fontChangedReads'], result['chunks'])
+        self.assertTrue(result['widthsChanged'])
+        self.check_event_widths(page)
+
+    def test_filter_controls_show_status_before_work_and_respect_composition(self):
+        page = self.open_report(filename='text-only.html')
+        result = page.evaluate('''async () => {
+            const input = document.getElementById('filterInput');
+            const status = document.getElementById('textFilterProgress');
+            const viewport = document.getElementById('textViewport');
+            const clear = document.querySelector('.clear-btn');
+            const apply = document.querySelector('.filter-btn');
+            const nextFrame = () => new Promise(resolve => requestAnimationFrame(resolve));
+            const state = () => [status.textContent, viewport.getAttribute('aria-busy'), fgFilterState.text];
+            input.value = 'sort:desc';
+            input.dispatchEvent(new KeyboardEvent('keydown', {key:'Enter', isComposing:true, bubbles:true}));
+            const composed = state();
+            input.dispatchEvent(new KeyboardEvent('keydown', {key:'Enter', bubbles:true}));
+            await nextFrame();
+            const pending = state();
+            await nextFrame();
+            const applied = state();
+            input.value = 'sort:asc';
+            apply.click();
+            clear.click();
+            await nextFrame();
+            const clearing = state();
+            await nextFrame();
+            const cleared = state();
+            input.value = 'sort:desc';
+            apply.click();
+            input.dispatchEvent(new KeyboardEvent('keydown', {key:'Escape', bubbles:true}));
+            await nextFrame();
+            await nextFrame();
+            return {composed, pending, applied, clearing, cleared, cancelled:state()};
+        }''')
+        self.assertEqual(result, dict(composed=['', None, ''], pending=['Applying filter…', 'true', ''],
+                                      applied=['', None, 'sort:desc'], clearing=['Clearing filter…', 'true', 'sort:desc'],
+                                      cleared=['', None, ''], cancelled=['', None, '']))
+
+    def test_sparse_filters_project_only_previous_and_next_hits(self):
+        page = self.open_report(filename='event-widths.html')
+        result = page.evaluate('''() => {
+            const input = document.getElementById('filterInput');
+            const rows = Array.from(document.querySelectorAll('#content .line-container'));
+            const setVisible = fgTextNavigation.setVisible;
+            let visits = 0;
+            fgTextNavigation.setVisible = function(...args) { visits++; return setVisible.apply(this, args); };
+            const apply = query => {
+                input.value = query;
+                visits = 0;
+                applyFilter();
+                const visible = rows.filter(row => row.style.display !== 'none').map(row => +row.dataset.lineNumber);
+                const navigable = fgTextNavigation.visible.map(index => fgTextNavigation.order[index]);
+                return {visits, visible, match: JSON.stringify(visible) === JSON.stringify(navigable)};
+            };
+            const first = apply('func:^wide_leaf$');
+            const root = apply('func:^root$');
+            const empty = apply('func:^not_in_trace$');
+            const recovered = apply('func:^wide_leaf$');
+            const block = fgGetTextFolding().blocks.keys().next().value;
+            fgSetFoldStates([[block, true]]);
+            const folded = apply('func:^wide_leaf$');
+            fgSetFoldStates([[block, false]]);
+            const unfiltered = apply('');
+            const again = apply('func:^wide_leaf$');
+            return {first, root, empty, recovered, folded, unfiltered, again, total: rows.length};
+        }''')
+        self.assertTrue(all(value['match'] for key, value in result.items() if key != 'total'))
+        self.assertEqual(result['first']['visits'], result['total'])
+        self.assertEqual(len(result['first']['visible']), 1)
+        self.assertEqual(result['root']['visits'], 1 + len(result['root']['visible']))
+        self.assertEqual(result['empty']['visits'], len(result['root']['visible']))
+        self.assertEqual(result['empty']['visible'], [])
+        self.assertEqual(result['recovered'], dict(visits=1, visible=result['first']['visible'], match=True))
+        self.assertEqual(result['folded']['visits'], result['total'])
+        self.assertEqual(result['folded']['visible'], [])
+        self.assertEqual(len(result['unfiltered']['visible']), result['total'])
+        self.assertEqual(result['again'], result['first'])
+
+    def test_hidden_event_widths_follow_new_filter_before_events_return(self):
+        page = self.open_report(filename='event-widths.html')
+        self.observe_width_reads(page)
+        result = page.evaluate('''() => {
+            const input = document.getElementById('filterInput');
+            fgSetTextEventsVisible(false);
+            input.value = 'func:^wide_leaf$'; applyFilter();
+            input.value = 'NOT func:^wide_leaf$'; applyFilter();
+            const events = Array.from(document.querySelectorAll('[data-trace-event="1"]'));
+            const stillHidden = events.every(row => row.style.display === 'none');
+            fgSetTextEventsVisible(true);
+            return {stillHidden, shown:events.filter(row => row.style.display !== 'none').length};
+        }''')
+        self.assertEqual(result, dict(stillHidden=True, shown=1400))
+        self.check_event_widths(page)
+
+    def test_clear_refreshes_changed_chunks_and_preserves_hidden_event_context(self):
+        page = self.open_report(filename='event-widths.html')
+        self.observe_width_reads(page)
+        result = page.evaluate('''() => {
+            const root = document.getElementById('content'), input = document.getElementById('filterInput');
+            const widths = () => Array.from(root.children, chunk => chunk.style.getPropertyValue('--fg-text-inline-size'));
+            const before = widths();
+            input.value = 'NOT func:^wide_leaf$'; applyFilter();
+            measuredChunkReads = 0; clearFilter();
+            const clearReads = measuredChunkReads;
+            const restoredWidths = JSON.stringify(widths()) === JSON.stringify(before);
+            measuredChunkReads = 0; clearFilter();
+            const repeatReads = measuredChunkReads;
+            root.style.setProperty('--fg-text-font-size', '17px');
+            measuredChunkReads = 0; clearFilter();
+            const fontReads = measuredChunkReads;
+            fgSetTextEventsVisible(false);
+            input.value = 'NOT func:^wide_leaf$'; applyFilter();
+            measuredChunkReads = 0; clearFilter();
+            const hiddenEventReads = measuredChunkReads;
+            fgSetTextEventsVisible(true);
+            return {clearReads, repeatReads, fontReads, hiddenEventReads, restoredWidths, chunks:before.length};
+        }''')
+        self.assertEqual(result['clearReads'], 1)
+        self.assertEqual(result['repeatReads'], 0)
+        self.assertEqual(result['fontReads'], result['chunks'])
+        self.assertEqual(result['hiddenEventReads'], result['chunks'])
+        self.assertTrue(result['restoredWidths'])
+        self.check_event_widths(page)
+
+    def test_filter_skips_width_measurement_of_empty_chunks_without_losing_extents(self):
+        page = self.open_report(filename='event-widths.html')
+        self.observe_width_reads(page)
+        result = page.evaluate('''() => {
+            const root = document.getElementById('content'), input = document.getElementById('filterInput');
+            const chunks = () => Array.from(root.querySelectorAll('.text-chunk'));
+            root.style.setProperty('--fg-text-font-size', '17px');
+            input.value = 'func:^wide_leaf$ sort:desc';
+            measuredChunkReads = 0; applyFilter();
+            const reads = measuredChunkReads;
+            const widths = chunks().map(chunk => parseFloat(chunk.style.getPropertyValue('--fg-text-inline-size')));
+            const rows = Array.from(root.querySelectorAll('.line-container'));
+            const first = rows.find(row => row.style.display !== 'none');
+            const firstMatches = first.dataset.func === 'wide_leaf' && +first.dataset.lineNumber === fgTextNavigation.order[0];
+            input.value = 'func:^not_in_trace$';
+            measuredChunkReads = 0; applyFilter();
+            const noMatchReads = measuredChunkReads;
+            const noMatchWidths = chunks().every(chunk => chunk.style.getPropertyValue('--fg-text-inline-size') === '0px');
+            const last = chunks().at(-1);
+            const note = document.createElement('div');
+            note.textContent = 'Additional context '.repeat(250);
+            last.appendChild(note);
+            measuredChunkReads = 0; fgRefreshTextLayout([last]);
+            const extraReads = measuredChunkReads;
+            last.classList.add('text-layout-measure');
+            const nativeWidth = last.getBoundingClientRect().width;
+            last.classList.remove('text-layout-measure');
+            return {reads, fullCount:widths.length, positiveWidths:widths.filter(width => width > 0).length,
+                firstMatches, noMatchReads, noMatchWidths, extraReads, nativeWidth,
+                extraWidth:parseFloat(last.style.getPropertyValue('--fg-text-inline-size'))};
+        }''')
+        self.assertGreater(result['fullCount'], 1)
+        self.assertEqual(result['positiveWidths'], 1)
+        self.assertEqual(result['reads'], 1)
+        self.assertTrue(result['firstMatches'] and result['noMatchWidths'])
+        self.assertEqual(result['noMatchReads'], 0)
+        self.assertEqual(result['extraReads'], 1)
+        self.assertGreater(result['extraWidth'], 0)
+        self.assertAlmostEqual(result['extraWidth'], result['nativeWidth'], delta=1 / 64)
+
+    def test_duration_order_reuses_native_row_widths_until_the_context_changes(self):
+        for width, touch in ((1500, False), (390, True)):
+            with self.subTest(width=width, touch=touch):
+                page = self.open_report(width=width, touch=touch, filename='event-widths.html')
+                self.observe_width_reads(page)
+                result = page.evaluate('''() => {
+                    const root = document.getElementById('content'), input = document.getElementById('filterInput');
+                    const chunks = () => Array.from(root.children).filter(chunk => chunk.classList.contains('text-chunk'));
+                    const apply = query => { input.value = query; measuredChunkReads = 0; applyFilter(); return measuredChunkReads; };
+                    const matchNative = () => {
+                        const targets = chunks();
+                        const widths = targets.map(chunk => parseFloat(chunk.style.getPropertyValue('--fg-text-inline-size')));
+                        for (const chunk of targets) chunk.classList.add('text-layout-measure');
+                        try { return targets.every((chunk, index) => Math.abs(chunk.getBoundingClientRect().width - widths[index]) <= 1 / 64); }
+                        finally { for (const chunk of targets) chunk.classList.remove('text-layout-measure'); }
+                    };
+                    const first = apply('sort:desc'), exactFirst = matchNative();
+                    const filtered = apply('func:^wide_leaf$ sort:asc'), exactFiltered = matchNative();
+                    root.style.setProperty('--fg-text-font-size', '17px');
+                    const changed = apply('sort:desc'), exactChanged = matchNative();
+                    return {first, filtered, changed, exactFirst, exactFiltered, exactChanged, chunks:chunks().length};
+                }''')
+                self.assertEqual((result['first'], result['filtered']), (0, 0))
+                self.assertEqual(result['changed'], result['chunks'])
+                self.assertTrue(result['exactFirst'] and result['exactFiltered'] and result['exactChanged'])
+                self.check_event_widths(page)
+                page.close()
+
+    def test_clearing_duration_sort_reuses_matching_order_widths_only(self):
+        for mode, width in (('time', 1500), ('task', 390)):
+            with self.subTest(mode=mode, width=width):
+                page = self.open_report(width=width, filename='event-widths.html')
+                self.observe_width_reads(page)
+                result = page.evaluate('''mode => {
+                    const root = document.getElementById('content'), input = document.getElementById('filterInput');
+                    fgSetTextOrder(mode);
+                    const styles = () => Array.from(root.querySelectorAll('.text-chunk'), chunk => chunk.style.cssText);
+                    const before = styles();
+                    const order = fgTextNavigation.order.slice();
+                    const sorted = () => { input.value = 'duration:>0 sort:desc'; applyFilter(); };
+                    sorted();
+                    measuredChunkReads = 0; clearFilter();
+                    const reusedReads = measuredChunkReads;
+                    const sameStyles = JSON.stringify(styles()) === JSON.stringify(before);
+                    const rows = Array.from(root.querySelectorAll('.line-container'), row => +row.dataset.lineNumber);
+                    const sameOrder = JSON.stringify(rows) === JSON.stringify(order) &&
+                        JSON.stringify(fgTextNavigation.order) === JSON.stringify(order);
+                    sorted();
+                    root.style.setProperty('--fg-text-font-size', '17px');
+                    measuredChunkReads = 0; clearFilter();
+                    return {reusedReads, fallbackReads:measuredChunkReads, count:before.length,
+                        sameStyles, sameOrder, widthsChanged:JSON.stringify(styles()) !== JSON.stringify(before)};
+                }''', mode)
+                self.assertEqual(result['reusedReads'], 0)
+                self.assertEqual(result['fallbackReads'], result['count'])
+                self.assertTrue(result['sameStyles'] and result['sameOrder'] and result['widthsChanged'])
+                self.check_event_widths(page)
+                page.close()
+
     def test_only_large_supported_inline_reports_enable_native_layout(self):
         for count in (4095, 4096):
             with self.subTest(count=count):
@@ -363,6 +623,9 @@ class InlineTextLayoutTest(unittest.TestCase):
         page = self.open_report()
         result = page.evaluate('''async () => {
             const settle = () => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+            const content = document.getElementById('content');
+            const containment = () => [getComputedStyle(content).contain, getComputedStyle(content).contentVisibility];
+            const visible = containment(), states = [];
             const row = document.getElementById('L3003');
             row.scrollIntoView({block:'center', behavior:'instant'});
             toggleExpand(row.dataset.lineId);
@@ -384,19 +647,23 @@ class InlineTextLayoutTest(unittest.TestCase):
             try {
                 for (let iteration=0; iteration<3; iteration++) {
                     await fgSwitchView('timeline'); await settle();
+                    states.push(containment());
                     if (selection.rangeCount) throw new Error('Hidden Text kept active native selection');
                     await fgSwitchView('text'); await settle();
+                    states.push(containment());
                     if (selection.toString() !== before.selection) throw new Error('Lost complete cross-chunk selection');
                 }
             } finally { fgMeasureTextLayout = originalMeasure; }
             return {before, after:{top:scrollY, left:viewport.scrollLeft, selection:selection.toString(),
                 source:row.nextElementSibling.innerHTML, data:JSON.stringify(fgData.read('tlData'))},
-                same:document.getElementById(row.id)===originalRow, measurements};
+                same:document.getElementById(row.id)===originalRow, measurements, visible, states};
         }''')
         self.assertTrue(result['before']['selection'].strip())
         self.assertEqual(result['before'], result['after'])
         self.assertTrue(result['same'])
         self.assertEqual(result['measurements'], 0)
+        self.assertEqual(result['visible'], ['style', 'visible'])
+        self.assertEqual(result['states'], [['style', 'hidden'], ['style', 'visible']] * 3)
 
     def test_native_drag_selection_and_find_reveal_complete_offscreen_text(self):
         for theme in ('light', 'dark'):

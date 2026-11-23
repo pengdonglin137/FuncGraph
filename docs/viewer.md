@@ -4,10 +4,11 @@
 
 ## Usage
 
-The report itself also offers an [experimental Text window renderer](performance-text-window.md)
-for newly generated chunked sidecars. Append `?text=windowed` to the complete HTTP
-URL printed by `fgview` before entering Text, or use the report's **Windowed Text**
-tool. This does not change `fgview`, the default output mode or size thresholds.
+New chunked sidecars default to [Windowed Text](performance-text-window.md) at
+65,536 records or 64 MiB of rendered Text HTML. Use **Full Text** for
+whole-document browser operations. Append `?text=windowed` or `?text=full` to
+the URL printed by `fgview` to override the renderer. This does not affect
+single-file output or the threshold that selects sidecar in `auto` mode.
 
 After installing FuncGraph:
 
@@ -40,7 +41,34 @@ funcgraph trace.txt --timeline --report-mode sidecar --enable-fold --filter --ou
 fgview trace-report --open
 ```
 
-Text and binary raw inputs use the same output mode; raw input still requires its optional native dependencies. `--report-mode single` remains the default and never switches automatically. Sidecar requires `--timeline`, an HTTP URL, and a dedicated output directory, not a filename.
+Text and binary raw inputs use the same output mode; raw input still requires its optional native dependencies. Sidecar requires `--timeline`, an HTTP URL, and a dedicated output directory, not a filename. The offline default never creates a sidecar directory.
+
+### Offline windowed HTML
+
+By default, offline reports with Timeline and at least 75,000 Text rows after
+CLI filtering use gzip-windowed HTML. Smaller reports, Text-only reports and
+reports without Text keep the ordinary format. This default also applies to
+`fgreport`; it does not drop Text because the raw input has more than 150,000
+lines. An explicit `--report-mode` overrides the default. Use `--report-mode single`
+for eager Full Text (add `--text` with `fgreport` to keep it above the legacy
+150,000 plain-text input line cutoff), or `--windowed-compression none` to keep
+the automatic windowed layout when the viewing browser does not support gzip decompression.
+
+```bash
+funcgraph trace.txt --timeline --report-mode single-windowed --enable-fold --filter --output trace-windowed.html
+```
+
+Open or share the HTML file directly; no server or companion folder is needed.
+It starts in Timeline and only mounts up to 160 trace rows when you enter Text.
+The complete filter index and source chunks travel inside the HTML. Choose
+**Full Text** for whole-document browser Find or printing. The mode requires
+`--timeline` and a Text view; `fgreport --report-mode single-windowed --open`
+also defaults to `.html`. The embedded index and escaping can make the file
+larger. Add `--windowed-compression gzip` to either command to compress the
+embedded Text index, Text chunks, and sources. They are decompressed on demand
+using the browser's gzip `DecompressionStream`; omit the flag for browsers
+without it. The entire HTML is still read up front. If you want to load only
+the data for the active view from disk, use a sidecar.
 
 ### Automatic selection above an explicit byte threshold
 
@@ -54,7 +82,7 @@ fgreport --report-mode auto --sidecar-threshold 67108864 --open trace.txt
 
 Auto mode also requires `--timeline` and a dedicated output **directory**, regardless of its decision. It counts the complete hypothetical single HTML's uncompressed UTF-8 bytes, including Text, embedded sources, view data and scripts. Only a strict `>` selects sidecar: equal or smaller stays a self-contained `index.html` that opens offline. The threshold is a nonnegative integer byte count; `0` forces sidecar for any nonempty report. There is **no default threshold**, and auto mode without one fails before processing. Trace line counts, compressed file sizes and shell sizes do not select the mode. This avoids treating equally long traces with different embedded-source sizes as equivalent.
 
-The CLI prints the actual mode, full HTML byte count, threshold and entry path; sidecar decisions also print a shell-safe `fgview` command. `fgview` works for either decision. `fgreport --open` in a directory mode runs the loopback viewer in the foreground until Ctrl+C, not a `file://` directory URL. Both options can be stored in INI defaults/presets or with `fgreport init NAME --report-mode auto --sidecar-threshold BYTES`. Explicit `--report-mode single` overrides configured auto mode and writes the ordinary HTML file. Wrapper single mode retains its existing 150k-line Text omission rule (`--text` overrides it); sidecar/auto preserve Text unless explicitly omitted.
+The CLI prints the actual mode, full HTML byte count, threshold and entry path; sidecar decisions also print a shell-safe `fgview` command. `fgview` works for either decision. `fgreport --open` in a directory mode runs the loopback viewer in the foreground until Ctrl+C, not a `file://` directory URL. Both options can be stored in INI defaults/presets or with `fgreport init NAME --report-mode auto --sidecar-threshold BYTES`. Explicit `--report-mode single` overrides configured auto mode and writes the ordinary HTML file. Explicit `single-windowed`, `sidecar` and `auto` preserve Text by default.
 
 Generation still renders the full report once and stages the filter index even for a below-threshold decision, then discards that index for single output. It needs temporary disk space for the full HTML plus index and, above threshold, the extracted resources; it does not skip parsing or symbol resolution. Updating a managed directory may switch in either direction without moving its entry path. Old sidecar resources remain available to already-open pages even after a switch back to single; do not interpret those historical directories as evidence that the current entry uses sidecar. Fresh single decisions publish only `index.html` and the hidden ownership marker. The same publication protections described below apply to both decisions.
 
@@ -78,7 +106,7 @@ limits](performance-text-delivery.md).
 - First Timeline loads its complete model but does not fetch Text, Compare or source bodies and creates no per-record Text DOM. The compact trace-line → source-ID index remains embedded. Source HTML is stored in `source-<first-id>.json` chunks of up to 64 source records; expanding a Text source or an open Timeline call-site panel fetches only its chunk. A closed call-site panel waits until opened. Resolved hover locations use the compact Timeline positions without fetching source HTML; older/unknown positions can load the relevant source chunk.
 - Source chunks use the same byte-count/SHA-256 verification and shared requests as other resources. Pending panels show **Loading source…**, failures show **Retry** without partial code, and collapsing, replacing/closing a detail or leaving a view cancels its consumer and ignores stale results. Leaving a view with an open pending panel restarts it on reentry. Other consumers sharing that chunk can finish. Newly generated sidecar reports retain source resources in an LRU cache of **at most 8 chunks and 16 MiB of verified UTF-8 JSON bytes in total**. Actual reads and load hits refresh recency; readiness probes do not. The least recently read chunks are evicted as needed without removing displayed code, and subsequent use downloads and verifies them again. A chunk larger than 16 MiB can still be viewed in full but is not retained in the resource cache and does not displace other chunks. Chain/flat controls remain synchronized. This budget is not a bound on JS heap, concurrent requests or complete-report memory: a large source record is not split, and populated DOM and complete models can still accumulate. Single-file output and auto decisions at/below the threshold retain the full embedded source pool and offline behavior. Regenerate older reports to use this policy.
 - Timeline unified filtering fetches `text-index.json` on first use, evaluates all trace rows without creating Text DOM, and shares the Text expression/graph semantics. Progress is cancellable with Escape or Clear; a newer query supersedes the previous one. Errors retain the previous result and offer **Retry filter**. The complete index is cached until Text mounts; downloading/parsing it and graph preparation still use main-thread memory and time.
-- First Text entry, a trace-line jump or `#L<number>` starts complete Text preparation. New sidecars above 4,096 original records (including headers) use `text-<first>.html` resources of up to 4,096 records, downloading, verifying and parsing each without first creating a monolithic Text HTML string. Small/older reports keep their complete `text.html`. A separate Text HTML-resource LRU retains at most 4 chunks and 16 MiB of verified UTF-8 bytes; actual reads refresh recency, and oversized chunks load without retention. This is not a limit on concurrent requests, JS heap or complete-report memory. The record rule only groups data inside sidecar; it does not change single/auto byte-threshold selection.
+- First Text entry, a trace-line jump or `#L<number>` starts Text preparation with the chosen renderer. New sidecars above 4,096 original records (including headers) use `text-<first>.html` resources of up to 4,096 records, downloading and verifying them as needed. Windowed mode loads the complete index and only the required chunks; full mode reads every chunk without constructing a monolithic HTML string. Small/older reports keep their complete `text.html`. A separate Text HTML-resource LRU retains at most 4 chunks and 16 MiB of verified UTF-8 bytes; actual reads refresh recency, and oversized chunks load without retention. This is not a limit on concurrent requests, JS heap or complete-report memory.
 - Text accumulates all detached rows and metadata before mounting, with loading/preparation progress and back/tab/Escape cancellation. Cancellation discards unmounted nodes, never exposing partial rows. Chunked reentry reuses retained resources but refetches evicted chunks; the older single-resource path retains its complete-HTML cache behavior. Before the complete mount, **Finishing Text layout…** gets a paint opportunity; final initialization/layout remains synchronous and can block. The active filter is reapplied before use, and index/Text HTML-resource caches are released on success. The complete Text DOM stays resident, without viewport windowing or a DOM bound; total opening time is not necessarily shorter. Saved Text preferences and hash anchors open Text directly. Older sidecars without an index retain full-Text filtering.
 - Fetch/integrity and detached Text parsing failures expose Retry; Escape/back cancels pending view loading/preparation without allowing late data to activate it. A failure during final Text initialization instead offers **Reload report**, avoiding reuse of partially initialized listeners/state. Regenerate existing reports to use the new preparation behavior.
 - Filtering shares a complete record model across indexed and mounted Text. Deferred Text reuses an already prepared index model, or snapshots every authored row while detached; it does not fetch the index just to prepare Text. Row snapshot/validation and complete fold metadata yield during preparation, with the usual status and cancellation controls. Only the complete model is published with the final mount, so the first fold reuses it; metadata failures before mounting can Retry, and cancellation discards partial work while verified HTML follows the resource cache policy above. Embedded Text keeps lazy synchronous preparation. Generated fold summaries are not trace input, and task/duration reordering does not change stable metadata. Releasing the `fgData` input caches does not release this logical model: its rows and the full DOM remain resident. This moves work into visible preparation, not off the main thread; total readiness can increase, and initialization/native layout can still block. Navigation/display are not virtualized. Regenerate reports to use this behavior and the working `sort:asc` / `sort:desc` directives.

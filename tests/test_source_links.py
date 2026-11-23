@@ -69,7 +69,7 @@ class SourceBrowserTest(unittest.TestCase):
         parser = Links()
         parser.feed(create_source_link('/tree/' + path, 42, 'work',
                                        'https://example.org/src', '/tree', None))
-        self.assertEqual(set(parser.attributes), {'class', 'href', 'target', 'title', 'onclick'})
+        self.assertEqual(set(parser.attributes), {'class', 'href', 'target', 'title'})
         self.assertEqual(parser.attributes['title'], 'Click to open ' + path + ':42')
         self.assertEqual(urlsplit(parser.attributes['href']).fragment, 'L42')
         self.assertEqual(unquote(urlsplit(parser.attributes['href']).path), '/src/' + path)

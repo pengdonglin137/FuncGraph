@@ -209,7 +209,11 @@ fgreport --uftrace mixed.data -- --user-src "$PWD"
 减轻 Timeline → Text 反复切换的开销，不丢弃行、源码、原生选区或横向阅读空间。
 首次准备仍可能耗时，详见[实测与边界](docs/performance-view-roundtrip.md)。
 
-需要先打开 Timeline、之后再加载 Text 时，显式选择 **sidecar 目录**：
+带 Timeline 且预筛选后至少有 75,000 行 Text 的离线报告默认使用 gzip 窗口化 HTML。
+用 `--report-mode single` 可直接挂载完整 Text；要在任意规模指定窗口化，可用
+`--timeline --report-mode single-windowed`。详见[离线窗口化模式](docs/viewer.cn.md)。
+
+需要按需从磁盘读取报告资源时，显式选择 **sidecar 目录**：
 
 ```bash
 funcgraph --no-config trace.txt --timeline --enable-fold --filter \
@@ -221,11 +225,12 @@ fgview trace.report --open
   分享时保留**整个目录**，不能只发送 `index.html`。
 - 若只想超过指定大小才切换，使用 `--report-mode auto --sidecar-threshold 67108864`，
   输出指定为目录。这里的 **64 MiB 指完整 HTML 大小**，不是内置默认值或 trace 行数阈值。
-- 默认 Text 仍准备并保留完整 DOM／模型。新生成的分块 sidecar 可手动启用实验性
-  **Windowed Text**，限制挂载的行数，**不代表限制整个报告内存**。
-  详见[窗口化模式说明](docs/performance-text-window.md)。
-- `fgreport` 在单文件模式下，对超过 150k 行的输入选择仅 Timeline，`--text` 可保留 Text；
-  目录模式保留 Text。也可以显式使用 `--no-text-view --keep-source` 生成保留源码的纯 Timeline 报告。
+- 新生成的分块 sidecar 达到 65,536 条记录或 64 MiB Text 正文时默认使用
+  **Windowed Text**，限制挂载行数，**不代表限制整个报告内存**。整篇浏览器操作可切换
+  **Full Text**。详见[窗口化模式说明](docs/performance-text-window.md)。
+- `fgreport` 未指定模式时保留 Text，命令行预筛选后报告达到 75,000 行即使用离线 gzip 窗口化 HTML。
+  只有显式选择 `single` 时，才沿用纯文本输入超过 150,000 行则只显示 Timeline 的规则；加 `--text` 可保留 Full Text。
+  可用 `--no-text-view --keep-source` 生成保留源码的纯 Timeline 报告。
 
 服务启动、自动模式和资源加载行为见[本地查看器](docs/viewer.cn.md)。
 `fgview` 只监听 loopback；请服务专用报告目录，不要把整个源码／工作目录作为根目录。

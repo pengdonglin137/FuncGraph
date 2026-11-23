@@ -23,8 +23,9 @@ class BtfBuilder:
         self.strs += name.encode() + b'\0'
         return off
 
-    def add(self, name, kind, vlen, size_type, extra=b''):
-        self.types += struct.pack('<III', self.s(name) if name else 0, (kind << 24) | vlen, size_type) + extra
+    def add(self, name, kind, vlen, size_type, extra=b'', signed=False):
+        self.types += struct.pack('<III', self.s(name) if name else 0, (int(signed) << 31) | (kind << 24) | vlen,
+                                  size_type) + extra
         self.n += 1
         return self.base_next + self.n - 1
 
@@ -97,6 +98,32 @@ class BtfTest(unittest.TestCase):
                 'ret_uint': ('uint', 4), 'ret_bool': ('bool', 1), 'ret_ptr': ('ptr', 8)}
         for fn, cls in want.items():
             self.assertEqual(info.func_ret[fn], cls, fn)
+
+    def test_layout_reuse_preserves_field_names_and_return_widths(self):
+        builder = BtfBuilder()
+        boolean = builder.int_('_Bool', 1, boolean=True)
+        pointer = builder.add(None, btf.KIND_PTR, 0, boolean)
+        params = struct.pack('<IIII', builder.s('enabled'), boolean, builder.s('ptr'), pointer)
+        proto = builder.add(None, btf.KIND_FUNC_PROTO, 2, boolean, params)
+        renamed = builder.add(None, btf.KIND_FUNC_PROTO, 1, boolean,
+                             struct.pack('<II', builder.s('active'), boolean))
+        for name, type_id in (('first', proto), ('second', proto), ('renamed', renamed),
+                              ('ambiguous', proto), ('ambiguous', renamed)):
+            builder.add(name, btf.KIND_FUNC, 0, type_id)
+        base = btf.BtfInfo(builder.blob(), word_size=8)
+        first = base.func_params['first']
+        self.assertIs(base.func_params['second'], first)
+        self.assertEqual(first, ((('enabled', 'bool', 1, 8), ('ptr', 'ptr', 8, 64)), ('bool', 1, 1), 8))
+        self.assertEqual(base.func_params['renamed'][0], (('active', 'bool', 1, 8),))
+        self.assertEqual(base.func_ret['first'], ('bool', 1))
+        self.assertIsNone(base.func_params['ambiguous'])
+        self.assertIsNone(base.func_proto['ambiguous'])
+
+        module = BtfBuilder(base)
+        module.add('shared_proto', btf.KIND_FUNC, 0, proto)
+        split = btf.BtfInfo(module.blob(), base=base, word_size=4)
+        self.assertEqual(split.func_params['shared_proto'],
+                         ((('enabled', 'bool', 1, 8), ('ptr', 'ptr', 8, 32)), ('bool', 1, 1), 4))
 
     def test_elf_section_and_db(self):
         vml = self.write('vmlinux', make_elf({'.text': b'\0' * 16, '.BTF': base_blob().blob()}))

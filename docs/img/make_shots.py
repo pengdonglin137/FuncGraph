@@ -347,6 +347,10 @@ def an_dist(b, rep):
     nm = pg.evaluate(f"""(() => {{ const q = {PROBE}, c = new Map(); for (let i = 0; i < q.N; i++) c.set(q.sName[i], (c.get(q.sName[i]) || 0) + 1);
         let best = -1, n = 0; for (const [k, v] of c) if (v > n && !/^(preempt_count|__rcu_read|rcu_read_lock)/.test(q.S[k])) {{ best = k; n = v; }} return best; }})()""")
     pg.evaluate(f"{PROBE}.dist({nm})")
+    pg.evaluate("""() => {
+        localStorage.setItem('fgTl.detailFrac', '0.42');
+        fgView('timeline').resize();
+    }""")
     pg.wait_for_timeout(400)
     shot(pg, 'an_dist')
 
@@ -355,17 +359,12 @@ def an_slowfast(b, rep):
     pg = open_page(b, rep['sched'], 'timeline', height=980)
     index = find(pg, 'next_uptodate_folio')
     pg.evaluate(f"{PROBE}.dist({PROBE}.sName[{index}])")
-    pg.locator('[data-act=slowfast]').click()
     handle = box(pg, '.tl-resizer')
     pg.mouse.move(handle['x'] + handle['width'] / 2, handle['y'] + 4)
     pg.mouse.down()
     pg.mouse.move(handle['x'] + handle['width'] / 2, handle['y'] - 200, steps=4)
     pg.mouse.up()
-    pg.evaluate("""() => {
-        const panel = document.querySelector('.tl-detail');
-        const comparison = panel.querySelector('.an-slowfast-tools');
-        panel.scrollTop += comparison.getBoundingClientRect().top - panel.getBoundingClientRect().top - panel.querySelector('.tl-detail-head').offsetHeight - 4;
-    }""")
+    pg.locator('[data-act=slowfast]').click()
     pg.wait_for_timeout(400)
     shot(pg, 'an_slowfast')
 
@@ -377,6 +376,18 @@ def panel(name, key, func):
         pg.wait_for_timeout(400)
         shot(pg, name)
     return run
+
+
+def an_errors(b, rep):
+    pg = open_page(b, rep['sched'], 'timeline')
+    pg.evaluate(f'{PROBE}.errors()')
+    pg.locator('[data-act=minor]').check()
+    pg.evaluate("""() => {
+        localStorage.setItem('fgTl.detailFrac', '0.37');
+        fgView('timeline').resize();
+    }""")
+    pg.wait_for_function("() => document.querySelectorAll('.an-error-table tbody tr').length === 6")
+    shot(pg, 'an_errors')
 
 
 def an_wait(b, rep):
@@ -444,7 +455,7 @@ SHOTS = {
     'timeline_saved_views': tl_saved_views,
     'timeline_focus': tl_focus,
     'an_range': an_range, 'an_dist': an_dist, 'an_slowfast': an_slowfast, 'an_sections': panel('an_sections', 'sample', 'sections'),
-    'an_errors': panel('an_errors', 'sched', 'errors'), 'an_wait': an_wait, 'an_tasks': an_tasks,
+    'an_errors': an_errors, 'an_wait': an_wait, 'an_tasks': an_tasks,
     'an_children': an_children, 'an_children_calls': lambda browser, reports: an_children(browser, reports, calls=True),
     'an_lat': panel('an_lat', 'sched', 'latency'), 'compare': compare,
 }

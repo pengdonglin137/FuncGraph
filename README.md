@@ -226,7 +226,12 @@ repeated Timeline → Text entry without discarding rows, source, native selecti
 or horizontal reading space. Initial preparation can still be expensive; see
 [measurements and limits](docs/performance-view-roundtrip.md).
 
-For a report that should load Timeline before Text, choose a **sidecar directory**:
+Offline reports with Timeline and at least 75,000 Text rows after CLI filtering
+default to gzip-windowed HTML. Use `--report-mode single` for eager Full Text,
+or `--timeline --report-mode single-windowed` to request a windowed file at any size.
+See the [offline mode guide](docs/viewer.md).
+
+To read report resources separately on demand, choose a **sidecar directory**:
 
 ```bash
 funcgraph --no-config trace.txt --timeline --enable-fold --filter \
@@ -239,12 +244,13 @@ fgview trace.report --open
 - To switch only above a size you choose, use `--report-mode auto` with
   `--sidecar-threshold 67108864` and a directory output. This example is **64 MiB
   of complete HTML**, not a built-in default or a trace-line threshold.
-- Default Text still prepares and retains the complete DOM/model. Experimental
-  **Windowed Text** is opt-in for newly generated chunked sidecars; it limits
-  mounted rows, **not total report memory**. [Windowed-mode guide](docs/performance-text-window.md).
-- In single mode, `fgreport` chooses Timeline-only above 150k input lines;
-  `--text` keeps Text. Directory modes retain Text. Explicit
-  `--no-text-view --keep-source` is another option for source-enabled Timeline-only reports.
+- New chunked sidecars use **Windowed Text** by default at 65,536 records or
+  64 MiB of Text HTML. This limits mounted rows, **not total report memory**.
+  Choose **Full Text** for whole-document browser operations. [Windowed-mode guide](docs/performance-text-window.md).
+- With no mode specified, `fgreport` keeps Text and uses offline gzip-windowed HTML at 75,000
+  or more report rows after pre-filtering. Only explicit `single` mode keeps the legacy
+  Timeline-only fallback above 150,000 plain-text input lines; add `--text` to keep Full Text there.
+  Use `--no-text-view --keep-source` for a source-enabled Timeline-only report.
 
 See the [viewer guide](docs/viewer.md) for serving, automatic selection and
 resource-loading behavior. `fgview` binds to loopback; serve a dedicated report

@@ -9,6 +9,29 @@ from fglib.textindex import FIELDS, PRESENTATION_FIELDS, TextIndexWriter
 
 
 class TextIndexTest(unittest.TestCase):
+    def test_highlight_and_fold_wrappers_skip_general_html_parsing(self):
+        stream = io.BytesIO()
+        writer = TextIndexWriter(stream)
+        markup = ('<span class="call-indent">  </span><span class="fold-marker">'
+                  '<button type="button" aria-label="Collapse foo"></button></span>'
+                  '<a class="func-name-link" href="https://example.test/foo#L5">føø</a>'
+                  '<span class="hl-symbol">()</span><button tabindex="-1">{</button>'
+                  ' <-parent+<span class="hl-addr">0x2</span>\r\n\0')
+        with mock.patch.object(writer.parser, 'feed', side_effect=AssertionError('unexpected HTML parsing')):
+            writer.append(1, {}, markup)
+        writer.finish('text-index.json')
+        self.assertEqual(json.loads(stream.getvalue())['rows'][0][1], '  føø(){ <-parent+0x2\n\ufffd')
+
+    def test_unfamiliar_markup_and_split_entities_keep_parser_semantics(self):
+        stream = io.BytesIO()
+        writer = TextIndexWriter(stream)
+        writer.append(1, {}, '&am<span class="hl-func">p;</span> &lt; →')
+        writer.append(2, {}, '<script>"<span class=\"hl-func\">text</span>"</script>\r\nnext')
+        writer.append(3, {}, '<span title="has > sign">text</span> < 7')
+        writer.finish('text-index.json')
+        self.assertEqual([row[1] for row in json.loads(stream.getvalue())['rows']],
+                         ['&amp; < →', '"<span class="hl-func">text</span>"\nnext', 'text < 7'])
+
     def test_raw_symbol_index_keeps_display_name_and_exact_compiler_identity_separate(self):
         stream = io.BytesIO()
         writer = TextIndexWriter(stream, include_raw_functions=True)

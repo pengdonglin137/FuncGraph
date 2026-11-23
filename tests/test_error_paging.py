@@ -9,6 +9,7 @@ import threading
 import unittest
 
 import helpers
+from benchmark_error_csv import fixture as mixed_csv_fixture
 from benchmark_errors import fixture
 from fglib.viewer import create_server
 
@@ -44,7 +45,7 @@ class ErrorPagingTest(unittest.TestCase):
     def tearDown(self):
         self.assertEqual(self.errors, [])
 
-    def open_report(self, count=650, atomic_count=None, update=None):
+    def open_report(self, count=650, atomic_count=None, update=None, mixed_csv=False):
         self.serial += 1
         if self.page and not self.page.is_closed():
             self.page.close()
@@ -52,7 +53,10 @@ class ErrorPagingTest(unittest.TestCase):
         self.page.set_default_timeout(10000)
         self.page.on('pageerror', lambda error: self.errors.append(str(error)))
         report = Path(self.directory.name) / f'errors-{self.serial}.html'
-        fixture(self.template, report, count, atomic_count)
+        if mixed_csv:
+            mixed_csv_fixture(self.template, report, count)
+        else:
+            fixture(self.template, report, count, atomic_count)
         if update:
             html = report.read_text(encoding='utf-8')
             match = re.search(r'(<script type="application/json" id="tlData">)(.*?)(</script>)', html, re.S)
@@ -80,6 +84,103 @@ class ErrorPagingTest(unittest.TestCase):
 
     def rows(self, kind='groups'):
         return list(csv.DictReader(io.StringIO(self.export(kind).decode('utf-8-sig'))))
+
+    def test_overview_markers_are_reused_during_zoom_and_refresh_for_scope_and_theme(self):
+        def update(data):
+            for index, chain in enumerate(data['chains']):
+                chain[6] = int(index % 7 == 0)
+
+        self.open_report(update=update)
+        self.page.evaluate('''async () => {
+            window.rulerFrame = () => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+            await rulerFrame();
+            const fillRect = CanvasRenderingContext2D.prototype.fillRect;
+            window.rulerMarks = 0;
+            CanvasRenderingContext2D.prototype.fillRect = function (left, top, width, height) {
+                if (top === 1 && width === 1.5 && ['#d32f2f', '#e8873a', '#e53935', '#d9822b'].includes(this.fillStyle)) rulerMarks++;
+                return fillRect.call(this, left, top, width, height);
+            };
+            window.rulerPixels = () => document.querySelector('.tl-head-canvas').toDataURL();
+        }''')
+        original = self.page.evaluate('rulerPixels()')
+        zoomed = self.page.evaluate('''async () => {
+            fgView('timeline').probe().zoomTo(100000, 200000);
+            await rulerFrame();
+            return rulerPixels();
+        }''')
+        self.assertNotEqual(original, zoomed)
+        self.assertEqual(self.page.evaluate('rulerMarks'), 0)
+
+        def change(action):
+            return self.page.evaluate('''async action => {
+                rulerMarks = 0;
+                if (action === 'theme') document.documentElement.setAttribute('data-theme', 'dark');
+                else document.querySelector(action).click();
+                await rulerFrame();
+                return [rulerMarks, rulerPixels()];
+            }''', action)
+
+        marks, all_chains = change('[data-act=errmode]')
+        self.assertGreater(marks, 300)
+        self.assertNotEqual(all_chains, zoomed)
+        marks, with_minor = change('[data-act=minor]')
+        self.assertEqual(marks, 650)
+        self.assertNotEqual(with_minor, all_chains)
+        marks, disabled = change('[data-ov=err]')
+        self.assertEqual(marks, 0)
+        self.assertNotEqual(disabled, with_minor)
+        marks, restored = change('[data-ov=err]')
+        self.assertEqual(marks, 650)
+        self.assertEqual(restored, with_minor)
+        marks, dark = change('theme')
+        self.assertEqual(marks, 650)
+        self.assertNotEqual(dark, restored)
+
+    def test_track_error_markers_read_nearby_origins_in_original_draw_order(self):
+        for ordered in (True, False):
+            with self.subTest(ordered=ordered):
+                def update(data):
+                    data['cols']['dur'] = [1] * len(data['chains'])
+                    data['cols']['start'][2911] = 0
+                    if not ordered:
+                        for left, right in ((10, 2900), (2910, 2911)):
+                            data['chains'][left], data['chains'][right] = data['chains'][right], data['chains'][left]
+
+                self.open_report(count=4096, atomic_count=0, update=update)
+                result = self.page.evaluate(r'''async () => {
+                    const wait = () => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+                    document.querySelector('[data-act=errmode]').click();
+                    await wait();
+                    const model = fgView('timeline').probe(), source = fgData.read('tlData');
+                    const track = model.TRACKS[0], canvas = document.querySelector('.tl-canvas');
+                    const ctx = canvas.getContext('2d');
+                    const actual = [];
+                    let reads = 0, path = [];
+                    track.errs = new Proxy(track.errs, {get(target, key) {
+                        if (typeof key === 'string' && /^\d+$/.test(key)) reads++;
+                        return Reflect.get(target, key);
+                    }});
+                    for (const method of ['beginPath', 'moveTo', 'lineTo', 'fill']) {
+                        const original = ctx[method];
+                        ctx[method] = function (...args) {
+                            if (method === 'beginPath') path = [];
+                            else if (method === 'moveTo' || method === 'lineTo') path.push(args);
+                            else if (path.length === 3 && path[1][0] === path[0][0] + 4.5 &&
+                                     path[2][0] === path[0][0] - 4.5 && path[1][1] === path[0][1] + 8 &&
+                                     ['#e8873a', '#d32f2f'].includes(ctx.fillStyle)) actual.push([path[0][0], ctx.fillStyle]);
+                            return original.apply(this, args);
+                        };
+                    }
+                    model.zoomTo(2900000, 2920000);
+                    await wait();
+                    const [start, end] = model.view(), width = parseFloat(canvas.style.width), scale = width / (end - start);
+                    const expected = source.chains.map(chain => [(model.sStart[chain[0]] - start) * scale,
+                        chain[3] === 0 ? '#e8873a' : '#d32f2f']).filter(([x]) => x >= -6 && x <= width + 6);
+                    return {actual, expected, reads};
+                }''')
+                self.assertGreater(len(result['expected']), 20)
+                self.assertEqual(result['actual'], result['expected'])
+                self.assertLess(result['reads'], 400 if not ordered else 70)
 
     def test_independent_pages_replace_rows_and_preserve_complete_exports(self):
         self.open_report()
@@ -149,6 +250,63 @@ class ErrorPagingTest(unittest.TestCase):
                 self.assertEqual(result['ids'], expected)
                 self.assertEqual(result['sizes'], [size] * (5003 // size) + [5003 % size])
                 self.assertEqual(len(set(result['ids'])), 5003)
+
+    def test_toolbar_continues_from_the_current_call_instead_of_an_old_error(self):
+        self.open_report(6)
+        self.page.locator('[data-act=errmode]').evaluate('button => { if (button.textContent.includes("to user")) button.click(); }')
+        self.page.locator('[data-act=errnext]').evaluate('button => button.click()')
+        self.assertEqual(self.page.evaluate("fgView('timeline').probe().sel()"), 1)
+        self.page.evaluate("fgView('timeline').probe().select(4)")
+        self.assertEqual(self.page.locator('.err-label').inner_text(), '6 errors · all')
+        for action, index in (('errnext', 5), ('errnext', 0), ('errprev', 5)):
+            self.page.locator(f'[data-act={action}]').evaluate('button => button.click()')
+            self.assertEqual(self.page.evaluate("fgView('timeline').probe().sel()"), index)
+            self.assertEqual(self.page.locator('.err-label').inner_text(), f'{index + 1}/6 errors · all')
+
+    def test_occurrence_rows_anchor_toolbar_navigation_even_at_tied_times(self):
+        def mixed(data):
+            chains = data['chains']
+            data['chains'] = [chains[index] for index in (2, 1, 0, 4, 5)]
+            data['cols']['start'][2:4] = [0, 0]
+            data['cols']['flags'][3] = 1 << 25
+            data['uftrace'] = {'spaces': ['kernel', 'user'], 'user_details': {'4': {
+                'failure': {'rule': 'minus_one', 'summary': 'API error', 'note': 'Synthetic API failure'}
+            }}}
+
+        self.open_report(6, 0, mixed)
+        self.page.locator('tr[data-chain="0"] [data-error-step="1"]').evaluate('button => button.click()')
+        self.assertEqual(self.page.evaluate("fgView('timeline').probe().sel()"), 2)
+        self.assertEqual(self.page.locator('.err-label').inner_text(), '2/6 errors · all')
+        for index in (1, 3):
+            self.page.locator('[data-act=errnext]').evaluate('button => button.click()')
+            self.assertEqual(self.page.evaluate("fgView('timeline').probe().sel()"), index)
+        self.page.evaluate("fgView('timeline').probe().errors()")
+        self.page.locator('tr[data-user-error-group] [data-error-step="1"]').evaluate('button => button.click()')
+        self.assertEqual(self.page.locator('.err-label').inner_text(), '4/6 errors · all')
+        self.page.locator('[data-act=errprev]').evaluate('button => button.click()')
+        self.assertEqual(self.page.evaluate("fgView('timeline').probe().sel()"), 1)
+
+    def test_unanchored_navigation_bounds_origin_reads_in_large_error_lists(self):
+        self.open_report(8192, 0)
+        facts = self.page.evaluate('''() => {
+            const model = fgView('timeline').probe(), chains = fgData.read('tlData').chains;
+            const scope = document.querySelector('[data-act=errmode]');
+            if (scope.textContent.includes('to user')) scope.click();
+            let reads = 0;
+            for (const chain of chains) {
+                const origin = chain[0];
+                Object.defineProperty(chain, 0, {get() { reads++; return origin; }});
+            }
+            return ['errnext', 'errprev'].map(action => {
+                model.select(4096);
+                scope.click(); scope.click();
+                reads = 0;
+                document.querySelector(`[data-act=${action}]`).click();
+                return {selected:model.sel(), reads};
+            });
+        }''')
+        self.assertEqual([item['selected'] for item in facts], [4097, 4095])
+        self.assertLess(max(item['reads'] for item in facts), 24, facts)
 
     def test_occurrence_positions_survive_page_replacement_reopen_and_text_roundtrips(self):
         def update(data):
@@ -253,7 +411,101 @@ class ErrorPagingTest(unittest.TestCase):
                         self.assertEqual({row['time_mode'] for row in rows}, {mode})
                         unit = 'units' if mode == 'count' else 'ns'
                         self.assertIn('origin_start_' + unit if kind == 'occurrences' else 'start_' + unit, rows[0])
-                        self.assertIn('任务', rows[0]['task'])
+                    self.assertIn('任务', rows[0]['task_labels' if kind == 'groups' else 'task'])
+
+    def test_large_csv_preserves_all_rows_and_order_through_paging_and_text(self):
+        count = 2050
+        self.open_report(count, mixed_csv=True)
+        downloads = []
+        self.page.on('download', lambda download: downloads.append(download))
+        for kind, action, identity in (('groups', 'errors-csv', 'group_id'),
+                                       ('occurrences', 'error-occurrences-csv', 'chain_index'),
+                                       ('atomic', 'atomic-csv', 'slice_index'),
+                                       ('user', 'user-errors-csv', 'slice_index')):
+            with self.subTest(kind=kind):
+                button = self.page.locator(f'[data-act={action}]')
+                status = button.locator('+ .an-error-csv-status')
+                label = button.inner_text()
+                self.assertEqual(button.evaluate('''button => new Promise((resolve, reject) => {
+                    const status = button.nextElementSibling, clock = performance.now.bind(performance);
+                    let elapsed = 0;
+                    performance.now = () => clock() + (elapsed += 7);
+                    button.click();
+                    for (const pager of document.querySelectorAll('[data-act=errors-next], [data-act=atomic-next]')) pager.click();
+                    document.querySelector('tr[data-chains] [data-error-step="1"]').click();
+                    const observer = new MutationObserver(() => {
+                        if (!status.textContent.includes('%')) return;
+                        observer.disconnect(); clearTimeout(timeout); delete performance.now;
+                        fgSwitchView('text');
+                        resolve([button.textContent, status.textContent]);
+                    });
+                    const timeout = setTimeout(() => {
+                        observer.disconnect(); delete performance.now; reject(Error('No CSV progress'));
+                    }, 5000);
+                    observer.observe(status, {childList: true});
+                })'''), ['Cancel CSV', 'Preparing CSV… 25%'])
+                self.page.evaluate('() => new Promise(resolve => requestAnimationFrame(() => setTimeout(resolve, 20)))')
+                self.assertEqual(downloads, [])
+                self.assertEqual(status.text_content(), 'Preparing CSV… 25%')
+                with self.page.expect_download() as downloaded:
+                    self.page.evaluate("fgSwitchView('timeline')")
+                filename = 'funcgraph-user-api-failures.csv' if kind == 'user' else f'funcgraph-errors-{kind}.csv'
+                self.assertEqual(downloaded.value.suggested_filename, filename)
+                self.assertEqual(len(downloads), 1)
+                downloads.clear()
+                raw = Path(downloaded.value.path()).read_bytes()
+                self.assertTrue(raw.startswith(b'\xef\xbb\xbf'))
+                self.assertTrue(raw.endswith(b'\r\n'))
+                rows = list(csv.DictReader(io.StringIO(raw.decode('utf-8-sig'), newline='')))
+                expected = list(range(count))
+                if kind == 'user':
+                    expected = [index for offset in range(4) for index in range(count + offset, 2 * count, 4)]
+                    self.assertIn('"用户"', rows[0]['function'])
+                self.assertEqual([int(row[identity]) for row in rows], expected)
+                self.assertTrue(status.is_hidden())
+                self.assertEqual(button.inner_text(), label)
+                with self.page.expect_download() as replay:
+                    button.click()
+                self.assertEqual(Path(replay.value.path()).read_bytes(), raw)
+                downloads.clear()
+
+    def test_large_csv_cancel_control_fits_and_scope_changes_discard_pending_work(self):
+        self.context.close()
+        self.context = self.browser.new_context(viewport={'width': 320, 'height': 700}, has_touch=True, is_mobile=True)
+        self.addCleanup(self.context.close)
+        self.open_report(2060, update=lambda data: data['chains'][-1].__setitem__(6, 1))
+        button = self.page.locator('[data-act=errors-csv]')
+        status = button.locator('+ .an-error-csv-status')
+        downloads = []
+        self.page.on('download', lambda download: downloads.append(download))
+        for change in (
+            'button.click()',
+            "document.querySelector('th[data-esort=origin] button').click()",
+            "document.querySelector('[data-act=minor]').click()",
+            "document.querySelector('[data-act=adj]').click()",
+            "fgNotifyFilter('one call', new Set([1]))",
+            "document.querySelector('.an-error-head .tl-close').click()",
+            "fgView('timeline').probe().sections()",
+        ):
+            with self.subTest(change=change):
+                self.assertEqual(button.evaluate(f'''button => {{
+                    document.querySelector('.tl-detail').scrollLeft = 1e6;
+                    button.click();
+                    const visible = [button, button.nextElementSibling].every(element => {{
+                        const rect = element.getBoundingClientRect();
+                        return rect.left >= 0 && rect.right <= innerWidth && rect.width > 0;
+                    }});
+                    const result = [button.textContent, visible, button.offsetHeight >= 44,
+                        document.querySelector('[data-act=atomic-csv]').disabled];
+                    {change};
+                    return result;
+                }}'''), ['Cancel CSV', True, True, True])
+                self.page.evaluate('() => new Promise(resolve => requestAnimationFrame(() => setTimeout(resolve, 20)))')
+                self.assertEqual(downloads, [])
+                self.assertTrue(status.is_hidden())
+                self.page.evaluate("fgNotifyFilter('', null); fgView('timeline').probe().errors();")
+                self.assertEqual(button.inner_text(), 'Export groups CSV')
+                self.assertFalse(self.page.locator('[data-act=atomic-csv]').is_disabled())
 
     def test_empty_single_scope_and_atomic_only_populations_have_no_paging_clutter(self):
         for count, atomic_count in ((0, 0), (1, 0), (0, 1), (200, 100)):
@@ -307,6 +559,57 @@ class ErrorPagingTest(unittest.TestCase):
                     if height < 480:
                         self.page.locator('[data-detail-expand]').tap()
                         self.assertEqual(self.page.locator('.an-error-table th').first.evaluate('node => getComputedStyle(node).position'), 'static')
+
+    def test_mixed_pagers_are_reachable_at_each_table_start_without_scrolling_its_rows(self):
+        def mixed(data):
+            data['chains'] = data['chains'][:205]
+            data['atomic'] = data['atomic'][:101]
+            data['uftrace'] = {'spaces': ['kernel', 'user'], 'user_details': {}}
+            for index in range(205, 406):
+                data['cols']['flags'][index] = 1 << 25
+                data['uftrace']['user_details'][str(index + 1)] = {
+                    'failure': {'rule': 'minus_one', 'summary': 'API error', 'note': 'Synthetic user API failure'}
+                }
+
+        self.context.close()
+        self.context = self.browser.new_context(viewport={'width': 320, 'height': 700}, has_touch=True, is_mobile=True)
+        self.addCleanup(self.context.close)
+        self.context.add_init_script("localStorage.setItem('fgTl.detailFrac', '0.18')")
+        modes = [('atomic', 'an-atomic-table', 100, 1), ('user-errors', 'an-user-error-table', 200, 1),
+                 ('errors', 'an-error-table', 200, 5)]
+        for short in (True, False):
+            self.open_report(406, update=mixed)
+            if not short:
+                self.page.locator('[data-detail-expand]').tap()
+            self.assertEqual(self.page.locator('.tl-detail').evaluate("pane => pane.classList.contains('tl-detail-short')"), short)
+            current = [mode[2] for mode in modes]
+            for slot, (kind, table_class, _, last_count) in enumerate(modes):
+                with self.subTest(short=short, kind=kind):
+                    table = self.page.locator('.' + table_class)
+                    table.evaluate('''(table, short) => {
+                        const pane = table.closest('.tl-detail');
+                        pane.scrollLeft = pane.scrollWidth;
+                        pane.scrollTop += table.getBoundingClientRect().top - pane.getBoundingClientRect().top
+                            - pane.clientTop - (short ? 85 : 0);
+                    }''', short)
+                    next_button = self.page.locator(f'[data-act={kind}-next]')
+                    point = self.page.evaluate('''kind => {
+                        const button = document.querySelector(`[data-act=${kind}-next]`);
+                        const rect = button.getBoundingClientRect(), x = rect.left + rect.width / 2, y = rect.top + rect.height / 2;
+                        return button.contains(document.elementFromPoint(x, y)) ? [x, y] : null;
+                    }''', kind)
+                    self.assertIsNotNone(point, 'Next must be tappable at the start of its own table')
+                    self.page.touchscreen.tap(*point)
+                    current[slot] = last_count
+                    self.assertEqual([self.page.locator(f'.{item[1]} tbody tr').count() for item in modes], current)
+                    previous = self.page.locator(f'[data-act={kind}-prev]')
+                    self.assertTrue(next_button.is_disabled())
+                    self.assertTrue(previous.evaluate('''button => {
+                        const rect = button.getBoundingClientRect();
+                        return button === document.activeElement && button.contains(document.elementFromPoint(
+                            rect.left + rect.width / 2, rect.top + rect.height / 2));
+                    }'''), 'Focus must move to a visible previous-page button')
+                    self.assertFalse(self.page.evaluate('document.documentElement.scrollWidth > innerWidth'))
 
     def test_actual_parser_and_cli_sidecar_keep_every_original_error_chain(self):
         trace = Path(self.directory.name) / 'failures.txt'

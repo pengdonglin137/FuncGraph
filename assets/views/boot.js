@@ -7,11 +7,21 @@
     const apis = {};
     const pending = {};
     const pausedSources = {};
+    const textApi = { resize: () => fgTextWindow?.resize(), suspend: () => fgTextWindow?.suspend() };
     let current = 'text';
     let textScroll = 0;
     let textScrollLeft = 0;
     let textSelection = null;
     let textFailed = false;
+    let useTextWindow = false;
+    let returnJump = null;
+    let textJumpLine = null;
+    const jumpButton = document.getElementById('textTimelineJump');
+    const jumpTarget = jumpButton?.querySelector('.text-jump-target');
+    const jumpNumber = jumpTarget?.querySelector('.text-jump-number');
+    const returnButton = document.getElementById('fgJumpReturn');
+    const jumpStatus = document.getElementById('fgJumpStatus');
+    const returnHome = returnButton?.parentElement;
     const get = k => (typeof lsGet === 'function' ? lsGet(k) : null);
     const set = (k, v) => { if (typeof lsSet === 'function') lsSet(k, v); };
     if (typeof __tlBoot === 'function' || document.getElementById('tlData')) {
@@ -19,10 +29,14 @@
             staged: window.fgData.external('tlData') || window.fgData.length('tlData') >= 1024 * 1024 };
     }
     if (fgTextDeferred()) {
-        const chunked = !!document.getElementById('fgTextChunks');
+        const textCatalog = document.getElementById('fgTextChunks');
+        const chunked = !!textCatalog;
+        const renderer = new URL(location.href).searchParams.get('text');
+        useTextWindow = chunked && (renderer === 'windowed' ||
+            (renderer !== 'full' && textCatalog.dataset.defaultRenderer === 'windowed'));
         function* textSteps() {
-            if (chunked && new URL(location.href).searchParams.get('text') === 'windowed') {
-                try { return yield* fgWindowedTextSteps(); }
+            if (useTextWindow) {
+                try { yield* fgWindowedTextSteps(); return textApi; }
                 catch (error) { if (fgTextInitialized) textFailed = true; throw error; }
             }
             const content = document.getElementById('content');
@@ -79,9 +93,7 @@
                 const navigation = yield* fgPrepareTextNavigation(rows, model);
                 if (fgTextOrder === 'task') yield* fgTextModel.prepareOrder(model, 'task');
                 yield { label: 'Finishing Text layout…', paint: true };
-                content.classList.toggle('text-layout-auto', chunked && window.CSS?.supports('content-visibility: auto') &&
-                    CSS.supports('contain-intrinsic-block-size: calc(2 * (max(13px * 1.5 + 4px, 21px) + 2px))') &&
-                    CSS.supports('selector(:has(*))'));
+                content.classList.toggle('text-layout-auto', chunked && fgSupportsTextLayout());
                 content.replaceChildren(fragment);
                 content.removeAttribute('data-fg-text');
                 try { fgInitText(true, model, navigation); }
@@ -94,7 +106,7 @@
                 window.fgData.release('fgTextIndex');
                 window.fgData.releaseTextChunks();
                 document.querySelector('.controls').inert = false;
-                return {};
+                return textApi;
             } finally {
                 parser.replaceChildren();
                 fragment.replaceChildren();
@@ -103,7 +115,7 @@
         views.text = { el: 'content', data: chunked ? [] : ['fgText'], asynchronous: chunked, staged: true, steps: textSteps, init: () => {
             const steps = textSteps();
             while (!steps.next().done) {}
-            return {};
+            return textApi;
         } };
         document.querySelector('.controls').inert = true;
         const windowButton = document.getElementById('textWindowBtn');
@@ -124,6 +136,7 @@
         return apis[state.name];
     }
     function backToText() {
+        if (returnJump?.to === current) { returnFromJump(); return; }
         const next = current === 'text' && views.text ? 'timeline' : 'text';
         window.fgSwitchView(next);
         const tab = pageChrome().tabs.find(button => button.dataset.view === next);
@@ -162,6 +175,13 @@
             retry.addEventListener('click', () => reload ? window.location.reload() : window.fgSwitchView(state.name));
             state.el.querySelector('.fg-loading').appendChild(retry);
         }
+        if (state.name === 'text' && useTextWindow) {
+            const full = document.createElement('button');
+            full.type = 'button';
+            full.textContent = 'Open Full Text';
+            full.addEventListener('click', () => fgOpenTextRenderer('full'));
+            state.el.querySelector('.fg-loading').appendChild(full);
+        }
         state.controller.abort();
         state.resolve(null);
         console.error('[' + state.name + '] startup failed:', error);
@@ -195,24 +215,29 @@
         return true;
     }
     function schedule(state, first) {
+        const run = () => {
+            if (pending[state.name] !== state) return;
+            const start = performance.now();
+            try {
+                let result;
+                do {
+                    const input = state.input;
+                    state.input = undefined;
+                    result = state.steps.next(input);
+                    if (result.done) { complete(state, result.value); return; }
+                    const paint = updateStatus(state, result.value);
+                    if (waitForStep(state, result.value)) return;
+                    if (paint) { schedule(state, true); return; }
+                } while (performance.now() - start < 8);
+                schedule(state);
+            } catch (error) { fail(state, error); }
+        };
         const next = () => {
-            state.timer = setTimeout(() => {
-                if (pending[state.name] !== state) return;
-                const start = performance.now();
-                try {
-                    let result;
-                    do {
-                        const input = state.input;
-                        state.input = undefined;
-                        result = state.steps.next(input);
-                        if (result.done) { complete(state, result.value); return; }
-                        const paint = updateStatus(state, result.value);
-                        if (waitForStep(state, result.value)) return;
-                        if (paint) { schedule(state, true); return; }
-                    } while (performance.now() - start < 8);
-                    schedule(state);
-                } catch (error) { fail(state, error); }
-            }, 0);
+            if (state.name === 'text' && useTextWindow && typeof window.scheduler?.postTask === 'function') {
+                window.scheduler.postTask(run, { signal: state.controller.signal }).catch(error => {
+                    if (pending[state.name] === state) fail(state, error);
+                });
+            } else state.timer = setTimeout(run, 0);
         };
         if (first) state.frame = requestAnimationFrame(() => {
             state.frame = requestAnimationFrame(next);
@@ -282,18 +307,20 @@
         const signal = options.signal;
         const check = () => fgValidateTextLine(number, null, signal);
         const validate = element => fgValidateTextLine(number, element, signal);
-        const obtain = api => {
+        const obtain = () => {
             check();
             const read = () => {
                 check();
-                return api?.ensureLine ? api.ensureLine(number, options) :
+                const renderer = fgTextWindow || apis.text;
+                return renderer?.ensureLine ? renderer.ensureLine(number, options) :
                     fgTextDeferred() ? null : document.getElementById('L' + number);
             };
             const reveal = fgRevealTextEvent(number);
             return reveal?.then ? reveal.then(read) : read();
         };
         check();
-        const value = apis.text?.ensureLine || !fgTextDeferred() ? obtain(apis.text) : Promise.resolve(open('text')).then(obtain);
+        const canRead = !fgTextDeferred() || apis.text?.ensureLine;
+        const value = canRead ? obtain() : Promise.resolve(open('text')).then(obtain);
         if (!value?.then) return validate(value);
         return new Promise((resolve, reject) => {
             const cleanup = () => signal?.removeEventListener('abort', cancel);
@@ -314,6 +341,7 @@
         const tabs = one('.view-tabs');
         chrome = {
             hide: [one('.controls'), document.getElementById('content'), document.getElementById('progressBar'),
+                   document.getElementById('textWindowLoading'),
                    document.getElementById('floatingToggle')].filter(Boolean),
             wide: [one('.container')].filter(Boolean),
             top: [one('.page-header'), tabs].filter(Boolean),
@@ -355,9 +383,9 @@
             for (const range of ranges) selection.addRange(range);
         }
     }
-    window.fgSwitchView = function (which) {
+    function switchView(which, nextReturn = null) {
         if (which !== 'text' && !views[which]) return;
-        if (which !== 'text') clearCaretSelection();
+        if (which !== 'text' && current !== 'text') clearCaretSelection();
         if (which === current) {
             if (which === 'text' && !views.text) return;
             const api = open(which);
@@ -366,6 +394,8 @@
         }
         if (current === 'text') {
             suspendTextSelection();
+            fgCancelTextRowGestures();
+            fgCancelWindowHandoff();
             fgCancelTextNavigation();
             textScroll = window.scrollY;
             textScrollLeft = pageChrome().textViewport?.scrollLeft || 0;
@@ -375,6 +405,7 @@
         pausedSources[current] = fgCancelSources(document.getElementById(current === 'text' ? 'content' : views[current]?.el));
         apis[current]?.suspend?.();
         cancel(current);
+        setReturnJump(nextReturn);
         for (const [name, v] of Object.entries(views)) {
             const el = document.getElementById(v.el);
             if (el) el.classList.toggle('fg-view-on', name === which);
@@ -393,10 +424,16 @@
         const max = off && document.body.classList.contains('tl-max');
         pc.top.forEach(e => e.classList.toggle('fg-off', max));
         document.body.dataset.view = which;
-        pc.tabs.forEach(b => b.classList.toggle('active', b.dataset.view === which));
+        pc.tabs.forEach(tab => {
+            const active = tab.dataset.view === which;
+            tab.classList.toggle('active', active);
+            if (active) tab.setAttribute('aria-current', 'true');
+            else tab.removeAttribute('aria-current');
+        });
         current = which;
         set('view', which);
         const sourceRoot = document.getElementById(which === 'text' ? 'content' : views[which]?.el);
+        fgResumeSourceLayout(sourceRoot);
         for (const source of pausedSources[which] || []) {
             if (source.isConnected && sourceRoot?.contains(source)) fgFill(source);
         }
@@ -417,21 +454,192 @@
             if (apis[which] && apis[which].resize) apis[which].resize();
             return api;
         }
+    }
+    function setReturnJump(jump) {
+        returnJump = jump;
+        if (jumpStatus?.textContent) jumpStatus.textContent = '';
+        jumpStatus?.classList.remove('fg-jump-pending');
+        if (!returnButton) return;
+        returnButton.hidden = !jump;
+        if (jump) {
+            const viewLabel = jump.from === 'text' ? 'Text' : 'Timeline';
+            const label = 'Return to ' + viewLabel;
+            returnButton.firstElementChild.textContent = label;
+            returnButton.lastElementChild.textContent = '← ' + viewLabel;
+            returnButton.setAttribute('aria-label', label);
+            returnButton.title = label;
+        }
+    }
+    function beginTraceJump(which, line = null, origin = null) {
+        const jump = which !== current && returnButton ? { from: current, to: which, line, origin,
+            scroll: window.scrollY, fullscreen: apis[current]?.traceJumpFullscreen?.(), filter: window.fgFilterState.text,
+            viewport: current === 'timeline' && origin ? [innerWidth, innerHeight] : null } : null;
+        return switchView(which, jump);
+    }
+    function isJumpOriginVisible(origin, minimumTop = 0) {
+        if (!origin?.isConnected || origin.matches(':disabled')) return false;
+        const bounds = origin.getBoundingClientRect(), viewport = window.visualViewport;
+        const viewportLeft = viewport?.offsetLeft ?? 0, viewportTop = viewport?.offsetTop ?? 0;
+        const left = Math.max(bounds.left, viewportLeft), top = Math.max(bounds.top, viewportTop, minimumTop);
+        const right = Math.min(bounds.right, viewportLeft + (viewport?.width ?? innerWidth));
+        const bottom = Math.min(bounds.bottom, viewportTop + (viewport?.height ?? innerHeight));
+        return left < right && top < bottom && origin.contains(document.elementFromPoint((left + right) / 2, (top + bottom) / 2));
+    }
+    function restoreJumpFocus(origin, minimumTop = 0) {
+        if (!isJumpOriginVisible(origin, minimumTop)) return false;
+        origin.focus({ preventScroll: true });
+        return document.activeElement === origin;
+    }
+    function restoreTimelineJumpFocus(jump) {
+        const { origin, viewport } = jump;
+        if (restoreJumpFocus(origin)) return true;
+        if (!viewport || (viewport[0] === innerWidth && viewport[1] === innerHeight) ||
+            !origin?.isConnected || origin.matches(':disabled') || !origin.getClientRects().length ||
+            getComputedStyle(origin).visibility !== 'visible') return false;
+        origin.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'instant' });
+        return restoreJumpFocus(origin);
+    }
+    function textJumpInset() {
+        const inset = Math.max(0, document.querySelector('.controls')?.getBoundingClientRect().bottom || 0);
+        return fgTextWindow?.taskContextBottom(inset) ?? inset;
+    }
+    function placeTraceReturn(fullscreenToolbar) {
+        if (!returnButton) return;
+        if (fullscreenToolbar && returnJump?.to === 'timeline') {
+            if (returnButton.parentElement !== fullscreenToolbar) {
+                fullscreenToolbar.prepend(returnButton);
+                fullscreenToolbar.append(jumpStatus);
+            }
+        } else if (returnButton.parentElement !== returnHome) {
+            returnHome.append(returnButton, jumpStatus);
+        }
+    }
+    async function returnFromJump() {
+        const jump = returnJump;
+        if (!jump || current !== jump.to) return;
+        if (document.fullscreenElement?.contains(returnButton)) {
+            try { await document.exitFullscreen(); }
+            catch (_) { return; }
+            if (returnJump !== jump || current !== jump.to) return;
+        }
+        const previousTextJob = jump.from === 'text' ? fgTextWindow?.settled : null;
+        switchView(jump.from);
+        if (jump.from === 'text') {
+            setTextJumpLine(jump.line);
+            const textJob = fgTextWindow?.settled;
+            if (textJob && textJob !== previousTextJob) {
+                const textTab = pageChrome().tabs.find(tab => tab.dataset.view === 'text');
+                textTab?.focus({ preventScroll: true });
+                try { await textJob; } catch (_) { return; }
+                if (current !== 'text' || document.activeElement !== textTab || fgTextWindow?.settled !== textJob) return;
+            }
+            const row = jump.line === null ? null : document.getElementById('L' + jump.line);
+            if (row?.hasAttribute('tabindex') && !fgTextDeferred() && restoreJumpFocus(row, textJumpInset())) {
+                if (fgTextInitialized && keyboardSelectedLine !== row) fgSelectMountedTextLine(row, false, false);
+                return;
+            }
+        } else if (jump.from === 'timeline') {
+            if (jump.scroll) window.scrollTo({ top: jump.scroll, behavior: 'instant' });
+            const fullscreenExit = jump.fullscreen && apis.timeline?.restoreTraceJumpFullscreen?.(jump.fullscreen);
+            if (restoreTimelineJumpFocus(jump)) return;
+            if (fullscreenExit) { fullscreenExit.focus(); return; }
+        }
+        pageChrome().tabs.find(tab => tab.dataset.view === jump.from)?.focus({ preventScroll: true });
+    }
+    window.fgSwitchView = which => switchView(which);
+    window.fgBeginTraceJump = beginTraceJump;
+    window.fgReturnFromPendingTextJump = () => {
+        if (current !== 'text' || returnJump?.from !== 'timeline' || returnJump.to !== current ||
+            !fgTextWindow?.jumpPending || !fgTextLineRequest?.current()) return false;
+        returnFromJump();
+        return true;
     };
+    window.fgReturnToTextOrigin = number => {
+        const jump = returnJump;
+        if (current !== 'timeline' || jump?.from !== 'text' || jump.line !== number ||
+            !jump.origin || document.getElementById('L' + number) !== jump.origin ||
+            jump.filter !== window.fgFilterState.text) return false;
+        returnFromJump();
+        return true;
+    };
+    window.fgPlaceTraceReturn = placeTraceReturn;
+    window.fgSetTraceJumpStatus = (message, pending = false) => {
+        if (!jumpStatus || returnJump?.to !== current ||
+            jumpStatus.textContent === message && jumpStatus.classList.contains('fg-jump-pending') === pending) return false;
+        jumpStatus.classList.toggle('fg-jump-pending', pending);
+        jumpStatus.textContent = message;
+        return true;
+    };
+    function setTextJumpLine(number) {
+        if (!jumpButton || number === textJumpLine) return;
+        textJumpLine = number;
+        jumpButton.disabled = number === null;
+        const suffix = number === null ? '' : ' · L' + number;
+        jumpNumber.textContent = number === null ? '' : 'L' + number;
+        jumpTarget.hidden = number === null;
+        jumpButton.setAttribute('aria-label', 'In Timeline' + suffix);
+        jumpButton.title = number === null ? 'Select a trace row first' : 'Locate trace line ' + number + ' in Timeline';
+    }
+    window.fgSetTextJumpLine = setTextJumpLine;
+    function textLineAt(target) {
+        const line = target.closest?.('#content .line-container[data-line-number]');
+        const number = Number(line?.dataset.lineNumber);
+        return Number.isSafeInteger(number) && number > 0 ? number : null;
+    }
+    function jumpToTimeline(number, keyboard = false) {
+        if (number === null) return;
+        setTextJumpLine(number);
+        const row = document.getElementById('L' + number);
+        const origin = row && isJumpOriginVisible(row, textJumpInset()) ? row : null;
+        const ready = beginTraceJump('timeline', number, origin);
+        const jump = returnJump;
+        const tab = pageChrome().tabs.find(tab => tab.dataset.view === 'timeline');
+        tab?.focus({ preventScroll: true });
+        Promise.resolve(ready).then(api => {
+            if (api && current === 'timeline' && returnJump === jump)
+                api.revealLine(number, keyboard && document.activeElement === tab);
+        });
+    }
+    jumpButton?.addEventListener('click', event => {
+        if (current === 'text') jumpToTimeline(textJumpLine, event.detail === 0);
+    });
+    returnButton?.addEventListener('click', returnFromJump);
+    if (jumpButton) document.addEventListener('focusin', event => {
+        if (current !== 'text') return;
+        const number = textLineAt(event.target);
+        if (number !== null) setTextJumpLine(number);
+    });
     window.fgCurrentView = () => current;
-    // Alt+click on a text line opens it in the timeline
     document.addEventListener('click', ev => {
-        if (!ev.altKey || current !== 'text' || !views.timeline) return;
-        const line = ev.target.closest && ev.target.closest('.line-container');
-        if (!line) return;
+        if (current !== 'text' || !jumpButton) return;
+        const number = textLineAt(ev.target);
+        if (number === null) return;
+        if (!ev.altKey) {
+            if (!ev.ctrlKey && !ev.metaKey && !ev.shiftKey && window.getSelection()?.isCollapsed !== false) setTextJumpLine(number);
+            return;
+        }
         ev.preventDefault();
         ev.stopPropagation();
-        const n = parseInt(line.getAttribute('data-line-number'), 10);
-        Promise.resolve(window.fgSwitchView('timeline')).then(api => {
-            if (api && current === 'timeline') api.revealLine(n);
-        });
+        jumpToTimeline(number);
     }, true);
+    if (jumpButton) document.addEventListener('keydown', event => {
+        if (event.key !== 'Enter' || !event.altKey || event.ctrlKey || event.metaKey || event.shiftKey ||
+            event.defaultPrevented || event.isComposing || event.keyCode === 229 || event.repeat || current !== 'text') return;
+        const row = event.target;
+        if (!row.matches?.('#content .line-container[data-line-number]') || row.isContentEditable ||
+            fgTextDeferred() || window.getSelection()?.isCollapsed === false) return;
+        const number = textLineAt(row);
+        if (number === null) return;
+        event.preventDefault();
+        jumpToTimeline(number, true);
+    });
     document.addEventListener('keydown', ev => {
+        if (ev.key === 'Escape' && current === 'text' && fgWindowHandoff && !fgWindowHandoff.signal.aborted) {
+            fgCancelWindowHandoff();
+            ev.preventDefault();
+            ev.stopImmediatePropagation();
+            return;
+        }
         if (ev.key !== 'Escape' || !pending[current]) return;
         ev.preventDefault();
         ev.stopImmediatePropagation();

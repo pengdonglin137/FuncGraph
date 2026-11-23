@@ -142,3 +142,66 @@ this is an arranged documentation view, not the default saved pane height.
 
 No dependency pin, native payload, public capture, public sample HTML, version,
 push or release change is part of this iteration.
+
+## Pager layout follow-up (2026-11-19)
+
+A mixed synthetic report checks 101 atomic, 201 user API, and 205 kernel error
+groups in a 320 × 700 touch viewport. With the pane scrolled to its right edge,
+the test positions each table at the start of its rows and taps the measured
+button coordinates without letting Playwright scroll to the button. Previously
+all six first-page taps were unreachable (three sections, short and expanded
+panes). Each now turns only its own page and moves focus to the visible
+Previous button when Next becomes disabled. This checks scroll reachability,
+not wall-clock paging performance. Single-page sections still omit pagination;
+CSV coverage and retained occurrence cursors remain independent of paging.
+
+## Shared navigation anchor
+
+Previous / Next error and the `E` shortcuts no longer continue from a stale
+occurrence after a different call is selected. Without an anchored occurrence,
+they use the current call's start (or the window start if no call is selected)
+and wrap at either end. Jumping from a kernel or user API occurrence in the
+Errors table anchors that exact occurrence if it is in the toolbar scope.
+Equal timestamps keep their original order: kernel chains first, then user API
+hints in call order. This does not change table grouping or exports.
+
+The initial seek uses binary search on the existing chronological list. In a
+Chromium fixture of 8,192 chains, jumping forward and backward from the middle
+previously read 4,100 and 4,099 origin entries respectively; the regression
+now bounds each handler to fewer than 24 reads, including detail selection.
+These are work counts, not wall-clock or rendering benchmarks. Logs:
+`build/validation/20261119-error-navigation-anchor/`.
+
+## Cooperative CSV export (2026-11-20)
+
+Errors exports below 2,048 rows still download synchronously. Larger exports use
+the shared Timeline CSV scheduler to encode batches of 128 rows and yield between
+work chunks. Progress appears next to the active export button, which becomes
+**Cancel CSV**. One export runs at a time. Paging and occurrence jumps preserve
+the export; Text pauses it and Timeline resumes it. Replacing or closing the
+panel cancels pending work, including on sort, filter, minor or Overhead changes.
+A download starts only after the entire CSV is ready.
+
+Three interleaved A/B rounds in headless Chromium 145 at 4× CPU throttling,
+with 50,000 rows per export (synthetic, mixed kernel/user input). Figures are
+medians in ms after the panel is open; file-ready stops at the download trigger,
+not disk persistence. Maximum frame gap is the largest consecutive animation
+frame interval per run, including the interval from click to first frame.
+
+| Export | Click handler | Maximum frame gap | File ready |
+| --- | ---: | ---: | ---: |
+| Kernel groups | 261.5 → 2.0 | 263.3 → 45.6 | 261.5 → 423.2 |
+| Kernel occurrences | 345.1 → 2.2 | 347.4 → 25.1 | 344.7 → 511.7 |
+| Atomic calls | 279.6 → 2.1 | 282.5 → 26.7 | 279.5 → 399.7 |
+| User API hints | 277.5 → 2.3 | 287.6 → 25.1 | 277.4 → 397.0 |
+
+The large files take longer to become ready, but the UI can respond while
+they are prepared. All four exports matched by byte length and SHA-256.
+On the real offline `ping3` capture, the two available exports (kernel groups
+and occurrences) stayed immediate and also matched by SHA-256. Browser tests
+cover all four full row sequences, pause/resume after progress, scope changes,
+cancel, and a 320px touch viewport with the table scrolled right.
+
+Reproduce with `python3 tests/benchmark_error_csv.py before.html after.html`
+(add `--rows 0` for the original capture). Local measurements are in
+`build/benchmarks/20261120-error-csv/`.

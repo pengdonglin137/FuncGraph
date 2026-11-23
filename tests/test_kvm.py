@@ -274,6 +274,18 @@ class KvmBrowserTest(unittest.TestCase):
         self.page.mouse.click(point['x'], point['y'])
         self.page.locator('.tl-kvm-table').wait_for()
 
+    def test_double_click_zooms_the_same_kvm_interval(self):
+        self.open_report()
+        self.click_window()
+        self.page.evaluate('fgView("timeline").probe().zoomTo(0, 5000, -1)')
+        point = self.window_point()
+        view = 'fgView("timeline").probe().view()'
+        previous = self.page.evaluate(view)
+        self.page.mouse.dblclick(point['x'], point['y'])
+        current = self.page.evaluate(view)
+        self.assertLess(current[1] - current[0], previous[1] - previous[0])
+        self.assertIn('Guest window · CPUID', self.page.locator('.tl-detail-title').inner_text())
+
     def test_kvm_only_single_file_hover_select_navigation_original_events_and_csv(self):
         self.open_report()
         self.assertIn('KVM', self.page.locator('.tl-event-only').inner_text())

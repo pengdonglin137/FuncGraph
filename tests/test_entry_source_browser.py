@@ -14,9 +14,11 @@ except ImportError:
     sync_playwright = None
 
 
-TRACE = '# tracer: function_graph\n 0)               |  entry() {\n'
+TRACE_HEADER = '# tracer: function_graph\n'
+TRACE = TRACE_HEADER + ' 0)               |  entry() {\n'
 LEAF = ' 0)   1.000 us    |    leaf(value=5);\n'
 EXIT = ' 0)   2.000 us    |  } /* entry */\n'
+CALL_SITE_COUNT = 300
 
 
 @unittest.skipIf(sync_playwright is None, 'playwright not installed')
@@ -33,11 +35,16 @@ class NativeEntrySourceBrowserTest(unittest.TestCase):
                           ('sidecar', ['--timeline', '--report-mode', 'sidecar'], 1),
                           ('windowed', ['--timeline', '--report-mode', 'sidecar'], 4500),
                           ('mixed-caller.html', ['--timeline'], 1),
+                          ('many-callers.html', ['--timeline'], 1),
                           ('kept.html', ['--timeline', '--no-text-view', '--keep-source'], 1)]
         for destination, extra, count in configurations:
             content = TRACE + LEAF * count + EXIT
             if destination == 'mixed-caller.html':
                 content = content.replace('entry() {', 'entry() { /* <-main+0x1/0x20 */')
+            if destination == 'many-callers.html':
+                content = TRACE_HEADER + ''.join(
+                    f' 0)   1.000 us    |  leaf(); /* <-caller_{index}+0x1/0x20 */\n'
+                    for index in range(CALL_SITE_COUNT))
             trace.write_text(content)
             cls.kernel.run(str(trace), *options, *extra, out=destination)
         cls.server = create_server(root)
@@ -79,6 +86,8 @@ class NativeEntrySourceBrowserTest(unittest.TestCase):
                 button.click()
                 source = page.locator('#line_2_content')
                 source.wait_for(state='visible')
+                self.assertEqual(button.get_attribute('aria-expanded'), 'true')
+                source.locator('.source-line.current-line').wait_for()
                 self.assertIn('kernel function entry', source.inner_text())
                 self.assertIn('int b;', source.inner_text())
                 self.assertEqual(source.locator('[data-source-position] a').get_attribute('href'),
@@ -86,6 +95,7 @@ class NativeEntrySourceBrowserTest(unittest.TestCase):
                 self.assertEqual(source.locator('.source-line.current-line').count(), 1)
                 button.click()
                 source.wait_for(state='hidden')
+                self.assertEqual(button.get_attribute('aria-expanded'), 'false')
                 page.locator('#L3').focus()
                 page.locator('#L3').press('Enter')
                 source.wait_for(state='visible')
@@ -94,6 +104,8 @@ class NativeEntrySourceBrowserTest(unittest.TestCase):
                 page.locator('#filterInput').fill('func:leaf')
                 page.locator('#filterInput').press('Enter')
                 page.wait_for_function("!fgFilterProgress && fgFilterState.text === 'func:leaf'")
+                source.locator('.source-line.current-line').wait_for(state='attached')
+                self.assertEqual(button.get_attribute('aria-expanded'), 'true' if source.is_visible() else 'false')
                 self.assertIn('int b;', page.locator('#line_2_content').inner_text())
                 page.close()
 
@@ -122,3 +134,49 @@ class NativeEntrySourceBrowserTest(unittest.TestCase):
                     page.locator('.tl-cs .source-line').first.wait_for(state='attached')
                     self.assertTrue(page.locator('.tl-cs > summary').text_content().startswith('Call site source'))
                 page.close()
+
+    def test_timeline_bounds_call_site_cache_without_changing_revisited_positions(self):
+        page = self.open_report('many-callers.html')
+        result = page.evaluate('''async count => {
+            await fgSwitchView('timeline');
+            const model = fgView('timeline').probe();
+            const trace = fgData.read('tlData');
+            const chains = trace.cols.caller.map(index => trace.sources.callers[index]);
+            const known = new Set(chains);
+            const set = Map.prototype.set;
+            let cache, peak = 0;
+            Map.prototype.set = function (key, value) {
+                const result = set.call(this, key, value);
+                if (known.has(key) && value?.at && typeof value.inl === 'boolean') {
+                    cache = this;
+                    peak = Math.max(peak, this.size);
+                }
+                return result;
+            };
+            const site = index => {
+                model.select(index);
+                const link = document.querySelector('.tl-cs-at [data-callsite-position]');
+                return link && [link.textContent, link.getAttribute('href'), link.parentElement.textContent];
+            };
+            try {
+                const first = site(0), second = site(1);
+                for (let index = 2; index < count; index++) {
+                    if (index % 32 === 0) site(0);
+                    site(index);
+                }
+                const hotStillCached = cache?.has(chains[0]);
+                const coldStillCached = cache?.has(chains[1]);
+                return {first, second, revisited:site(1), peak, hotStillCached, coldStillCached,
+                    selected:model.sel(), distinct:known.size};
+            } finally {
+                Map.prototype.set = set;
+            }
+        }''', CALL_SITE_COUNT)
+        self.assertTrue(result['first'], result)
+        self.assertTrue(result['second'], result)
+        self.assertEqual(result['distinct'], CALL_SITE_COUNT, result)
+        self.assertEqual(result['peak'], 256, result)
+        self.assertTrue(result['hotStillCached'], result)
+        self.assertFalse(result['coldStillCached'], result)
+        self.assertEqual(result['revisited'], result['second'])
+        self.assertEqual(result['selected'], 1)

@@ -139,6 +139,93 @@ apart from build time; complete HTML matches after substituting the changed
 runtime and normalizing generation metadata. All five regenerated public
 screenshots are byte-identical.
 
+## Text-to-Timeline line lookup
+
+The first Text-to-Timeline jump builds its line index on demand. When the
+recorded line span is at most twice the number of recorded calls, one typed
+array stores both exact matches and the preceding-entry fallback. Exact
+entry and exit matches still take priority; gaps never fall back to an exit
+or to a synthetic frame. Sparse line ranges store sorted call ordinals
+rather than allocating by line span. The density check stops as soon as
+the span exceeds the limit.
+
+In Chromium 145, on the 58,539 calls from `ping3`, cold construction plus an
+exact lookup went from **3.0 ms** to **0.9 ms** (median); 93 subsequent gap
+lookups went from **4.9 ms** to below timer resolution. With the same columns
+repeated at distinct line offsets (468,312 calls), the cold median went from
+**36.6 ms** to **6.6 ms**. Spacing line numbers 1,000 apart retained the sparse
+path and its **4.7 ms** median for 128 gap lookups. These measurements cover
+lookup work, not view setup, painting, or total jump latency. Local benchmark
+and logs: `build/benchmarks/20261119-trace-jump/`.
+
+The earlier sparse gap optimization recorded the minimum and maximum entry line
+and the earliest maximum's ordinal per block of 256 calls. Subsequent gap
+queries skip blocks that cannot contain a better predecessor. If the target
+falls in the portion shared by every block's bounds, the lookup runs the
+original linear scan instead. Exact matching and duplicate tie order are
+unchanged. Those summaries used 12 bytes per block, in addition to the exact
+map built on the first sparse jump.
+
+In nine alternating Chromium 145 pairs at 4× CPU throttling, spreading the
+`ping3` line numbers apart and repeating the columns eight times (468,312
+calls) took **372.9 → 2.5 ms** for 256 warm gap lookups. The first gap took
+**1.5 ms** in both versions. Shuffling those same calls took **1,221.4 →
+1,230.3 ms** for the warm batch and **6.0 → 8.0 ms** for the first gap: the
+optimization does not speed up highly overlapping blocks. The original
+dense report's cold exact lookup stayed at **3.2 ms**. These are isolated
+lookup measurements, not full UI jump latency. Benchmark and raw data:
+`build/benchmarks/sparse-timeline-jump.DPQxYU/`.
+
+The current sparse index replaces both that map and the block summaries.
+It retains separate typed orders for entry and exit lines, reuses existing
+order when monotonic, and uses stable radix passes for large unordered
+columns. Both exact matches and gaps use binary searches. The latest
+ordinal still wins an exact duplicate, while the earliest ordinal at the
+preceding **entry** line still wins a gap. The retained indexes use four
+bytes per indexed entry or nonzero exit; building them still needs scratch
+space and runs on the caller's thread.
+
+In a follow-up Chromium 145 comparison at 4× CPU throttling, building the
+index and finding the first exact match in the 468,312-call sparse replay
+went from **151.6 → 38.7 ms**. With shuffled calls it went from
+**158.2 → 52.7 ms**, and 256 warm gap lookups went from **1,133.8 → 0.9 ms**.
+The dense path is unchanged. These timings isolate lookups; the browser
+still has separate rendering costs. Benchmark and data:
+`build/benchmarks/sparse-line-cold.2EKJid/`.
+
+## Cold call details
+
+On first selection in a large track, recorded call navigation checks at most
+256 positions per direction before waiting for the complete parent-link index.
+It only enables a button early when it can prove the exact target. The time
+breakdown and child preview still use the complete index; enabling every
+button early does not bring that background work into an Overhead click.
+
+On `ping3` (58,539 calls), eight alternating Chromium pairs at 4× CPU
+throttling gave first-child button readiness medians of **81.9 → 15.1 ms**
+and **78.6 → 14.8 ms** for slices 665 and 2366. The final navigation targets,
+time breakdowns and child summaries matched. This measures the time from
+canvas mouse-up until the button is ready in the DOM, not canvas paint time.
+Benchmark and raw results: `build/benchmarks/20261122-cold-call-nav/`.
+
+Replacing or closing the details pane now cancels any Timeline detail-work
+timer whose frame callback already ran. A replacement queues its own frame
+before running deferred work; if the old frame callback has not run yet, both
+selections can still share it. This keeps a timer armed for an earlier call
+from spending the background work budget before the replacement has had a
+rendering opportunity. A browser regression holds the first timer across a
+selection change and checks cancellation, the new frame, and the final result.
+
+An experiment encoding missing call-tree links as zero removed the explicit
+full-array fills but did not consistently improve readiness. Seven alternating
+Chromium pairs at 4× CPU throttling measured synthetic cold navigation at
+**91.7 → 98.9 ms** (450,002 slices); on the real `ping3` slice 665, cold
+breakdown readiness went from **87.0 → 84.1 ms**, while settled warm readiness
+went from **13.3 → 13.2 ms**. The original link encoding remains. The warm
+benchmark now waits for the priming call's navigation, breakdown and child
+summary to settle before starting measurement. Logs and preview:
+`build/benchmarks/20261122-call-tree-links/`.
+
 ## Regression cases
 
 `tests/test_timeline_preparation.py` covers empty/small input, frozen inputs, coalesced missing-depth extents and children, direct-child run termination, inline followed by untraced growth, deep single-call expansion, large scans, all uftrace space combinations, multiple tasks, negative deltas and equal-time ordering. Chunk sorting and merging are compared with the native comparator at 8,192/16,384 boundaries and partial runs. Already ordered rows must not invoke the rewrite path.

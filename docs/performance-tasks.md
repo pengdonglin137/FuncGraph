@@ -9,20 +9,24 @@ the new behavior.
 
 - **Previous** and **Next** replace pages of at most 100 task identities. Earlier
   pages do not remain attached. The status gives the current range and total;
-  both directions are disabled for empty results. Enabled controls keep their
+  pagination controls are hidden for empty and single-page results. **Page**
+  accepts a whole page number; press Enter or **Go** to jump. Enabled controls keep their
   DOM identity and keyboard focus during ordinary refreshes. At an endpoint,
   focus moves to the available direction instead of disappearing into the page.
 - The current page survives reopening and refreshes that preserve the population.
   A new query, kind, sort, single-task scope or shared-match population starts
   from the first page. Existing literal matching and count/span semantics are
   unchanged; task identities are not deduplicated by PID.
-- The pager stays at the bottom of normal-height panels without requiring a
-  scroll past 100 rows. Very short panels use ordinary scrolling for both the
-  title and pager so pinned elements cannot cover all available space.
+- The pager stays at the bottom of normal-height panels. In very short panels,
+  or when compact filters are open, it moves before the table and scrolls with
+  the content so pinned elements do not cover the available space. It stays
+  within reach during horizontal table scrolling.
 - Touch paging, Show and export buttons have 44-pixel minimum heights. Compact
-  layouts initially hide task search/filter controls behind **Filters**, leaving
-  room for actual rows. The toggle reports expanded state and indicates active
-  conditions even while collapsed. Desktop keeps the controls visible. Resizing
+  layouts initially hide task search/filter controls behind **Filters** in the
+  title bar, leaving room for actual rows. The toggle reports expanded state
+  and indicates active conditions even while collapsed. In short panes, opening
+  it scrolls Find into view; typing keeps the field visible, and Escape closes
+  the controls and returns focus without discarding their values. Desktop keeps the controls visible. Resizing
   or hiding controls does not clear a query or change which identities match.
 - **Export CSV** uses the complete current query/kind/matching/single-task scope
   and sort order, not the displayed page. Export neither advances the page nor
@@ -33,6 +37,37 @@ Task **Find** is a literal task-name/alias/PID/CPU query, not the toolbar's
 function-name regex or the shared Text line filter. The shared filter changes
 the matches column and optional **Matching calls only**, not raw call counts or
 recorded task boundaries. In event-only reports, it remains a Text-only filter.
+
+### Track navigation follow-up
+
+November 19, 2026. **Show** restores the split when expanded details hide the
+chart. It focuses the chart without changing the saved split or replacing the
+Tasks page. Showing an already visible, expanded track does not rebuild the
+track layout: three jumps in a 2,048-task fixture went from 6,144 writes to
+track positions to zero. A first CPU jump to a scheduler-only task adds the
+track after opening its task detail, requiring one layout pass instead of
+two; later jumps to that visible track reuse its position. CPU jumps still
+keep the time range, and **Show** still fits the selected task's extent.
+
+### Reuse shared filter counts
+
+Tasks uses the per-task counts already produced by the shared Timeline filter.
+Applying a filter matching one exit per task in a 4,096-call, 1,024-task
+fixture no longer rereads all 4,096 entries in the call-match bitmap. The
+initial filter pass still checks entry/exit membership; a call is counted once
+even if both lines match. If a new filter changes which calls match but leaves
+all task counts unchanged, Tasks keeps its current page, rows and focus. A
+changed count still resets the page, and CSV always names the current filter
+even when the task rows did not need refreshing.
+
+### Reuse task sort order while filtering the list
+
+Find, Kind and Matching calls only narrow the active sorted list rather than
+sorting their results again. Only the active sort is cached. The Matches
+sort is rebuilt when task counts change; other sorts keep their order. In a
+1,024-task browser fixture, six task-list updates under name sort went from
+six sort calls to zero. The same test checks exact CSV order and that changing
+only letter case or surrounding spaces keeps the current page and rows.
 
 ## Reproduce the comparison
 
@@ -115,12 +150,74 @@ replacement pagination does not discard data from the model or export.
 FG_RAW_REQUIRED=1 FG_UFTRACE_REQUIRED=1 FG_SAMPLE_BROWSER_REQUIRED=1 tests/run.sh
 ```
 
+## Page jumps and short panes (2026-11-20)
+
+On a 501-task Chromium touch fixture, with the detail pane set to 10% and the
+table scrolled right, the vertical scroll needed to fully reveal Next fell
+from **4,916 to 107 CSS pixels** at 320 × 700 and **4,876 to 56** at 844 × 390.
+Coordinate taps turned the page in both layouts. Tests also cover direct
+entry to the last page, invalid page numbers, retained focus, horizontal scroll
+and identical complete CSV downloads. The real `ping3` preview has 18 tasks
+and hides the unnecessary pagination controls. Local observations:
+`build/benchmarks/20261120-task-pager/geometry.txt`.
+
+## Cold open and on-demand task metadata (2026-11-20)
+
+Tasks reuses the recorded per-track call intervals, CPU sets, and existing
+128-call extent blocks instead of walking every slice again. Short tracks
+read their recorded endpoints directly. Scheduling evidence still extends
+the recorded call span and CPU list; open waits still mark a lower bound.
+Display names, CPU text, and searchable alias text are cached when needed,
+not built for every task just to render the first page. No work was moved
+to Timeline startup.
+
+Three interleaved A/B runs in headless Chromium 145 at 4× CPU throttling.
+Measurements start with Timeline ready; times are medians in ms.
+
+| Fixture | Click handler | First rows ready | Maximum frame gap |
+| --- | ---: | ---: | ---: |
+| 50,000 scheduler-only tasks | 119.5 → 80.0 | 119.5 → 80.5 | 147.1 → 105.6 |
+| 500,000 calls on one task | 54.4 → 17.8 | 54.6 → 18.1 | 63.4 → 33.9 |
+| Real `ping3` | 37.5 → 26.6 | 37.8 → 26.6 | 61.7 → 50.3 |
+
+For each fixture the first page's rows and paging status matched, as did the
+full CSV SHA-256. The first search still needs to format matching candidates;
+the largest task population still has a noticeable cold-open frame gap.
+`python3 tests/benchmark_task_open.py before.html after.html` reproduces the
+comparison. Local results: `build/benchmarks/20261120-task-open/`.
+
+## Cooperative CSV export (2026-11-20)
+
+Exports below 2,048 task rows still download immediately. Larger exports use
+the shared Timeline CSV scheduler with 128-row batches. The heading displays
+progress beside **Cancel CSV** while browsing and Show remain available. Text
+pauses the export; returning to Timeline resumes it. An export captures the
+current order and CSV metadata; changing the query, task scope, sort or shared
+filter cancels pending work, even when a metadata-only edit leaves all rows
+unchanged. Closing or replacing the panel also cancels. No partial file is
+downloaded.
+
+Three interleaved A/B runs in headless Chromium 145, at 4× CPU throttling,
+with 50,000 synthetic scheduler-only tasks. Medians after the panel is open
+(ms); file-ready is the download trigger, not disk persistence.
+
+| Fixture | Click handler | Maximum frame gap | File ready |
+| --- | ---: | ---: | ---: |
+| 50,000 tasks | 259.0 → 2.6 | 260.4 → 22.2 | 258.2 → 351.4 |
+| Real `ping3` | 4.3 → 4.0 | 16.5 → 16.0 | 3.5 → 3.2 |
+
+Large downloads take longer to become ready, but leave time for interaction.
+Each fixture's exports matched by byte length and SHA-256 across runtimes.
+The synthetic run does not measure first-open task aggregation. Reproduce with
+`python3 tests/benchmark_task_csv.py before.html after.html` (use `--rows 0`
+for the original capture). Local measurements: `build/benchmarks/20261120-task-csv/`.
+
 ## Remaining limits
 
 Only the attached task-table rows are bounded. Full Timeline data, task facts,
-matching counts and the sorted scope remain in memory; CSV still traverses and
-constructs the complete export in memory. Initial facts, queries and sorting
-still scale with the recording. This is not worker-based or bounded-model
+matching counts and the sorted scope remain in memory; CSV traverses the full
+scope and retains all encoded batches until download. The remaining task facts,
+queries and sorting still scale with the recording. This is not worker-based or bounded-model
 loading, and no overall large-trace speedup or memory ceiling is claimed.
 Very short detail panes, including short landscape windows, still need vertical
 scrolling or a larger pane; this change does not make every control and task row

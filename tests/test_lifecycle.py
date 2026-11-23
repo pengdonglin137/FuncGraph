@@ -43,7 +43,8 @@ class LifecycleBrowserTest(unittest.TestCase):
     def tearDown(self):
         self.assertEqual(self.errors, [])
 
-    def open_report(self, count=205, mode='single', no_text=False, metadata=HEADER, rewrite=None, comm=None):
+    def open_report(self, count=205, mode='single', no_text=False, metadata=HEADER, rewrite=None, comm=None,
+                    overhead=False):
         records = capture()
         if comm is not None:
             for record in records:
@@ -56,6 +57,8 @@ class LifecycleBrowserTest(unittest.TestCase):
         options = ['--no-config', '--timeline', '--enable-fold', '--filter', '--report-mode', mode]
         if no_text:
             options.append('--no-text-view')
+        if overhead:
+            options.extend(('--overhead', '100,100'))
         html, unused_result = self.kernel.run(str(trace), *options, out='report' if mode == 'sidecar' else 'report.html')
         report = Path(self.kernel.dir) / ('report' if mode == 'sidecar' else 'report.html')
         if rewrite:
@@ -105,8 +108,13 @@ class LifecycleBrowserTest(unittest.TestCase):
         self.assertEqual(self.status(), 'Events 201–205 of 205')
         self.assertTrue(following.is_disabled())
         self.assertEqual(self.page.locator('.tl-process-table tbody tr').count(), 5)
-        previous.click()
+        self.assertEqual(self.page.evaluate('document.activeElement.dataset.processPage'), '-1')
+        self.page.keyboard.press('Enter')
         self.assertEqual(self.status(), 'Events 101–200 of 205')
+        self.page.keyboard.press('Space')
+        self.assertEqual(self.status(), 'Events 1–100 of 205')
+        self.assertTrue(previous.is_disabled())
+        self.assertEqual(self.page.evaluate('document.activeElement.dataset.processPage'), '1')
         self.page.locator('.tl-close').click()
         self.open_panel()
         self.assertEqual(self.status(), 'Events 1–100 of 205')
@@ -143,18 +151,24 @@ class LifecycleBrowserTest(unittest.TestCase):
             self.assertGreater(int(row['trace_line']), 0)
         self.assertEqual(self.page.locator('.tl-process-table tbody tr').count(), 100)
 
-    def test_filter_refresh_keeps_the_lifecycle_panel_and_current_page(self):
-        self.open_report()
+    def test_filter_and_overhead_keep_the_lifecycle_rows_and_current_page(self):
+        self.open_report(overhead=True)
         self.page.evaluate("() => fgView('timeline').probe().select(0)")
         self.open_panel()
         self.page.locator('[data-process-page="1"]').click()
+        first_row = self.page.locator('.tl-process-table tbody tr').first.element_handle()
         helpers.open_timeline_tools(self.page)
         self.page.fill('.tl-ftext', 'space:user')
         self.page.press('.tl-ftext', 'Enter')
         self.page.wait_for_function("document.querySelector('.tl-filterbar').classList.contains('on')")
         self.assertEqual(self.status(), 'Events 101–200 of 205')
         self.assertIn('Unfiltered recorded kernel milestones', self.page.locator('.tl-process-note').inner_text())
+        self.assertTrue(first_row.evaluate('row => row.isConnected'))
         self.page.locator('[data-act=fclear]').click()
+        helpers.open_timeline_tools(self.page)
+        self.page.locator('[data-act=adj]').click()
+        self.assertEqual(self.page.locator('[data-act=adj]').inner_text(), 'Overhead: subtracted')
+        self.assertTrue(first_row.evaluate('row => row.isConnected'))
         self.assertEqual(self.status(), 'Events 101–200 of 205')
 
     def test_time_jump_is_available_without_text_and_keeps_zoom_and_clock_separation(self):
@@ -192,10 +206,19 @@ class LifecycleBrowserTest(unittest.TestCase):
         self.open_report()
         self.open_panel()
         self.page.evaluate("() => { localStorage.setItem('fgTl.detailFrac', '0.07'); window.dispatchEvent(new Event('resize')); }")
-        self.page.locator('.tl-detail-short').wait_for()
-        self.assertEqual(self.page.locator('.tl-process-head').evaluate('(element) => getComputedStyle(element).position'), 'static')
-        self.page.locator('[data-process-page="1"]').click()
+        pane = self.page.locator('.tl-detail-short')
+        pane.wait_for()
+        head = self.page.locator('.tl-process-head')
+        start = head.bounding_box()['y']
+        pane.evaluate('panel => panel.scrollTop = 32')
+        self.assertAlmostEqual(head.bounding_box()['y'], start - 32, delta=1)
+        next_page = self.page.locator('[data-process-page="1"]')
+        next_page.scroll_into_view_if_needed()
+        scroll = pane.evaluate('panel => panel.scrollTop')
+        self.assertGreater(scroll, 0)
+        next_page.click()
         self.assertEqual(self.status(), 'Events 101–200 of 205')
+        self.assertAlmostEqual(pane.evaluate('panel => panel.scrollTop'), scroll, delta=1)
         self.page.locator('[data-process-time="150"]').click()
         self.assertEqual(self.page.evaluate('fgCurrentView()'), 'timeline')
 

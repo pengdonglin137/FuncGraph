@@ -133,6 +133,48 @@ class TextCopyTest(unittest.TestCase):
                     .textContent.startsWith('Copied ')''')
                 self.assertEqual(page.evaluate('nativeClipboard.readText()'), expected)
 
+    def test_windowed_copy_reuses_committed_order_without_dense_line_lookups(self):
+        page = self.open_report('windowed/index.html?text=windowed')
+        self.install_clipboard(page)
+        for mode in ('time', 'task', 'duration', 'sparse'):
+            with self.subTest(mode=mode):
+                if mode == 'task':
+                    page.evaluate('fgSetTextOrder("task")')
+                    page.evaluate('fgSetTextEventsVisible(false)')
+                elif mode in ('duration', 'sparse'):
+                    page.locator('#filterInput').fill('sort:desc' if mode == 'duration' else 'params:arg=8 sort:desc')
+                    page.evaluate('applyFilter()')
+                    page.wait_for_function('!fgFilterProgress')
+                expected = page.evaluate(EXPECTED)
+                facts = page.locator(BUTTON).evaluate('''async button => {
+                    const locate = fgTextModel.locate;
+                    let lookups = 0;
+                    fgTextModel.locate = (...args) => { lookups++; return locate(...args); };
+                    try { return {copied: await copyVisibleContent({target:button}), lookups}; }
+                    finally { fgTextModel.locate = locate; }
+                }''')
+                self.assertTrue(facts['copied'])
+                self.assertEqual(page.evaluate('copiedText.at(-1)'), expected)
+                self.assertLessEqual(facts['lookups'], len(expected.splitlines()) if mode == 'sparse' else 0)
+
+    def test_legacy_copy_keeps_compact_tools_open_and_restores_the_copy_button(self):
+        page = self.open_report(mobile=True)
+        expected = page.evaluate(EXPECTED)
+        page.context.grant_permissions(['clipboard-read', 'clipboard-write'])
+        page.evaluate('''() => {
+            window.nativeClipboard = navigator.clipboard;
+            Object.defineProperty(navigator, 'clipboard', {value:undefined});
+        }''')
+        page.locator('#textMoreToggle').press('Enter')
+        copy = page.locator(BUTTON)
+        copy.press('Enter')
+        self.assertEqual(page.evaluate('nativeClipboard.readText()'), expected)
+        self.assertTrue(copy.is_visible())
+        self.assertTrue(copy.evaluate('button => button === document.activeElement'))
+        page.keyboard.press('Escape')
+        self.assertFalse(copy.is_visible())
+        self.assertTrue(page.locator('#textMoreToggle').evaluate('button => button === document.activeElement'))
+
     def test_false_or_throwing_legacy_copy_is_not_reported_as_success(self):
         for outcome in ('false', 'throw'):
             for theme in ('light', 'dark'):

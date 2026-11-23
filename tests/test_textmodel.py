@@ -629,6 +629,29 @@ class TextModelTest(unittest.TestCase):
             }
         ''')
 
+    def test_validation_checks_every_attribute_and_source_before_publishing(self):
+        self.run_model('''
+            const fields = fgTextModel.outcomeFields, rowCount = 1026;
+            const input = {version:6, fields, events:[1,rowCount], rows:Array.from({length:rowCount}, (unused, index) =>
+                [index + 1, 'source row', ...fields.map(() => null), index % 2 === 0 ? null : 0])};
+            const finalRow = input.rows.at(-1), lastAttribute = finalRow.length - 2;
+            for (const [column, invalid] of [[2,true], [lastAttribute,{}], [lastAttribute,undefined], [lastAttribute + 1,-1]]) {
+                const saved = finalRow[column];
+                finalRow[column] = invalid;
+                assert.throws(() => drain(fgTextModel.prepare(input)), /Invalid Text filter index row 1026/);
+                finalRow[column] = saved;
+            }
+            delete finalRow[lastAttribute];
+            assert.throws(() => drain(fgTextModel.prepare(input)), /Invalid Text filter index row 1026/);
+            finalRow[lastAttribute] = '';
+            const model = drain(fgTextModel.prepare(input));
+            assert.equal(model.records.length, rowCount);
+            assert.deepEqual(model.eventRecords.map(record => record.row[0]), [1,rowCount]);
+            assert.equal(model.records.at(-1).source, 0);
+            assert.equal(model.records.at(-1).getAttribute('data-user-error'), '');
+            assert.equal(fgTextModel.prepare(input).next().value, model);
+        ''')
+
     def test_filter_results_are_independent_of_any_mounted_projection(self):
         self.run_model('''
             globalThis.parseFilterExpr = text => ({ast:text ? {type:'COND'} : null, sortDir:'asc'});
@@ -647,11 +670,21 @@ class TextModelTest(unittest.TestCase):
             assert.equal(all.lines, null);
             assert.equal(all.visible, 4);
             assert.equal(model.records[0].textContent, '');
-            globalThis.parseFilterExpr = () => ({ast:null, sortDir:'desc'});
-            const sorted = drain(fgTextModel.filter(model, 'sort:desc'));
-            assert.equal(sorted.text, 'sort:desc');
-            assert.equal(sorted.lines, null);
-            assert.equal(sorted.visible, 4);
+        ''')
+
+    def test_empty_and_sort_only_filters_return_counts_without_reading_rows(self):
+        self.run_model('''
+            const records = new Proxy({length:82529}, {get(target, key) {
+                if (key !== 'length') throw Error('Read an unfiltered row');
+                return target.length;
+            }});
+            globalThis.parseFilterExpr = text => ({ast:null, sortDir:text.split(':')[1] || ''});
+            globalThis.collectGraphConditions = () => { throw Error('No call-tree predicates'); };
+            for (const text of ['', 'sort:asc', 'sort:desc']) {
+                assert.deepEqual(fgTextModel.filter({records}, text).next(), {done:true, value:{
+                    text, lines:null, visible:82529, total:82529, sortDir:text.split(':')[1] || '', graphSets:{}
+                }});
+            }
         ''')
 
     def test_folding_counts_members_and_visibility_compose_without_dom(self):
@@ -969,30 +1002,72 @@ class TextModelTest(unittest.TestCase):
             assert.deepEqual(numbers(['missing']), []);
         ''')
 
-    def test_fold_range_membership_and_unions_match_an_independent_randomized_reference(self):
+    def test_fold_ranges_and_call_counts_match_an_independent_randomized_reference(self):
         self.run_model('''
             let seed = 42871;
-            const random = () => (seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0);
-            const ids = ['a', 'a1', 'a10', 'b', 'quoted"', '层级', null, ''];
-            const rows = Array.from({length:1200}, (unused, index) => [index * 5 + 1, 'row', {
+            const random = () => (seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0) >>> 8;
+            const ids = ['a', 'a1', 'a10', 'b', 'quoted"', '层级', 'null', null, ''];
+            const paths = ['a', 'a a1', 'a a1 a10', 'a a1 a1', 'a a1\u00a0b', 'a a1 \tb',
+                'a a1  ', 'a a1   层级', 'a a1\t', 'a a1\t 层级'];
+            const rows = [...paths.map((path, index) => [index + 1, 'ancestry prefix', {'fold-ancestors':path}]),
+                ...Array.from({length:1200}, (unused, index) => [index * 5 + 100, 'row', {
                 'fold-id':ids[random() % ids.length], 'fold-type':['entry', 'inner', 'exit', null][random() % 4],
-                'fold-ancestors':Array.from({length:random() % 6}, () => ids[random() % ids.length] || '').join('  '),
-                func:random() % 3 ? 'call' : null}]);
+                'fold-ancestors':Array.from({length:random() % 6}, () => ids[random() % ids.length] || '')
+                    .join([' ', '  ', '\t', '\u00a0'][random() % 4]),
+                func:random() % 3 ? 'call' : null}])];
             const input = data(rows);
             const original = JSON.stringify(input);
             const model = drain(fgTextModel.prepare(input));
             const folding = fgTextModel.folding(model);
-            const belongs = (record, id) => record.getAttribute('data-fold-id') === id ||
+            const isAncestor = (record, id) =>
                 (record.getAttribute('data-fold-ancestors') || '').split(/\\s+/).filter(Boolean).includes(id);
+            const owns = (record, id) => record.getAttribute('data-fold-id') === id;
+            const type = record => record.getAttribute('data-fold-type');
+            const belongs = (record, id) => owns(record, id) || isAncestor(record, id);
             for (const id of [...ids, 'missing', undefined]) {
-                assert.deepEqual(Array.from(folding.members(id)), model.records.filter(record => belongs(record, id)));
+                const members = model.records.filter(record => belongs(record, id));
+                assert.deepEqual(Array.from(folding.members(id)), members);
+                const entry = id && members.findLast(record => owns(record, id) && type(record) === 'entry') || null;
+                const exit = id && members.findLast(record => owns(record, id) && type(record) === 'exit') || null;
+                const calls = members.filter(record => type(record) === 'entry' && !owns(record, id) ||
+                    type(record) === 'inner' && !!id && record.getAttribute('data-func')).length;
+                assert.deepEqual(folding.blocks.get(id), entry || exit || calls ? {id, entry, exit, calls} : undefined);
             }
             for (let query = 0; query < 100; query++) {
                 const selected = Array.from({length:random() % 12}, () => ids[random() % ids.length]);
                 const expected = model.records.filter(record => selected.some(id => belongs(record, id)));
                 assert.deepEqual(Array.from(folding.membersOf(selected)), expected);
+                const folds = Object.fromEntries(selected.map(id => [id, true]));
+                const hidden = folding.hiddenMask(folds);
+                assert.deepEqual(model.records.map((unused, index) => Boolean(hidden?.[index])), model.records.map(record =>
+                    (type(record) !== 'entry' && folds[record.getAttribute('data-fold-id')] === true) ||
+                    Object.keys(folds).some(id => isAncestor(record, id))));
             }
             assert.equal(JSON.stringify(input), original);
+        ''')
+
+    def test_fold_scan_reads_shared_columns_in_all_index_versions(self):
+        self.run_model('''
+            const fixtures = [fgTextModel.fields, fgTextModel.fields, [...fgTextModel.fields, 'space'],
+                fgTextModel.presentationFields, fgTextModel.symbolFields, fgTextModel.outcomeFields];
+            for (const [index, fields] of fixtures.entries()) {
+                const version = index + 1;
+                const input = {version, fields, rows: [
+                    [2, {func:'root', 'fold-id':'root', 'fold-type':'entry', 'fold-ancestors':'root'}],
+                    [4, {func:'other', 'fold-id':'other', 'fold-type':'entry', 'fold-ancestors':'root other'}],
+                    [5, {func:'leaf', 'fold-id':'other', 'fold-type':'inner', 'fold-ancestors':'root other'}],
+                    [8, {func:'leaf', 'fold-id':'other', 'fold-type':'inner', 'fold-ancestors':'other root'}],
+                    [9, {'fold-id':'other', 'fold-type':'exit', 'fold-ancestors':'root'}],
+                    [11, {}],
+                    [14, {func:'leaf', 'fold-id':'other', 'fold-type':'inner', 'fold-ancestors':'root other'}],
+                ].map(([number, attributes]) => [number, 'row', ...fields.map(field => attributes[field] ?? null),
+                    ...(version >= 2 ? [null] : [])])};
+                const model = drain(fgTextModel.prepare(input)), folding = fgTextModel.folding(model);
+                assert.deepEqual(Array.from(folding.members('other'), record => record.row[0]), [4,5,8,9,14]);
+                assert.deepEqual(Array.from(folding.members('root'), record => record.row[0]), [2,4,5,8,9,14]);
+                assert.equal(folding.blocks.get('root').calls, 4);
+                assert.equal(folding.blocks.get('other').calls, 3);
+            }
         ''')
 
     def test_fold_index_handles_deep_and_ancestry_only_scopes_without_recursion(self):
@@ -1009,14 +1084,14 @@ class TextModelTest(unittest.TestCase):
             assert.equal(folding.visible(model.records[1], {scope2999:true}, null), false);
         ''')
 
-    def test_cancelling_fold_range_finalization_does_not_publish_partial_metadata(self):
+    def test_cancelling_fold_preparation_does_not_publish_partial_metadata(self):
         self.run_model('''
             const model = drain(fgTextModel.prepare(data(Array.from({length:1800}, (unused, index) =>
                 [index + 1, 'entry', {'fold-id':'scope' + index, 'fold-type':'entry', func:'call'}]))));
             const cancelled = fgTextModel.prepareFolding(model);
-            let step;
-            do { step = cancelled.next(); } while (!step.done && !String(step.value).startsWith('Indexing Text fold ranges:'));
-            assert.equal(step.done, false);
+            assert.match(cancelled.next().value, /512 \/ 1800/);
+            assert.match(cancelled.next().value, /1024 \/ 1800/);
+            assert.match(cancelled.next().value, /1536 \/ 1800/);
             cancelled.return();
             const retry = fgTextModel.prepareFolding(model);
             assert.match(retry.next().value, /Preparing Text fold metadata/);
@@ -1264,13 +1339,51 @@ class TextModelTest(unittest.TestCase):
             next.map=()=>{throw new Error('Per-row pair projection')};
             next.some=()=>{throw new Error('Duplicate validation scan')};
             navigation.reorder(next);
-            assert.equal(maps,3);
+            assert.equal(maps,2,'only the initial and replacement positions maps are allocated');
             assert.deepEqual(navigation.order,order.slice().reverse());
             for(let index=0;index<order.length;index++) assert.equal(navigation.indexOf(order[index]),order.length-1-index);
             next[0]=0;
             assert.equal(navigation.order[0],order[order.length-1]);
             navigation.reorder(order.slice().reverse());
-            assert.equal(maps,3);
+            assert.equal(maps,2);
+        ''')
+
+    def test_prepared_navigation_matches_generic_visibility_and_wrapping_on_sparse_rows(self):
+        self.run_model('''
+            function snapshot(navigation) {
+                const last = navigation.order.length - 1;
+                return {order:navigation.order, visible:navigation.visible, expandable:navigation.expandable,
+                    count:[navigation.visibleCount,navigation.expandableCount],
+                    boundaries:[navigation.boundary(false),navigation.boundary(true)],
+                    jumps:[-1,0,Math.floor(last / 2),last].map(position =>
+                        [navigation.next(position,1),navigation.next(position,-1)]),
+                    positions:navigation.order.map(line => navigation.indexOf(line))};
+            }
+            for (const length of [0,1,511,512,513,2053]) {
+                const order = Array.from({length}, (_, index) => 4294967297 + 11 * index);
+                const records = order.map((line, index) => ({row:[line],source:index % 5 < 2 ? index : null}));
+                const model = {version:6,records};
+                if (length >= 512) {
+                    const canceled = fgTextModel.prepareNavigation(model);
+                    const step = canceled.next();
+                    assert.equal(step.done,false);
+                    assert.match(step.value,/Preparing Text navigation: 512/);
+                    assert.equal(canceled.return().done,true);
+                }
+                const staged = fgTextModel.prepareNavigation(model);
+                let result;
+                do { result = staged.next(); } while (!result.done);
+                const complete = result.value;
+                const generic = fgTextModel.navigation(order,order.filter((_, index) => index % 5 < 2));
+                assert.deepEqual(snapshot(complete),snapshot(generic));
+                const mask = Uint8Array.from(order, (_, index) => Number(index % 7 === 2));
+                for (const navigation of [complete,generic]) {
+                    navigation.setVisibility(mask);
+                    if (length) navigation.setVisible(order[0],true);
+                    navigation.reorder(order.slice().reverse());
+                }
+                assert.deepEqual(snapshot(complete),snapshot(generic));
+            }
         ''')
 
     def test_empty_navigation_reorder_keeps_validation_and_snapshot_identity(self):

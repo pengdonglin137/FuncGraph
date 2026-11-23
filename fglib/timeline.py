@@ -31,6 +31,7 @@ Timing modes, picked from what the trace contains:
 
 import re
 import time
+from itertools import repeat
 
 from .kvm import KvmTimeline
 
@@ -1029,6 +1030,28 @@ class TimelineBuilder:
             self.err_rows.append([i, e, role, fate, 1 if verified[i] else 0, cid])
 
     # -- serialization --------------------------------------------------
+    def _btf_symbols(self, cols):
+        """Yield each kernel symbol once, with the union of its observed fields."""
+        arguments, returns = cols['args'], cols['ret']
+        argument_bit, return_bit = 1, 2
+        available = (argument_bit if arguments is not None else 0) | (return_bit if returns is not None else 0)
+        observations = {}
+        for name, module, flags, argument, returned in zip(
+                cols['name'], cols['module'] or repeat(-1), cols['flags'],
+                arguments or repeat(-1), returns or repeat(-1)):
+            if flags & F_USER:
+                continue
+            key = name if module < 0 else (module, name)
+            seen = observations.setdefault(key, 0)
+            if seen != available:
+                observed = seen | (argument_bit if argument >= 0 else 0) | (return_bit if returned >= 0 else 0)
+                if observed != seen:
+                    observations[key] = observed
+        for key, observed in observations.items():
+            module, name = key if isinstance(key, tuple) else (-1, key)
+            yield (f'{module}:{name}', self.strings[name], self.strings[module] if module >= 0 else None,
+                   bool(observed & argument_bit), bool(observed & return_bit))
+
     def to_data(self):
         n = len(self.s_task)
         timed = self.mode in ('abs', 'rel')
@@ -1061,6 +1084,7 @@ class TimelineBuilder:
             r = self.s_ret[old]
             ret_col.append(self._s(r) if r is not None else -1)
         mod_col = [self._s(self.s_module[old]) if self.s_module[old] else -1 for old in order]
+        arg_col = [self.s_args[old] for old in order]
         cols = {
             'task': [self.s_task[o] for o in order],
             'depth': [self.s_depth[o] for o in order],
@@ -1073,7 +1097,7 @@ class TimelineBuilder:
             'parent': [remap[self.s_parent[o]] if self.s_parent[o] >= 0 else -1 for o in order],
             'ret': ret_col,
             'caller': [self.s_caller[o] for o in order],
-            'args': [self.s_args[o] for o in order],
+            'args': arg_col,
             'module': mod_col,
             'cpu': [self.s_cpu[o] for o in order],
             'adj': None,
@@ -1148,6 +1172,10 @@ class TimelineBuilder:
         }
         if self.kvm.events:
             data['kvm'] = self.kvm.to_data(t0)
+        if hasattr(self.rettypes, 'detail_data'):
+            detail = self.rettypes.detail_data(self._btf_symbols(cols))
+            if detail:
+                data['btf_detail'] = detail
         return data
 
 

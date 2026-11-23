@@ -356,6 +356,40 @@ class TimelineSavedViewsTest(unittest.TestCase):
                 self.assertEqual(self.payload(), original)
                 self.assertTrue(self.page.locator('[data-saved-status]').inner_text())
 
+    def test_import_returns_focus_and_retains_existing_bookmark_rows(self):
+        self.open_report(); original = self.save('Original view')
+        self.page.locator('.tl-saved-transfer summary').press('Enter')
+        button = self.page.get_by_role('button', name='Import views…', exact=True)
+        button.focus()
+        self.page.locator('.tl-saved-row').evaluate('row => { window.originalSavedRow = row; }')
+        other = dict(original['views'][0], id='imported', name='Second view')
+        self.import_payload(dict(original, views=[other]))
+        self.assertTrue(button.evaluate('node => document.activeElement === node'))
+        self.assertTrue(self.page.locator('.tl-saved-row').first.evaluate('row => row === originalSavedRow'))
+        self.assertEqual(len(self.payload()['views']), 2)
+        self.import_payload(b'not-json')
+        self.assertTrue(button.evaluate('node => document.activeElement === node'))
+        self.assertTrue(self.page.locator('.tl-saved-row').first.evaluate('row => row === originalSavedRow'))
+        self.assertIn('Import failed', self.page.locator('[data-saved-status]').inner_text())
+
+    def test_remove_in_large_list_updates_only_one_row_and_focuses_neighbor(self):
+        self.open_report(); original = self.save('Original view')
+        other = [dict(original['views'][0], id=f'remove-{index}', name=f'View {index}', note='A long note. ' * 15)
+                 for index in range(39)]
+        self.import_payload(dict(original, views=other))
+        self.page.locator('[data-saved-list]').evaluate('''list => {
+            window.savedRowChanges = {added: 0, removed: 0};
+            new MutationObserver(records => records.forEach(record => {
+                savedRowChanges.added += record.addedNodes.length;
+                savedRowChanges.removed += record.removedNodes.length;
+            })).observe(list, {childList:true});
+        }''')
+        self.page.get_by_role('button', name='Remove view View 20', exact=True).press('Enter')
+        neighbor = self.page.get_by_role('button', name='View 21', exact=True)
+        self.assertTrue(neighbor.evaluate('node => document.activeElement === node'))
+        self.assertEqual(self.page.evaluate('savedRowChanges'), {'added': 0, 'removed': 1})
+        self.assertEqual(len(self.payload()['views']), 39)
+
     def test_remove_returns_focus_and_preserves_trace(self):
         self.open_report(); self.save('One view')
         count = self.page.evaluate('fgView("timeline").probe().N')
@@ -496,7 +530,7 @@ class TimelineSavedViewsTest(unittest.TestCase):
         payload['views'] = [dict(prototype, id='mobile-' + str(index), name='View ' + str(index), note='A long note. ' * 20)
                             for index in range(15)]
         self.import_payload(payload)
-        self.page.locator('.tl-saved-views').evaluate('element => element.scrollTop=element.scrollHeight')
+        self.page.locator('.tl-saved-body').evaluate('element => element.scrollTop=element.scrollHeight')
         box = self.page.locator('.tl-saved-views').bounding_box()
         close = self.page.locator('[data-saved-close]').bounding_box()
         self.assertGreaterEqual(close['y'], box['y'])
@@ -504,6 +538,32 @@ class TimelineSavedViewsTest(unittest.TestCase):
         self.page.keyboard.press('Escape')
         self.assertFalse(self.page.locator('.tl-saved-views').is_visible())
         self.assertTrue(self.page.locator('#timelineView').evaluate('element => element.classList.contains("tl-fullscreen")'))
+
+    def test_reverse_tab_keeps_bookmark_buttons_clear_of_header_in_short_dialog(self):
+        self.context.close()
+        self.context = self.browser.new_context(viewport={'width': 320, 'height': 340}, is_mobile=True, has_touch=True)
+        self.page = self.context.new_page(); self.page.on('pageerror', lambda error: self.errors.append(str(error)))
+        self.open_report(); original = self.save('Original view')
+        other = [dict(original['views'][0], id=f'short-{index}', name='Bookmark ' + str(index), note='Long note. ' * 12)
+                 for index in range(15)]
+        self.import_payload(dict(original, views=other))
+        self.page.get_by_role('button', name='Bookmark 7', exact=True).focus()
+        self.page.get_by_role('button', name='Remove view Bookmark 6', exact=True).evaluate('''button => {
+            const dialog = button.closest('dialog'), scrollport = dialog.querySelector('.tl-saved-body') || dialog;
+            scrollport.scrollTop += button.getBoundingClientRect().top - dialog.getBoundingClientRect().top - 22;
+        }''')
+        for _ in range(12):
+            self.page.keyboard.press('Shift+Tab')
+            bounds = self.page.evaluate('''() => {
+                const button = document.activeElement, dialog = button.closest('dialog');
+                const box = button.getBoundingClientRect();
+                return {isBookmark: !!button.closest('.tl-saved-row'), label: button.textContent,
+                    top: box.top, headerBottom: dialog.querySelector('header').getBoundingClientRect().bottom,
+                    bottom: box.bottom, dialogBottom: dialog.getBoundingClientRect().bottom};
+            }''')
+            self.assertTrue(bounds['isBookmark'], bounds)
+            self.assertGreaterEqual(bounds['top'], bounds['headerBottom'] - 1, bounds)
+            self.assertLessEqual(bounds['bottom'], bounds['dialogBottom'] + 1, bounds)
 
     def test_view_switch_dismisses_dialog_without_focus_leaking_to_hidden_timeline(self):
         self.open_report(); self.open_views()

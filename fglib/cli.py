@@ -20,6 +20,9 @@ from .uftrace import UftraceInputError
 from .util import SOURCE_BROWSERS, check_gawk_available, source_browser_url, verbose_print
 
 
+LARGE_OFFLINE_TEXT_ROWS = 75_000
+
+
 def build_compare_data(args, parsed_lines, timeline_json, vmlinux_path, module_dirs, module_index=None,
                        rettype_resolver=None):
     """Compare tab data: per-function statistics of --compare BASE vs. this trace."""
@@ -170,9 +173,14 @@ def build_parser():
                              'independent of --source-rev, which controls embedded source')
     parser.add_argument('--base-url', help='Custom base URL for source code links; overrides built-in browser settings')
     parser.add_argument('--module-url', action='append', help='Module URL mapping (can be specified multiple times, format: url:mod1,mod2)')
-    parser.add_argument('--output', default='ftrace_viz.html', help='Output HTML file path (single) or dedicated report directory (sidecar/auto)')
-    parser.add_argument('--report-mode', choices=('single', 'sidecar', 'auto'), default='single',
-                        help='single: offline HTML (default); sidecar: HTTP directory; auto: directory with offline index.html unless the full HTML exceeds --sidecar-threshold; sidecar/auto require --timeline')
+    parser.add_argument('--output', default='ftrace_viz.html', help='Output HTML file path (single/single-windowed) or dedicated report directory (sidecar/auto)')
+    parser.add_argument('--report-mode', choices=('single', 'single-windowed', 'sidecar', 'auto'),
+                        help=f'default: offline HTML, gzip-windowed with Timeline and {LARGE_OFFLINE_TEXT_ROWS:,}+ Text rows; '
+                             'single: always render full Text; single-windowed: offline HTML with on-demand Text; '
+                             'sidecar: HTTP directory; auto: choose by --sidecar-threshold; only single works without --timeline')
+    parser.add_argument('--windowed-compression', choices=('none', 'gzip'),
+                        help='compress embedded Text and sources in single-windowed reports (gzip requires browser DecompressionStream); '
+                             'use none to disable compression for automatically windowed HTML')
     parser.add_argument('--sidecar-threshold', type=int, metavar='BYTES',
                         help='Required for auto mode: switch only when complete uncompressed UTF-8 HTML exceeds this nonnegative byte count (no default)')
     parser.add_argument('--auto-search', action='store_true',
@@ -257,11 +265,17 @@ def validate_args(args):
     if args.user_src and not os.path.isdir(args.user_src):
         print('Error: --user-src needs an existing source directory', file=sys.stderr)
         sys.exit(1)
-    if args.report_mode not in ('single', 'sidecar', 'auto'):
-        print('Error: report mode must be single, sidecar or auto', file=sys.stderr)
+    if args.report_mode not in (None, 'single', 'single-windowed', 'sidecar', 'auto'):
+        print('Error: report mode must be single, single-windowed, sidecar or auto', file=sys.stderr)
         sys.exit(1)
-    if args.report_mode in ('sidecar', 'auto') and not args.timeline:
+    if args.report_mode not in (None, 'single') and not args.timeline:
         print(f'Error: --report-mode {args.report_mode} requires --timeline', file=sys.stderr)
+        sys.exit(1)
+    if args.report_mode == 'single-windowed' and args.no_text_view:
+        print('Error: --report-mode single-windowed requires a Text view', file=sys.stderr)
+        sys.exit(1)
+    if args.windowed_compression not in (None, 'none', 'gzip') or args.windowed_compression == 'gzip' and args.report_mode != 'single-windowed':
+        print('Error: --windowed-compression must be none, or gzip with --report-mode single-windowed', file=sys.stderr)
         sys.exit(1)
     if args.sidecar_threshold is not None and args.sidecar_threshold < 0:
         print('Error: --sidecar-threshold must be a nonnegative byte count', file=sys.stderr)
@@ -501,6 +515,16 @@ def parse_args(argv=None):
     return args
 
 
+def resolve_offline_mode(args, text_rows, has_timeline):
+    automatic = (args.report_mode is None and has_timeline and not args.no_text_view and
+                 text_rows >= LARGE_OFFLINE_TEXT_ROWS)
+    args.report_mode = args.report_mode or ('single-windowed' if automatic else 'single')
+    args.windowed_compression = args.windowed_compression or ('gzip' if automatic else 'none')
+    if automatic:
+        print(f'Large offline report: single-windowed ({args.windowed_compression}; {text_rows:,} Text rows). '
+              'Use --report-mode single for eager Full Text.', file=sys.stderr)
+
+
 def main():
     args = parse_args()
     validate_args(args)
@@ -637,6 +661,7 @@ def main():
     kernel_count = expandable_count - module_count
 
     # 生成HTML
+    resolve_offline_mode(args, len(parsed_lines), timeline_json is not None)
     text_lines = parsed_lines
     if args.no_text_view:
         if not (timeline_json or compare_json):
@@ -647,9 +672,12 @@ def main():
         if not args.keep_source:
             text_lines = [l for l in parsed_lines if l.raw_line.startswith('#')][:200]
     elif len(parsed_lines) > 150000:
-        if args.report_mode in ('sidecar', 'auto'):
+        if args.report_mode == 'single-windowed':
+            print(f'Warning: Full Text may be expensive for {len(parsed_lines)} lines; '
+                  'keep Windowed Text or use a pre-filter (--pid/--graph/--time-range).', file=sys.stderr)
+        elif args.report_mode in ('sidecar', 'auto'):
             print(f'Warning: keeping Text for {len(parsed_lines)} lines; its first full mount may still be expensive. '
-                  'Sidecar defers Text loading, not its full mount cost; consider a pre-filter (--pid/--graph/--time-range).', file=sys.stderr)
+                  'Deferred Text does not remove its full mount cost; consider a pre-filter (--pid/--graph/--time-range).', file=sys.stderr)
         else:
             print(f"Warning: {len(parsed_lines)} lines make a very large text view that browsers may fail to open; "
                   "consider --no-text-view (with --timeline) or a pre-filter (--pid/--graph/--time-range)", file=sys.stderr)
@@ -668,6 +696,7 @@ def main():
             vmlinux_path,
             faddr2line_path,
             report_mode=args.report_mode,
+            windowed_compression=args.windowed_compression,
             sidecar_threshold=args.sidecar_threshold,
             omit_text=args.no_text_view and args.keep_source,
             user_src=args.user_src,
@@ -720,9 +749,13 @@ def main():
         print(f'Report entry: {report_output.entry_path}')
     if getattr(report_output, 'mode', 'single') == 'sidecar':
         print(f"Open with: fgview {shlex.quote(os.path.abspath(args.output))}")
-        print('HTTP directory report: Timeline filtering loads an index; Text loads in full on first use.')
+        if not args.no_text_view:
+            print('HTTP directory report: Text loads on first use; large reports use Windowed Text. '
+                  'Choose Full Text or add ?text=full for whole-document browser commands.')
     elif args.report_mode == 'auto':
         print('Offline report: open index.html directly, or use fgview on the report directory.')
+    elif args.report_mode == 'single-windowed':
+        print('Offline windowed report: open the HTML file directly. Choose Full Text for whole-document browser commands.')
     print(f"Processed {len(parsed_lines)} lines, with {expandable_count} expandable entries")
     print(f"Resolved {module_count} module functions, {kernel_count} kernel functions")
     

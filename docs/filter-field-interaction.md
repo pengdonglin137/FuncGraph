@@ -26,6 +26,10 @@ Regenerate older reports to receive the updated runtime.
 - Compact touch layouts use 44px checkbox-label rows and action buttons, plus
   a 44px/16px-font free-form input. Desktop dimensions stay unchanged. Cancel
   uses the theme's ordinary foreground instead of low-contrast secondary text.
+- Compact Filter and More stay within the visible height when the visual
+  viewport resizes or pans. Field popups reposition without closing or
+  discarding input. If the focused control would be clipped, only its panel
+  scrolls to reveal it; the trace does not scroll.
 
 Only applying a condition changes the filter. Canceling preserves trace rows,
 selection, folding, open source panels, event visibility and Timeline evidence.
@@ -145,3 +149,20 @@ Refreshed published samples preserve **739 kernel rows / 10 events** and
 except regenerated `stats.build_time`. Default sample, Text, Timeline detail and
 help screenshots remain byte-identical; popup changes do not affect the closed
 toolbar layout.
+
+## Query row and feedback on large reports
+
+Chromium touch emulation on the 72,176-row single-file report measured the
+query input at 152 → 282px wide on a 320px viewport and 222 → 352px on a
+390px viewport. Apply, Clear and Help are at least 44px tall in compact layouts.
+The 640px touch layout keeps the actions on the same row, and the 1024px
+desktop dimensions remain unchanged. No measured panel overflowed horizontally.
+Evidence: `build/validation/20261119-text-filter-controls/before.jsonl` and
+`build/validation/20261119-text-filter-controls/after.jsonl`.
+
+Large mounted Text reports let the status render for a frame before the
+synchronous Apply or Clear. Results remain unchanged during that frame;
+the operation itself is not made asynchronous. Browser tests cover Enter
+during IME composition, the pending status, replacement by Clear and Escape
+cancellation before processing starts. Smaller and deferred reports keep
+their existing execution paths.

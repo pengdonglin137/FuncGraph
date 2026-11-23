@@ -48,8 +48,8 @@ def measure(browser, report, timeout):
         for iteration in range(2):
             source = page.evaluate('''async () => {
                 const started = performance.now();
-                const data = fgData.read('tlData'), sources = fgData.read('fgSrcLines');
-                const index = data.cols.line.findIndex(line => sources[String(line)] !== undefined);
+                const data = fgData.read('tlData');
+                const index = data.cols.line.findIndex(line => fgSourceForLine(line) !== null);
                 if (index < 0) throw new Error('Report has no resolved source identities');
                 fgView('timeline').probe().select(index);
                 const handler_ms = performance.now() - started;

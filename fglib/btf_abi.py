@@ -127,17 +127,23 @@ def verified_clones(path, requests):
                 if len(values) != 1 or requests[name][2] != elf.elfclass // 8:
                     continue
                 address = next(iter(values))
-                offset = aranges.cu_offset_at_addr(address)
+                try:
+                    offset = aranges.cu_offset_at_addr(address)
+                except errors:
+                    continue
                 if offset is not None:
                     groups.setdefault(offset, []).append((name, address))
             locations = LocationParser(dwarf.location_lists())
             for offset, names in groups.items():
                 wanted = {address for name, address in names}
                 functions = {}
-                for die in dwarf.get_CU_at(offset).iter_DIEs():
-                    address = die.attributes.get('DW_AT_low_pc')
-                    if die.tag == 'DW_TAG_subprogram' and address is not None and address.value in wanted:
-                        functions[address.value] = None if address.value in functions else die
+                try:
+                    for die in dwarf.get_CU_at(offset).iter_DIEs():
+                        address = die.attributes.get('DW_AT_low_pc')
+                        if die.tag == 'DW_TAG_subprogram' and address is not None and address.value in wanted:
+                            functions[address.value] = None if address.value in functions else die
+                except errors:
+                    continue
                 for name, address in names:
                     die = functions.get(address)
                     if die is not None:

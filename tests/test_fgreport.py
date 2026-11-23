@@ -33,6 +33,33 @@ class FgreportTest(unittest.TestCase):
         line = [x for x in self.run_fg('-n', *args).stderr.splitlines() if 'funcgraph.py' in x][0]
         return line.split('funcgraph.py ', 1)[1].split()
 
+    def test_resolver_defaults_follow_parsed_source_options(self):
+        loader = SourceFileLoader('fgreport_resolver_test', SCRIPT)
+        module = module_from_spec(spec_from_loader(loader.name, loader))
+        loader.exec_module(module)
+        vmlinux = os.path.join(self.tmp.name, 'vmlinux')
+        split = ['--vmlinux', vmlinux, '--kernel-src', self.tmp.name]
+        joined = [f'--vmlinux={vmlinux}', f'--kernel-src={self.tmp.name}']
+        cases = (
+            ('split', [], split, True, True, True),
+            ('joined', [], joined, True, True, True),
+            ('external', [], split + ['--use-external'], False, True, True),
+            ('explicit fast', [], joined + ['--fast'], True, True, True),
+            ('lite', ['--lite'], joined, False, False, False),
+            ('no vmlinux', [], [], False, False, False),
+        )
+        with mock.patch.dict(os.environ, self.env, clear=True), \
+                mock.patch.object(module, 'have', return_value=True), \
+                mock.patch.object(module.subprocess, 'call', return_value=0) as launch, \
+                mock.patch('sys.stderr'):
+            for name, flags, source_options, fast, links, highlight in cases:
+                with self.subTest(name=name):
+                    self.assertEqual(module.cmd_report(['-P', *flags, 't.txt', '--', *source_options]), 0)
+                    command = launch.call_args.args[0]
+                    self.assertEqual(command.count('--fast'), int(fast))
+                    self.assertEqual('--func-links' in command, links)
+                    self.assertEqual('--highlight-code' in command, highlight)
+
     def test_init_presets_and_default(self):
         vml = os.path.join(self.tmp.name, 'vmlinux')
         open(vml, 'w').close()
@@ -56,14 +83,26 @@ class FgreportTest(unittest.TestCase):
         self.assertNotEqual(p.returncode, 0)
         self.assertIn("no preset 'zz'", p.stderr)
 
-    def test_passthrough_and_big_trace(self):
-        c = self.command('t.txt', '--', '--pid', '7')
-        self.assertEqual(c[-3:], ['--pid', '7', 't.txt'])
+    def test_passthrough_and_large_offline_default(self):
+        command = self.command('t.txt', '--', '--pid', '7')
+        self.assertEqual(command[-3:], ['--pid', '7', 't.txt'])
         big = os.path.join(self.tmp.name, 'big.txt')
-        with open(big, 'w') as f:
-            f.write('x\n' * 150001)
-        self.assertIn('--no-text-view', self.command(big))
-        self.assertNotIn('--no-text-view', self.command('--text', big))
+        with open(big, 'w') as output:
+            output.write('x\n' * 150001)
+        command = self.command(big)
+        self.assertNotIn('--no-text-view', command)
+        self.assertNotIn('--report-mode', command)
+        self.assertNotIn('--no-text-view', self.command(big, '--text'))
+        self.assertIn('--no-text-view', self.command(big, '--', '--no-text-view'))
+
+    def test_large_trace_legacy_guard_requires_explicit_single_mode(self):
+        trace = os.path.join(self.tmp.name, 'big.txt')
+        with open(trace, 'w') as output:
+            output.write('x\n' * 150001)
+        for options in [('--report-mode', 'single'), ('--', '--report-mode', 'single')]:
+            with self.subTest(options=options):
+                self.assertIn('--no-text-view', self.command(trace, *options))
+                self.assertNotIn('--no-text-view', self.command('--text', trace, *options))
 
     def test_directory_modes_preserve_text_and_choose_stable_output_names(self):
         big = os.path.join(self.tmp.name, 'big.txt')
@@ -97,6 +136,27 @@ class FgreportTest(unittest.TestCase):
         self.assertEqual(command[command.index('--output') + 1], 't.report')
         command = self.command('-P', 't.txt', '--', '--config', alternate)
         self.assertEqual(command[command.index('--output') + 1], 't.html')
+
+    def test_single_windowed_preserves_text_and_defaults_to_html(self):
+        trace = os.path.join(self.tmp.name, 'big.txt')
+        with open(trace, 'w') as output:
+            output.write('x\n' * 150001)
+        command = self.command(trace, '--report-mode', 'single-windowed')
+        self.assertEqual(command[command.index('--output') + 1], os.path.splitext(trace)[0] + '.html')
+        self.assertNotIn('--no-text-view', command)
+
+    def test_single_windowed_gzip_flag_is_forwarded_without_changing_output_mode(self):
+        command = self.command('-P', 't.txt', '--report-mode', 'single-windowed', '--windowed-compression', 'gzip')
+        self.assertEqual(command[command.index('--windowed-compression') + 1], 'gzip')
+        self.assertEqual(command[command.index('--output') + 1], 't.html')
+
+    def test_gzip_flag_rejected_for_non_windowed_mode(self):
+        trace = os.path.join(self.tmp.name, 'trace.txt')
+        with open(trace, 'w') as output:
+            output.write('# tracer: function_graph\n 0) 1.000 us | leaf();\n')
+        result = self.run_fg('-P', trace, '--windowed-compression', 'gzip', check=False)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('gzip with --report-mode single-windowed', result.stderr)
 
     def test_directory_open_runs_loopback_viewer_instead_of_file_url(self):
         loader = SourceFileLoader('fgreport_test', SCRIPT)

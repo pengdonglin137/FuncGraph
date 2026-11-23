@@ -27,6 +27,10 @@ address spaces retain their distinct rows, and an adjusted table can have a
 different row order. Sorting, changed-only and overhead changes reuse completed
 hits instead of rerunning a potentially expensive expression.
 
+For either path, ranking controls also reuse the complete row population
+while the applied query and row scope stay unchanged. See the
+[Compare paging measurements](performance-compare-paging.md#reuse-filtered-rows-when-changing-the-ranking).
+
 While matching, an **only-when-needed** status says that the previous result is
 still shown. **Cancel** or Escape restores the last completed expression and
 table; editing, composition and leaving Compare also cancel outstanding work.

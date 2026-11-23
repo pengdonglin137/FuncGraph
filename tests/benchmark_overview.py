@@ -11,14 +11,14 @@ import tempfile
 
 
 def instrument(text):
-    start = text.index('function buildOverview() {')
-    stop = text.index('\nfunction renderHead()', start)
-    function = text[start:stop].replace('{', '{\n const overviewStarted = performance.now();', 1)
-    closing = function.rfind('}')
-    function = function[:closing] + '''
+    marker = 'function buildOverview() {'
+    if text.count(marker) != 1:
+        raise ValueError('Cannot instrument the Timeline overview builder')
+    start = text.index(marker) + len(marker)
+    closing = text.index('\n}', start) + 1
+    text = text[:start] + '\n    const overviewStarted = performance.now();' + text[start:closing] + '''
     (window.overviewBuilds ||= []).push({width:W, duration:performance.now() - overviewStarted});
-''' + function[closing:]
-    text = text[:start] + function + text[stop:]
+''' + text[closing:]
     marker = 'const probe = () => ({ N, NA, SYN, S,'
     if text.count(marker) != 1:
         raise ValueError('Cannot inspect the complete Timeline model')

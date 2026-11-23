@@ -1,9 +1,12 @@
 """Verified lazy report resources and cancellable view startup over real loopback HTTP."""
+import base64
 from collections import Counter
+import gzip
 import hashlib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 from pathlib import Path
+import random
 import re
 import threading
 import unittest
@@ -221,6 +224,228 @@ class DataProviderTest(unittest.TestCase):
         self.assertTrue(self.page.evaluate("async () => !!(await fgSwitchView('compare'))"))
         self.assertEqual(self.count('manifest.json'), 0)
         self.assertEqual(self.count('notes.json'), 0)
+
+    def test_embedded_gzip_decodes_with_and_without_native_base64(self):
+        text = '仓库🙂'
+        raw = encode(dict(text=text))
+        encoded = base64.b64encode(gzip.compress(raw)).decode('ascii')
+        payload = {'encoded': encoded[:10] + '\n \t' + encoded[10:], 'size': len(raw)}
+        for mode in ('fallback', 'native'):
+            with self.subTest(mode=mode):
+                self.publish(embedded=True)
+                if mode == 'native' and not self.page.evaluate('typeof Uint8Array.fromBase64 === "function"'):
+                    self.skipTest('browser lacks native base64 decoding')
+                facts = self.page.evaluate('''async ({mode, encoded, size}) => {
+                    const decodeString = window.atob;
+                    let stringDecodes = 0;
+                    window.atob = value => { stringDecodes++; return decodeString(value); };
+                    if (mode === 'fallback') Uint8Array.fromBase64 = undefined;
+                    function add(name, bytes, base64) {
+                        const node = document.createElement('script');
+                        node.type = 'application/x-funcgraph-gzip';
+                        node.id = name;
+                        node.dataset.bytes = bytes;
+                        node.textContent = base64;
+                        document.body.append(node);
+                        return node;
+                    }
+                    const notes = add('notes', size - 1, encoded);
+                    const badSize = await fgData.load('notes').catch(error => error.message);
+                    notes.dataset.bytes = size;
+                    notes.textContent = 'not base64!';
+                    const badBase64 = await fgData.load('notes').then(() => false, () => true);
+                    const cachedFailure = fgData.ready('notes');
+                    notes.textContent = encoded;
+                    const value = await fgData.load('notes');
+                    return {badSize, badBase64, cachedFailure, value, stringDecodes};
+                }''', dict(payload, mode=mode))
+                self.assertEqual(facts, dict(badSize='Embedded gzip size mismatch: notes', badBase64=True,
+                                             cachedFailure=False, value=dict(text=text),
+                                             stringDecodes=3 if mode == 'fallback' else 0))
+        self.assertEqual(self.count('manifest.json'), 0)
+        self.assertEqual(self.count('notes.json'), 0)
+
+    def test_embedded_gzip_streams_multiple_chunks_and_can_retry_after_cancel(self):
+        length = 192 * 1024
+        payload = random.Random(37).getrandbits(length * 8).to_bytes(length, 'little')
+        text = '源码🙂' + base64.b64encode(payload).decode('ascii') + '末尾🙂'
+        raw = encode(dict(text=text))
+        compressed = gzip.compress(raw)
+        self.assertGreater(len(compressed), 2 * 64 * 1024)
+        self.publish(embedded=True)
+        result = self.page.evaluate('''async ({encoded, truncated, size, text}) => {
+            window.Blob = class {
+                constructor() { throw new Error('Embedded gzip must not create a Blob'); }
+            };
+            const node = document.createElement('script');
+            node.type = 'application/x-funcgraph-gzip';
+            node.id = 'notes';
+            node.dataset.bytes = size;
+            node.textContent = encoded;
+            document.body.append(node);
+            const last = new AbortController();
+            const canceled = fgData.load('notes', {signal:last.signal}).catch(error => error.name);
+            await Promise.resolve();
+            last.abort();
+            const canceledName = await canceled, cachedAfterCancel = fgData.ready('notes');
+            node.textContent = truncated;
+            const rejectedTruncated = await fgData.load('notes').then(() => false, () => true);
+            const cachedAfterFailure = fgData.ready('notes');
+            node.textContent = encoded;
+            const first = new AbortController();
+            const canceledShared = fgData.load('notes', {signal:first.signal}).catch(error => error.name);
+            const surviving = fgData.load('notes');
+            await Promise.resolve();
+            first.abort();
+            return {canceledName, cachedAfterCancel, rejectedTruncated, cachedAfterFailure,
+                canceledShared:await canceledShared, valueMatches:(await surviving).text === text,
+                ready:fgData.ready('notes')};
+        }''', dict(encoded=base64.b64encode(compressed).decode('ascii'),
+                   truncated=base64.b64encode(compressed[:-8]).decode('ascii'), size=len(raw), text=text))
+        self.assertEqual(result, dict(canceledName='AbortError', cachedAfterCancel=False, rejectedTruncated=True,
+                                      cachedAfterFailure=False, canceledShared='AbortError', valueMatches=True, ready=True))
+        self.assertEqual(self.count('manifest.json'), 0)
+        self.assertEqual(self.count('notes.json'), 0)
+
+    def test_large_gzip_text_index_worker_cancels_validates_and_retries(self):
+        count = 2053
+        text = '函数🙂' * 450
+        raw = encode(dict(version=6, fields=['func'], rows=[[number, text] for number in range(1, count + 1)],
+                          events=[1, count]))
+        self.assertGreater(len(raw), 8 * 1024 * 1024)
+        compressed = gzip.compress(raw)
+        self.publish(embedded=True)
+        result = self.page.evaluate('''async ({encoded, truncated, size, count, text}) => {
+            const index = document.createElement('script');
+            index.id = 'fgTextIndex';
+            index.type = 'application/x-funcgraph-gzip';
+            index.dataset.bytes = size;
+            index.textContent = encoded;
+            document.body.append(index);
+
+            const NativeWorker = window.Worker;
+            let started = 0, terminated = 0, resolveHeld;
+            const held = new Promise(resolve => { resolveHeld = resolve; });
+            window.Worker = class extends NativeWorker {
+                constructor(url, options) {
+                    super(url, options);
+                    if (options.name === 'FuncGraph Text index') this.testIndexWorker = ++started;
+                }
+                postMessage(...args) {
+                    if (this.testIndexWorker === 1) { resolveHeld(); return; }
+                    super.postMessage(...args);
+                }
+                terminate() {
+                    if (this.testIndexWorker) terminated++;
+                    super.terminate();
+                }
+            };
+            const controller = new AbortController();
+            const first = fgData.load('fgTextIndex', {signal: controller.signal}).catch(error => error.name);
+            await Promise.race([held, first]);
+            controller.abort();
+            const canceled = await first;
+            const canceledCleanly = terminated === 1 && !fgData.ready('fgTextIndex');
+            index.textContent = truncated;
+            const corruptRejected = await fgData.load('fgTextIndex').then(() => false, () => !fgData.ready('fgTextIndex'));
+            index.textContent = encoded;
+            index.dataset.bytes = size - 1;
+            const mismatch = await fgData.load('fgTextIndex').then(() => false, error => error.message);
+            const mismatchUncached = !fgData.ready('fgTextIndex');
+            index.dataset.bytes = size;
+            const shared = new AbortController();
+            const canceledUser = fgData.load('fgTextIndex', {signal: shared.signal}).catch(error => error.name);
+            const surviving = fgData.load('fgTextIndex');
+            shared.abort();
+            const value = await surviving;
+            const matches = value.version === 6 && value.fields.join() === 'func' && value.events.join() === '1,' + count &&
+                value.rows.length === count && value.rows.every(([number, string], position) => number === position + 1 && string === text);
+            const cached = value === fgData.read('fgTextIndex');
+            fgData.release('fgTextIndex');
+            window.Worker = undefined;
+            const fallback = await fgData.load('fgTextIndex');
+            return {canceled, canceledCleanly, corruptRejected, mismatch, mismatchUncached, started, terminated,
+                matches, cached, fallbackMatches: JSON.stringify(fallback) === JSON.stringify(value), canceledUser:await canceledUser};
+        }''', dict(encoded=base64.b64encode(compressed).decode('ascii'), size=len(raw), count=count, text=text,
+                   truncated=base64.b64encode(compressed[:-8]).decode('ascii')))
+        self.assertEqual(result, dict(canceled='AbortError', canceledCleanly=True, corruptRejected=True,
+            mismatch='Embedded gzip size mismatch: fgTextIndex', mismatchUncached=True, started=4, terminated=4,
+            matches=True, cached=True, fallbackMatches=True, canceledUser='AbortError'))
+        self.assertEqual(self.count('manifest.json'), 0)
+
+    def test_large_text_index_delta_preserves_rows_and_rejects_inconsistent_batches(self):
+        rows = [[number, -0.0 if number % 2 else 0.0, '函数🙂', ['nested'], {'value': 1},
+                 *([None] * 26), 'changed' if number % 2 else 'original'] for number in range(1, 2054)]
+        rows[1024] = [1025, 'ragged']
+        raw = encode(dict(version=6, fields=['func'], rows=rows, events=[2], padding='a' * (8 * 1024 * 1024)))
+        self.publish(embedded=True)
+        result = self.page.evaluate('''async ({encoded, size}) => {
+            const index = document.createElement('script');
+            index.type = 'application/x-funcgraph-gzip';
+            index.id = 'fgTextIndex';
+            index.dataset.bytes = size;
+            index.textContent = encoded;
+            document.body.append(index);
+            const NativeWorker = window.Worker;
+            let failure = null;
+            const batches = [];
+            window.Worker = class extends NativeWorker {
+                set onmessage(handler) {
+                    super.onmessage = handler && (event => {
+                        const data = event.data;
+                        if (data.changes instanceof Uint32Array) {
+                            if (failure && data.first === 0) {
+                                if (failure === 'short') data.cells.pop();
+                                if (failure === 'trailing') data.cells.push('unreferenced');
+                                if (failure === 'width') data.width = 31;
+                            } else batches.push([data.first, data.width, data.changes.length]);
+                        } else if (Array.isArray(data.rows)) batches.push([data.first, 'plain', data.rows.length]);
+                        handler(event);
+                    });
+                }
+            };
+            const rejected = [];
+            for (failure of ['short', 'trailing', 'width']) {
+                rejected.push(await fgData.load('fgTextIndex').then(() => false,
+                    error => error.message === 'Invalid Text index worker result' && !fgData.ready('fgTextIndex')));
+            }
+            failure = null;
+            const value = await fgData.load('fgTextIndex');
+            const wire = batches.slice();
+            fgData.release('fgTextIndex');
+            window.Worker = undefined;
+            const fallback = await fgData.load('fgTextIndex');
+            return {rejected, wire, same: JSON.stringify(value) === JSON.stringify(fallback),
+                length: value.rows.length, signedZero: value.rows.every((row, position) =>
+                    position === 1024 || Object.is(row[1], position % 2 ? 0 : -0)),
+                separateObjects: value.rows[0][4] !== value.rows[1][4]};
+        }''', dict(encoded=base64.b64encode(gzip.compress(raw)).decode('ascii'), size=len(raw)))
+        self.assertEqual(result, dict(rejected=[True, True, True], wire=[[0, 32, 1023], [1024, 'plain', 1024],
+            [2048, 32, 4]], same=True, length=len(rows), signedZero=True, separateObjects=True))
+
+    def test_embedded_gzip_source_cancels_before_decoding_on_the_next_task(self):
+        raw = encode(['源码🙂'])
+        self.publish(embedded=True, source_catalog=dict(version=1, count=1, chunk_size=1))
+        result = self.page.evaluate('''async ({encoded, size}) => {
+            const node = document.createElement('script');
+            node.type = 'application/x-funcgraph-gzip';
+            node.id = 'fgSrc0';
+            node.dataset.bytes = size;
+            node.textContent = encoded;
+            document.body.append(node);
+            let reads = 0;
+            Object.defineProperty(node, 'textContent', {get() { reads++; return encoded; }});
+            const controller = new AbortController();
+            const canceled = fgData.loadSource(0, {signal:controller.signal}).catch(error => error.name);
+            await Promise.resolve();
+            const readsBeforeCancel = reads;
+            controller.abort();
+            const outcome = await canceled, readyAfterCancel = fgData.sourceReady(0);
+            const source = await fgData.loadSource(0);
+            return {readsBeforeCancel, outcome, readyAfterCancel, source, reads};
+        }''', dict(encoded=base64.b64encode(gzip.compress(raw)).decode('ascii'), size=len(raw)))
+        self.assertEqual(result, dict(readsBeforeCancel=0, outcome='AbortError', readyAfterCancel=False,
+                                      source='源码🙂', reads=1))
 
     def test_checksum_worker_accepts_array_buffer_responses_without_streaming(self):
         self.payloads['raw'] = b'x' * (1024 * 1024)
@@ -863,6 +1088,38 @@ class DataProviderTest(unittest.TestCase):
         self.assertEqual(sum(result['ready']), 16)
         self.assertEqual(result['ready'][::2], result['ready'][1::2])
         self.assertTrue(all(self.count('fgSrc' + str(index) + '.json') == 1 for index in range(0, 20, 2)))
+
+    def test_source_handoff_expires_and_does_not_delay_other_chunk_cancellation(self):
+        self.payloads.update(fgSrc0=encode(['first', 'next']), fgSrc2=encode(['other']))
+        self.publish(source_catalog=dict(version=1, count=3, chunk_size=2))
+        result = self.page.evaluate('''async () => {
+            const originalFetch = window.fetch;
+            let notifyStarted;
+            window.fetch = (url, options) => {
+                if (!String(url).endsWith('/fgSrc0.json')) return originalFetch(url, options);
+                return new Promise((resolve, reject) => {
+                    const signal = options.signal;
+                    signal.addEventListener('abort', () => reject(signal.reason), {once:true});
+                    notifyStarted(signal);
+                });
+            };
+            async function cancel(next) {
+                const started = new Promise(resolve => { notifyStarted = resolve; });
+                const consumer = new AbortController();
+                const old = fgData.loadSource(0, {signal:consumer.signal}).catch(error => error.name);
+                const transport = await started;
+                const dropped = new Promise(resolve => transport.addEventListener('abort', resolve, {once:true}));
+                fgData.keepSourceFlight(0, next);
+                consumer.abort();
+                const kept = !transport.aborted;
+                await dropped;
+                return {kept, old:await old, cached:fgData.sourceReady(0)};
+            }
+            try { return [await cancel(1), await cancel(2)]; }
+            finally { window.fetch = originalFetch; }
+        }''')
+        self.assertEqual(result, [dict(kept=True, old='AbortError', cached=False),
+                                  dict(kept=False, old='AbortError', cached=False)])
 
     def test_canceled_source_loads_do_not_evict_or_reorder_cached_chunks(self):
         self.payloads.update({'fgSrc' + str(index): encode(['source ' + str(index)]) for index in range(9)})

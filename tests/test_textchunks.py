@@ -58,9 +58,10 @@ class TextChunkRangesTest(unittest.TestCase):
         self.root = Path(self.directory.name)
 
     def test_exact_utf8_ranges_cover_each_original_byte_once(self):
-        for count in [0, 1, 4095, 4096, 4097, 8192, 8199]:
-            with self.subTest(count=count):
-                ranges = TextChunkRanges(512)
+        for chunk_size, count in [(size, count) for size in (512, TEXT_NETWORK_ROWS)
+                                  for count in (0, 1, size - 1, size, size + 1, size * 2, size * 2 + 7)]:
+            with self.subTest(count=count, chunk_size=chunk_size):
+                ranges = TextChunkRanges(512, chunk_size)
                 with ReportSpool(self.root / 'spool') as spool:
                     spool.write_sections(ChunkRender(count).iter_sections(), observer=ranges.append)
                     result = ranges.finish(count)
@@ -69,17 +70,19 @@ class TextChunkRangesTest(unittest.TestCase):
                     spool.copy_sections('text', expected)
                     actual = io.BytesIO()
                     for first, rows, section in result:
-                        self.assertEqual(first % TEXT_NETWORK_ROWS, 0)
-                        self.assertEqual(rows, min(TEXT_NETWORK_ROWS, count - first))
+                        self.assertEqual(first % chunk_size, 0)
+                        self.assertEqual(rows, min(chunk_size, count - first))
                         _copy(spool, section, actual)
                     self.assertEqual(actual.getvalue(), expected.getvalue())
                     self.assertEqual(sum(rows for first, rows, section in result), count)
-                    self.assertEqual(len(result), (count + TEXT_NETWORK_ROWS - 1) // TEXT_NETWORK_ROWS)
+                    self.assertEqual(len(result), (count + chunk_size - 1) // chunk_size)
 
     def test_invalid_paint_sizes_and_incomplete_structures_fail_closed(self):
         for size in [True, 0, -1, 3, '512', None]:
             with self.subTest(size=size), self.assertRaises(ValueError):
                 TextChunkRanges(size)
+            with self.subTest(chunk_size=size), self.assertRaises(ValueError):
+                TextChunkRanges(512, size)
         marker = b'<div class="text-chunk" data-chunk-size="512">'
         cases = [[('text', b'</div>')], [('text', b'row')], [('text', marker)],
                  [('text', marker), ('text', b'</div>')],
@@ -154,6 +157,22 @@ class TextChunkRangesTest(unittest.TestCase):
         self.assertIsNone(helpers.json_script(Path(result.entry_path).read_text(), 'fgTextChunks'))
         self.assertEqual(list(self.root.glob('.funcgraph-sidecar-*')), [])
 
+    def test_window_default_uses_exact_rows_or_rendered_utf8_bytes_only_for_chunked_sidecars(self):
+        rows = TEXT_NETWORK_ROWS + 1
+        text_bytes = sum(len(fragment.encode('utf-8')) for name, fragment in ChunkRender(rows).iter_sections()
+                         if name == 'text')
+        cases = [(rows, rows + 1, text_bytes + 1, None, False),
+                 (rows, rows, text_bytes + 1, None, True),
+                 (rows, rows + 1, text_bytes, 0, True),
+                 (rows, rows, text_bytes, 10**9, False),
+                 (TEXT_NETWORK_ROWS, 1, 1, None, False)]
+        for ordinal, (count, row_limit, byte_limit, auto_limit, windowed) in enumerate(cases):
+            with self.subTest(count=count, rows=row_limit, bytes=byte_limit, auto=auto_limit):
+                with mock.patch.multiple(sidecar, TEXT_WINDOW_DEFAULT_ROWS=row_limit, TEXT_WINDOW_DEFAULT_BYTES=byte_limit):
+                    result = write_sidecar(self.root / f'window-policy-{ordinal}', ChunkRender(count), byte_limit=auto_limit)
+                entry = Path(result.entry_path).read_text(encoding='utf-8')
+                self.assertEqual('id="fgTextChunks" data-default-renderer="windowed"' in entry, windowed)
+
     def test_chunk_export_failure_preserves_old_entry_and_success_keeps_old_resources(self):
         output = self.root / 'report'
         write_sidecar(output, ChunkRender(4097))
@@ -204,6 +223,7 @@ class TextChunkBrowserTest(unittest.TestCase):
                          ' 3) 300.000 us    |  } /* root */\n')
         cls.kernel.run(str(trace), '--timeline', '--enable-fold', '--filter', '--func-links',
                        '--report-mode', 'sidecar', out='report')
+        cls.offline_trace = trace
         cls.directory = Path(cls.kernel.dir) / 'report'
         cls.server = create_server(cls.directory)
         cls.thread = threading.Thread(target=cls.server.serve_forever, kwargs={'poll_interval': 0.02}, daemon=True)
@@ -259,6 +279,213 @@ class TextChunkBrowserTest(unittest.TestCase):
         self.assertEqual(result['rows'], 0)
         self.assertTrue(result['deferred'])
         self.assertFalse(any(url.endswith('text-index.json') for url in self.requests))
+
+    def open_single_windowed(self, compression):
+        target = Path(self.kernel.dir) / f'windowed-{compression}.html'
+        self.kernel.run(str(self.offline_trace), '--no-config', '--timeline', '--enable-fold', '--filter', '--func-links',
+                        '--report-mode', 'single-windowed', '--windowed-compression', compression, out=str(target))
+        self.requests.clear()
+        self.page.goto(target.as_uri())
+        self.page.locator('#timelineView .tl-canvas').wait_for(state='attached')
+
+    def test_single_windowed_file_supports_text_sources_filters_and_complete_mount_without_http(self):
+        for compression in ('none', 'gzip'):
+            with self.subTest(compression=compression):
+                self.check_single_windowed(compression)
+
+    def check_single_windowed(self, compression):
+        self.open_single_windowed(compression)
+        self.assertTrue(self.page.evaluate('''() => fgCurrentView() === 'timeline' && fgTextDeferred() &&
+            !document.getElementById('fgDataManifest') && !document.querySelector('#content .line-container')'''))
+        if compression == 'gzip':
+            pending = self.page.evaluate('''() => ['fgTextIndex', 'fgText0', 'fgText512', 'fgText4096', 'fgSrc0']
+                .every(name => document.getElementById(name)?.type === 'application/x-funcgraph-gzip' && !fgData.ready(name))''')
+            self.assertTrue(pending)
+        facts = self.page.evaluate('''async () => {
+            const catalog = fgData.textChunks();
+            const blocks = await Promise.all([63, 64, 511, 512, 4095, 4096, 4159, 4160, 4202]
+                .map(ordinal => fgData.loadTextBlock(ordinal)));
+            await fgSwitchView('text');
+            const renderer = fgTextWindow;
+            document.getElementById('filterInput').value = 'func:^leaf$';
+            await applyFilter();
+            const row = await fgEnsureTextLine(4101);
+            const source = row.nextElementSibling;
+            toggleExpand(row.dataset.lineId);
+            await fgFill(source);
+            const visible = fgFilterState.lines.size;
+            const mounted = renderer.root.querySelectorAll('.line-container').length;
+            const loaded = source.textContent.includes('fake.c') && source.textContent.includes('int b;');
+            await fgSwitchView('timeline');
+            await fgSwitchView('text');
+            const retained = fgTextWindow === renderer && fgFilterState.lines.size === visible;
+            const original = fgData.loadTextBlocks;
+            const fullGroups = [];
+            fgData.loadTextBlocks = (ordinals, options) => {
+                fullGroups.push(ordinals.slice());
+                return original(ordinals, options);
+            };
+            try { await renderer.fullText(); } finally { fgData.loadTextBlocks = original; }
+            const complete = fgTextWindow === null, all = renderer.root.querySelectorAll('.line-container').length;
+            const url = location.href, entries = history.length, filter = fgFilterState;
+            const returned = await fgOpenTextRenderer('windowed');
+            const windowRows = renderer.root.querySelectorAll('.line-container').length;
+            const far = await fgEnsureTextLine(4101);
+            return {visible, mounted, loaded, retained, line:row.id, complete, all,
+                catalog, bounds:blocks.map(({first,count}) => [first,count]), fullGroups,
+                expected:renderer.model.records.length, windowRows, returned:returned && far?.isConnected &&
+                    far.id === 'L4101' && url === location.href && entries === history.length && filter === fgFilterState,
+                stillFiltered:fgFilterState.lines.size === visible};
+        }''')
+        self.assertGreater(facts['mounted'], 0)
+        self.assertLessEqual(facts['mounted'], 160)
+        self.assertGreater(facts['visible'], 4096)
+        self.assertEqual(facts['line'], 'L4101')
+        chunk_size = 512 if compression == 'gzip' else 4096
+        self.assertEqual(facts['catalog'], dict(version=1, count=4203, chunk_size=chunk_size, paint_rows=64))
+        self.assertEqual(facts['bounds'], [[0, 64], [64, 64], [448, 64], [512, 64], [4032, 64],
+                                           [4096, 64], [4096, 64], [4160, 43], [4160, 43]])
+        self.assertEqual(facts['fullGroups'], [list(range(first, min(first + chunk_size, 4203), 64))
+                                               for first in range(0, 4203, chunk_size)])
+        self.assertTrue(all(facts[field] for field in ('loaded', 'retained', 'complete', 'returned', 'stillFiltered')), facts)
+        self.assertEqual(facts['all'], facts['expected'])
+        self.assertGreater(facts['windowRows'], 0)
+        self.assertLessEqual(facts['windowRows'], 160)
+        self.assertFalse(any(url.startswith(('http:', 'https:')) for url in self.requests), self.requests)
+
+    def test_gzip_failure_does_not_cache_data_and_can_retry_offline(self):
+        self.open_single_windowed('gzip')
+        result = self.page.evaluate('''async () => {
+            const name = 'fgText4096', node = document.getElementById(name);
+            const body = node.textContent, size = node.dataset.bytes, original = window.DecompressionStream;
+            const failure = () => fgData.load(name).then(() => null, error => error.message);
+            window.DecompressionStream = undefined;
+            const unsupported = await failure();
+            window.DecompressionStream = original;
+            node.textContent = 'not-base64!';
+            const corrupt = await failure();
+            node.textContent = btoa(atob(body).slice(0, -8));
+            const truncated = await failure();
+            node.textContent = body;
+            node.dataset.bytes = String(Number(size) - 1);
+            const wrongSize = await failure();
+            node.dataset.bytes = size;
+            const pending = !fgData.ready(name);
+            const result = await fgData.load(name);
+            return {unsupported, corrupt, truncated, wrongSize, pending, retried:result.includes('L4101')};
+        }''')
+        self.assertIn('DecompressionStream', result['unsupported'])
+        self.assertTrue(result['corrupt'], result)
+        self.assertTrue(result['truncated'], result)
+        self.assertIn('gzip size mismatch', result['wrongSize'])
+        self.assertTrue(result['pending'] and result['retried'], result)
+        self.assertFalse(any(url.startswith(('http:', 'https:')) for url in self.requests), self.requests)
+
+    def test_trace_jump_back_restores_windowed_text_position_without_history(self):
+        self.open_single_windowed('gzip')
+        expected = self.page.evaluate('''async () => {
+            const index = fgData.read('tlData').cols.line.indexOf(4101);
+            await fgSwitchView('text');
+            await fgRequestTextLine(4101, row => row.scrollIntoView({block:'center'}));
+            return index;
+        }''')
+        self.assertGreaterEqual(expected, 0)
+        self.page.locator('#L4101 .line-content').click()
+        jump = self.page.get_by_role('button', name='In Timeline · L4101', exact=True)
+        back = self.page.get_by_role('button', name='Return to Text', exact=True)
+        before = self.page.evaluate('[scrollY, history.length]')
+        jump.click()
+        self.page.wait_for_function('index => fgView("timeline").probe().sel() === index', arg=expected)
+        back.click()
+        self.page.wait_for_function('() => fgCurrentView() === "text" && !!document.getElementById("L4101")')
+        self.assertEqual(self.page.evaluate('[scrollY, history.length]'), before)
+        self.assertTrue(jump.is_visible())
+        self.assertFalse(back.is_visible())
+
+        jump.click()
+        back.wait_for(state='visible')
+        self.page.locator('.view-tab[data-view=text]').click()
+        self.assertFalse(back.is_visible())
+
+    def test_trace_jump_back_only_focuses_rows_visible_below_sticky_task_context(self):
+        self.open_single_windowed('gzip')
+        number = 4101
+        self.page.evaluate('''async number => {
+            await fgSwitchView('text');
+            await fgSetTextOrder('task');
+            await fgRequestTextLine(number, row => {
+                row.scrollIntoView({block:'center', behavior:'instant'});
+                fgSelectMountedTextLine(row, false);
+            });
+        }''', number)
+        row = self.page.locator(f'#L{number}')
+        caption = self.page.locator('.fg-window-context > .task-group-head')
+        jump = self.page.get_by_role('button', name=f'In Timeline · L{number}', exact=True)
+        back = self.page.get_by_role('button', name='Return to Text', exact=True)
+        tab = self.page.locator('.view-tab[data-view=text]')
+        position = '[scrollY, document.getElementById("textViewport").scrollLeft, history.length]'
+        for covered in (False, True):
+            with self.subTest(covered=covered):
+                caption.wait_for(state='visible')
+                row.evaluate('''(row, covered) => {
+                    const caption = document.querySelector('.fg-window-context > .task-group-head').getBoundingClientRect();
+                    scrollBy({top:row.getBoundingClientRect().bottom - caption.bottom + (covered ? 2 : -8), behavior:'instant'});
+                }''', covered)
+                before = self.page.evaluate(position)
+                jump.press('Enter')
+                back.press('Enter')
+                caption.wait_for(state='visible')
+                self.assertEqual(self.page.evaluate(position), before)
+                geometry = row.evaluate('''row => {
+                    const bottom = row.getBoundingClientRect().bottom;
+                    return {belowControls: bottom > document.querySelector('.controls').getBoundingClientRect().bottom,
+                        covered: bottom <= document.querySelector('.fg-window-context > .task-group-head').getBoundingClientRect().bottom};
+                }''')
+                self.assertEqual(geometry, dict(belowControls=True, covered=covered))
+                self.assertTrue((tab if covered else row).evaluate('element => element === document.activeElement'))
+                if not covered:
+                    self.page.keyboard.press('j')
+                    self.page.wait_for_function('number => document.activeElement.id === "L" + (number + 1)', arg=number)
+                    self.page.keyboard.press('k')
+                    self.page.wait_for_function('number => document.activeElement.id === "L" + number', arg=number)
+
+    def test_trace_jump_selection_tracks_programmatic_rows_and_clears_on_escape(self):
+        self.open_single_windowed('gzip')
+        self.page.locator('.view-tab[data-view=text]').click()
+        self.page.evaluate('''() => fgRequestTextLine(4101, row => fgSelectMountedTextLine(row, false, false))''')
+        self.assertFalse(self.page.locator('#L4101').evaluate('row => row === document.activeElement'))
+        self.assertTrue(self.page.locator('#L4101.keyboard-selected').is_visible())
+        jump = self.page.get_by_role('button', name='In Timeline · L4101', exact=True)
+        jump.press('Escape')
+        empty_jump = self.page.get_by_role('button', name='In Timeline', exact=True)
+        self.assertTrue(empty_jump.is_disabled())
+        self.assertEqual(self.page.locator('#content .keyboard-selected').count(), 0)
+
+        self.page.locator('#L4101 .line-content').click()
+        self.assertTrue(jump.is_enabled())
+        self.page.keyboard.press('Escape')
+        self.assertTrue(empty_jump.is_disabled())
+        self.assertEqual(self.page.evaluate('fgCurrentView()'), 'text')
+
+    def test_gzip_shared_request_survives_one_cancellation_and_retries_after_last(self):
+        self.open_single_windowed('gzip')
+        result = self.page.evaluate('''async () => {
+            const controller = new AbortController();
+            const canceled = promise => promise.then(() => null, error => error.name);
+            const first = canceled(fgData.load('fgText0', {signal:controller.signal}));
+            const other = fgData.load('fgText0');
+            await Promise.resolve();
+            controller.abort();
+            const all = new AbortController();
+            const last = canceled(fgData.load('fgText4096', {signal:all.signal}));
+            await Promise.resolve();
+            all.abort();
+            const pending = !fgData.ready('fgText4096');
+            const retry = await fgData.load('fgText4096');
+            return {first:await first, other:(await other).includes('L1"'), last:await last,
+                pending, retry:retry.includes('L4101')};
+        }''')
+        self.assertEqual(result, dict(first='AbortError', other=True, last='AbortError', pending=True, retry=True))
 
     def test_grouped_paint_reads_preserve_request_order_shared_blocks_and_partial_final_range(self):
         facts = self.page.evaluate('''async () => {

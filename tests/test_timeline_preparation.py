@@ -51,6 +51,480 @@ class OverheadBenchmarkFixtureTest(unittest.TestCase):
 
 @unittest.skipUnless(shutil.which('node'), 'node not installed')
 class TimelinePreparationTest(unittest.TestCase):
+    def test_offcpu_depth_index_preserves_intersections_and_first_record(self):
+        asset = Path(helpers.ROOT, 'assets', 'timeline', 'model.js').read_text(encoding='utf-8')
+        functions = asset[asset.index('function* indexSchedulingIntervals('):
+                          asset.index('for (const track of TRACKS) {\n    track.errorIndex')]
+        result = subprocess.run(['node', '-e', functions + '''
+            const assert = require('node:assert/strict');
+            const SCHED_BLOCK_SIZE = 128, HAS_INL = true, TIMED = true, D = {wakeups: [true]};
+            const OPEN_OFF = new Set();
+            let inlineView = false;
+            const offRow = record => inlineView ? record.ldI : record[3];
+            for (const count of [31, 437]) for (const unordered of [false, true]) {
+                const off = Array.from({length: count}, (_, index) => {
+                    const start = Math.floor(index / 2) * 100;
+                    const record = [0, start, start + 100, index < 128 ? 1 : index < 256 ? 32 : 4];
+                    record.ldI = index < 128 ? 2 : index < 256 ? 54 : 8;
+                    return record;
+                });
+                if (unordered) {
+                    [off[0], off[count - 1]] = [off[count - 1], off[0]];
+                    off[1][2] = count * 200;
+                    OPEN_OFF.add(off[1]);
+                }
+                const track = {off}, snapshot = off.slice();
+                const steps = indexSchedulingIntervals(off, 1, track);
+                let state;
+                do state = steps.next(); while (!state.done);
+                track.offIndex = state.value;
+                assert.equal(track.offIndex === true, count >= SCHED_BLOCK_SIZE && !unordered);
+                for (inlineView of [false, true]) for (const [left, right] of [[0, count * 200], [6400, 6400], [350, 17200], [30000, 31000]]) {
+                    for (const [first, last] of [[0, 100], [1, 1], [2, 2], [3, 31], [32, 32], [54, 54], [55, 75]]) {
+                        const expected = off.filter(record => record[1] <= right && record[2] >= left &&
+                            offRow(record) >= first && offRow(record) <= last);
+                        const seen = [];
+                        const stopped = visitOffIntervals(track, left, right, first, last, (record, depth) => {
+                            assert.equal(depth, offRow(record));
+                            seen.push(record);
+                        });
+                        assert.equal(stopped, null);
+                        assert.deepEqual(seen, expected);
+                        assert.equal(visitOffIntervals(track, left, right, first, last, () => true), expected[0] ?? null);
+                    }
+                }
+                assert.ok(off.every((record, index) => record === snapshot[index]));
+                OPEN_OFF.clear();
+            }
+        '''], capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_call_tree_builds_only_the_selected_track_and_preserves_global_slice_ids(self):
+        directory = Path(helpers.ROOT, 'assets', 'timeline')
+        analysis = (directory / 'analysis.js').read_text(encoding='utf-8')
+        interact = (directory / 'interact.js').read_text(encoding='utf-8')
+        functions = (analysis[analysis.index('const callTreesByTrack'):analysis.index('const CHILD_PAGE')] +
+                     analysis[analysis.index('function* scanCallSubtreeSteps('):analysis.index('// Partition of the measured')] +
+                     interact[interact.index('function callTarget('):interact.index('function navigateCall(')])
+        result = subprocess.run(['node', '-e', functions + '''
+            const assert = require('node:assert/strict');
+            const offset = 100000, count = 11, N = offset + count + 2, NA = N + 1;
+            const TRACKS = [{id: 0, lo: 0, hi: offset}, {id: 1, lo: offset, hi: offset + count},
+                {id: 2, lo: offset + count, hi: N}];
+            const parents = new Int32Array(NA).fill(-1), sDepth = new Uint16Array(NA), sTask = new Int32Array(NA);
+            const FL = { LEAF: 1 << 21 }, sFlags = new Uint32Array(NA);
+            const SYN = [{kids: [offset + 1]}], isSyn = index => index >= N;
+            sTask.fill(1, offset, offset + count); sTask.fill(2, offset + count, N); sTask[N] = 1;
+            sDepth.set([0, 1, 3, 1, 0, 0, 1, 2, 3, 2, 2], offset);
+            parents.set([-1, 0, 1, 0, 0, -1, -2, 6, 7, 3, 3].map(relative =>
+                relative === -1 ? -1 : relative === -2 ? 0 : offset + relative), offset);
+            parents[N] = offset;
+            const visited = [];
+            const sParent = new Proxy(parents, {get(array, key) {
+                if (typeof key === 'string' && /^\\d+$/.test(key)) visited.push(Number(key));
+                return array[key];
+            }});
+            assert.equal(callTarget(N, 'child'), offset + 1);
+            assert.equal(callTarget(N, 'next'), -1);
+            assert.equal(callTreesByTrack.has(TRACKS[1]), false);
+            assert.equal(visited.length, 0);
+            assert.equal(callTreeFor(offset), undefined);
+            const tree = callTreeSteps(offset).next().value;
+            assert.deepEqual(visited, Array.from({length: count}, (_, position) => offset + count - 1 - position));
+            assert.equal(tree.first.length + tree.next.length + tree.previous.length, count * 3);
+            assert.strictEqual(callTreeFor(offset + 10), tree);
+            assert.equal(visited.length, count);
+            assert.equal(callTreesByTrack.has(TRACKS[0]), false);
+            assert.equal(callTreesByTrack.has(TRACKS[2]), false);
+            assert.equal(callTarget(offset, 'next'), offset + 5);
+            assert.equal(callTarget(offset + 5, 'previous'), offset);
+            assert.equal(callTarget(offset + 3, 'previous'), offset + 1);
+            assert.equal(callTarget(offset + 4, 'previous'), -1);
+            assert.equal(callTarget(offset + 6, 'parent'), -1);
+            assert.deepEqual(directChildren(offset).next(), {done: true, value: [offset + 1, offset + 3]});
+            const visit = root => {
+                const calls = [];
+                for (const step of scanCallSubtreeSteps(root, index => calls.push(index), false)) {}
+                return calls;
+            };
+            assert.deepEqual(visit(offset), [offset + 1, offset + 2, offset + 3, offset + 9, offset + 10]);
+            assert.deepEqual(visit(offset + 6), [offset + 7, offset + 8]);
+            const other = offset + count;
+            assert.equal(callTreeSteps(other).next().done, true);
+            assert.equal(callTarget(other, 'next'), other + 1);
+            assert.equal(callTarget(other + 1, 'previous'), other);
+            assert.notStrictEqual(callTreeFor(other), tree);
+            assert.equal(callTreesByTrack.has(TRACKS[0]), false);
+            visited.length = 0;
+            const firstReader = callTreeSteps(0), secondReader = directChildren(0);
+            assert.equal(firstReader.next().done, false);
+            assert.equal(visited.length, CALL_TREE_BATCH);
+            assert.equal(secondReader.next().done, false);
+            assert.equal(visited.length, CALL_TREE_BATCH * 2);
+            firstReader.return();
+            assert.equal(callTreeFor(0), undefined);
+            const resumed = callTreeSteps(1);
+            while (!resumed.next().done) {}
+            assert.equal(visited.length, offset);
+            assert.deepEqual(secondReader.next(), {done: true, value: []});
+            assert.equal(visited.length, new Set(visited).size);
+            assert.equal(callTarget(1, 'previous'), 0);
+            assert.equal(callTarget(0, 'previous'), -1);
+            assert.equal(callTarget(0, 'next'), 1);
+            assert.equal(callTarget(offset - 1, 'next'), -1);
+        '''], capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_child_preview_and_group_ranking_leave_member_lists_unbuilt(self):
+        asset = Path(helpers.ROOT, 'assets', 'timeline', 'analysis.js').read_text(encoding='utf-8')
+        functions = asset[asset.index('const callTreesByTrack'):asset.index('function* childOrderSteps(')]
+        result = subprocess.run(['node', '-e', functions + '''
+            const assert = require('node:assert/strict');
+            const S = ['root', 'alpha', 'beta', 'gamma'], sName = [0, 1, 2, 1, 3, 1];
+            const sParent = [-1, 0, 0, 0, 0, 1], sDepth = [0, 1, 1, 1, 1, 2];
+            const sTask = sParent.map(() => 0);
+            const TRACKS = [{id: 0, lo: 0, hi: sParent.length}];
+            const measured = [100, 4, 8, 4, 1, 1], adjusted = [90, 2, 7, 3, 1, 1];
+            let sDur = measured, sSelf = [0, 3, 8, 4, 1, 1];
+            const complete = steps => {
+                let result;
+                do { result = steps.next(); } while (!result.done);
+                return result.value;
+            };
+            const childData = (...args) => complete(childDataSteps(...args));
+            const rankChildRows = (...args) => complete(rankChildRowsSteps(...args));
+            const summary = data => selectChildPreview(data.groups).next().value.map(group =>
+                [group.name, group.count, group.first, group.longest, group.inclusive]);
+
+            const data = childData(0, null);
+            assert.strictEqual(data.ids, data.raw.ids);
+            assert.deepEqual(summary(data), [[1, 2, 1, 1, 8], [2, 1, 2, 2, 8], [3, 1, 4, 4, 1]]);
+            assert.deepEqual(rankChildRows(data, 'groups', 'calls', null, '').map(group => group.name), [1, 2, 3]);
+            assert.deepEqual(rankChildRows(data, 'calls', 'inclusive', null, ''), [2, 1, 3, 4]);
+            assert.equal(data.members, null);
+            assert.deepEqual(rankChildRows(data, 'calls', 'inclusive', 1, ''), [1, 3]);
+            const members = data.members;
+            assert.deepEqual(rankChildRows(data, 'calls', 'inclusive', 3, ''), [4]);
+            assert.strictEqual(data.members, members);
+
+            const filtered = childData(0, Uint8Array.of(0, 0, 1, 1, 1, 1));
+            assert.deepEqual(filtered.ids, [2, 3, 4]);
+            assert.deepEqual(summary(filtered), [[2, 1, 2, 2, 8], [1, 1, 3, 3, 4], [3, 1, 4, 4, 1]]);
+            assert.equal(filtered.members, null);
+            assert.deepEqual(rankChildRows(filtered, 'calls', 'inclusive', 1, ''), [3]);
+
+            sDur = adjusted;
+            assert.deepEqual(summary(childData(0, null)), [[2, 1, 2, 2, 7], [1, 2, 1, 3, 5], [3, 1, 4, 4, 1]]);
+            sDur = measured;
+            assert.strictEqual(childData(0, null), data);
+        '''], capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_subtree_breakdown_keeps_irq_boundaries_and_cached_cohort_order(self):
+        asset = (Path(helpers.ROOT) / 'assets' / 'timeline' / 'analysis.js').read_text(encoding='utf-8')
+        functions = (asset[asset.index('const callTreesByTrack'):asset.index('const CHILD_WORK_BATCH')] +
+                     asset[asset.index('function* scanCallSubtreeSteps('):asset.index('function breakdownHtml(')])
+        result = subprocess.run(['node', '-e', functions + '''
+            const assert = require('node:assert/strict');
+            const FL = {CTX: 3}, D = {overhead: {child: 5, self: 3}}, PREPARE_BATCH = 8192;
+            const sParent = [-1, 0, 1, 1, 0, 4, 5, 0, 7], sTask = sParent.map(() => 0);
+            const sDepth = [0, 2, 3, 5, 4, 7, 9, 1, 10];
+            const sFlags = [0, 2, 3, 0, 0, 1, 0, 0, 0];
+            const sStart = [0, 100, 110, 150, 300, 350, 360, 700, 720];
+            const sEnd = [1000, 220, 135, 172, 480, 410, 385, 790, 795];
+            const sSelfRaw = [100, 90, 20, 15, 120, 30, 18, 12, 13];
+            const TRACKS = [{id: 0, lo: 0, hi: sParent.length,
+                off: [[0, 12, 25, 1, 0, 0, 0, 0, false], [0, 40, 48, 2, 0, 0, 0, 0, true]]}];
+            let waitScans = 0;
+            function* offIntervalBlocks(track) { waitScans++; yield [0, track.off.length]; }
+            const breakdown = (...args) => {
+                const steps = breakdownSteps(...args);
+                let result;
+                do { result = steps.next(); } while (!result.done);
+                return result.value;
+            };
+            const measured = breakdown(0);
+            assert.deepEqual(measured, {wall: 1000, own: 87, callees: 137, irq: 180,
+                offB: 13, offP: 8, ovh: 18, nCalls: 8});
+            const cohort = [];
+            assert.strictEqual(breakdown(0, index => cohort.push(index)), measured);
+            assert.deepEqual(cohort, [1, 2, 3, 4, 5, 6, 7, 8]);
+            assert.equal(waitScans, 1);
+            const nested = [];
+            assert.deepEqual(breakdown(1, index => nested.push(index)), {wall: 120, own: 90, callees: 15,
+                irq: 25, offB: 0, offP: 0, ovh: 8, nCalls: 2});
+            assert.deepEqual(nested, [2, 3]);
+        '''], capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_dense_hit_cache_uses_current_row_geometry_and_match_state(self):
+        render = Path(helpers.ROOT, 'assets', 'timeline', 'render.js').read_text(encoding='utf-8')
+        interact = Path(helpers.ROOT, 'assets', 'timeline', 'interact.js').read_text(encoding='utf-8')
+        lookup = render[render.index('const DENSE_MATCH_BLOCK'):render.index('// ---- detail panel split')]
+        cache = interact[interact.index('const unfilteredDenseHit'):interact.index('let lastDenseOff')]
+        result = subprocess.run(['node', '-e', lookup + cache + '''
+            const assert = require('node:assert/strict');
+            const N = 7, NA = N, range = null;
+            const sName = [0, 1, 2, 3, 4, 5, 6];
+            const sStart = [0.05, 0.2, 0.45, 0.75, 2.85, 3.1, 0.45];
+            const sEnd = [0.05, 0.2, 0.45, 2.8, 2.85, 3.1, 0.45];
+            const row = [0, 1, 2, 3, 4, 5], otherRow = [6];
+            let searchHits = null, textHits = null, lookups = 0;
+            const calculate = densePixelAt;
+            densePixelAt = (...args) => { lookups++; return calculate(...args); };
+            const original = denseHitAt(row, 0, 0, 1);
+            assert.deepEqual(original, {index: 0, count: 3, matches: 3});
+            assert.strictEqual(denseHitAt(row, 0, 0, 1), original);
+            assert.equal(lookups, 1);
+
+            textHits = Uint8Array.of(0, 1, 1, 0, 0, 0, 0);
+            const filtered = denseHitAt(row, 0, 0, 1);
+            assert.deepEqual(filtered, {index: 1, count: 3, matches: 2});
+            assert.strictEqual(denseHitAt(row, 0, 0, 1), filtered);
+            assert.equal(lookups, 2);
+
+            searchHits = Uint8Array.of(1, 0, 1, 0, 0, 0, 0);
+            assert.deepEqual(denseHitAt(row, 0, 0, 1), {index: 2, count: 3, matches: 1});
+            textHits = Uint8Array.of(0, 1, 0, 0, 0, 0, 0);
+            assert.deepEqual(denseHitAt(row, 0, 0, 1), {index: 0, count: 3, matches: 0});
+            textHits = searchHits = null;
+            assert.strictEqual(denseHitAt(row, 0, 0, 1), original);
+            assert.equal(lookups, 4);
+
+            assert.deepEqual(denseHitAt(otherRow, 0, 0, 1), {index: 6, count: 1, matches: 1});
+            assert.deepEqual(denseHitAt(row, 2, 0, 1), {index: 4, count: 1, matches: 1});
+            assert.deepEqual(denseHitAt(row, 2, 1, 1), {index: 5, count: 1, matches: 1});
+            assert.deepEqual(denseHitAt(row, 2, 0, 10), {index: 1, count: 1, matches: 1});
+            assert.equal(denseHitAt(row, 1, 0, 1), null);
+            assert.equal(denseHitAt(row, 1, 0, 1), null);
+            assert.equal(lookups, 9);
+        '''], capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_pixel_group_cache_reuses_boundaries_without_caching_filter_or_wide_slices(self):
+        asset = Path(helpers.ROOT, 'assets', 'timeline', 'render.js').read_text(encoding='utf-8')
+        pixel = asset[asset.index('function lbPixel('):asset.index('// ---- detail panel split')]
+        cache = asset[asset.index('const DENSE_SLICE_WIDTH'):asset.index('function render()')]
+        row = asset[asset.index('function drawDenseRun('):asset.index('function drawSlice(')]
+        result = subprocess.run(['node', '-e', pixel + cache + row + '''
+            const assert = require('node:assert/strict');
+            const P = { dense: 0.65 }, searchHits = true, textHits = false;
+            const lbEnd = () => 0, lbStart = () => 0, sliceStyle = index => [index];
+            let sStart, sEnd, matches, spans, fills, wide, searches, reads;
+            const originalSearch = lbPixel;
+            lbPixel = (...args) => { searches++; return originalSearch(...args); };
+            const ctx = { fillRect(x, y, width) { fills.push([x, width, this.fillStyle, this.globalAlpha]); } };
+            const drawSlice = (index, start, end) => wide.push([index, start, end]);
+            function denseSummary(row, first, end) {
+                spans.push([first, end]);
+                const match = matches.find(index => first <= index && index < end);
+                return { index: row[match ?? first], count: end - first, matches: Number(match !== undefined) };
+            }
+            function paint(row, selected, start = 0, end = 10, scale = 1) {
+                prepareDenseRowView(start, end, scale, {});
+                matches = selected;
+                spans = []; fills = []; wide = []; searches = 0; reads = 0;
+                drawRow(row, 0, 12, start, end, scale, false);
+            }
+            function setup(starts, ends) {
+                sStart = starts;
+                sEnd = ends;
+                return new Proxy(Array.from(starts.keys()), {
+                    get(ids, key) {
+                        if (typeof key === 'string' && /^\\d+$/.test(key)) reads++;
+                        return ids[key];
+                    }
+                });
+            }
+            const singletons = setup([0, 1, 2, 3], [0, 1, 2, 3]);
+            paint(singletons, [0, 2]);
+            assert.equal(searches, 4);
+            assert.deepEqual(spans, [[0, 1], [1, 2], [2, 3], [3, 4]]);
+            assert.deepEqual(fills, [[0, 1, 0, 0.65], [1, 1, 1, 0.2], [2, 1, 2, 0.65], [3, 1, 3, 0.2]]);
+            paint(singletons, [1, 3]);
+            assert.equal(searches, 0);
+            assert.deepEqual(fills, [[0, 1, 0, 0.2], [1, 1, 1, 0.65], [2, 1, 2, 0.2], [3, 1, 3, 0.65]]);
+            const boundary = setup([0, 1 - Number.EPSILON / 2, 1], [0, 1, 1]);
+            paint(boundary, [1]);
+            assert.deepEqual(spans, [[0, 2], [2, 3]]);
+            assert.deepEqual(fills, [[0, 1, 1, 0.65], [1, 1, 2, 0.2]]);
+            assert.equal(densePixelAt(boundary, 0, 0, 1).index, 1);
+            const dense = setup([...Array(4096).fill(0), 0.75, 3], [...Array(4096).fill(0), 2.25, 3]);
+            paint(dense, [2500]);
+            assert.equal(searches, 2);
+            assert.ok(reads < 40, `read ${reads} row members for one dense group`);
+            assert.deepEqual(spans, [[0, 4096], [4097, 4098]]);
+            assert.deepEqual(fills, [[0, 1, 2500, 0.65], [3, 1, 4097, 0.2]]);
+            assert.deepEqual(wide, [[4096, 0.75, 2.25]]);
+            assert.deepEqual(densePixelAt(dense, 0, 0, 1), { index: 2500, count: 4096, matches: 1 });
+            paint(dense, [3999]);
+            assert.equal(searches, 0);
+            assert.deepEqual(fills, [[0, 1, 3999, 0.65], [3, 1, 4097, 0.2]]);
+            assert.deepEqual(wide, [[4096, 0.75, 2.25]]);
+            paint(dense, [3999], 0, 10, 0.5);
+            assert.equal(searches, 2);
+            assert.deepEqual(spans, [[0, 4097], [4097, 4098]]);
+            assert.deepEqual(wide, []);
+            prepareDenseRowView(0, 9, 1, {});
+            denseRowView.remaining = 1;
+            paint(dense, [3999], 0, 9, 1);
+            assert.equal(denseRowView.remaining, 0);
+            assert.equal(denseRowView.rows.get(dense).ends.length, 1);
+            paint(dense, [3999], 0, 9, 1);
+            assert.equal(searches, 1);
+            assert.deepEqual(spans, [[0, 4096], [4097, 4098]]);
+        '''], capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_dense_row_fill_reuse_preserves_wide_slice_and_filter_paint_order(self):
+        asset = Path(helpers.ROOT, 'assets', 'timeline', 'render.js').read_text(encoding='utf-8')
+        pixel = asset[asset.index('function lbPixel('):asset.index('// ---- detail panel split')]
+        cache = asset[asset.index('const DENSE_SLICE_WIDTH'):asset.index('function render()')]
+        row = asset[asset.index('function drawDenseRun('):asset.index('function drawSlice(')]
+        result = subprocess.run(['node', '-e', pixel + cache + row + '''
+            const assert = require('node:assert/strict');
+            const P = {dense: 0.65}, searchHits = true, textHits = null;
+            const sStart = [0, 3, 6, 10, 13, 16], sEnd = [0, 3, 8, 10, 13, 16];
+            const row = Array.from(sStart.keys()), matching = {};
+            const lbEnd = () => 0, lbStart = () => 0;
+            let denseColor = 'red', fill, assignments, rects;
+            const sliceStyle = () => [denseColor];
+            const ctx = {
+                globalAlpha: 1,
+                set fillStyle(value) { fill = value; assignments.push(value); },
+                fillRect(left, top, width, height) { rects.push([left, width, fill, this.globalAlpha]); }
+            };
+            function denseSummary(row, first) { return {index: row[first], matches: Number(first % 2 === 0)}; }
+            function drawSlice(index, left, right, top, height) {
+                ctx.fillStyle = 'blue';
+                ctx.globalAlpha = 1;
+                ctx.fillRect(left, top, right - left, height);
+            }
+            for (const replay of [false, false, true]) {
+                prepareDenseRowView(0, 20, 1, matching);
+                assert.equal(denseRowView.paints.has(row), replay);
+                if (replay) denseColor = 'green';
+                assignments = []; rects = [];
+                drawRow(row, 0, 12, 0, 20, 1, true);
+                assert.deepEqual(assignments, [denseColor, 'blue', denseColor]);
+                assert.deepEqual(rects, [
+                    [0, 1, denseColor, 0.65], [3, 1, denseColor, 0.2], [6, 2, 'blue', 1],
+                    [10, 1, denseColor, 0.2], [13, 1, denseColor, 0.65], [16, 1, denseColor, 0.2]
+                ]);
+                assert.equal(ctx.globalAlpha, 1);
+            }
+        '''], capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_wide_row_paint_skips_recording_and_rechecks_density_after_zoom(self):
+        asset = Path(helpers.ROOT, 'assets', 'timeline', 'render.js').read_text(encoding='utf-8')
+        functions = (asset[asset.index('function lbPixel('):asset.index('// ---- detail panel split')] +
+                     asset[asset.index('const DENSE_SLICE_WIDTH'):asset.index('function render()')] +
+                     asset[asset.index('function drawDenseRun('):asset.index('function drawSlice(')])
+        result = subprocess.run(['node', '-e', functions + '''
+            const assert = require('node:assert/strict');
+            const P = {dense: 0.65}, searchHits = null, textHits = null;
+            const sStart = [0, 3, 6], sEnd = [2, 5, 8], row = [0, 1, 2];
+            const sliceStyle = () => ['red'];
+            let lookups = 0, wideCalls = 0, denseRuns = 0;
+            const lbEnd = () => { lookups++; return 0; }, lbStart = () => 0;
+            const ctx = { globalAlpha: 1, fillRect() { denseRuns++; } };
+            function drawSlice() { wideCalls++; }
+
+            const matching = {};
+            prepareDenseRowView(0, 10, 1, matching);
+            drawRow(row, 0, 12, 0, 10, 1, true);
+            for (const matches of [matching, {}]) {
+                prepareDenseRowView(0, 10, 1, matches);
+                drawRow(row, 0, 12, 0, 10, 1, true);
+                assert.equal(denseRowView.paints.has(row), false);
+                assert.equal(denseRowView.paintRemaining, DENSE_ROW_PAINT_LIMIT);
+            }
+            assert.equal(lookups, 1);
+            assert.equal(wideCalls, 9);
+            assert.equal(denseRuns, 0);
+            drawRow([], 0, 12, 0, 10, 1, true);
+            assert.equal(lookups, 1);
+
+            const uncached = [];
+            for (let index = 0; index < WIDE_ROW_CACHE_LIMIT; index++) {
+                uncached.push([0, 1, 2]);
+                drawRow(uncached[index], 0, 12, 0, 10, 1, true);
+            }
+            assert.equal(denseRowView.wideRemaining, 0);
+            assert.equal(denseRowView.rows.has(uncached.at(-1)), false);
+            assert.equal(denseRowView.remaining, DENSE_ROW_GROUP_LIMIT);
+
+            prepareDenseRowView(0, 20, 0.5, matching);
+            drawRow(row, 0, 12, 0, 20, 0.5, true);
+            prepareDenseRowView(0, 20, 0.5, matching);
+            drawRow(row, 0, 12, 0, 20, 0.5, true);
+            assert(denseRowView.paints.has(row));
+            assert.equal(denseRuns, 2);
+        '''], capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_trace_line_lookup_preserves_exact_exit_and_preceding_call_ties(self):
+        asset = Path(__file__).resolve().parents[1] / 'assets' / 'timeline' / 'model.js'
+        source = asset.read_text(encoding='utf-8')
+        source = source[source.index('function createTraceLineLookup('):source.index('let traceLineLookup =')]
+        result = subprocess.run(['node', '-e', source + '''
+            const assert = require('node:assert/strict');
+            function reference(entries, exits, count, line) {
+                let exact = -1, preceding = -1;
+                for (let index = 0; index < count; index++) {
+                    if (entries[index] === line || exits?.[index] && exits[index] === line) exact = index;
+                    if (entries[index] <= line && (preceding < 0 || entries[index] > entries[preceding])) preceding = index;
+                }
+                return exact >= 0 ? exact : preceding;
+            }
+            for (const multiplier of [1, 1000]) {
+                const entries = Int32Array.from([9,4,4,3,7,10,11,2], line => line * multiplier);
+                const exits = Int32Array.from([12,8,7,6,11,0,13,14], line => line * multiplier);
+                for (const endLines of [exits, null]) {
+                    for (const count of [0, 1, 7]) {
+                        const lookup = createTraceLineLookup(entries, endLines, count);
+                        for (let line = 1; line <= 15 * multiplier; line++) {
+                            assert.equal(lookup(line), reference(entries, endLines, count, line),
+                                JSON.stringify({line,count,multiplier,withExits:!!endLines}));
+                        }
+                    }
+                }
+            }
+            const entries = Int32Array.from({length: 769}, (_, index) => (index * 17 % 769 + 1) * 32);
+            entries[0] = entries[256] = entries[768] = 24_576;
+            entries[10] = entries[265] = entries[765] = 42_496;
+            const exits = Int32Array.from(entries, (entry, index) => index % 3 ? entry + 8 : 0);
+            exits[766] = entries[10];
+            for (const count of [255, 256, 257, 512, 768, 769]) {
+                const lookup = createTraceLineLookup(entries, exits, count);
+                const lines = [1, 42_496, 42_497, 42_504, 42_505, 2_147_483_647];
+                for (let rank = 1; rank <= 769; rank++) lines.push(rank * 32, rank * 32 + 1, rank * 32 + 8);
+                for (const line of lines) assert.equal(lookup(line), reference(entries, exits, count, line), `${count}:${line}`);
+            }
+            const signedEntries = Int32Array.from({length: 3073}, (_, index) => (index * 179 % 3079 - 1539) * 65537);
+            signedEntries[0] = signedEntries[2048] = -2_147_483_648;
+            signedEntries[22] = signedEntries[2050] = 2_147_483_647;
+            const signedExits = Int32Array.from(signedEntries, (line, index) => index % 7 ? line : 0);
+            signedExits[3072] = signedEntries[0];
+            for (const count of [2048, 2049, 3073]) {
+                const queries = [-2_147_483_649, -2_147_483_648, -2_147_483_647, 0, 2_147_483_646, 2_147_483_647, 2_147_483_648];
+                for (let index = 0; index < count; index += 17) {
+                    queries.push(signedEntries[index], signedEntries[index] + 1, signedExits[index]);
+                }
+                for (const skipZero of [false, true]) {
+                    const lines = skipZero ? signedExits : signedEntries;
+                    const expected = Array.from({length: count}, (_, index) => index)
+                        .filter(index => !skipZero || lines[index] !== 0)
+                        .sort((left, right) => lines[left] - lines[right] || left - right);
+                    assert.deepEqual([...sortTraceLineOrdinals(lines, count, skipZero)], expected);
+                }
+                const lookup = createTraceLineLookup(signedEntries, signedExits, count);
+                for (const line of queries) assert.equal(lookup(line), reference(signedEntries, signedExits, count, line), `${count}:${line}`);
+            }
+        '''], capture_output=True, text=True, timeout=30)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
     def run_model(self, assertions, cpu=False):
         asset = Path(__file__).resolve().parents[1] / 'assets' / 'timeline' / 'model.js'
         source = asset.read_text(encoding='utf-8')
@@ -590,10 +1064,12 @@ class TimelinePreparationBrowserTest(unittest.TestCase):
         self.assertEqual(self.page.locator('.tl-canvas').count(), 0)
 
     def test_cancel_during_each_large_phase_reopens_without_mutating_cached_input(self):
-        for scenario, phase in (('inline', 'Building inline frames…'), ('gaps', 'Building untraced frames…'),
-                                ('gaps', 'Indexing task tracks…')):
+        for scenario, phase, occurrence in (('inline', 'Building inline frames…', 5),
+                                            ('gaps', 'Building untraced frames…', 5),
+                                            ('gaps', 'Indexing task tracks…', 5),
+                                            ('gaps', 'Indexing call ranges…', 2)):
             with self.subTest(scenario=scenario, phase=phase):
-                self.gate(scenario, phase, 5)
+                self.gate(scenario, phase, occurrence)
                 self.page.locator('.fg-loading button').click()
                 self.assertTrue(self.page.evaluate('async () => await preparing === null'))
                 self.assertTrue(self.page.evaluate('preparationClosed'))

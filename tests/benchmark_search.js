@@ -30,8 +30,19 @@ function baseline(query) {
 }
 
 const buildStart = performance.now();
-const index = drain(buildSearchIndex(names, count));
+const index = drain(buildSearchIndex(names, count, strings.length));
 const buildMilliseconds = performance.now() - buildStart;
+
+const typedBuildTimes = [], sparseBuildTimes = [];
+for (let iteration = -3; iteration < iterations; iteration++) {
+    for (const mode of iteration % 2 ? ['typed', 'sparse'] : ['sparse', 'typed']) {
+        const start = performance.now();
+        const built = drain(buildSearchIndex(names, count, mode === 'typed' ? strings.length : 0));
+        const milliseconds = performance.now() - start;
+        if (iteration >= 0) (mode === 'typed' ? typedBuildTimes : sparseBuildTimes).push(milliseconds);
+        if (iteration === 0) assert.deepEqual(built, index);
+    }
+}
 
 function indexed(query) {
     const hits = drain(matchSearchNames(index, strings, new RegExp(query, 'i')));
@@ -65,6 +76,7 @@ for (const kind of ['single-function', 'sparse-union', 'dense']) {
         speedup:median(baselineTimes) / median(indexedTimes)});
 }
 console.log(JSON.stringify({calls:count, functions, iterations, cold_index_ms:buildMilliseconds,
+    typed_build_median_ms:median(typedBuildTimes), sparse_build_median_ms:median(sparseBuildTimes),
     retained_index_typed_bytes:index.names.byteLength + index.offsets.byteLength + index.calls.byteLength,
     scope:'Model CPU only; generator yields drained synchronously; excludes browser rendering, filtering and process heap overhead',
     baseline:'Former warm-name-cache regex pass followed by a full call-name scan and JavaScript result array',

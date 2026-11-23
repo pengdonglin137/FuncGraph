@@ -301,7 +301,7 @@ yield 'Indexing task tracks…';
 // ---- tracks ----
 const TRACKS = D.tasks.map((t, i) => ({
     id: i, pid: t.pid, comm: t.comm, comms: t.comms || [], kind: t.kind, cpu: t.cpu, runs: t.runs || [],
-    lo: -1, hi: -1, maxD: -1, rows: [], rowsT: [], rowsI: [], maxDT: -1, maxDI: -1, busy: 0, off: [], rs: [], io: [], errs: [], userErrors: [], cpus: new Set(),
+    lo: -1, hi: -1, orderedParents: true, maxD: -1, rows: [], rowsT: [], rowsI: [], maxDT: -1, maxDI: -1, busy: 0, off: [], rs: [], io: [], errs: [], userErrors: [], cpus: new Set(),
     collapsed: false, hidden: false, hits: 0, y: 0, h: 0, kvm: [], kvmEvents: [], vcpus: new Set()
 }));
 const KVM = D.kvm?.v === 1 ? D.kvm : null;
@@ -351,42 +351,44 @@ for (let i = 0; i < N; i++) {
     if (t.lo < 0) t.lo = i;
     t.hi = i + 1;
     if (sDepth[i] > t.maxD) t.maxD = sDepth[i];
-    if (sParent[i] < 0) t.busy += sEnd[i] - sStart[i];
+    const parent = sParent[i];
+    if (parent < 0) t.busy += sEnd[i] - sStart[i];
+    else if (parent >= i) t.orderedParents = false;
     if (sCpu && sCpu[i] >= 0) t.cpus.add(sCpu[i]);
 }
 function* sortTimelineRow(row, compare = (left, right) => sStart[left] - sStart[right] || left - right,
-        label = 'Indexing task tracks…') {
+        label = 'Indexing task tracks…', batchSize = PREPARE_BATCH) {
     const typed = row instanceof Int32Array;
     let ordered = true;
     for (let index = 1; index < row.length; index++) {
-        if ((index & (PREPARE_BATCH - 1)) === 0) yield label;
+        if (index % batchSize === 0) yield label;
         if (compare(row[index - 1], row[index]) > 0) { ordered = false; break; }
     }
     if (ordered) return;
-    for (let start = 0; start < row.length; start += PREPARE_BATCH) {
-        const chunk = typed ? row.subarray(start, start + PREPARE_BATCH) : row.slice(start, start + PREPARE_BATCH);
+    for (let start = 0; start < row.length; start += batchSize) {
+        const chunk = typed ? row.subarray(start, start + batchSize) : row.slice(start, start + batchSize);
         chunk.sort(compare);
         if (!typed) for (let offset = 0; offset < chunk.length; offset++) row[start + offset] = chunk[offset];
         yield label;
     }
-    if (row.length <= PREPARE_BATCH) return;
+    if (row.length <= batchSize) return;
     const buffer = typed ? new Int32Array(row.length) : new Array(row.length);
     let source = row, target = buffer;
-    for (let width = PREPARE_BATCH; width < row.length; width *= 2) {
+    for (let width = batchSize; width < row.length; width *= 2) {
         for (let start = 0; start < row.length; start += width * 2) {
             const middle = Math.min(start + width, row.length), end = Math.min(start + width * 2, row.length);
             let left = start, right = middle;
             for (let index = start; index < end; index++) {
-                if (index && (index & (PREPARE_BATCH - 1)) === 0) yield label;
+                if (index && index % batchSize === 0) yield label;
                 target[index] = left < middle && (right >= end || compare(source[left], source[right]) <= 0)
                     ? source[left++] : source[right++];
             }
         }
         [source, target] = [target, source];
     }
-    if (source !== row) for (let start = 0; start < row.length; start += PREPARE_BATCH) {
-        if (typed) row.set(source.subarray(start, start + PREPARE_BATCH), start);
-        else for (let index = start; index < Math.min(row.length, start + PREPARE_BATCH); index++) row[index] = source[index];
+    if (source !== row) for (let start = 0; start < row.length; start += batchSize) {
+        if (typed) row.set(source.subarray(start, start + batchSize), start);
+        else for (let index = start; index < Math.min(row.length, start + batchSize); index++) row[index] = source[index];
         yield label;
     }
 }
@@ -420,6 +422,23 @@ function* buildRows(first, end, synthetic, depthOf) {
     return [rows, mx];
 }
 const synByTask = new Map();
+const RANGE_BLOCK_SIZE = 128;
+function* indexRangeBounds(first, end) {
+    if (end - first < RANGE_BLOCK_SIZE) return null;
+    const bounds = new Float64Array(2 * Math.ceil((end - first) / RANGE_BLOCK_SIZE));
+    for (let offset = 0, start = first; start < end; offset += 2, start += RANGE_BLOCK_SIZE) {
+        if (offset && (start - first) % PREPARE_BATCH === 0) yield 'Indexing call ranges…';
+        const stop = Math.min(start + RANGE_BLOCK_SIZE, end);
+        let earliest = Infinity, latest = -Infinity;
+        for (let index = start; index < stop; index++) {
+            earliest = Math.min(earliest, sStart[index]);
+            latest = Math.max(latest, sEnd[index]);
+        }
+        bounds[offset] = earliest;
+        bounds[offset + 1] = latest;
+    }
+    return bounds;
+}
 for (let i = N; i < NA; i++) {
     if ((i - N) && ((i - N) & (PREPARE_BATCH - 1)) === 0) yield 'Indexing task tracks…';
     if (!synByTask.has(sTask[i])) synByTask.set(sTask[i], []);
@@ -427,6 +446,7 @@ for (let i = N; i < NA; i++) {
 }
 for (const t of TRACKS) {
     if (t.lo < 0) continue;
+    t.rangeBounds = yield* indexRangeBounds(t.lo, t.hi);
     const syn = synByTask.get(t.id) || [];
     const ghosts = [];
     for (let ordinal = 0; ordinal < syn.length; ordinal++) {
@@ -457,7 +477,11 @@ function applyView() {
 applyView();
 for (const r of D.resched) TRACKS[r[0]].rs.push(r);   // [task, start, end, maxPreempt, irqoff, closedBy]
 for (const r of D.irqoff) TRACKS[r[0]].io.push(r);    // [task, start, end]
-for (let c = 0; c < CHAINS.length; c++) if (!CHAINS[c][6]) TRACKS[sTask[CHAINS[c][0]]].errs.push(c);
+for (let index = 0; index < CHAINS.length; index++) {
+    if (index && index % PREPARE_BATCH === 0) yield 'Indexing error origins…';
+    const chain = CHAINS[index];
+    if (!chain[6]) TRACKS[sTask[chain[0]]].errs.push(index);
+}
 for (const index of USER_ERRORS.keys()) TRACKS[sTask[index]].userErrors.push(index);
 
 let tMin = Infinity, tMax = -Infinity, callStart = Infinity, callEnd = -Infinity;
@@ -492,13 +516,41 @@ initialEnd = Math.max(initialStart + 1, initialEnd);
 const OPEN_OFF = new Set(D.offcpu.filter(record => record[2] === null));
 for (const r of D.offcpu) if (r[2] === null) r[2] = tMax;
 const SCHED_BLOCK_SIZE = 128;
-function* indexSchedulingIntervals(records, timeColumn = 1) {
+const ERROR_BLOCK_SIZE = 128;
+function* indexErrorOrigins(chains) {
+    if (chains.length < ERROR_BLOCK_SIZE) return null;
+    const bounds = new Float64Array(2 * Math.ceil(chains.length / ERROR_BLOCK_SIZE));
+    let ordered = true, previous = -Infinity;
+    for (let start = 0, offset = 0; start < chains.length; start += ERROR_BLOCK_SIZE, offset += 2) {
+        if (start && start % PREPARE_BATCH === 0) yield 'Indexing error origins…';
+        const stop = Math.min(chains.length, start + ERROR_BLOCK_SIZE);
+        let earliest = Infinity, latest = -Infinity;
+        for (let position = start; position < stop; position++) {
+            const time = sStart[CHAINS[chains[position]][0]];
+            if (time < previous) ordered = false;
+            previous = time;
+            earliest = Math.min(earliest, time);
+            latest = Math.max(latest, time);
+        }
+        bounds[offset] = earliest;
+        bounds[offset + 1] = latest;
+    }
+    return ordered ? true : bounds;
+}
+function* indexSchedulingIntervals(records, timeColumn = 1, offTrack = null) {
     if (records.length < SCHED_BLOCK_SIZE) return null;
     const bounds = new Float64Array(2 * Math.ceil(records.length / SCHED_BLOCK_SIZE));
+    const depths = offTrack ? new Int32Array(bounds.length) : null;
+    const inlineDepths = offTrack && HAS_INL ? new Int32Array(bounds.length) : depths;
+    const waitTrack = TIMED && D.wakeups?.length ? offTrack : null;
+    let minDepth = Infinity, maxDepth = -Infinity, minInlineDepth = Infinity, maxInlineDepth = -Infinity;
     let ordered = true, previousStart = -Infinity, previousEnd = -Infinity;
+    let firstWait = -1, lastWait = -1, lastWaitEnd = 0;
+    let ascending = true, descending = true, contiguous = true;
     for (let start = 0, block = 0; start < records.length; start += SCHED_BLOCK_SIZE, block += 2) {
         if (start && start % 16384 === 0) yield 'Indexing scheduling intervals…';
         let earliest = Infinity, latest = -Infinity;
+        let shallowest = Infinity, deepest = -Infinity, shallowestInline = Infinity, deepestInline = -Infinity;
         const stop = Math.min(records.length, start + SCHED_BLOCK_SIZE);
         for (let ordinal = start; ordinal < stop; ordinal++) {
             const record = records[ordinal], begin = record[timeColumn], end = record[timeColumn + 1];
@@ -507,20 +559,81 @@ function* indexSchedulingIntervals(records, timeColumn = 1) {
             if (begin < previousStart || end < previousEnd) ordered = false;
             previousStart = begin;
             previousEnd = end;
+            if (offTrack) {
+                shallowest = Math.min(shallowest, record[3]);
+                deepest = Math.max(deepest, record[3]);
+                if (HAS_INL) {
+                    shallowestInline = Math.min(shallowestInline, record.ldI);
+                    deepestInline = Math.max(deepestInline, record.ldI);
+                }
+            }
+            if (waitTrack && (ascending || descending) && contiguous && (!OPEN_OFF.size || !OPEN_OFF.has(record))) {
+                if (firstWait < 0) firstWait = ordinal;
+                else {
+                    if (ordinal !== lastWait + 1) contiguous = false;
+                    if (end < lastWaitEnd) ascending = false;
+                    if (end > lastWaitEnd) descending = false;
+                }
+                lastWait = ordinal;
+                lastWaitEnd = end;
+            }
         }
         bounds[block] = earliest;
         bounds[block + 1] = latest;
+        if (offTrack) {
+            depths[block] = shallowest;
+            depths[block + 1] = deepest;
+            minDepth = Math.min(minDepth, shallowest);
+            maxDepth = Math.max(maxDepth, deepest);
+            if (HAS_INL) {
+                inlineDepths[block] = shallowestInline;
+                inlineDepths[block + 1] = deepestInline;
+                minInlineDepth = Math.min(minInlineDepth, shallowestInline);
+                maxInlineDepth = Math.max(maxInlineDepth, deepestInline);
+            }
+        }
+    }
+    if (offTrack) {
+        offTrack.offDepths = { bounds: depths, min: minDepth, max: maxDepth };
+        offTrack.offInlineDepths = HAS_INL ? { bounds: inlineDepths, min: minInlineDepth, max: maxInlineDepth } : offTrack.offDepths;
+    }
+    if (waitTrack && contiguous && (ascending || descending)) {
+        waitTrack.waitOrder = { records, start: Math.max(0, firstWait), end: lastWait + 1, ascending };
     }
     return ordered ? true : bounds;
 }
+function schedulingLowerEnd(records, left, timeColumn) {
+    let low = 0, high = records.length;
+    while (low < high) {
+        const middle = (low + high) >>> 1;
+        if (records[middle][timeColumn + 1] < left) low = middle + 1;
+        else high = middle;
+    }
+    return low;
+}
+function* offIntervalBlocks(track, startTime, endTime) {
+    const records = track.off, index = track.offIndex;
+    if (!records.length) return;
+    if (index === true) {
+        const first = schedulingLowerEnd(records, startTime, 1);
+        let low = first, stop = records.length;
+        while (low < stop) {
+            const middle = (low + stop) >>> 1;
+            if (records[middle][1] < endTime) low = middle + 1;
+            else stop = middle;
+        }
+        for (let start = first; start < stop; start += PREPARE_BATCH)
+            yield [start, Math.min(start + PREPARE_BATCH, stop)];
+    } else if (index) {
+        for (let block = 0, start = 0; block < index.length; block += 2, start += SCHED_BLOCK_SIZE) {
+            if (index[block] < endTime && index[block + 1] > startTime)
+                yield [start, Math.min(start + SCHED_BLOCK_SIZE, records.length)];
+        }
+    } else yield [0, records.length];
+}
 function visitSchedulingIntervals(records, index, left, right, visit, timeColumn = 1) {
     if (index === true) {
-        let low = 0, high = records.length;
-        while (low < high) {
-            const middle = (low + high) >>> 1;
-            if (records[middle][timeColumn + 1] < left) low = middle + 1;
-            else high = middle;
-        }
+        const low = schedulingLowerEnd(records, left, timeColumn);
         for (let ordinal = low; ordinal < records.length; ordinal++) {
             const record = records[ordinal];
             if (record[timeColumn] > right) break;
@@ -542,8 +655,39 @@ function visitSchedulingIntervals(records, index, left, right, visit, timeColumn
     }
     return null;
 }
+function visitOffIntervals(track, left, right, firstRow, lastRow, visit) {
+    const records = track.off, timeIndex = track.offIndex;
+    const depthIndex = inlineView ? track.offInlineDepths : track.offDepths;
+    if (depthIndex) {
+        if (firstRow > depthIndex.max || lastRow < depthIndex.min) return null;
+        if (firstRow <= depthIndex.min && lastRow >= depthIndex.max)
+            return visitSchedulingIntervals(records, timeIndex, left, right, record => visit(record, offRow(record)));
+    }
+    const visitRow = record => {
+        const depth = offRow(record);
+        return depth >= firstRow && depth <= lastRow && visit(record, depth);
+    };
+    if (!depthIndex) return visitSchedulingIntervals(records, timeIndex, left, right, visitRow);
+    const { bounds } = depthIndex;
+    const ordered = timeIndex === true;
+    const first = ordered ? schedulingLowerEnd(records, left, 1) : 0;
+    for (let block = Math.floor(first / SCHED_BLOCK_SIZE) * 2; block < bounds.length; block += 2) {
+        const start = Math.max(first, block / 2 * SCHED_BLOCK_SIZE);
+        if (start >= records.length || (ordered && records[start][1] > right)) break;
+        if (bounds[block] > lastRow || bounds[block + 1] < firstRow ||
+                (!ordered && (timeIndex[block] > right || timeIndex[block + 1] < left))) continue;
+        const stop = Math.min(records.length, (block / 2 + 1) * SCHED_BLOCK_SIZE);
+        for (let ordinal = start; ordinal < stop; ordinal++) {
+            const record = records[ordinal];
+            if (record[1] > right) { if (ordered) return null; continue; }
+            if ((ordered || record[2] >= left) && visitRow(record)) return record;
+        }
+    }
+    return null;
+}
 for (const track of TRACKS) {
-    track.offIndex = yield* indexSchedulingIntervals(track.off);
+    track.errorIndex = yield* indexErrorOrigins(track.errs);
+    track.offIndex = yield* indexSchedulingIntervals(track.off, 1, track);
     track.rsIndex = yield* indexSchedulingIntervals(track.rs);
     track.ioIndex = yield* indexSchedulingIntervals(track.io);
 }
@@ -553,21 +697,8 @@ const OFF_IDX = new Map(D.offcpu.map((r, i) => [r, i]));
 const WAKE_OF_OFF = new Map();
 const WAKE_BLOCK_SIZE = 128;
 const WAKE_BOUNDS = new Float64Array(2 * Math.ceil(WAKES.length / WAKE_BLOCK_SIZE));
+const WAKE_TRACK_BOUNDS = new Int32Array(WAKE_BOUNDS.length);
 function wakeOff(wake) { return wake[5] >= 0 ? D.offcpu[wake[5]] : null; }
-for (let start = 0, block = 0; start < WAKES.length; start += WAKE_BLOCK_SIZE, block += 2) {
-    if (start && start % 16384 === 0) yield 'Indexing wakeup spans…';
-    let earliest = Infinity, latest = -Infinity;
-    const stop = Math.min(start + WAKE_BLOCK_SIZE, WAKES.length);
-    for (let index = start; index < stop; index++) {
-        const wake = WAKES[index], off = wakeOff(wake);
-        if (wake[5] >= 0) WAKE_OF_OFF.set(wake[5], wake);
-        earliest = Math.min(earliest, wake[1]);
-        latest = Math.max(latest, off ? off[2] : wake[1]);
-    }
-    WAKE_BOUNDS[block] = earliest;
-    WAKE_BOUNDS[block + 1] = latest;
-}
-
 const EVENT_TASKS = new Set();
 if (!N) {
     for (const wake of WAKES) { EVENT_TASKS.add(wake[0]); EVENT_TASKS.add(wake[2]); }
@@ -582,6 +713,34 @@ const ORDER = TRACKS.filter(t => t.lo >= 0 || t.off.length || PROCESS_BY_TASK.ha
     if (a.kvmEvents.length || b.kvmEvents.length) return b.kvmEvents.length - a.kvmEvents.length || b.busy - a.busy;
     return b.busy - a.busy;
 });
+if (WAKES.length) {
+    const trackOrdinals = new Int32Array(TRACKS.length).fill(-1);
+    for (let index = 0; index < ORDER.length; index++) trackOrdinals[ORDER[index].id] = index;
+    for (let start = 0, block = 0; start < WAKES.length; start += WAKE_BLOCK_SIZE, block += 2) {
+        if (start && start % 16384 === 0) yield 'Indexing wakeup spans…';
+        let earliest = Infinity, latest = -Infinity, firstTrack = ORDER.length, lastTrack = -1;
+        const stop = Math.min(start + WAKE_BLOCK_SIZE, WAKES.length);
+        for (let index = start; index < stop; index++) {
+            const wake = WAKES[index], off = wakeOff(wake);
+            if (wake[5] >= 0) WAKE_OF_OFF.set(wake[5], wake);
+            earliest = Math.min(earliest, wake[1]);
+            latest = Math.max(latest, off ? off[2] : wake[1]);
+            if (firstTrack < 0) continue;
+            const source = trackOrdinals[wake[0]], target = trackOrdinals[wake[2]];
+            if (!(source >= 0 && target >= 0) || (wake[4] >= 0 && sTask[wake[4]] !== wake[0]) ||
+                    (off && off[0] !== wake[2])) {
+                firstTrack = -1;
+                continue;
+            }
+            firstTrack = Math.min(firstTrack, source, target);
+            lastTrack = Math.max(lastTrack, source, target);
+        }
+        WAKE_BOUNDS[block] = earliest;
+        WAKE_BOUNDS[block + 1] = latest;
+        WAKE_TRACK_BOUNDS[block] = firstTrack;
+        WAKE_TRACK_BOUNDS[block + 1] = lastTrack;
+    }
+}
 yield 'Preparing scheduling context…';
 // ---- CPU tracks: which task ran on each CPU, plus irq/softirq strips ----
 const CPU_SEGS = new Map();   // cpu -> {s: Float64Array, e: Float64Array, t: Int32Array}
@@ -662,7 +821,7 @@ function trackLabel(t) {
 function trackSub(t) {
     if (t.kind === 9) return CPU_LIST.length + ' CPU(s) · ' +
         (CPU_HAS_SWITCHES ? 'recorded scheduling, irq/softirq strip' : 'observed calls · no sched_switch') +
-        ' · click a segment to open its task';
+        (t.collapsed ? ' · expand for CPU lanes' : ' · click a segment to open its task');
     const parts = [];
     if (t.kvmEvents.length) parts.push(t.kvmEvents.length + ' KVM events · Host TID ' + t.pid);
     if (t.cpus.size) parts.push('CPU ' + Array.from(t.cpus).sort((a, b) => a - b).join(','));
@@ -706,6 +865,8 @@ function spaceOf(index) { return sFlags[index] & FL.USER ? 'user' : 'kernel'; }
 function userPosition(index) { return D.sources?.user_positions?.[D.sources?.user_lines?.[sLine[index]]]; }
 function userCallSite(index) { return D.sources?.user_positions?.[D.sources?.user_callsites?.[sLine[index]]]; }
 function kernelTypesOf(index) { return sFlags[index] & FL.USER ? null : D.uftrace?.kernel_types?.[sName[index]]; }
+function btfDetailKey(index) { return (sMod?.[index] ?? -1) + ':' + sName[index]; }
+function btfDetailOf(index) { return sFlags[index] & FL.USER ? null : D.btf_detail?.functions?.[btfDetailKey(index)]; }
 function scalarValue(value, format, returning = false) {
     if (!Array.isArray(format)) return value;
     const [kind, bits] = format;
@@ -713,7 +874,7 @@ function scalarValue(value, format, returning = false) {
     if (!Number.isInteger(bits) || bits < 1 || bits > 64) return value;
     try {
         let number = BigInt(value) & ((1n << BigInt(bits)) - 1n);
-        if (kind === 'sint') {
+        if (kind === 'sint' || kind === 'senum') {
             if (number & (1n << BigInt(bits - 1))) number -= 1n << BigInt(bits);
             return String(number);
         }
@@ -751,17 +912,97 @@ function namedArgsOf(index) {
 function modOf(i) { return sMod && sMod[i] >= 0 ? S[sMod[i]] : null; }
 function cpuOf(i) { return sCpu ? sCpu[i] : -1; }
 
-// line number -> slice (lazy)
-let lineMap = null;
-function sliceForLine(n) {
-    if (!lineMap) {
-        lineMap = new Map();
-        for (let i = 0; i < N; i++) {
-            lineMap.set(sLine[i], i);
-            if (sEline && sEline[i]) lineMap.set(sEline[i], i);
-        }
+function createTraceLineLookup(entries, exits, count) {
+    if (!count) return () => -1;
+    const capacity = count * 2;
+    let first = Infinity, last = -Infinity;
+    for (let index = 0; index < count; index++) {
+        const entry = entries[index], exit = exits?.[index];
+        if (entry < first) first = entry;
+        if (entry > last) last = entry;
+        if (exit && exit < first) first = exit;
+        if (exit && exit > last) last = exit;
+        if (last - first >= capacity) break;
     }
-    return lineMap.has(n) ? lineMap.get(n) : -1;
+    const span = last - first + 1;
+    if (span <= capacity) {
+        const byLine = new Uint32Array(span);
+        for (let index = count - 1; index >= 0; index--) byLine[entries[index] - first] = index + 1;
+        let preceding = 0;
+        for (let offset = 0; offset < span; offset++) {
+            preceding = byLine[offset] || preceding;
+            byLine[offset] = preceding;
+        }
+        for (let index = 0; index < count; index++) {
+            byLine[entries[index] - first] = index + 1;
+            if (exits?.[index]) byLine[exits[index] - first] = index + 1;
+        }
+        return line => line < first ? -1 : (line > last ? preceding : byLine[line - first]) - 1;
+    }
+    const sortedEntries = sortTraceLineOrdinals(entries, count, false);
+    const sortedExits = exits ? sortTraceLineOrdinals(exits, count, true) : null;
+    const lower = (lines, ordinals, target) => {
+        let low = 0, high = ordinals.length;
+        while (low < high) {
+            const middle = low + ((high - low) >>> 1);
+            if (lines[ordinals[middle]] < target) low = middle + 1;
+            else high = middle;
+        }
+        return low;
+    };
+    return line => {
+        const end = Math.floor(line) + 1;
+        const position = lower(entries, sortedEntries, end) - 1;
+        const entry = sortedEntries[position];
+        const exit = sortedExits?.length ? sortedExits[lower(exits, sortedExits, end) - 1] : undefined;
+        const exactEntry = entry !== undefined && entries[entry] === line ? entry : -1;
+        const exactExit = exit !== undefined && exits[exit] === line ? exit : -1;
+        if (exactEntry >= 0 || exactExit >= 0) return Math.max(exactEntry, exactExit);
+        if (position < 0) return -1;
+        const previousLine = entries[entry];
+        return entries[sortedEntries[position - 1]] === previousLine ?
+            sortedEntries[lower(entries, sortedEntries, previousLine)] : entry;
+    };
+}
+
+function sortTraceLineOrdinals(lines, count, skipZero) {
+    const ordinals = new Uint32Array(count);
+    let size = 0, previous = -Infinity, sorted = true;
+    for (let index = 0; index < count; index++) {
+        const line = lines[index];
+        if (skipZero && !line) continue;
+        ordinals[size++] = index;
+        if (line < previous) sorted = false;
+        previous = line;
+    }
+    const active = size === count ? ordinals : ordinals.slice(0, size);
+    if (sorted) return active;
+    if (size <= 2048) return active.sort((left, right) => lines[left] - lines[right] || left - right);
+    const bits = 11, bins = new Uint32Array(1 << bits), mask = bins.length - 1;
+    let input = active, output = new Uint32Array(size);
+    for (let shift = 0; shift < 32; shift += bits) {
+        bins.fill(0);
+        for (let index = 0; index < size; index++)
+            bins[((lines[input[index]] ^ 0x80000000) >>> shift) & mask]++;
+        let remaining = 0;
+        for (let bin = 0; bin < bins.length; bin++) {
+            const length = bins[bin];
+            bins[bin] = remaining;
+            remaining += length;
+        }
+        for (let index = 0; index < size; index++) {
+            const ordinal = input[index], bin = ((lines[ordinal] ^ 0x80000000) >>> shift) & mask;
+            output[bins[bin]++] = ordinal;
+        }
+        [input, output] = [output, input];
+    }
+    return input;
+}
+
+let traceLineLookup = null;
+function sliceForLine(line) {
+    traceLineLookup ||= createTraceLineLookup(sLine, sEline, N);
+    return traceLineLookup(line);
 }
 
 // ---- binary search helpers on a depth row (slices in a row never overlap) ----
@@ -810,18 +1051,20 @@ tlRoot.innerHTML = `
     <span class="tl-group tl-zoom-group" role="group" aria-label="Timeline zoom">
       <button class="tl-btn tl-touch-zoom" data-act="zoomout" aria-label="Zoom timeline out">−</button>
       <button class="tl-btn tl-touch-zoom" data-act="zoomin" aria-label="Zoom timeline in">+</button>
-      <button class="tl-btn" data-act="fit" title="Show the whole trace (0)">Fit trace</button>
+      <button class="tl-btn" data-act="fit" title="Show the whole trace (0)" aria-label="Fit trace"><span class="tl-toolbar-long">Fit trace</span><span class="tl-toolbar-short" aria-hidden="true">Fit</span></button>
     </span>
-    <button class="tl-btn" data-act="inl" title="Show inlined functions as frames between the traced calls (I)">Inline: hidden</button>
-    <button class="tl-btn" data-act="notes" title="Show / hide the notes about this trace" aria-pressed="false">Notes</button>
-    <button class="tl-btn tl-more" data-act="options" title="Filters, colors, overlays and analysis tools" aria-haspopup="dialog" aria-expanded="false" aria-controls="tlOptions">Tools<span class="tl-more-filter" hidden> · Filter on</span></button>
+    <button class="tl-btn" data-act="inl" title="Show inlined functions as frames between the traced calls (I)" aria-label="Inline frames" aria-pressed="false"><span class="tl-toolbar-long">Inline: hidden</span><span class="tl-toolbar-short" aria-hidden="true">Inline<svg class="tl-inline-mark" viewBox="0 0 12 12" focusable="false"><path d="M2 6l3 3 5-6"/></svg></span></button>
+    <button class="tl-btn" data-act="notes" title="Show / hide the notes about this trace" aria-label="Notes" aria-pressed="false"><span class="tl-toolbar-long">Notes</span><span class="tl-toolbar-short" aria-hidden="true">Notes</span></button>
+    <button class="tl-btn tl-more" data-act="options" title="Filters, colors, overlays and analysis tools" aria-label="Tools" aria-haspopup="dialog" aria-expanded="false" aria-controls="tlOptions">Tools<span class="tl-more-filter" hidden> · Filter on</span></button>
   </span>
-  <button class="tl-btn tl-fullscreen-button" data-act="max" title="Enter full screen (M); Escape to exit" aria-label="Full screen" aria-pressed="false">Full screen</button>
+  <button class="tl-btn tl-fullscreen-button" data-act="max" title="Enter full screen (M); Escape to exit" aria-label="Full screen" aria-pressed="false"><span class="tl-toolbar-long">Full screen</span><span class="tl-toolbar-short" aria-hidden="true">Full</span></button>
   <button class="tl-btn" id="timelineHelpBtn" data-act="help" title="Timeline help (?)" aria-label="Timeline help" aria-haspopup="dialog" aria-controls="timelineHelp" aria-expanded="false" hidden>?</button>
   </div>
   ${MIXED ? '<span class="tl-group tl-space-key" aria-label="Address space legend"><span class="tl-space-user">User</span><span>Kernel</span>' +
     (D.stats.user_kernel_boundaries ? '<span class="tl-space-edge" title="Boundary spans the recorded kernel call">User → kernel</span>' : '') + '</span>' : ''}
   <div class="tl-options" id="tlOptions" role="dialog" aria-label="Timeline tools" tabindex="-1">
+  <div class="tl-menu-wide tl-jump-tools" role="group" aria-label="Search and display" hidden></div>
+  <div class="tl-menu-wide tl-zoom-tools" hidden><span class="tl-label" aria-hidden="true">Zoom</span></div>
   <div class="tl-group tl-filterbar" role="group" aria-label="Filter calls">
     <div class="tl-filter-heading"><label class="tl-label" for="tlFilterInput">Filter calls</label><span class="tl-fdraft" role="status" aria-live="polite" hidden>Unapplied changes</span></div>
     <div class="tl-filter-entry">
@@ -895,6 +1138,7 @@ tlRoot.innerHTML = `
   </span>
   <span class="tl-group tl-menu-wide" role="group" aria-label="Timeline analysis">
     <span class="tl-label tl-menu-heading">Analyze</span>
+    <button type="button" class="tl-btn" data-act="pick-range" title="Choose two points on the chart to summarize a range">Select range</button>
     <button class="tl-btn" data-act="an-errors" title="Error summary by syscall / origin / errno">Errors</button>
     <button class="tl-btn" data-act="an-sec" title="Critical sections: irqs-off / preempt-off / BH-off regions">Critical sections</button>
     <button class="tl-btn" data-act="an-lat" title="Scheduling latency: need-resched windows and what delayed them">Scheduling latency</button>
@@ -904,13 +1148,25 @@ tlRoot.innerHTML = `
 </div>
 ${N ? '' : '<div class="tl-event-only" role="note">No recorded function calls. Showing recorded ' + (KVM ? 'KVM / ' : '') + 'scheduling / lifecycle observations only.</div>'}
 <div class="tl-notes"></div>
+<div class="tl-range-pick" role="group" aria-label="Select range" hidden>
+  <span id="tlRangePickHint" role="status"></span>
+  <select aria-label="Range scope"><option value="all">All tracks</option><option value="track">Start track</option></select>
+  <button type="button" class="tl-btn" data-range-pick-cancel>Cancel</button>
+</div>
+<div class="tl-chart-detail-split">
 <div class="tl-stage">
   <canvas class="tl-head-canvas"></canvas>
   <div class="tl-scroll"><canvas class="tl-canvas" tabindex="0" aria-label="Interactive function timeline. Press question mark for keyboard shortcuts."></canvas><div class="tl-spacer"></div></div>
+  <div class="tl-hover-layer" aria-hidden="true">
+    <div class="tl-range-overlay" hidden><div class="tl-range-band"></div><div class="tl-range-line"></div><div class="tl-range-line"></div></div>
+    <div class="tl-range-anchor" hidden></div>
+    <div class="tl-hover-cursor" hidden><canvas class="tl-hover-time"></canvas></div>
+  </div>
   <div class="tl-help" id="timelineHelp" role="dialog" aria-label="Timeline help"></div>
 </div>
 <div class="tl-resizer" role="separator" tabindex="0" aria-label="Resize details" aria-orientation="horizontal" aria-controls="tlDetail" aria-valuemin="60" title="Drag or use Up/Down to resize details; Home/End for limits; Enter or double-click to reset"></div>
 <div class="tl-detail" id="tlDetail"></div>
+</div>
 <div class="tl-call-actions-panel" id="tlCallActions" role="menu" aria-label="Selected call actions"${D.no_text ? ' aria-describedby="tlCallActionsNote"' : ''} hidden>
   <button type="button" role="menuitem" tabindex="-1" data-call-action="distribution"><span>Duration distribution</span><kbd>H</kbd></button>
   <button type="button" role="menuitem" tabindex="-1" data-call-action="text"${D.no_text ? ' disabled' : ''}><span>Open in Text</span><kbd>Enter</kbd></button>
@@ -933,6 +1189,14 @@ ${N ? '' : '<div class="tl-event-only" role="note">No recorded function calls. S
 const elHead = tlRoot.querySelector('.tl-head-canvas');
 const elScroll = tlRoot.querySelector('.tl-scroll');
 const elCv = tlRoot.querySelector('.tl-canvas');
+const elRangeOverlay = tlRoot.querySelector('.tl-range-overlay');
+const [elRangeBand, elRangeStart, elRangeEnd] = elRangeOverlay.children;
+const elRangePick = tlRoot.querySelector('.tl-range-pick');
+const elRangePickHint = elRangePick.firstElementChild;
+const elRangeScope = elRangePick.querySelector('select');
+const elRangeAnchor = tlRoot.querySelector('.tl-range-anchor');
+const elHoverCursor = tlRoot.querySelector('.tl-hover-cursor');
+const elHoverTime = elHoverCursor.firstElementChild;
 const elSpacer = tlRoot.querySelector('.tl-spacer');
 const elStage = tlRoot.querySelector('.tl-stage');
 const elDetail = tlRoot.querySelector('.tl-detail');
@@ -949,6 +1213,7 @@ const elMore = tlRoot.querySelector('.tl-more');
 const elMoreFilter = tlRoot.querySelector('.tl-more-filter');
 const elNotesButton = tlRoot.querySelector('[data-act=notes]');
 const compactToolbar = window.matchMedia('(any-pointer: coarse) and (max-width: 640px), (any-pointer: coarse) and (max-height: 480px)');
+const shortNarrowToolbar = window.matchMedia('(any-pointer: coarse) and (max-width: 640px) and (max-height: 480px) and (orientation: landscape)');
 const elSearch = tlRoot.querySelector('.tl-search');
 const elCount = tlRoot.querySelector('.tl-count');
 const elSearchPrev = tlRoot.querySelector('[data-act=searchprev]');

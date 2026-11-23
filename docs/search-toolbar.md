@@ -1,5 +1,40 @@
 # Timeline search controls on narrow screens
 
+## First search and repeated navigation
+
+Simple input waits 90 ms instead of 150 ms. Expressions routed to a Worker
+keep the 150 ms delay; Enter and Shift+Enter bypass both timers. The lazy
+postings index uses a typed counter table when the string ID range is no larger
+than the recorded call count. A sparse ID range uses the existing Map path.
+Both keep distinct names in first-seen order and the same call order within each
+name. Index construction still yields between batches; cancelling a query
+does not publish a partial index or partial matches.
+
+Offline Chromium 145, `ping3` (58,539 calls, 1,570 recorded function names),
+`^x2apic_send_IPI$` (13 matches), 7 fresh-page samples per case. The comparison
+changes only the two Timeline search scripts. Values are median milliseconds.
+
+| Phase | Before | After | Before, 4× CPU throttle | After, 4× CPU throttle |
+|---|---:|---:|---:|---:|
+| Input → matches ready | 154.2 | 93.3 | 168.9 | 100.0 |
+| First Enter → publish results, before jump | 4.3 | 3.5 | 20.3 | 14.2 |
+| First Enter → canvas starts drawing | 17.6 | 17.7 | 58.1 | 56.2 |
+| Repeated Enter → canvas starts drawing | 16.9 | 16.9 | 24.9 | 26.9 |
+
+Canvas drawing start is not paint completion or end-to-end display latency. No
+meaningful improvement is established for redraws or repeated navigation.
+A separate timing probe identifies opening the call details as the largest
+synchronous part of this particular first jump: about 8 ms at native speed
+and 35 ms under 4× CPU throttling. This is not a measurement of all slices.
+`node tests/benchmark_search.js` separately measures model CPU: at one million
+calls and 1,000 names, median index construction drops from 23.5 ms (Map) to
+7.6 ms (typed), with identical postings and about 4 MB of retained typed data
+in both cases. Transient allocation and browser heap are not measured by that
+benchmark. Browser observations and the harness are in
+`build/benchmarks/20261121-search-latency/`.
+
+## Narrow-screen layout
+
 ## Reproduced overlap
 
 In a 568 × 320 touch window, the previous published mixed report could shrink
@@ -119,3 +154,52 @@ results are retained in `build/search-toolbar/`, including
 `sample-fidelity.json`, `rendered-reports.json`, `mixed-before.png`,
 `mixed-after.png`, `package-content.json`, `installed-smoke.log` and
 `screenshots.log`.
+
+## Stable layout while refreshing search
+
+Once Find has matches, updating the expression keeps the navigation controls
+and the counter's space in the toolbar. The toolbar shows a pending indicator
+instead of the old count. Previous and Next are unavailable while refreshing:
+they keep existing focus without taking a Tab stop or queueing a jump. If
+the completed query has no usable matches, focus returns to Find when it
+was on one of those controls. The first search and cleared state still hide
+unused navigation buttons in compact mode.
+
+In Chromium touch emulation at 320 × 420 and 720 × 420, starting text
+composition after a completed query previously moved the top of the canvas
+up by 32.6 px. The paired probe now shows no movement. The regression also
+checks 350 × 420 and 760 × 420 with single-file and sidecar reports. These are
+layout measurements, not measurements of physical-device input latency or
+search throughput. Logs: `build/validation/20261119-search-refresh-layout/`.
+
+## Compact portrait controls
+
+At up to 420 CSS px wide on touch screens, Timeline uses shorter labels and
+smaller horizontal padding without reducing the 44 × 44 px touch targets.
+The Notes count stays in the accessible name on the narrowest screens.
+When a shared filter is active, Tools shows a dot rather than widening the
+toolbar; its accessible name still says **Tools · Filter on**. Controls can
+wrap when the available width or text size requires it.
+
+On standalone `ping3` in Chromium touch emulation, the idle toolbar measured
+150 → 102 px at 320 × 640, 360 × 800, 390 × 844 and 420 × 844. The chart gained
+48 px in each case. At 320 × 640, a search with 55 matches measured 183 → 102 px.
+The 568 × 320, 844 × 390 and 1500 × 900 layouts were unchanged in the idle
+comparison. Native taps exercised search navigation, Notes, Inline and
+full screen. Logs and screenshots: `build/benchmarks/compact-call-audit/`.
+
+## Keep search and filtering on one row in more landscape sizes
+
+On touch layouts up to 800 × 480 CSS px in landscape, an active shared
+filter uses the same compact dot as narrow portrait. The Tools button still
+has the accessible name **Tools · Filter on**, and wider landscape layouts
+still show the text. The change leaves the query, matches, and touch target
+sizes alone.
+
+With Find active on `ping3` in Chromium touch emulation, turning on a filter
+at 660 × 360 no longer expands the toolbar from 54 to 102 px. In page full
+screen at that size, the chart viewport grows from 144 to 192 px. At 720 × 400
+outside full screen, the chart grows from 114 to 147 px. At 568 × 320 the
+change moves the chart up without growing its already-minimum height.
+The 11-size sweep found no blocked search or toolbar targets. Logs:
+`build/benchmarks/20261121-short-toolbar/`.

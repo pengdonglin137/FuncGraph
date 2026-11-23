@@ -14,9 +14,9 @@ Regenerate existing HTML to get the new controls.
   at page one. Keyboard endpoints transfer focus to an enabled direction;
   unchanged-population refreshes restore the focused control.
 - The pager stays within the call-browser section, not over the later call-site
-  or Slow vs fast tables. Very short panels scroll it normally. Touch paging,
-  bucket and export controls have 44px minimum heights. The temporary expansion
-  control remains available for cramped detail panes.
+  or Slow vs fast tables. Very short panels place it above the table in the
+  normal scroll flow. Touch paging, bucket and export controls have 44px
+  minimum heights. Temporary expansion remains available for cramped panes.
 - Initial pages now contain up to 50 calls in both the whole-population and
   bucket views. Previously, the initial whole-population list had 15 calls and
   each **Load more** appended 50; bucket views started with 50.
@@ -100,6 +100,52 @@ the default pane fits the histogram, every control and call rows simultaneously.
 The pager is scoped to the call section and does not cover subsequent call-site
 or comparison tables.
 
+## Batch large distribution opens
+
+The first open reads the function's indexed calls, sorts them by duration and
+original slice index, and computes site totals and histogram buckets. It runs
+with a short initial budget; large populations continue in batches with a
+**Preparing duration distribution…** status and reachable Close control.
+Switching views pauses the work. Closing or replacing the panel, changing the
+function, shared filter, or Overhead basis discards stale work. The completed
+population cache and exact statistical and export scopes are unchanged.
+
+Five alternating Chromium 145 runs per variant at 4× CPU throttling (200,000
+synthetic calls of one function) measured these medians:
+
+| Metric | Before | After |
+| --- | ---: | ---: |
+| Open handler | 100.3 ms | 10.8 ms |
+| Longest frame gap | 126.0 ms | 32.4 ms |
+| First page ready | 101.1 ms | 177.5 ms |
+
+The first page, statistics, bucket labels and full CSV had matching hashes.
+The table measures interaction responsiveness, not faster completion or
+reduced total memory. Reproduce using `tests/benchmark_dist_open.py`; the raw
+run is in `build/benchmarks/20261120-dist-open/ab.json`.
+
+## Batch large duration-call exports
+
+Below 4,096 rows, export still downloads directly. Larger scoped exports use
+the shared Timeline CSV queue and show progress and **Cancel CSV**. Changing
+pages or hiding the histogram does not change the export scope. View changes
+pause work; changing the population or bucket, or closing or replacing the
+panel discards it. The download starts only after all rows have been written.
+
+Five alternating Chromium 145 runs at 4× CPU throttling on 100,000 synthetic
+calls measured these medians:
+
+| Metric | Before | After |
+| --- | ---: | ---: |
+| Export handler | 440.4 ms | 1.2 ms |
+| Longest frame gap | 441.8 ms | 31.0 ms |
+| Download ready | 440.4 ms | 597.0 ms |
+
+Views and full downloaded CSVs had identical hashes. Responsiveness improves
+at the cost of file readiness time; buffering still grows with output size.
+Reproduce with `tests/benchmark_dist_open.py --export-csv`; raw results are in
+`build/benchmarks/20261120-dist-csv/ab.json`.
+
 ## Validation
 
 The paging change (`a7ea8256f3b7`) was validated as follows:
@@ -157,6 +203,24 @@ The compact screenshot is a native crop of the real Pi4 report at the default
 275px pane height. The expanded `an_dist.png` remains a manually enlarged pane;
 neither screenshot is a new capture or a reconstructed drawing.
 
+### Expanded touch landscape (2026-11-20)
+
+At 844 × 390, both the collapsed histogram layout and the original open
+layout could leave no complete call row between the heading and pager, even
+after explicitly expanding details. The short touch-landscape layout now
+puts the histogram and statistics alongside the call table when open. The
+graph is shorter only in this layout, with its bitmap resized to the CSS box
+and tick labels spaced to avoid overlap. With Histogram closed, the statistics
+remain compact and the table uses the full width.
+
+Chromium touch emulation at 844 × 390 showed one complete call row with the
+histogram closed and two with it open at the top of the expanded pane for the
+distribution regression fixture. Tests cover light and dark themes, embedded
+and HTTP sidecar reports, 44px controls, and unchanged statistics and CSV.
+A 2× device-pixel-ratio test verifies that tapping a visible bucket selects it
+and that portrait rotation restores the standard chart height without losing
+the bucket. Even shorter or wider-content panes may still require scrolling.
+
 Six follow-up tests extend the dedicated duration suite to 16 tests. They cover
 native disclosure focus and retained DOM/navigation/CSV, report-local lifetime,
 hidden-canvas paint avoidance and current-size redraw, compact touch layouts in
@@ -172,11 +236,202 @@ and the same preserved, uncommitted Text computed-style assertion described
 above fails. This follow-up does not fix or include that unrelated Text work,
 and the full audit is not described as all-green.
 
+## Histogram bucket preparation
+
+Each bucket references a contiguous range of the existing duration-sorted
+population instead of retaining another array of call IDs. Binary searches
+find the boundaries for nonempty buckets using the same logarithmic assignment
+rule. Paging copies only the visible page; CSV iterates the entire selected
+range in the same order. If the trace contains recorded errors, error shading
+still checks for an origin within each occupied range.
+
+On a 20,001-call synthetic distribution with ties, zero durations and values
+around powers of ten, the synchronous open measured 20,003 calls to `Math.log10`
+before and 117 after. The test traverses every occupied bucket and checks call
+identities against the per-call assignment. This is a work count, not a
+measurement of total open latency or peak memory.
+
+For the active function, the overview histogram and up to four recently used
+call-site histograms are retained. Switching scopes still resets the call page
+and bucket selection; changing function, filter membership or Overhead metrics
+replaces the population and its cache. On a 600-call fixture with five sites,
+returning to the overview made 158 synchronous `Math.log10` calls before this
+cache and none after. Revisiting a resident site also reuses its bucket ranges;
+a site evicted by newer visits is rebuilt on demand.
+
+## Reusing the Timeline search index
+
+If Timeline Find already indexed the report, the distribution looks up the
+exact recorded name ID in that index and copies only its matching calls for
+duration sorting. It neither reads the full call-name column nor modifies the
+index that Find uses for navigation. Opening a distribution without a prepared
+index still makes one scan and does not allocate a new index.
+
+In a 32,768-call test that opens the distribution after Find, the lookup uses
+three recorded names and five postings for the target. A similarly named
+compiler variant stays separate, filters still apply, and Find continues to
+navigate in recorded order. These are work bounds, not timing measurements.
+
+## Slow vs fast profile pages
+
+Opening the comparison scrolls its toolbar into view, targeting the space
+below the pinned detail header or the top of a short pane. Focus stays on the
+expanded toggle. No horizontal scroll or Timeline movement is requested.
+
+The profile now replaces pages of up to 100 rows. The pager is above the
+table and stays reachable when the pane scrolls horizontally. A page change
+brings it back into view rather than leaving focus below the replaced rows.
+At the first and last pages, focus transfers to the enabled direction.
+Collapsing and reopening retains the page; sorting or changing the function,
+shared filter, call site, or Overhead population returns to the first page.
+The duration bucket is independent. Both CSV exports retain their full scope.
+
+In the 150,004-row synthetic profile, one forward action increased attached
+rows from 100 to 200 before the change; afterward it replaced those rows and
+kept exactly 100. A separate 229-row browser test traverses the complete order,
+revisits prior pages, and matches the full profile CSV from the last page.
+This is a DOM bound, not a measurement of cohort preparation or latency.
+
+## Batch large Slow vs fast profiles
+
+The comparison uses a short initial budget, then yields during the call-tree
+index, descendant traversal, cohort aggregation and ordering. The ready view
+and its export actions replace the status only after preparation completes.
+Changing the profile sort also yields on wide results and restores keyboard
+focus to the sort button if focus has not moved away. The work pauses in
+another view and is discarded when the comparison is hidden or replaced.
+
+Chromium 145 at 4× CPU throttling: five alternating pairs on 150,000 synthetic
+descendants, and three pairs on the `handle_mm_fault` profile in `ping3`.
+Times are medians in milliseconds.
+
+| Profile | Click handler, before → after | Longest frame gap, before → after | First page ready, before → after |
+| --- | ---: | ---: | ---: |
+| Synthetic wide subtree | 252.5 → 9.5 | 265.3 → 36.7 | 252.5 → 336.0 |
+| Real `handle_mm_fault` | 43.5 → 7.7 | 57.0 → 40.8 | 43.6 → 58.2 |
+
+Page one and both complete CSVs match in both cases. The measurements show
+improved responsiveness, not faster completion or bounded total memory.
+Reproduce with `tests/benchmark_slowfast.py`; logs are in
+`build/benchmarks/20261120-slowfast-preparation/`.
+
+## Batch large Slow vs fast exports
+
+The profile and cohort buttons use the shared Timeline CSV queue at 4,096
+rows or more; smaller exports still download directly. Paging does not
+change the export's captured scope. Switching views pauses it; changing the
+comparison order, population or timing basis, or closing it, cancels it.
+Only one of these two file exports runs at a time.
+
+Five alternating Chromium 145 runs per variant at 4× CPU throttling:
+
+| Export | Rows | Longest frame gap, before → after | Download ready, before → after |
+| --- | ---: | ---: | ---: |
+| Profile | 100,004 | 479.4 → 27.5 ms | 470.7 → 613.0 ms |
+| Cohorts | 60,000 | 263.4 → 28.8 ms | 260.1 → 359.8 ms |
+
+Profile and cohort files had matching hashes before and after; these are
+responsiveness gains, not faster download completion or bounded buffering.
+Reproduce using `tests/benchmark_slowfast.py --export`; results are in
+`build/benchmarks/20261120-slowfast-csv/`.
+
+## Off-CPU lookups in call breakdowns
+
+The selected call and each Slow vs fast root reuse the task's scheduling
+interval index instead of scanning all of its off-CPU records. Breakdown
+still excludes intervals that merely touch the call, visits records in their
+original order, and attributes blocked and preempted time using the recorded
+depth. No additional index is built. A long call that intersects most of the
+history can still require a scan through most records.
+
+A Chromium regression with 65,536 off-CPU intervals checks the same four
+breakdown values for sorted and unordered histories. Either baseline read all
+65,536 records; both indexed cases read fewer than 320, including candidates
+and binary-search reads.
+
+In Chromium 145, a separate synthetic profile with 240 roots on one task and
+65,536 off-CPU intervals measured the synchronous cost of the first
+**Slow vs fast** activation (five alternating before/after pairs, fresh pages
+without record-counting proxies). With sorted intervals, the median fell from
+36.0 to 3.6 ms; with two intervals swapped, it fell from 36.7 to 4.0 ms.
+Only the breakdown implementation differed, and both full CSV exports matched
+byte for byte. This measures handling and synchronous layout, not trace
+loading, browser paint, or end-to-end input latency.
+
+## Single-pass breakdown and cohort traversal
+
+Breakdown walks the recorded call tree once, accumulating self time and
+counting descendants without saving them in an array. It counts an interrupt
+at the first higher-context frame and stops classifying descendants as
+interrupted when the walk leaves that frame's subtree. Slow vs fast visits
+the same descendants in the same order, including interrupt descendants; a
+cache hit reuses the timing totals while still visiting cohort members.
+
+Seven alternating Chromium 145 pairs on the 58,539-call `ping3` report
+(4× CPU throttling, fresh pages, only the breakdown and cohort code replaced)
+returned identical breakdown fields and identical profiles covering 861
+functions. With the call tree already built, median breakdown for the
+11,224-descendant `__x64_sys_execve` fell from 2.0 to 1.6 ms. Median profile
+construction over five large calls fell from 14.2 to 6.9 ms with uncached
+totals and from 6.6 to 5.2 ms with cached totals. First synchronous selection
+varied between runs (51.1 vs. 48.8 ms median); this does not establish an
+end-to-end click latency or frame-rate improvement.
+
+Independent regression tests cover depth gaps, nested IRQ/softirq boundaries,
+blocked/preempted time, overhead and cached visit order. Synthetic fan-out,
+chain and mixed-depth trees with 65,536 descendants each produced identical
+breakdowns and cohort profiles. Local samples are in
+`build/benchmarks/20261119-trace-jump/stream-breakdown-{ab,synthetic}.jsonl`.
+
+## Call-site pages
+
+The table attaches up to 12 sites, in the existing order by call count and
+then name. Turning these pages replaces only the call-site rows; it does not
+resort calls or sites, change the active site or bucket, or update the main
+call page. Selecting a site moves focus to **All call sites**; clearing it
+returns focus to **Histogram** and keeps the site page. After a new shared
+filter, an active site that still exists is shown on its new ranked page.
+An excluded site remains clearable from the empty calls state.
+
+A 29-site regression visits 12, 12 and 5 rows, checks that the first page is
+detached, and verifies that the call list and complete CSV stay unchanged
+while paging. Separate browser cases exercise the pager at the horizontal
+edge of a 60 px detail pane and tap both directions in a generated sidecar
+report with 14 distinct recorded kernel call sites.
+
 ## Remaining limits
 
-Only attached rows in the main slowest-call list are bounded. Full Timeline
-arrays, sorted populations, per-site groups, histogram buckets and complete CSV
-remain in memory. Initial aggregation and sorting still scale with the recording.
-Call-site rows, Slow vs fast profile rows and other analysis panels retain their
-own independent browsing behavior; this is not a bound on the whole panel's DOM.
-There is no worker, out-of-core loading or overall large-trace speedup claim.
+The main slowest-call list, Slow vs fast profile and call-site table have
+separate attached-row bounds. Full Timeline arrays, sorted populations,
+per-site groups, histogram ranges, prepared cohort profiles and complete CSV
+remain in memory. Without a prepared search index, finding calls for a new
+distribution still scans the recording; sorting scales with the matching
+calls. These are not bounds on the whole panel's DOM or a measurement of
+overall large-trace speed.
+
+## Distribution section shortcuts (2026-11-19)
+
+The header's **Jump to…** menu only lists available destinations. Going to
+an analysis section scrolls the detail pane and assigns focus there; it does
+not open a collapsed comparison or prepare its profile.
+
+Chromium touch emulation at 320 × 700 with a short pane and a generated
+sidecar containing 205 calls at 14 sites verifies the target is visible and
+focused after each jump, even with horizontal scrolling at its right limit.
+The call-site jump reaches content over 1,000 pixels below the top. The
+current call and site pages, complete call CSV, and Timeline range match
+before and after. The compact Histogram controls still leave a call row
+visible at 390 × 844. These are layout and state checks, not timing claims.
+
+## Consecutive paging in short panes
+
+When the detail pane is under 140 CSS pixels, the call pager moves above the
+table. A page turn reveals the first row when it fits without hiding the
+controls. Expansion restores the footer placement without changing the page.
+
+On the real `ping3` report at 320 × 700 with the histogram collapsed and a
+124px detail pane, selecting **Jump to… → Slowest calls** used to leave the
+Next button 893px of scrolling away. The new layout needs no additional
+scrolling in that configuration, keeps Next reachable after a page turn,
+and displays the same calls on page two. The touch regression also checks
+horizontal overflow, keyboard endpoint focus, and expansion and restoration.

@@ -1,8 +1,9 @@
 (function () {
     const descriptorNode = document.getElementById('fgDataManifest');
+    const gzipType = 'application/x-funcgraph-gzip';
     const embedded = name => {
         const element = document.getElementById(name);
-        return element && element.tagName === 'SCRIPT' && element.type === 'application/json' ? element : null;
+        return element && element.tagName === 'SCRIPT' && (element.type === 'application/json' || element.type === gzipType) ? element : null;
     };
     const cache = new Map();
     const sourceCache = { entries: new Map(), bytes: 0, chunks: 8, limit: 16 * 1024 * 1024 };
@@ -10,6 +11,7 @@
     const requests = new Map();
     const checksumWorkers = [];
     let checksumWorkerUnavailable = false;
+    let textIndexWorkerUnavailable = false;
     let checksumSequence = 0;
     let descriptor = null;
     function checksumWorkerMain() {
@@ -243,6 +245,11 @@
         const text = new TextDecoder('utf-8', { fatal: true }).decode(checked.bytes);
         return resource.format === 'json' ? JSON.parse(text) : text;
     }
+    function dropUnusedRequest(key, flight) {
+        if (flight.users || flight.handoff || requests.get(key) !== flight) return;
+        requests.delete(key);
+        flight.controller.abort();
+    }
     function request(key, signal, loader, store = cacheStore) {
         try { aborted(signal); } catch (error) { return Promise.reject(error); }
         if (cache.has(key)) return Promise.resolve(cacheRead(key));
@@ -255,8 +262,13 @@
                 if (requests.get(key) === flight) store(key, value);
                 return value;
             }).finally(() => {
+                if (flight.handoff) clearTimeout(flight.handoff);
                 if (requests.get(key) === flight) requests.delete(key);
             });
+        }
+        if (flight.handoff) {
+            clearTimeout(flight.handoff);
+            flight.handoff = null;
         }
         return new Promise((resolve, reject) => {
             flight.users++;
@@ -271,10 +283,7 @@
             const cancel = () => {
                 if (!release()) return;
                 reject(new DOMException('Data request canceled', 'AbortError'));
-                if (!flight.users && requests.get(key) === flight) {
-                    requests.delete(key);
-                    flight.controller.abort();
-                }
+                dropUnusedRequest(key, flight);
             };
             if (signal) signal.addEventListener('abort', cancel, { once: true });
             flight.promise.then(value => {
@@ -298,16 +307,210 @@
         });
     }
     function ready(name) {
-        return cache.has('data:' + name) || !!embedded(name);
+        return cache.has('data:' + name) || embedded(name)?.type === 'application/json';
     }
     function read(name) {
         const key = 'data:' + name;
         if (cache.has(key)) return cacheRead(key);
         const element = embedded(name);
-        if (!element) throw new Error('Report data ' + name + ' is not ready; await fgData.load() first');
-        const value = JSON.parse(element.textContent);
-        cacheStore(key, value);
+        if (element?.type !== 'application/json') throw new Error('Report data ' + name + ' is not ready; await fgData.load() first');
+        const payload = element.textContent;
+        const value = JSON.parse(payload);
+        const chunk = /^fgText(?:0|[1-9][0-9]*)$/.test(name) && embedded('fgTextChunks') ||
+            /^fgSrc(?:0|[1-9][0-9]*)$/.test(name) && embedded('fgSourceChunks');
+        cacheStore(key, value, chunk ? payload.length * 2 : undefined);
         return value;
+    }
+    async function inflateEmbedded(element, name, expected, signal) {
+        aborted(signal);
+        if (/^fgSrc[0-9]+$/.test(name)) {
+            await new Promise(resolve => {
+                if (typeof MessageChannel !== 'function') { setTimeout(resolve, 0); return; }
+                const channel = new MessageChannel();
+                channel.port1.onmessage = () => {
+                    channel.port1.close();
+                    channel.port2.close();
+                    resolve();
+                };
+                channel.port2.postMessage(null);
+            });
+            aborted(signal);
+        }
+        if (typeof DecompressionStream !== 'function') {
+            throw new Error('This browser cannot decompress report data. Use a browser with gzip DecompressionStream or regenerate without --windowed-compression gzip.');
+        }
+        if (!Number.isSafeInteger(expected) || expected <= 0) throw new Error('Invalid embedded gzip size: ' + name);
+        const encoded = element.textContent;
+        if (name === 'fgTextIndex' && expected >= 8 * 1024 * 1024) {
+            const value = await decodeTextIndex(encoded, expected, signal);
+            aborted(signal);
+            if (value !== undefined) return value;
+        }
+        return inflateGzip(encoded, name, expected, signal);
+    }
+    async function inflateGzip(encoded, name, expected, signal) {
+        let bytes;
+        if (typeof Uint8Array.fromBase64 === 'function') bytes = Uint8Array.fromBase64(encoded);
+        else {
+            const payload = atob(encoded);
+            bytes = new Uint8Array(payload.length);
+            for (let index = 0; index < bytes.length; index++) bytes[index] = payload.charCodeAt(index);
+        }
+        let offset = 0;
+        const compressed = new ReadableStream({
+            pull(controller) {
+                const end = Math.min(offset + 64 * 1024, bytes.length);
+                if (end > offset) controller.enqueue(bytes.subarray(offset, end));
+                offset = end;
+                if (offset === bytes.length) controller.close();
+            },
+        });
+        const reader = compressed.pipeThrough(new DecompressionStream('gzip')).getReader();
+        const cancel = () => { reader.cancel().catch(() => {}); };
+        signal.addEventListener('abort', cancel, { once: true });
+        try {
+            const decoder = new TextDecoder('utf-8', { fatal: true });
+            const parts = [];
+            let length = 0;
+            while (true) {
+                const { value, done } = await reader.read();
+                aborted(signal);
+                if (done) break;
+                length += value.byteLength;
+                if (length > expected) throw new Error('Embedded gzip size mismatch: ' + name);
+                parts.push(decoder.decode(value, { stream: true }));
+            }
+            if (length !== expected) throw new Error('Embedded gzip size mismatch: ' + name);
+            parts.push(decoder.decode());
+            const text = parts.join('');
+            return /^fgText[0-9]+$/.test(name) ? text : JSON.parse(text);
+        } finally {
+            signal.removeEventListener('abort', cancel);
+            cancel();
+        }
+    }
+    function textIndexWorkerMain() {
+        function sendRows(rows, first) {
+            const width = rows[0]?.length;
+            if (rows.length < 2 || !Number.isInteger(width) || width < 1 || width > 32 ||
+                rows.some(row => !Array.isArray(row) || row.length !== width)) {
+                self.postMessage({ first, rows });
+                return;
+            }
+            const changes = new Uint32Array(rows.length - 1);
+            const cells = rows[0].slice();
+            for (let index = 1; index < rows.length; index++) {
+                const previous = rows[index - 1], current = rows[index];
+                let mask = 0;
+                for (let column = 0; column < width; column++) if (!Object.is(current[column], previous[column])) {
+                    mask |= 1 << column;
+                    cells.push(current[column]);
+                }
+                changes[index - 1] = mask;
+            }
+            self.postMessage({ first, width, changes, cells }, [changes.buffer]);
+        }
+        self.onmessage = async ({ data: { encoded, expected, batchSize } }) => {
+            try {
+                const value = await inflateGzip(encoded, 'fgTextIndex', expected, new AbortController().signal);
+                if (Array.isArray(value?.rows) && value.rows.length > batchSize) {
+                    const rows = value.rows;
+                    value.rows = [];
+                    self.postMessage({ value, count: rows.length });
+                    for (let first = 0; first < rows.length; first += batchSize) {
+                        sendRows(rows.slice(first, first + batchSize), first);
+                    }
+                } else self.postMessage({ value });
+                self.postMessage({ done: true });
+            } catch (error) {
+                self.postMessage({ error: error.message, name: error.name });
+            }
+        };
+        self.postMessage({ ready: true });
+    }
+    function appendTextIndexRows(target, data, length) {
+        if (Array.isArray(data.rows)) {
+            if (data.rows.length !== length) return false;
+            target.push(...data.rows);
+            return true;
+        }
+        const { width, changes, cells } = data;
+        if (!Number.isInteger(width) || width < 1 || width > 32 || length < 2 || !(changes instanceof Uint32Array) ||
+            changes.length !== length - 1 || !Array.isArray(cells) || cells.length < width || cells.length > length * width) return false;
+        let previous = cells.slice(0, width), offset = width;
+        target.push(previous);
+        for (let mask of changes) {
+            if (width < 32 && mask >>> width) return false;
+            const current = previous.slice();
+            while (mask) {
+                current[31 - Math.clz32(mask & -mask)] = cells[offset++];
+                mask &= mask - 1;
+            }
+            if (offset > cells.length) return false;
+            target.push(current);
+            previous = current;
+        }
+        return offset === cells.length;
+    }
+    function decodeTextIndex(encoded, expected, signal) {
+        if (textIndexWorkerUnavailable || !window.Worker || !window.Blob || !window.URL?.createObjectURL) return undefined;
+        return new Promise((resolve, reject) => {
+            const batchSize = 1024;
+            let worker, url, timer, value, count, started = false, received = false;
+            const finish = (result, error) => {
+                clearTimeout(timer);
+                signal.removeEventListener('abort', cancel);
+                if (worker) {
+                    worker.onmessage = worker.onerror = worker.onmessageerror = null;
+                    worker.terminate();
+                }
+                if (url) URL.revokeObjectURL(url);
+                if (error) reject(error);
+                else resolve(result);
+            };
+            const cancel = () => finish(undefined, new DOMException('Data request canceled', 'AbortError'));
+            const unavailable = () => {
+                textIndexWorkerUnavailable = true;
+                finish(undefined);
+            };
+            try {
+                url = URL.createObjectURL(new Blob([aborted.toString(), '\n', inflateGzip.toString(), '\n(',
+                    textIndexWorkerMain.toString(), ')()'], { type: 'text/javascript' }));
+                worker = new Worker(url, { name: 'FuncGraph Text index' });
+                worker.onmessage = ({ data }) => {
+                    if (data?.ready && !started) {
+                        clearTimeout(timer);
+                        URL.revokeObjectURL(url);
+                        url = null;
+                        started = true;
+                        try { worker.postMessage({ encoded, expected, batchSize }); }
+                        catch (error) { finish(undefined, error); }
+                    } else if (started && typeof data?.error === 'string') {
+                        const Constructor = data.name === 'SyntaxError' ? SyntaxError : data.name === 'TypeError' ? TypeError : Error;
+                        finish(undefined, new Constructor(data.error));
+                    } else if (started && data && !received && Object.prototype.hasOwnProperty.call(data, 'value') &&
+                               (data.count === undefined || Number.isSafeInteger(data.count) && data.count > batchSize &&
+                                Array.isArray(data.value?.rows) && !data.value.rows.length)) {
+                        value = data.value;
+                        count = data.count;
+                        received = true;
+                    } else if (received && data?.done && (count === undefined || value.rows.length === count)) {
+                        finish(value);
+                    } else if (!(count !== undefined && data?.first === value.rows.length && data.first < count &&
+                                 appendTextIndexRows(value.rows, data, Math.min(batchSize, count - data.first)))) {
+                        finish(undefined, new Error('Invalid Text index worker result'));
+                    }
+                };
+                worker.onerror = event => {
+                    event.preventDefault();
+                    if (started) finish(undefined, new Error('Text index worker failed'));
+                    else unavailable();
+                };
+                worker.onmessageerror = () => finish(undefined, new Error('Unable to read the Text index worker result'));
+                timer = setTimeout(unavailable, 5000);
+                signal.addEventListener('abort', cancel, { once: true });
+            } catch (_) { unavailable(); }
+        });
     }
     function load(name, options = {}) {
         const signal = options.signal;
@@ -318,6 +521,12 @@
                 if (info.name !== name) throw new Error('Invalid Text chunk identity: ' + name);
             }
             if (ready(name)) return Promise.resolve(read(name));
+            const element = embedded(name);
+            if (element?.type === gzipType) {
+                const expected = Number(element.dataset.bytes);
+                return request('data:' + name, signal, active => inflateEmbedded(element, name, expected, active),
+                    (key, value) => cacheStore(key, value, expected));
+            }
         } catch (error) { return Promise.reject(error); }
         let resourceSize;
         return request('data:' + name, signal, async active => {
@@ -371,6 +580,20 @@
             const info = sourceInfo(source);
             return load(info.name, options).then(data => sourceValue(info, data));
         } catch (error) { return Promise.reject(error); }
+    }
+    const SOURCE_HANDOFF_MS = 120;
+    function keepSourceFlight(previous, next) {
+        if (!descriptorNode || next === null) return;
+        try {
+            const {name} = sourceInfo(previous);
+            if (embedded(name) || sourceInfo(next).name !== name) return;
+            const key = 'data:' + name, flight = requests.get(key);
+            if (!flight?.users || flight.handoff) return;
+            flight.handoff = setTimeout(() => {
+                flight.handoff = null;
+                dropUnusedRequest(key, flight);
+            }, SOURCE_HANDOFF_MS);
+        } catch (_) {}
     }
     function textChunks() {
         if (!embedded('fgTextChunks')) return null;
@@ -440,7 +663,7 @@
     }
     window.fgData = {
         read, load, ready,
-        readSource, loadSource, sourceReady: source => ready(sourceInfo(source).name),
+        readSource, loadSource, keepSourceFlight, sourceReady: source => ready(sourceInfo(source).name),
         textChunks, loadTextChunk, loadTextBlock, loadTextBlocks,
         releaseTextChunks: () => { for (const key of Array.from(textCache.entries.keys())) cacheRelease(key); },
         release: name => cacheRelease('data:' + name),

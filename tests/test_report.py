@@ -1,7 +1,9 @@
 """End-to-end: run funcgraph.py against a fake kernel tree and check the generated HTML."""
 import os
+from pathlib import Path
 import re
 import subprocess
+import sys
 import tempfile
 import unittest
 
@@ -56,6 +58,36 @@ class SourceChunkTest(unittest.TestCase):
         for count in [0, -1, True, False, None, '64', 1.5]:
             with self.subTest(count=count), self.assertRaises(ValueError):
                 list(generator.iter_source_chunks(count))
+
+
+class OfflineReportDefaultTest(unittest.TestCase):
+    def test_large_timeline_defaults_to_gzip_windowed_without_overriding_explicit_modes(self):
+        trace = helpers.fixture('pi4_sched')
+        rows = count_input_lines(trace)
+        runner = 'from fglib import cli; cli.LARGE_OFFLINE_TEXT_ROWS = %d; cli.main()'
+        cases = (
+            ('at-limit', rows, ['--timeline'], 'gzip'),
+            ('below-limit', rows + 1, ['--timeline'], None),
+            ('text-only', rows, [], None),
+            ('timeline-only', rows, ['--timeline', '--no-text-view'], None),
+            ('filtered', rows, ['--timeline', '--pid', '2147483647'], None),
+            ('explicit-single', rows, ['--timeline', '--report-mode', 'single'], None),
+            ('explicit-windowed', rows, ['--timeline', '--report-mode', 'single-windowed'], 'none'),
+            ('automatic-uncompressed', rows, ['--timeline', '--windowed-compression', 'none'], 'none'),
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            for name, threshold, options, compression in cases:
+                with self.subTest(name=name):
+                    output = Path(directory) / (name + '.html')
+                    result = subprocess.run([sys.executable, '-c', runner % threshold, '--no-config', *options,
+                                             trace, '--output', str(output)], cwd=helpers.ROOT,
+                                            capture_output=True, text=True)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    html = output.read_text(encoding='utf-8')
+                    self.assertEqual('data-default-renderer="windowed"' in html, compression is not None)
+                    self.assertEqual(bool(re.search(r'<script type="application/x-funcgraph-gzip" id="fgTextIndex"', html)),
+                                     compression == 'gzip')
+                    self.assertEqual('Large offline report:' in result.stderr, name in ('at-limit', 'automatic-uncompressed'))
 
 
 class ReportTest(unittest.TestCase):

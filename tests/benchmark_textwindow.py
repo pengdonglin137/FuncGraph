@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compare complete and opt-in windowed Text in alternating isolated browsers."""
+"""Compare complete and windowed Text in alternating isolated browsers."""
 import argparse
 import hashlib
 import json
@@ -22,7 +22,7 @@ def measure(browser, url, mode, timeout):
     page.on('pageerror', lambda error: errors.append(str(error)))
     page.on('request', lambda request: requests.append(request.url))
     try:
-        page.goto(url + ('?text=windowed' if mode == 'windowed' else ''), wait_until='load')
+        page.goto(url + ('?text=windowed' if mode == 'windowed' else '?text=full'), wait_until='load')
         page.evaluate('async () => { await fgSwitchView("timeline"); }')
         facts = page.evaluate('''async () => {
             const tasks = [];

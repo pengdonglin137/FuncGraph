@@ -10,21 +10,24 @@ import tempfile
 from benchmark_range import fixture as range_fixture
 
 
-def fixture(template, destination, count):
-    range_fixture(template, destination, count)
+def fixture(template, destination, count, calls_per_window=1):
+    range_fixture(template, destination, count * calls_per_window)
     html = destination.read_text(encoding='utf-8')
     match = re.search(r'(<script type="application/json" id="tlData">)(.*?)(</script>)', html, re.S)
     data = json.loads(match[2])
     data['caps']['latency'] = True
     data['preempt_base'] = 0
-    data['resched'] = [[0, index * 1000, index * 1000 + 1 + index % 999, index % 4, 1, index % 3] for index in range(count)]
-    data['sections'] = [[0, kind, raw[1], raw[2], index, index, raw[3], index + 1, index + 1]
+    stride = calls_per_window * 1000
+    data['resched'] = [[0, index * stride, (index + 1) * stride - 999 + index % 999, index % 4, 1, index % 3]
+                       for index in range(count)]
+    data['sections'] = [[0, kind, raw[1], raw[2], index * calls_per_window, (index + 1) * calls_per_window - 1,
+                         raw[3], index * calls_per_window + 1, (index + 1) * calls_per_window]
                         for kind in range(3) for index, raw in enumerate(data['resched'])]
-    data['cols']['flags'] = [4] * count
+    data['cols']['flags'] = [4] * (count * calls_per_window)
     destination.write_text(html[:match.start(2)] + json.dumps(data, separators=(',', ':')) + html[match.end(2):], encoding='utf-8')
 
 
-def measure(browser, report, count, panel):
+def measure(browser, report, count, panel, calls_per_window=1):
     page = browser.new_page(viewport={'width': 1500, 'height': 900})
     page.set_default_timeout(60000)
     errors = []
@@ -32,7 +35,7 @@ def measure(browser, report, count, panel):
     try:
         page.goto(report.as_uri())
         page.evaluate("async () => { await fgSwitchView('timeline'); }")
-        result = page.evaluate('''async ({count, panel}) => {
+        result = page.evaluate('''async ({count, panel, stride}) => {
             await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
             const began = performance.now();
             fgView('timeline').probe()[panel]();
@@ -41,7 +44,7 @@ def measure(browser, report, count, panel):
             const observe = () => {
                 const rows = [...pane.querySelectorAll('tr[data-sec], tr[data-win]')];
                 for (const row of rows) {
-                    const index = panel === 'sections' ? +row.dataset.sec : +row.dataset.win.split(',')[0] / 1000;
+                    const index = panel === 'sections' ? +row.dataset.sec : +row.dataset.win.split(',')[0] / stride;
                     if (!Number.isInteger(index) || index < 0 || index >= count) throw new Error('Invalid window identity');
                     visited.add(index);
                 }
@@ -66,7 +69,7 @@ def measure(browser, report, count, panel):
             result.all_page_handlers_ms = result.page_handler_ms.reduce((total, value) => total + value, 0);
             result.all_page_frames_ms = result.page_frame_ms.reduce((total, value) => total + value, 0);
             return result;
-        }''', dict(count=count, panel=panel))
+        }''', dict(count=count, panel=panel, stride=calls_per_window * 1000))
         if errors:
             raise RuntimeError('\n'.join(errors))
         return result
@@ -81,16 +84,17 @@ def main():
     parser.add_argument('before', type=Path)
     parser.add_argument('after', type=Path)
     parser.add_argument('--windows', type=int, default=10000)
+    parser.add_argument('--calls-per-window', type=int, default=1)
     parser.add_argument('--rounds', type=int, default=3)
     parser.add_argument('--output', type=Path)
     args = parser.parse_args()
-    if args.windows < 1 or args.rounds < 1:
-        parser.error('--windows and --rounds must be positive')
+    if min(args.windows, args.calls_per_window, args.rounds) < 1:
+        parser.error('--windows, --calls-per-window and --rounds must be positive')
     samples = {panel: {'before': [], 'after': []} for panel in ('sections', 'latency')}
     with tempfile.TemporaryDirectory(prefix='fg-window-benchmark-') as directory:
         reports = {name: Path(directory) / (name + '.html') for name in ('before', 'after')}
-        fixture(args.before, reports['before'], args.windows)
-        fixture(args.after, reports['after'], args.windows)
+        fixture(args.before, reports['before'], args.windows, args.calls_per_window)
+        fixture(args.after, reports['after'], args.windows, args.calls_per_window)
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()
             try:
@@ -98,13 +102,14 @@ def main():
                 for panel, measurements in samples.items():
                     for round_index in range(args.rounds):
                         for name in ('before', 'after') if round_index % 2 == 0 else ('after', 'before'):
-                            measurements[name].append(measure(browser, reports[name], args.windows, panel))
+                            measurements[name].append(measure(browser, reports[name], args.windows, panel, args.calls_per_window))
             finally:
                 browser.close()
     metrics = ('open_handler_ms', 'all_page_handlers_ms', 'all_page_frames_ms', 'initial_rows',
                'maximum_rows', 'final_rows', 'visited_windows', 'panel_elements', 'page_actions')
     result = dict(browser=version, viewport=dict(width=1500, height=900), windows=args.windows, rounds=args.rounds,
-                  fixture='synthetic non-overlapping windows with one distinct function per window and all three section kinds',
+                  calls_per_window=args.calls_per_window,
+                  fixture='synthetic non-overlapping windows with distinct functions and all three section kinds',
                   scope='Handlers, two-rAF intervals and retained rows; excludes startup, CSV and peak memory', samples=samples,
                   medians={panel: {name: {metric: median(sample[metric] for sample in records) for metric in metrics}
                                    for name, records in measurements.items()} for panel, measurements in samples.items()})

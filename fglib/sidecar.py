@@ -2,6 +2,9 @@
 
 from dataclasses import dataclass
 from contextlib import nullcontext
+import base64
+import codecs
+import gzip
 import hashlib
 import json
 import os
@@ -18,6 +21,13 @@ from .textchunks import TEXT_NETWORK_ROWS, TextChunkRanges
 
 MARKER = b'FuncGraph sidecar report v1\n'
 SOURCE_CHUNK_ROWS = 64
+TEXT_GZIP_ROWS = 512
+TEXT_WINDOW_DEFAULT_ROWS = 65_536
+TEXT_WINDOW_DEFAULT_BYTES = 64 * 1024 * 1024
+DEFERRED_TEXT_HTML = (
+    (b'<div id="content"', b'<div id="content" data-fg-text="true" data-fg-text-index="true"'),
+    (b'data-default-view="text"', b'data-default-view="timeline" data-deferred-text="true"'),
+)
 
 
 @dataclass(frozen=True)
@@ -123,6 +133,94 @@ def _target(path):
     return True, stat.S_IMODE(entry.stat().st_mode)
 
 
+def _stage(spool, generator, index_stream, chunk_size=TEXT_NETWORK_ROWS):
+    index = TextIndexWriter(index_stream, include_space='uftrace' in generator.timeline_json,
+                            include_presentation=True, include_raw_functions=True,
+                            include_user_errors=getattr(generator, 'has_user_errors', False)) if index_stream is not None else None
+    paint_rows = getattr(generator, 'text_chunk_rows', None)
+    chunks = TextChunkRanges(paint_rows, chunk_size) if index is not None and paint_rows is not None else None
+    generator.text_index = index
+    try:
+        spool.write_sections(generator.iter_sections(), observer=chunks.append if chunks else None)
+    finally:
+        generator.text_index = None
+    ranges = chunks.finish(index.rows) if chunks else []
+    spool.file.flush()
+    return index, chunks, ranges
+
+
+def write_single_windowed(path, generator, compression='none'):
+    if generator.timeline_json is None or generator.timeline_json.get('no_text') or generator.omit_text:
+        raise ValueError('single-windowed reports require --timeline and a Text view')
+    if compression not in ('none', 'gzip'):
+        raise ValueError('windowed compression must be none or gzip')
+
+    def json_script(name, value, attrs=''):
+        payload = _json(value).decode('utf-8').replace('<', '\\u003c')
+        return 'embedded:' + name, f'<script type="application/json" id="{name}"{attrs}>{payload}</script>\n'
+
+    def gzip_script(name, blocks, length):
+        section = 'embedded:' + name
+        with tempfile.TemporaryFile('w+b') as packed:
+            with gzip.GzipFile(fileobj=packed, mode='wb', compresslevel=6, mtime=0) as encoder:
+                for block in blocks:
+                    encoder.write(block)
+            packed.seek(0)
+            yield section, f'<script type="application/x-funcgraph-gzip" id="{name}" data-bytes="{length}">'
+            for block in iter(lambda: packed.read(3 * 65536), b''):
+                yield section, base64.b64encode(block).decode('ascii')
+            yield section, '</script>\n'
+
+    with ReportSpool(path) as spool, tempfile.TemporaryFile('w+b') as index_stream:
+        chunk_size = TEXT_GZIP_ROWS if compression == 'gzip' else TEXT_NETWORK_ROWS
+        index, chunks, ranges = _stage(spool, generator, index_stream, chunk_size)
+        index.finish('text-index.json')
+        index_stream.seek(0)
+
+        def sections():
+            for section in spool.sections:
+                if section.name in ('text', 'source_open', 'source_data', 'source_close'):
+                    continue
+                if section.name == 'report_script':
+                    yield json_script('fgTextChunks', dict(version=1, count=chunks.rows, chunk_size=chunks.chunk_size,
+                                                           paint_rows=chunks.paint_rows), ' data-default-renderer="windowed"')
+                    index_blocks = iter(lambda: index_stream.read(1024 * 1024), b'')
+                    if compression == 'gzip':
+                        yield from gzip_script('fgTextIndex', index_blocks, index.byte_count)
+                    else:
+                        yield 'embedded:fgTextIndex', '<script type="application/json" id="fgTextIndex">'
+                        for text in codecs.iterdecode(index_blocks, 'utf-8'):
+                            yield 'embedded:fgTextIndex', text.replace('<', '\\u003c')
+                        yield 'embedded:fgTextIndex', '</script>\n'
+                    for first, _, text_range in ranges:
+                        name = 'fgText' + str(first)
+                        blocks = _blocks(spool, text_range)
+                        if compression == 'gzip':
+                            yield from gzip_script(name, blocks, text_range.end - text_range.start)
+                        else:
+                            yield json_script(name, b''.join(blocks).decode('utf-8'))
+                    source_count = 0
+                    for first, sources in generator.iter_source_chunks(SOURCE_CHUNK_ROWS):
+                        name = 'fgSrc' + str(first)
+                        if compression == 'gzip':
+                            payload = _json(sources)
+                            yield from gzip_script(name, (payload,), len(payload))
+                        else:
+                            yield json_script(name, sources)
+                        source_count += len(sources)
+                    yield json_script('fgSourceChunks', dict(version=1, count=source_count, chunk_size=SOURCE_CHUNK_ROWS))
+                blocks = _blocks(spool, section)
+                if section.name == 'chrome':
+                    for before, after in DEFERRED_TEXT_HTML:
+                        blocks = _replace(blocks, before, after)
+                for text in codecs.iterdecode(blocks, 'utf-8'):
+                    yield section.name, text
+
+        with ReportSpool(path) as output:
+            output.write_sections(sections())
+            return output.publish()
+
+
 def write_sidecar(path, generator, byte_limit=None):
     if generator.timeline_json is None:
         raise ValueError('sidecar reports require --timeline')
@@ -142,27 +240,18 @@ def write_sidecar(path, generator, byte_limit=None):
             resources = {}
             index_path = resources_directory / 'text-index.json'
             with index_path.open('xb') if deferred else nullcontext() as index_stream:
-                index = TextIndexWriter(index_stream, include_space='uftrace' in generator.timeline_json,
-                                        include_presentation=True, include_raw_functions=True,
-                                        include_user_errors=getattr(generator, 'has_user_errors', False)) if deferred else None
-                paint_rows = getattr(generator, 'text_chunk_rows', None)
-                chunks = TextChunkRanges(paint_rows) if deferred and paint_rows is not None else None
-                generator.text_index = index
-                try:
-                    spool.write_sections(generator.iter_sections(), observer=chunks.append if chunks else None)
-                finally:
-                    generator.text_index = None
-                text_ranges = chunks.finish(index.rows) if chunks else []
+                index, chunks, text_ranges = _stage(spool, generator, index_stream)
                 if index is not None:
                     resources['fgTextIndex'] = index.finish(index_path.name)
                     _sync(index_stream)
-            spool.file.flush()
             external = byte_limit is None or spool.exceeds_threshold(byte_limit)
             if external:
                 for name, filename in [('tlData', 'timeline.json'), ('cmpData', 'compare.json')]:
                     if any(section.name == 'view_data:' + name for section in spool.sections):
                         resources[name] = _resource(spool, 'view_data:' + name, resources_directory / filename, 'json')
                 chunked_text = bool(chunks and chunks.rows > TEXT_NETWORK_ROWS)
+                windowed_text = chunked_text and (chunks.rows >= TEXT_WINDOW_DEFAULT_ROWS or
+                    sum(section.end - section.start for _, _, section in text_ranges) >= TEXT_WINDOW_DEFAULT_BYTES)
                 if deferred:
                     if chunked_text:
                         for first, count, section in text_ranges:
@@ -171,7 +260,7 @@ def write_sidecar(path, generator, byte_limit=None):
                     else:
                         resources['fgText'] = _resource(spool, 'text', resources_directory / 'text.html', 'text')
                 text_catalog = _json(dict(version=1, count=chunks.rows, chunk_size=TEXT_NETWORK_ROWS,
-                                          paint_rows=paint_rows)) if chunked_text else None
+                                          paint_rows=chunks.paint_rows)) if chunked_text else None
                 source_count = 0
                 for first, sources in generator.iter_source_chunks(SOURCE_CHUNK_ROWS):
                     payload = _json(sources)
@@ -204,12 +293,10 @@ def write_sidecar(path, generator, byte_limit=None):
                             stream.write(b'    <script type="application/json" id="fgDataManifest">' + descriptor + b'</script>\n')
                             stream.write(b'    <script type="application/json" id="fgSourceChunks">' + source_catalog + b'</script>\n')
                             if text_catalog is not None:
-                                stream.write(b'    <script type="application/json" id="fgTextChunks">' + text_catalog + b'</script>\n')
+                                renderer = b' data-default-renderer="windowed"' if windowed_text else b''
+                                stream.write(b'    <script type="application/json" id="fgTextChunks"' + renderer + b'>' + text_catalog + b'</script>\n')
                         if deferred and section.name == 'chrome':
-                            _copy(spool, section, stream, (
-                                (b'<div id="content"', b'<div id="content" data-fg-text="true" data-fg-text-index="true"'),
-                                (b'data-default-view="text"', b'data-default-view="timeline" data-deferred-text="true"'),
-                            ))
+                            _copy(spool, section, stream, DEFERRED_TEXT_HTML)
                         else:
                             _copy(spool, section, stream)
                     _sync(stream)

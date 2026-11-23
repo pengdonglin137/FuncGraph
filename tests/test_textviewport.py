@@ -88,6 +88,114 @@ class TextViewportTest(unittest.TestCase):
                 })};
         }''')
 
+    def test_timeline_jump_reveals_on_next_frame_and_skips_superseded_selection(self):
+        page = self.open_report()
+        facts = page.evaluate('''async () => {
+            await fgSwitchView('timeline');
+            const timeline = fgView('timeline').probe();
+            timeline.select(fgData.read('tlData').cols.line.indexOf(4));
+            const jump = () => document.querySelector('.tl-detail button[data-line="4"]').click();
+            const row = document.getElementById('L4');
+            jump();
+            const readyBeforeFrame = keyboardSelectedLine === row && !row.classList.contains('tl-flash');
+            await new Promise(requestAnimationFrame);
+            const flashed = row.classList.contains('tl-flash');
+            const scrolled = [];
+            const scroll = fgScrollTextLine;
+            fgScrollTextLine = (target, ...options) => {
+                scrolled.push(target.id);
+                return scroll(target, ...options);
+            };
+            const selections = [];
+            for (const select of [() => fgRequestTextLine(5, next => fgSelectMountedTextLine(next, false)),
+                () => fgSelectMountedTextLine(document.getElementById('L5'), false)]) {
+                row.classList.remove('tl-flash');
+                await fgSwitchView('timeline');
+                jump();
+                select();
+                await new Promise(requestAnimationFrame);
+                selections.push([keyboardSelectedLine.id, row.classList.contains('tl-flash')]);
+            }
+            return {readyBeforeFrame, flashed, scrolled, selections};
+        }''')
+        self.assertEqual(facts, dict(readyBeforeFrame=True, flashed=True, scrolled=[],
+                                     selections=[['L5', False], ['L5', False]]))
+
+    def test_timeline_jump_highlight_expires_and_does_not_replay_after_return(self):
+        for mode in ('single', 'sidecar'):
+            with self.subTest(mode=mode):
+                page = self.open_report(mode)
+                facts = page.evaluate('''async () => {
+                    const frame = () => new Promise(requestAnimationFrame);
+                    const active = () => [...document.querySelectorAll('#content .tl-flash')].map(row => row.id);
+                    await fgSwitchView('timeline');
+                    const timeline = fgView('timeline').probe();
+                    const lines = fgData.read('tlData').cols.line;
+                    const jump = async number => {
+                        await fgSwitchView('timeline');
+                        timeline.select(lines.indexOf(number));
+                        document.querySelector('.tl-detail button[data-line="' + number + '"]').click();
+                        await frame();
+                        return active();
+                    };
+                    const first = await jump(4);
+                    const row = document.getElementById('L4');
+                    let layoutReads = 0;
+                    const offset = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'offsetWidth').get;
+                    Object.defineProperty(row, 'offsetWidth', {get() { layoutReads++; return offset.call(this); }});
+                    document.getElementById('fgJumpReturn').click();
+                    const afterReturn = active();
+                    await fgSwitchView('text');
+                    await frame();
+                    const afterTab = active();
+                    const repeated = await jump(4);
+                    const second = await jump(5);
+                    const animation = document.getElementById('L5').getAnimations()[0];
+                    animation.finish();
+                    await animation.finished;
+                    await frame();
+                    await frame();
+                    const finished = active();
+                    await jump(4);
+                    fgSelectMountedTextLine(document.getElementById('L5'), false);
+                    return {first, afterReturn, afterTab, repeated, second, finished, layoutReads,
+                        afterSelection:active()};
+                }''')
+                self.assertEqual(facts, dict(first=['L4'], afterReturn=[], afterTab=[], repeated=['L4'],
+                                             second=['L5'], finished=[], layoutReads=0, afterSelection=[]))
+
+    def test_timeline_jump_reveals_clipped_function_without_resetting_visible_name(self):
+        for mode in ('single', 'sidecar'):
+            with self.subTest(mode=mode):
+                page = self.open_report(mode, width=320)
+                page.set_viewport_size({'width': 320, 'height': 420})
+                page.add_style_tag(content='#L4 .line-content { padding-inline-start: 500px; }')
+                page.evaluate('''async () => {
+                    await fgSwitchView('timeline');
+                    fgView('timeline').probe().select(fgData.read('tlData').cols.line.indexOf(4));
+                }''')
+                link = page.locator('.tl-detail button[data-line="4"]').first
+                target = page.locator('#L4.tl-flash')
+                link.click()
+                target.wait_for()
+                self.assertTrue(target.evaluate('''row => {
+                    const symbol = row.querySelector('.line-content > :is(.func-name-link, .hl-func)').getBoundingClientRect();
+                    const viewport = document.getElementById('textViewport');
+                    const left = viewport.getBoundingClientRect().left + viewport.clientLeft;
+                    const controls = document.querySelector('.controls').getBoundingClientRect();
+                    return viewport.scrollLeft > 0 && symbol.left >= left && symbol.right <= left + viewport.clientWidth &&
+                        symbol.top >= controls.bottom && symbol.bottom <= innerHeight;
+                }'''))
+                left = page.locator('#textViewport').evaluate('''viewport => {
+                    viewport.scrollLeft += 12;
+                    document.getElementById('L4').classList.remove('tl-flash');
+                    return viewport.scrollLeft;
+                }''')
+                page.get_by_role('button', name='Return to Timeline', exact=True).click()
+                link.click()
+                target.wait_for()
+                self.assertEqual(self.facts(page)['left'], left)
+
     def test_view_tabs_stay_above_text_controls_and_switch_without_losing_position(self):
         for mode in ('single', 'sidecar'):
             for width in (390, 1500):
@@ -205,7 +313,7 @@ class TextViewportTest(unittest.TestCase):
                         self.assertTrue(page.evaluate('JSON.stringify(roundtripSnapshot()) === JSON.stringify(originalRoundtrip)'))
                         if iteration == 3:
                             break
-                        page.locator('.tl-detail a[data-line]').last.click()
+                        page.locator('.tl-detail button[data-line]').last.click()
                         page.wait_for_function("() => fgCurrentView() === 'text' && scrollY > 5000")
                         tab = page.locator('.view-tab[data-view=timeline]').bounding_box()
                         self.assertGreaterEqual(tab['y'], 0)
@@ -316,7 +424,7 @@ class TextViewportTest(unittest.TestCase):
                 self.assertEqual(page.locator('#content .line-container[onclick], #content .line-container[ondblclick], '
                                               '#content .line-container > .line-number[onclick]').count(), 0)
                 self.assertTrue(page.evaluate('''() => Array.from(document.querySelectorAll(
-                    '#content .line-container, #content .line-container > .line-number')).every(
+                    '#content .line-container, #content .line-container > .line-number, #content .func-name-link')).every(
                     node => node.onclick === null && node.ondblclick === null)'''))
                 session = page.context.new_cdp_session(page)
                 target = session.send('Runtime.evaluate', {'expression': 'document.getElementById("content")',
@@ -350,17 +458,52 @@ class TextViewportTest(unittest.TestCase):
                 self.assertEqual(page.locator('#line_2_content').evaluate('node => node.style.display'), 'none')
 
     def test_delegated_source_button_opens_and_closes_exactly_once(self):
-        for mode in ['single', 'sidecar']:
-            with self.subTest(mode=mode):
-                page = self.open_report(mode, width=1500)
+        for mode, width in (('single', 1500), ('sidecar', 1500), ('single', 390), ('sidecar', 390)):
+            with self.subTest(mode=mode, width=width):
+                page = self.open_report(mode, width=width)
                 button = page.locator('#L3 .expand-btn')
-                button.click()
-                page.wait_for_function('() => document.getElementById("line_2_content").style.display === "block"')
+                activate = button.tap if width < 640 else button.click
+                self.assertEqual(button.evaluate('node => node.tagName'), 'BUTTON')
+                self.assertEqual(button.get_attribute('aria-controls'), 'line_2_content')
+                self.assertEqual(button.get_attribute('aria-expanded'), 'false')
+                if width < 640:
+                    self.assertTrue(button.evaluate('''node => {
+                        const button = node.getBoundingClientRect();
+                        const row = node.closest('.line-container');
+                        const number = row.querySelector('.line-number').getBoundingClientRect();
+                        const text = row.querySelector('.line-content').getBoundingClientRect();
+                        return number.right <= button.left && button.right <= text.left &&
+                            button.width >= 24 && button.height >= 24 && button.right <= innerWidth;
+                    }'''))
+                page.evaluate('''() => {
+                    window.sourceClickStates = [];
+                    document.getElementById('content').addEventListener('click', event => {
+                        if (event.target.closest('#L3 .expand-btn')) {
+                            const source = document.getElementById('line_2_content');
+                            sourceClickStates.push([source.style.display, clickTimer === null]);
+                        }
+                    });
+                }''')
+                activate()
+                self.assertEqual(page.evaluate('sourceClickStates'), [['block', True]])
                 self.assertEqual(button.text_content(), '-')
+                self.assertEqual(button.get_attribute('aria-expanded'), 'true')
                 self.assertTrue(page.locator('#L3').evaluate('node => node.classList.contains("selected")'))
-                button.click()
-                page.wait_for_function('() => document.getElementById("line_2_content").style.display === "none"')
+                activate()
+                self.assertEqual(page.evaluate('sourceClickStates'), [['block', True], ['none', True]])
                 self.assertEqual(button.text_content(), '+')
+                self.assertEqual(button.get_attribute('aria-expanded'), 'false')
+
+    def test_native_source_button_keeps_focus_and_activates_once_per_key(self):
+        page = self.open_report(width=1500)
+        button = page.locator('#L3 .expand-btn')
+        button.focus()
+        button.press('Space')
+        self.assertEqual(button.get_attribute('aria-expanded'), 'true')
+        self.assertTrue(button.evaluate('element => element === document.activeElement'))
+        button.press('Enter')
+        self.assertEqual(button.get_attribute('aria-expanded'), 'false')
+        self.assertTrue(button.evaluate('element => element === document.activeElement'))
 
     def test_delegated_double_click_keeps_native_selection_and_cancels_source_toggle(self):
         for mode in ['single', 'sidecar']:
@@ -375,6 +518,21 @@ class TextViewportTest(unittest.TestCase):
                 self.assertEqual(page.evaluate('doubleCalls'), 1)
                 self.assertTrue(page.evaluate('getSelection().toString().trim().length > 0'))
                 self.assertEqual(page.locator('#line_2_content').evaluate('node => node.style.display'), 'none')
+
+    def test_source_button_replaces_a_pending_body_click(self):
+        page = self.open_report(width=1500)
+        facts = page.evaluate('''() => {
+            const body = document.querySelector('#L3 .line-content');
+            const button = document.querySelector('#L4 .expand-btn');
+            const first = document.querySelector('#L3 + .expanded-content');
+            const second = document.querySelector('#L4 + .expanded-content');
+            body.click();
+            const pending = clickTimer !== null && first.style.display === 'none';
+            button.click();
+            return {pending, cancelled: clickTimer === null,
+                first: first.style.display, second: second.style.display};
+        }''')
+        self.assertEqual(facts, dict(pending=True, cancelled=True, first='none', second='block'))
 
     def test_delegated_row_events_do_not_toggle_source_when_folding(self):
         for mode in ['single', 'sidecar']:
@@ -452,18 +610,42 @@ class TextViewportTest(unittest.TestCase):
 
     def test_native_source_links_keep_their_target_without_toggling_rows(self):
         for mode in ['single', 'sidecar']:
-            with self.subTest(mode=mode):
-                page = self.open_report(mode, width=1500)
-                page.context.route('https://**/*', lambda route: route.fulfill(status=200, body='source fixture'))
-                link = page.locator('#L3 .func-name-link').first
-                expected = link.get_attribute('href')
-                with page.expect_popup() as popup:
-                    link.click()
-                popup.value.wait_for_load_state()
-                self.assertEqual(popup.value.url, expected)
-                popup.value.close()
-                page.wait_for_timeout(250)
-                self.assertEqual(page.locator('#line_2_content').evaluate('node => node.style.display'), 'none')
+            for action in ('click', 'keyboard', 'tap'):
+                with self.subTest(mode=mode, action=action):
+                    page = self.open_report(mode, width=390 if action == 'tap' else 1500)
+                    page.context.route('https://**/*', lambda route: route.fulfill(status=200, body='source fixture'))
+                    link = page.locator('#L3 .func-name-link').first
+                    expected = link.get_attribute('href')
+                    self.assertIsNone(link.get_attribute('onclick'))
+                    with page.expect_popup() as popup:
+                        if action == 'keyboard':
+                            link.press('Enter')
+                        elif action == 'tap':
+                            link.tap()
+                        else:
+                            link.click()
+                    popup.value.wait_for_load_state()
+                    self.assertEqual(popup.value.url, expected)
+                    popup.value.close()
+                    self.assertTrue(link.evaluate('''node => {
+                        const event = new MouseEvent('dblclick', {bubbles:true, cancelable:true});
+                        let bubbled = false;
+                        node.closest('#content').addEventListener('dblclick', () => { bubbled = true; }, {once:true});
+                        return node.dispatchEvent(event) && bubbled && !clickTimer && !doubleClickTimer;
+                    }'''))
+                    self.assertEqual(page.locator('#line_2_content').evaluate('node => node.style.display'), 'none')
+
+    def test_alt_click_source_link_locates_timeline_without_opening_it(self):
+        page = self.open_report(width=1500)
+        page.locator('#L3 .func-name-link').first.click(modifiers=['Alt'])
+        page.wait_for_function('''() => {
+            if (fgCurrentView() !== 'timeline') return false;
+            const model = fgView('timeline').probe();
+            return fgData.read('tlData').cols.line[model.sel()] === 3;
+        }''')
+        self.assertEqual(page.context.pages, [page])
+        page.get_by_role('button', name='Return to Text', exact=True).click()
+        self.assertEqual(page.locator('#line_2_content').evaluate('node => node.style.display'), 'none')
 
     def test_long_rows_pan_without_expanding_or_displacing_page_chrome(self):
         for mode in ['single', 'sidecar']:
@@ -504,12 +686,26 @@ class TextViewportTest(unittest.TestCase):
                 page.keyboard.press('Shift+H')
                 page.wait_for_function('() => document.getElementById("textViewport").scrollLeft <= 1')
 
-    def test_narrow_desktop_toolbar_keeps_legend_pairs_and_filter_actions_inside_window(self):
+    def test_narrow_desktop_uses_one_row_and_keeps_legend_and_filter_panels_inside_window(self):
         for mode in ['single', 'sidecar']:
             for theme in ['light', 'dark']:
                 with self.subTest(mode=mode, theme=theme):
                     page = self.open_report(mode, width=320, theme=theme, touch=False)
-                    self.assertFalse(page.locator('.controls').evaluate('node => node.classList.contains("text-compact")'))
+                    self.assertTrue(page.locator('.controls').evaluate('node => node.classList.contains("text-compact")'))
+                    self.assertTrue(page.locator('.toolbar').evaluate('''toolbar => {
+                        const area = toolbar.getBoundingClientRect();
+                        const buttons = Array.from(toolbar.querySelectorAll(':scope > .btn-group > button, :scope > button'))
+                            .filter(button => button.getClientRects().length);
+                        return buttons.length >= 4 && buttons.every(button => {
+                            const bounds = button.getBoundingClientRect();
+                            return bounds.top === area.top && bounds.height >= 44 && bounds.width >= 44 &&
+                                bounds.left >= area.left && bounds.right <= area.right;
+                        });
+                    }'''))
+                    if mode == 'sidecar':
+                        self.assertEqual(page.get_by_role('button', name='Windowed Text', exact=True).inner_text(), 'Windowed')
+                    more = page.locator('#textMoreToggle')
+                    more.click()
                     pairs = page.locator('.heatmap-legend-level')
                     self.assertEqual(pairs.count(), 7)
                     for pair in pairs.all():
@@ -518,12 +714,35 @@ class TextViewportTest(unittest.TestCase):
                         bounds = pair.bounding_box()
                         self.assertGreaterEqual(bounds['x'], 0)
                         self.assertLessEqual(bounds['x'] + bounds['width'], 320)
-                    for selector in ['#filterInput', '#filterBox button[onclick="applyFilter()"]', '.clear-btn', '.filter-help-btn']:
+                    page.keyboard.press('Escape')
+                    self.assertEqual(more.get_attribute('aria-expanded'), 'false')
+                    self.assertTrue(more.evaluate('node => node === document.activeElement'))
+                    page.locator('#textFilterToggle').press('Enter')
+                    self.assertTrue(page.locator('#filterInput').evaluate('node => node === document.activeElement'))
+                    for selector in ['#filterInput', '.filter-btn', '.clear-btn', '.filter-help-btn']:
                         bounds = page.locator(selector).bounding_box()
                         self.assertGreater(bounds['width'], 0)
                         self.assertLessEqual(bounds['x'] + bounds['width'], 320)
                     facts = self.facts(page)
                     self.assertLessEqual(facts['rootWidth'], facts['width'])
+
+    def test_desktop_resize_keeps_filter_editing_across_the_compact_breakpoint(self):
+        page = self.open_report(width=860, touch=False)
+        field = page.locator('#filterInput')
+        toggle = page.locator('#textFilterToggle')
+        more = page.locator('#textMoreToggle')
+        if not field.is_visible():
+            toggle.click()
+        field.fill('func:^nested$')
+        field.evaluate('node => node.setSelectionRange(6, 10)')
+        for width in (640, 641, 320, 860):
+            with self.subTest(width=width):
+                page.set_viewport_size({'width': width, 'height': 844})
+                more.wait_for(state='visible' if width <= 640 else 'hidden')
+                self.assertTrue(field.is_visible())
+                self.assertEqual(toggle.get_attribute('aria-expanded'), 'true')
+                self.assertEqual(field.evaluate('node => [node === document.activeElement, node.value, node.selectionStart, node.selectionEnd]'),
+                                 [True, 'func:^nested$', 6, 10])
 
     def test_view_roundtrip_retains_horizontal_reading_position_without_overflow(self):
         for mode in ['single', 'sidecar']:
@@ -602,6 +821,44 @@ class TextViewportTest(unittest.TestCase):
                 top:Array.from(top).some((value,index) => index % 4 === 3 && value)};
         }''')
         self.assertEqual(result, dict(left=False, top=False))
+
+    def test_full_text_guides_match_a_fresh_draw_after_fold_filter_and_order_changes(self):
+        page = self.open_report('sidecar', width=1500)
+        frames = page.evaluate('''async () => {
+            const settle = () => new Promise(done => requestAnimationFrame(() => requestAnimationFrame(done)));
+            const guide = document.getElementById('foldGuidesBtn');
+            if (guide.getAttribute('aria-pressed') !== 'true') guide.click();
+            const root = document.getElementById('L2');
+            const foldId = root.dataset.foldId;
+            const filter = document.getElementById('filterInput');
+            const pixels = () => document.querySelector('.fold-guide-layer').toDataURL();
+            const freshDraw = async () => {
+                await settle();
+                const warm = pixels();
+                guide.click();
+                await settle();
+                guide.click();
+                await settle();
+                return {pixels: warm, same: warm === pixels()};
+            };
+            const unfolded = await freshDraw();
+            toggleFold(foldId, 'entry');
+            const folded = await freshDraw();
+            toggleFold(foldId, 'entry');
+            const reopened = await freshDraw();
+            filter.value = 'func:does_not_exist';
+            await applyFilter();
+            const filtered = await freshDraw();
+            filter.value = '';
+            await applyFilter();
+            await fgSetTextOrder('task');
+            const ordered = await freshDraw();
+            return {full: !fgTextWindow, allFresh: [unfolded, folded, reopened, filtered, ordered].every(frame => frame.same),
+                foldedChanges: folded.pixels !== unfolded.pixels, reopenedMatches: reopened.pixels === unfolded.pixels,
+                emptyChanges: filtered.pixels !== unfolded.pixels, orderedVisible: ordered.pixels !== filtered.pixels};
+        }''')
+        self.assertEqual(frames, dict(full=True, allFresh=True, foldedChanges=True, reopenedMatches=True,
+                                      emptyChanges=True, orderedVisible=True))
 
     def test_mouse_wheel_and_touch_swipe_pan_only_text(self):
         for width in [390, 1500]:

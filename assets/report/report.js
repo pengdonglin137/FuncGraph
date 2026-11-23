@@ -6,8 +6,10 @@
         // Filter state shared with the Timeline tab (line numbers that pass the filter)
         window.fgFilterState = { text: '', lines: null };
         window.fgFilterProgress = null;
-        function fgNotifyFilter(text, lines) {
-            window.fgFilterState = { text: text, lines: lines };
+        const fgIndexedFilterProjections = new WeakMap();
+        function fgNotifyFilter(text, lines, indexed = null) {
+            const state = window.fgFilterState = { text: text, lines: lines };
+            if (indexed) fgIndexedFilterProjections.set(state, new WeakMap([[indexed.data, indexed.result]]));
             const filterStatus = document.getElementById('textFilterStatus');
             if (filterStatus) filterStatus.hidden = !lines;
             if (typeof window.fgOnFilter === 'function') window.fgOnFilter();
@@ -15,8 +17,22 @@
         function fgSourceHtml(source) {
             return fgData.readSource(source);
         }
+        const fgSourceIndexDigits = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
         function fgSourceForLine(line) {
             const index = fgData.read('fgSrcLines');
+            if (typeof index === 'string') {
+                if (!Number.isSafeInteger(line) || line < 1 || line >= index.length / 2) return null;
+                const offset = line * 2;
+                const high = fgSourceIndexDigits.indexOf(index[offset]);
+                const low = fgSourceIndexDigits.indexOf(index[offset + 1]);
+                if (high < 0 || low < 0) return null;
+                const source = high * fgSourceIndexDigits.length + low;
+                return source > 0 ? source - 1 : null;
+            }
+            if (Array.isArray(index)) {
+                const source = index[line];
+                return source > 0 ? source - 1 : null;
+            }
             return Object.prototype.hasOwnProperty.call(index, line) ? index[line] : null;
         }
         // Two layouts for source blocks (toolbar "Source" button):
@@ -24,26 +40,39 @@
         //   flat : faddr2line order (innermost first), everything expanded
         let fgSrcMode = lsGet('srcMode') || 'chain';
         const fgSourceNodes = typeof WeakRef === 'function' && typeof FinalizationRegistry === 'function' ? new Set() : null;
-        const fgSourceSeen = new WeakSet();
+        const fgSourceReferences = new WeakMap();
         const fgSourceCleanup = fgSourceNodes && new FinalizationRegistry(reference => fgSourceNodes.delete(reference));
+        const fgRenderedSourceLayouts = new WeakMap();
+        const fgDeferredSourceLayouts = new WeakSet();
+        const fgSourceFrameChoices = new WeakMap();
+        const FG_SOURCE_REUSE_LIMIT = 256;
         function fgTrackSource(element) {
-            if (!fgSourceNodes || fgSourceSeen.has(element)) return;
+            if (!fgSourceNodes || fgSourceReferences.has(element)) return;
             const reference = new WeakRef(element);
-            fgSourceSeen.add(element);
+            fgSourceReferences.set(element, reference);
             fgSourceNodes.add(reference);
-            fgSourceCleanup.register(element, reference);
+            fgSourceCleanup.register(element, reference, reference);
+        }
+        function fgUntrackSource(element) {
+            const reference = fgSourceReferences.get(element);
+            if (!reference) return;
+            fgSourceReferences.delete(element);
+            fgSourceNodes.delete(reference);
+            fgSourceCleanup.unregister(reference);
         }
         function fgSourceMode() { return fgSrcMode; }
         const fgSourceJobs = new Map();
-        function fgCancelSources(root) {
-            const paused = [];
+        function fgPendingSources(root) {
+            const pending = [];
             if (root) for (const element of fgSourceJobs.keys()) {
-                if (root.contains(element)) {
-                    paused.push(element);
-                    fgCancelSource(element);
-                }
+                if (root.contains(element)) pending.push(element);
             }
-            return paused;
+            return pending;
+        }
+        function fgCancelSources(root) {
+            const pending = fgPendingSources(root);
+            pending.forEach(fgCancelSource);
+            return pending;
         }
         function fgCancelSource(element) {
             const job = element && fgSourceJobs.get(element);
@@ -53,17 +82,23 @@
             element.removeAttribute('aria-busy');
             element.replaceChildren();
         }
-        function fgFill(el, force) {
+        function fgFill(el, force, restoreLayout) {
             if (!el || el.dataset.src === undefined) return;
             const active = fgSourceJobs.get(el);
             if (active && !force) return active.promise;
-            if (el.firstChild && !force) return;
+            if (el.firstChild && !force) return fgRefreshSourceLayout(el, true);
             fgCancelSource(el);
             const source = +el.dataset.src;
             const fill = text => {
+                el.classList.remove('src-chain');
                 el.innerHTML = text;
-                if (fgSrcMode === 'chain') fgChainView(el, el.fgSourceFocus);
+                el.fgSourcePresentation?.prepare(el);
+                if (fgSourceFrameChoices.get(el)?.source !== source) fgSourceFrameChoices.delete(el);
+                const rendered = { source, layout: fgSrcMode, reusable: !!el.fgSourcePresentation || !!el.closest('#content'), flatChildren: null };
+                if (fgSrcMode === 'chain') fgRenderSourceChain(el, rendered);
+                fgRenderedSourceLayouts.set(el, rendered);
                 fgTrackSource(el);
+                restoreLayout?.(el);
                 el.dispatchEvent(new Event('fg-source-ready'));
             };
             try {
@@ -103,10 +138,35 @@
             });
             return job.promise;
         }
-        function fgChainView(el, focus) {
+        function fgRenderSourceChain(element, rendered) {
+            const choice = fgSourceFrameChoices.get(element);
+            const openFrames = choice?.source === rendered.source ? choice.open : undefined;
+            const retainChildren = rendered.reusable && element.childNodes.length <= FG_SOURCE_REUSE_LIMIT;
+            rendered.flatChildren = fgChainView(element, element.fgSourceFocus, openFrames, retainChildren);
+            rendered.layout = element.classList.contains('src-chain') ? 'chain' : 'both';
+        }
+        function fgCloneSourceLayout(element, rendered) {
+            const clone = element.cloneNode(true);
+            let flatChildren = null;
+            if (rendered.flatChildren) {
+                const copies = new Map();
+                element.childNodes.forEach((child, index) => {
+                    const copy = clone.childNodes[index];
+                    copies.set(child, copy);
+                    if (child.matches?.('details.src-frame')) {
+                        child.childNodes.forEach((node, offset) => copies.set(node, copy.childNodes[offset]));
+                    }
+                });
+                flatChildren = rendered.flatChildren.map(child => copies.get(child) ?? child.cloneNode(true));
+            }
+            fgRenderedSourceLayouts.set(clone, { ...rendered, flatChildren });
+            return clone;
+        }
+        function fgChainView(el, focus, openFrames, retainChildren = false) {
             const chains = [];
+            const children = Array.from(el.childNodes);
             let frames = null;
-            for (const node of Array.from(el.childNodes)) {
+            for (const node of children) {
                 const isLoc = node.classList && node.classList.contains('location-link');
                 if (isLoc && node.querySelector('strong')) { frames = null; continue; }
                 if (isLoc) {
@@ -115,12 +175,13 @@
                         chains.push(frames);
                     }
                     frames.push({ loc: node, lines: [] });
-                } else if (frames && node.classList && node.classList.contains('source-line')) {
+                } else if (frames && node.matches?.('.source-line, .tl-source-code')) {
                     frames[frames.length - 1].lines.push(node);
                 } else if (node.nodeType !== Node.TEXT_NODE || node.textContent.trim()) {
                     frames = null;
                 }
             }
+            let frameOffset = 0;
             for (const frames of chains) {
                 if (frames.length < 2) continue;
                 el.classList.add('src-chain');
@@ -136,7 +197,8 @@
                     const disclosure = document.createElement('details');
                     disclosure.className = 'src-frame' + (level === count - 1 ? ' src-call' : '');
                     disclosure.style.marginLeft = (level * 14) + 'px';
-                    if (focused ? frame === focused : level === count - 1) disclosure.open = true;
+                    const open = openFrames?.[frameOffset + level] ?? (focused ? frame === focused : level === count - 1);
+                    if (open) disclosure.open = true;
                     const summary = document.createElement('summary');
                     const text = frame.loc.textContent.replace(/^\s*\(inlined\s+by\)\s*/, '');
                     const position = text.match(/^(\S+)\s+at\s+(.*)$/);
@@ -160,8 +222,10 @@
                     for (const line of frame.lines) disclosure.appendChild(line);
                     el.insertBefore(disclosure, anchor);
                 });
+                frameOffset += count;
                 for (const frame of frames) frame.loc.remove();
             }
+            return retainChildren && frameOffset ? children : null;
         }
         // ---- text order: by time (as captured) or grouped by task ----
         // ftrace interleaves all CPUs by time; with several busy tasks a task's calls are scattered.
@@ -196,6 +260,7 @@
             if (record?.getAttribute('data-trace-event') === '1') return fgSetTextEventsVisible(true);
         }
         let fgTextSort = '';
+        let fgTextOrderWidths = null;
         function fgBlocks(container) {
             // [line, expandedContentOrNull] in DOM order
             const out = [];
@@ -207,21 +272,35 @@
             }
             return out;
         }
-        function fgSetTextOrder(mode) {
+        function fgSetTextOrder(mode, filterLines = window.fgFilterState.lines) {
             if (fgTextWindow) {
                 fgTextSort = ''; fgTextOrder = mode; lsSet('textOrder', mode);
                 return fgRefreshTextWindow();
             }
             const container = document.getElementById('content');
             if (!container) return;
+            const checkpoint = fgTextOrderWidths;
+            const widths = fgTextSort && checkpoint?.mode === mode && filterLines === null &&
+                checkpoint.eventsVisible === fgTextEventsVisible && !Object.values(foldedBlocks).includes(true) ? checkpoint : null;
+            fgTextOrderWidths = null;
             fgTextSort = '';
-            // reorder off-document: moving tens of thousands of live nodes is slow otherwise
-            const parent = container.parentNode, marker = document.createComment('content');
-            parent.replaceChild(marker, container);
-            try { fgReorder(container, mode); } finally { parent.replaceChild(container, marker); }
-            fgRefreshTextLayout();
+            fgReorderDetached(container, mode);
+            fgRefreshTextLayout(null, false, filterLines, widths);
             fgUpdateTextControlHeight();
             updateExpandableLines();
+        }
+        function fgReorderDetached(container, mode, orderedBlocks) {
+            const active = document.activeElement;
+            const restoreFocus = container.contains(active);
+            const parent = container.parentNode, marker = document.createComment('content');
+            parent.replaceChild(marker, container);
+            try { fgReorder(container, mode, orderedBlocks); }
+            finally {
+                parent.replaceChild(container, marker);
+                if (restoreFocus && active.isConnected && document.activeElement === document.body) {
+                    active.focus({ preventScroll: true });
+                }
+            }
         }
         function fgReorder(container, mode, orderedBlocks) {
             const blocks = orderedBlocks || fgBlocks(container);
@@ -271,6 +350,31 @@
             commit();
             container.classList.toggle('grouped', mode === 'task');
         }
+        function fgSortTextDuration(container, direction) {
+            const blocks = fgBlocks(container);
+            const durations = new Float64Array(blocks.length), visible = [], hidden = [];
+            blocks.forEach(([line], index) => {
+                if (line.style.display === 'none') hidden.push(index);
+                else {
+                    durations[index] = parseFloat(line.getAttribute('data-sort-duration') || line.getAttribute('data-duration') || '0');
+                    visible.push(index);
+                }
+            });
+            visible.sort(direction === 'desc' ? (left, right) => durations[right] - durations[left] :
+                (left, right) => durations[left] - durations[right]);
+            const positions = visible.concat(hidden);
+            const reordered = container.classList.contains('grouped') || positions.some((position, index) => position !== index);
+            if (reordered) {
+                const preferredOrder = fgTextOrder;
+                fgReorderDetached(container, 'time', positions.map(position => blocks[position]));
+                fgTextOrder = preferredOrder;
+                lsSet('textOrder', preferredOrder);
+            }
+            fgTextSort = direction;
+            const button = document.getElementById('textOrderBtn');
+            if (button) button.textContent = 'Order: duration ' + (direction === 'desc' ? '↓' : '↑');
+            return reordered;
+        }
         function fgToggleTextOrder() { fgSetTextOrder(fgTextOrder === 'task' ? 'time' : 'task'); }
         function fgRestoreTextOrder() {
             if (fgTextDeferred()) return;
@@ -282,22 +386,74 @@
         function escapeHtml(s) {
             return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
         }
-        function fgToggleSrcMode() {
-            fgSrcMode = fgSrcMode === 'chain' ? 'flat' : 'chain';
-            lsSet('srcMode', fgSrcMode);
-            const b = document.getElementById('srcModeBtn');
-            if (b) b.textContent = 'Source: ' + fgSrcMode;
-            const update = element => {
-                if (element.hasAttribute('data-fg-source-mode')) element.textContent = 'Source: ' + fgSrcMode;
-                else if (element.firstChild) { element.classList.remove('src-chain'); fgFill(element, true); }
-            };
+        function fgRelayoutSource(element, update) {
+            if (element.fgSourcePresentation) element.fgSourcePresentation.relayout(element, update);
+            else update();
+        }
+        function fgRefreshSourceLayout(element, opening = false) {
+            if (element.hasAttribute('data-fg-source-mode')) {
+                const label = 'Source: ' + fgSrcMode;
+                const value = element.querySelector('[data-fg-source-mode-value]');
+                if (value) {
+                    if (value.textContent !== fgSrcMode) value.textContent = fgSrcMode;
+                    if (element.getAttribute('aria-label') !== label) element.setAttribute('aria-label', label);
+                } else if (element.textContent !== label) element.textContent = label;
+                return;
+            }
+            if (!element.firstChild || fgSourceJobs.has(element)) return;
+            const source = +element.dataset.src;
+            const rendered = fgRenderedSourceLayouts.get(element);
+            if (!rendered || element.fgSourcePresentation?.isCollapsed(element) ||
+                    (!opening && rendered.reusable && element.style.display === 'none')) return;
+            if (rendered.source === source) {
+                if (rendered.layout === 'both' || rendered.layout === fgSrcMode) return;
+                if (fgSrcMode === 'flat' && rendered.layout === 'chain') {
+                    const frames = element.querySelectorAll(':scope > details.src-frame');
+                    if (frames.length) fgSourceFrameChoices.set(element, {
+                        source, open: Array.from(frames, frame => frame.open),
+                    });
+                    if (rendered.flatChildren) {
+                        fgRelayoutSource(element, () => {
+                            element.replaceChildren(...rendered.flatChildren);
+                            element.classList.remove('src-chain');
+                            rendered.layout = 'flat';
+                            rendered.flatChildren = null;
+                        });
+                        return;
+                    }
+                } else if (rendered.reusable && element.childNodes.length <= FG_SOURCE_REUSE_LIMIT) {
+                    fgRelayoutSource(element, () => fgRenderSourceChain(element, rendered));
+                    return;
+                }
+            }
+            const restoreLayout = rendered.source === source ? element.fgSourcePresentation?.captureScroll(element) : null;
+            return fgFill(element, true, restoreLayout);
+        }
+        function fgVisitSourceLayouts(update, root = document) {
             if (fgSourceNodes) {
                 for (const reference of fgSourceNodes) {
                     const element = reference.deref();
                     if (!element) fgSourceNodes.delete(reference);
-                    else if (element.isConnected) update(element);
+                    else if (element.isConnected && (root === document || root.contains(element))) update(element);
                 }
-            } else document.querySelectorAll('[data-fg-source-mode], .expanded-content[data-src]').forEach(update);
+            } else root.querySelectorAll('[data-fg-source-mode], .expanded-content[data-src]').forEach(element => update(element));
+        }
+        function fgResumeSourceLayout(root) {
+            if (root && fgDeferredSourceLayouts.delete(root)) fgVisitSourceLayouts(fgRefreshSourceLayout, root);
+        }
+        function fgToggleSrcMode() {
+            fgSrcMode = fgSrcMode === 'chain' ? 'flat' : 'chain';
+            lsSet('srcMode', fgSrcMode);
+            const button = document.getElementById('srcModeBtn');
+            if (button) button.textContent = 'Source: ' + fgSrcMode;
+            const view = window.fgCurrentView?.() ?? 'text';
+            const hiddenText = view === 'text' ? null : document.getElementById('content');
+            const hiddenTimeline = view === 'timeline' ? null : document.getElementById('timelineView');
+            if (hiddenText) fgDeferredSourceLayouts.add(hiddenText);
+            if (hiddenTimeline) fgDeferredSourceLayouts.add(hiddenTimeline);
+            fgVisitSourceLayouts(element => {
+                if (!hiddenText?.contains(element) && !hiddenTimeline?.contains(element)) fgRefreshSourceLayout(element);
+            });
         }
         document.addEventListener('DOMContentLoaded', () => {
             const b = document.getElementById('srcModeBtn');
@@ -328,11 +484,15 @@
         let fgTextNavigation = null;
         let fgTextLineRequest = null;
         let fgTextRequestedLine = null;
+        let fgTextJumpFlash = null;
         let fgTextInitialized = false;
         const fgTextLayoutPending = new Set();
         const fgTextLayoutWidths = new WeakMap();
+        let fgTextMeasuredContext = null;
+        let fgTextRowWidths = null;
         let fgFilterGeneration = 0;
         let fgFilterController = null;
+        let fgMountedFilterFrame = null;
         function fgTextDeferred() { return document.getElementById('content').hasAttribute('data-fg-text'); }
         function fgResetTextLayout(chunks) {
             const resetting = Array.from(chunks);
@@ -341,14 +501,19 @@
             try { getComputedStyle(resetting[resetting.length - 1]).getPropertyValue('content-visibility'); }
             finally { for (const chunk of resetting) chunk.classList.remove('text-layout-reset'); }
         }
-        function fgRememberTextWidths(chunk, width, context, visible) {
+        function fgRememberTextWidths(chunk, width, context, visible, capture) {
             let shown = 0, hidden = 0, complete = true;
+            let rows = capture ? [] : null;
             for (const row of chunk.childNodes) {
                 if (row.nodeType === 3 && !row.textContent.trim()) continue;
                 if (row.nodeType !== 1) return null;
                 if (row.classList.contains('expanded-content')) continue;
                 if (!row.classList.contains('line-container')) return null;
                 const size = row.getBoundingClientRect().width;
+                if (rows) {
+                    if (size > 0 && !row.style.length) rows.push(row, size);
+                    else rows = null;
+                }
                 shown = Math.max(shown, size);
                 if (row.getAttribute('data-trace-event') !== '1') hidden = Math.max(hidden, size);
                 else {
@@ -358,68 +523,176 @@
                 }
             }
             if (Math.abs(shown - width) > 0.01) return null;
+            if (complete && rows) {
+                for (let index = 0; index < rows.length; index += 2) capture.set(rows[index], rows[index + 1]);
+            }
             return { context, shown: complete ? width : null, hidden };
         }
-        function fgMeasureTextLayout(chunks, eventsOnly = false) {
+        function fgKnownTextChunkWidths(chunk, widths, context) {
+            let shown = 0, hidden = 0, events = false;
+            for (const row of chunk.childNodes) {
+                if (row.nodeType === 3 && !row.textContent.trim()) continue;
+                if (row.nodeType !== 1) return null;
+                if (row.classList.contains('expanded-content')) continue;
+                if (!row.classList.contains('line-container')) return null;
+                const event = row.getAttribute('data-trace-event') === '1';
+                events ||= event;
+                if (row.style.display === 'none') continue;
+                const width = widths.get(row);
+                if (width === undefined || row.style.length) return null;
+                shown = Math.max(shown, width);
+                if (!event) hidden = Math.max(hidden, width);
+            }
+            return {width: shown, events: events ? {context, shown, hidden} : null};
+        }
+        function fgTextWidthContext(root) {
+            const style = getComputedStyle(root);
+            return [innerWidth, devicePixelRatio, document.documentElement.dataset.theme,
+                fgTextCompactMedia.matches, root.className, root.style.cssText,
+                ...['font-size', 'pad-x', 'pad-y'].map(name => style.getPropertyValue('--fg-text-' + name))].join('|');
+        }
+        function fgTextWidthRows(chunk) {
+            const rows = [];
+            for (const node of chunk.childNodes) {
+                if (node.nodeType === 3 && !node.textContent.trim()) continue;
+                if (node.nodeType !== 1) return null;
+                if (node.classList.contains('expanded-content')) continue;
+                if (!node.classList.contains('line-container')) return null;
+                rows.push(node, node.style.display);
+            }
+            return rows.length ? rows : null;
+        }
+        function fgRememberTextOrderWidths(root) {
+            if (!root?.classList.contains('text-layout-measured') || root.classList.contains('fg-off') ||
+                fgTextLayoutPending.size || window.fgFilterState.lines !== null ||
+                Object.values(foldedBlocks).includes(true)) return null;
+            const context = fgTextWidthContext(root);
+            if (context !== fgTextMeasuredContext) return null;
+            const chunks = new Map();
+            for (const chunk of root.children) {
+                if (!chunk.classList.contains('text-chunk')) continue;
+                const width = parseFloat(chunk.style.getPropertyValue('--fg-text-inline-size'));
+                if (!Number.isFinite(width)) continue;
+                const rows = fgTextWidthRows(chunk);
+                if (rows) chunks.set(rows[0], {rows, width, events: fgTextLayoutWidths.get(chunk)});
+            }
+            return {mode: fgTextOrder, eventsVisible: fgTextEventsVisible, context, chunks};
+        }
+        function fgFindTextOrderWidth(chunk, saved) {
+            const first = chunk.querySelector(':scope > .line-container');
+            const candidate = saved.get(first);
+            if (!candidate) return null;
+            const rows = fgTextWidthRows(chunk);
+            return rows?.length === candidate.rows.length && rows.every((row, index) => row === candidate.rows[index]) ? candidate : null;
+        }
+        function fgTextChunkHasWidthContent(chunk, grouped) {
+            for (const node of chunk.childNodes) {
+                if (node.nodeType === 3 && !node.textContent.trim()) continue;
+                if (node.nodeType !== 1) return true;
+                if (node.classList.contains('expanded-content')) continue;
+                if (!node.classList.contains('line-container') ||
+                    node.style.display !== 'none' && !(grouped && node.classList.contains('grp-hidden'))) return true;
+            }
+            for (let index = 0; index < chunk.style.length; index++) {
+                if (!chunk.style.item(index).startsWith('--fg-text-')) return true;
+            }
+            return false;
+        }
+        function fgMeasureTextLayout(chunks, eventsOnly, filterLines, checkpoint, reordered) {
             const root = document.getElementById('content');
             if (!root?.classList.contains('text-layout-measured')) return;
             for (const chunk of fgTextLayoutPending) if (chunk.parentElement !== root) fgTextLayoutPending.delete(chunk);
             for (const chunk of chunks) if (chunk.classList.contains('text-chunk')) fgTextLayoutPending.add(chunk);
             if (root.classList.contains('fg-off')) return;
+            const context = fgTextWidthContext(root);
+            if (context !== fgTextMeasuredContext) {
+                for (const chunk of root.children) if (chunk.classList.contains('text-chunk')) fgTextLayoutPending.add(chunk);
+            }
             const pending = Array.from(fgTextLayoutPending);
             if (!pending.length) return;
             fgTextLayoutPending.clear();
-            const style = getComputedStyle(root);
-            const context = [innerWidth, devicePixelRatio, document.documentElement.dataset.theme,
-                fgTextCompactMedia.matches, root.className, root.style.cssText,
-                ...['font-size', 'pad-x', 'pad-y'].map(name => style.getPropertyValue('--fg-text-' + name))].join('|');
             const measuring = [], restoring = [];
+            const saved = checkpoint?.context === context ? checkpoint.chunks : null;
+            const grouped = root.classList.contains('grouped');
+            const stableRows = !grouped && fgTextEventsVisible && !Object.values(foldedBlocks).includes(true);
+            const capture = stableRows && !fgTextInitialized && !filterLines && document.getElementById('filterInput') ? new WeakMap() : null;
+            const rowWidths = stableRows && reordered && fgTextRowWidths?.context === context ? fgTextRowWidths.widths : null;
             for (const chunk of pending) {
+                const restored = saved && fgFindTextOrderWidth(chunk, saved);
+                if (restored) {
+                    restoring.push([chunk, restored.width]);
+                    if (restored.events?.context === context) fgTextLayoutWidths.set(chunk, restored.events);
+                    continue;
+                }
                 const cached = eventsOnly && fgTextLayoutWidths.get(chunk);
                 const width = cached && cached.context === context ? cached[fgTextEventsVisible ? 'shown' : 'hidden'] : null;
                 if (width !== null && width !== undefined) restoring.push([chunk, width]);
                 else {
                     fgTextLayoutWidths.delete(chunk);
+                    const known = rowWidths && fgKnownTextChunkWidths(chunk, rowWidths, context);
+                    if (known) {
+                        restoring.push([chunk, known.width]);
+                        if (known.events) fgTextLayoutWidths.set(chunk, known.events);
+                        continue;
+                    }
+                    if (!fgTextChunkHasWidthContent(chunk, grouped)) {
+                        restoring.push([chunk, 0]);
+                        continue;
+                    }
                     measuring.push(chunk);
                     chunk.classList.add('text-layout-measure');
-                    if (chunk.querySelector('.line-container[data-trace-event="1"]')) chunk.classList.add('text-layout-witness');
+                    if (capture || chunk.querySelector('.line-container[data-trace-event="1"]')) chunk.classList.add('text-layout-witness');
                 }
             }
             try {
                 const widths = measuring.map(chunk => chunk.getBoundingClientRect().width);
-                const visible = fgTextModel.visibility(foldedBlocks, window.fgFilterState.lines);
+                const visible = fgTextModel.visibility(foldedBlocks, filterLines);
                 const remembered = measuring.map((chunk, index) => chunk.classList.contains('text-layout-witness') ?
-                    fgRememberTextWidths(chunk, widths[index], context, visible) : null);
+                    fgRememberTextWidths(chunk, widths[index], context, visible, capture) : null);
                 restoring.forEach(([chunk, width]) => chunk.style.setProperty('--fg-text-inline-size', width + 'px'));
                 measuring.forEach((chunk, index) => chunk.style.setProperty('--fg-text-inline-size', widths[index] + 'px'));
-                remembered.forEach((cached, index) => { if (cached) fgTextLayoutWidths.set(measuring[index], cached); });
+                remembered.forEach((cached, index) => {
+                    if (cached && (!capture || measuring[index].querySelector('.line-container[data-trace-event="1"]'))) {
+                        fgTextLayoutWidths.set(measuring[index], cached);
+                    }
+                });
+                if (capture) fgTextRowWidths = {context, widths: capture};
             } finally {
                 for (const chunk of measuring) chunk.classList.remove('text-layout-measure', 'text-layout-witness');
             }
             fgResetTextLayout(pending);
+            fgTextMeasuredContext = context;
         }
         function fgPrepareTextLayout() {
             if (fgTextLayoutPending.size) fgRefreshTextLayout(fgTextLayoutPending);
         }
-        function fgRefreshTextLayout(chunks = null, eventsOnly = false) {
+        function fgSupportsTextLayout() {
+            return !!window.CSS?.supports('content-visibility: auto') &&
+                CSS.supports('contain-intrinsic-block-size: calc(2 * (max(13px * 1.5 + 4px, 21px) + 2px))') &&
+                CSS.supports('selector(:has(*))');
+        }
+        function fgRefreshTextLayout(chunks = null, eventsOnly = false, filterLines = window.fgFilterState.lines, checkpoint = null, reordered = false, authoredBlocks = null) {
             const content = document.getElementById('content');
             if (!content?.classList.contains('text-layout-auto')) return;
             const targets = chunks ? Array.from(chunks) : Array.from(content.children);
             if (!eventsOnly) for (const chunk of targets) fgTextLayoutWidths.delete(chunk);
             if (content.classList.contains('text-layout-measured') && content.classList.contains('fg-off')) {
-                fgMeasureTextLayout(targets, eventsOnly);
+                fgMeasureTextLayout(targets, eventsOnly, filterLines);
                 return;
             }
             const grouped = content.classList.contains('grouped');
             const resetting = [];
             for (const chunk of targets) {
                 if (!chunk.classList.contains('text-chunk')) continue;
-                const counts = { plain: 0, empty: 0, expandable: 0 };
-                for (const row of chunk.children) {
-                    if (!row.classList.contains('line-container') || row.style.display === 'none' ||
-                        grouped && row.classList.contains('grp-hidden')) continue;
-                    counts[row.classList.contains('expandable') ? 'expandable' :
-                        row.querySelector('.line-content')?.hasChildNodes() ? 'plain' : 'empty']++;
+                let counts = authoredBlocks?.get(chunk);
+                if (!counts) {
+                    counts = { plain: 0, empty: 0, expandable: 0 };
+                    for (const row of chunk.children) {
+                        if (!row.classList.contains('line-container') || row.style.display === 'none' ||
+                            grouped && row.classList.contains('grp-hidden')) continue;
+                        counts[row.classList.contains('expandable') ? 'expandable' :
+                            row.querySelector('.line-content')?.hasChildNodes() ? 'plain' : 'empty']++;
+                    }
                 }
                 let changed = false;
                 for (const [kind, count] of Object.entries(counts)) {
@@ -433,7 +706,7 @@
                 if (changed) resetting.push(chunk);
             }
             fgResetTextLayout(resetting);
-            fgMeasureTextLayout(targets, eventsOnly);
+            fgMeasureTextLayout(targets, eventsOnly, filterLines, checkpoint, reordered);
         }
         function fgTextScrollBehavior(line, bounds = null) {
             if (!fgTextWindow && !document.getElementById('content').classList.contains('text-layout-auto')) return 'smooth';
@@ -441,16 +714,48 @@
             return Math.abs(top) > window.innerHeight * 2 ? 'instant' : 'smooth';
         }
         function fgScrollTextLine(line, options, bounds = null) {
-            if (!document.getElementById('textViewport')) {
+            const viewport = document.getElementById('textViewport');
+            if (!viewport) {
                 line.scrollIntoView(options);
                 return;
             }
-            const rect = bounds || line.getBoundingClientRect();
-            const visibleTop = Math.max(0, document.querySelector('.controls')?.getBoundingClientRect().bottom || 0);
+            let rect = bounds || line.getBoundingClientRect();
+            if (options.behavior === 'instant' && !fgTextWindow &&
+                document.getElementById('content').classList.contains('text-layout-auto')) {
+                if (!rect.width || !rect.height) return;
+                if (Math.abs(rect.top) > window.innerHeight * 2) {
+                    const left = viewport.scrollLeft;
+                    line.scrollIntoView({block: 'center', inline: 'nearest', behavior: 'instant'});
+                    viewport.scrollLeft = left;
+                    rect = line.getBoundingClientRect();
+                }
+            }
+            const controls = document.querySelector('.controls');
+            const toolbar = controls?.getBoundingClientRect();
+            let visibleTop = Math.max(0, toolbar?.bottom || 0);
+            if (options.centerAfterSticky && options.block === 'center' && toolbar) {
+                const stickyTop = parseFloat(getComputedStyle(controls).top);
+                const pinnedBottom = Math.max(0, stickyTop + toolbar.height);
+                const pinnedCenter = pinnedBottom + Math.max(0, (window.innerHeight - pinnedBottom - rect.height) / 2);
+                if (pinnedBottom < visibleTop && rect.top - pinnedCenter >= toolbar.top - stickyTop) visibleTop = pinnedBottom;
+            }
             const top = options.block === 'center' ?
                 rect.top - visibleTop - Math.max(0, (window.innerHeight - visibleTop - rect.height) / 2) :
                 rect.bottom > window.innerHeight ? rect.bottom - window.innerHeight : Math.min(0, rect.top - visibleTop);
+            if (options.centerAfterSticky && options.behavior === 'instant' && Math.abs(top) < 1) return;
             window.scrollBy({top, behavior: options.behavior});
+        }
+        function fgRevealTextCallName(line) {
+            if (window.innerWidth > 640) return;
+            const name = line.querySelector('.line-content > :is(.func-name-link, .hl-func, .hl-module-func)');
+            const viewport = name?.closest('#textViewport');
+            if (!viewport || !viewport.clientWidth) return;
+            const left = viewport.getBoundingClientRect().left + viewport.clientLeft;
+            const width = viewport.clientWidth;
+            const bounds = name.getBoundingClientRect();
+            if (!bounds.width || (bounds.left >= left && bounds.right <= left + width)) return;
+            const context = Math.min(24, Math.max(0, width - bounds.width));
+            viewport.scrollBy({left: bounds.left - left - context, behavior: 'instant'});
         }
         let textGuideRevision = 0;
         let fgHelpState = null;
@@ -507,6 +812,7 @@
                 updateGuideButton();
                 guideButton.addEventListener('click', () => {
                     guideStyle.sheet.disabled = !guideStyle.sheet.disabled;
+                    if (guideStyle.sheet.disabled) guideProjection = null;
                     lsSet('foldGuides', String(!guideStyle.sheet.disabled));
                     updateGuideButton();
                     scheduleGuideScope();
@@ -516,20 +822,40 @@
             let scopeRows = [];
             let guideLayer = null;
             let guideFrame = null;
-            let guideGroups = [];
-            let guideRevision = -1;
+            let guideProjection = null;
             const foldControl = target => target?.closest?.('.fold-icon, .fold-brace');
             const scopeControl = target => target?.closest?.('.fold-icon, .fold-brace, .fold-marker, .fold-close');
             function drawGuideScope() {
                 guideFrame = null;
                 if (guideLayer) guideLayer.getContext('2d').clearRect(0, 0, guideLayer.width, guideLayer.height);
                 if (typeof fgCurrentView === 'function' && fgCurrentView() !== 'text') return;
-                const guideMeasure = content.querySelector('.call-indent');
-                if (!guideMeasure || !guideStyle || guideStyle.sheet.disabled) return;
-                const contentRect = content.getBoundingClientRect();
-                if (contentRect.height === 0) return;
+                if (fgTextWindow?.jumpPending || !guideStyle || guideStyle.sheet.disabled) return;
                 const viewportWidth = document.documentElement.clientWidth;
                 const viewportHeight = window.innerHeight;
+                const toolbarBottom = toolbar?.getBoundingClientRect().bottom || 0;
+                const screenTop = Math.max(0, toolbarBottom);
+                if (!guideProjection || guideProjection.revision !== textGuideRevision) {
+                    guideProjection = { revision: textGuideRevision, rowsByGroup: new Map(),
+                        groups: Array.from(content.children).filter(group => group.matches('.text-chunk, .line-container, .fg-window-rows')) };
+                }
+                const { groups, rowsByGroup } = guideProjection;
+                const windowRowsRect = groups.length === 1 && groups[0].classList.contains('fg-window-rows')
+                    ? groups[0].getBoundingClientRect() : null;
+                if (windowRowsRect && (windowRowsRect.bottom <= screenTop || windowRowsRect.top >= viewportHeight)) {
+                    rowsByGroup.clear();
+                    return;
+                }
+                const coversViewport = windowRowsRect && windowRowsRect.top <= screenTop && windowRowsRect.bottom >= viewportHeight;
+                const contentRect = coversViewport ? null : content.getBoundingClientRect();
+                if (contentRect?.height === 0) return;
+                const viewportTop = Math.max(screenTop, contentRect?.top ?? screenTop);
+                const bottom = Math.min(viewportHeight, contentRect?.bottom ?? viewportHeight);
+                const viewportRect = textViewport?.getBoundingClientRect();
+                const viewportLeft = Math.max(0, viewportRect?.left || 0);
+                const viewportRight = Math.min(viewportWidth, viewportRect?.right ?? viewportWidth);
+                if (bottom <= viewportTop || viewportRight <= viewportLeft) return;
+                const guideMeasure = content.querySelector('.call-indent');
+                if (!guideMeasure) return;
                 const step = parseFloat(getComputedStyle(guideMeasure, '::before').width);
                 if (!(step > 0)) return;
                 const unit = step / 2;
@@ -558,43 +884,39 @@
                 const palette = getComputedStyle(content);
                 const baseColor = palette.getPropertyValue('--tree-guide').trim();
                 const activeColor = palette.getPropertyValue('--tree-guide-active').trim();
-                if (guideRevision !== textGuideRevision) {
-                    guideGroups = Array.from(content.children).filter(group => group.matches('.text-chunk, .line-container, .fg-window-rows'));
-                    guideRevision = textGuideRevision;
-                }
-                const toolbarBottom = toolbar?.getBoundingClientRect().bottom || 0;
-                const viewportTop = Math.max(0, contentRect.top, toolbarBottom);
-                const viewportRect = textViewport?.getBoundingClientRect();
-                const viewportLeft = Math.max(0, viewportRect?.left || 0);
-                const viewportRight = Math.min(viewportWidth, viewportRect?.right ?? viewportWidth);
-                const bottom = Math.min(viewportHeight, contentRect.bottom);
-                if (bottom <= viewportTop || viewportRight <= viewportLeft) return;
                 context.save();
                 context.beginPath();
                 context.rect(viewportLeft, viewportTop, viewportRight - viewportLeft, bottom - viewportTop);
                 context.clip();
                 let lower = 0;
-                let upper = guideGroups.length;
+                let upper = groups.length;
                 while (lower < upper) {
                     const middle = Math.floor((lower + upper) / 2);
-                    if (guideGroups[middle].getBoundingClientRect().bottom <= viewportTop) lower = middle + 1;
+                    if ((windowRowsRect || groups[middle].getBoundingClientRect()).bottom <= viewportTop) lower = middle + 1;
                     else upper = middle;
                 }
-                for (let groupIndex = lower; groupIndex < guideGroups.length; groupIndex++) {
-                    const group = guideGroups[groupIndex];
-                    if (group.getBoundingClientRect().top >= bottom) break;
-                    const rows = (group.matches('.line-container') ? [group] : Array.from(group.querySelectorAll('.line-container')))
-                        .filter(row => row.style.display !== 'none' && !row.classList.contains('grp-hidden'));
+                let groupIndex = lower;
+                for (; groupIndex < groups.length; groupIndex++) {
+                    const group = groups[groupIndex];
+                    if ((windowRowsRect || group.getBoundingClientRect()).top >= bottom) break;
+                    let rows = rowsByGroup.get(groupIndex);
+                    if (!rows) {
+                        rows = (group.matches('.line-container') ? [group] : Array.from(group.querySelectorAll('.line-container')))
+                            .filter(row => row.style.display !== 'none' && !row.classList.contains('grp-hidden'));
+                        rowsByGroup.set(groupIndex, rows);
+                    }
                     let first = 0;
                     let last = rows.length;
+                    let firstRect = null;
                     while (first < last) {
                         const middle = Math.floor((first + last) / 2);
-                        if (rows[middle].getBoundingClientRect().bottom <= viewportTop) first = middle + 1;
-                        else last = middle;
+                        const rect = rows[middle].getBoundingClientRect();
+                        if (rect.bottom <= viewportTop) first = middle + 1;
+                        else { last = middle; firstRect = rect; }
                     }
                     for (let rowIndex = first; rowIndex < rows.length; rowIndex++) {
                         const row = rows[rowIndex];
-                        const rect = row.getBoundingClientRect();
+                        const rect = rowIndex === first && firstRect ? firstRect : row.getBoundingClientRect();
                         if (rect.top >= bottom) break;
                         const rowIndent = row.querySelector('.call-indent');
                         if (!rowIndent) continue;
@@ -633,6 +955,9 @@
                         }
                     }
                 }
+                for (const index of rowsByGroup.keys()) {
+                    if (index < lower || index >= groupIndex) rowsByGroup.delete(index);
+                }
                 context.restore();
             }
             function scheduleGuideScope() {
@@ -669,6 +994,7 @@
             textViewport?.addEventListener('scroll', scheduleGuideScope, {passive:true});
             window.addEventListener('resize', scheduleGuideScope);
             content.addEventListener('fg-guides-change', () => {
+                if (guideProjection?.revision !== textGuideRevision) guideProjection = null;
                 if (scopeRows.some(row => !row.isConnected)) showScope(null);
                 scheduleGuideScope();
             });
@@ -692,6 +1018,16 @@
             }
         }
 
+        function fgSetTextSourceButton(button, expanded) {
+            if (!button) return;
+            const symbol = expanded ? '-' : '+';
+            const state = String(expanded);
+            if (button.textContent !== symbol) button.textContent = symbol;
+            if (button.tagName === 'BUTTON' && button.getAttribute('aria-expanded') !== state) {
+                button.setAttribute('aria-expanded', state);
+            }
+        }
+
         // 初始化展开状态
         function restoreExpandedState() {
             for (const [lineId, isExpanded] of Object.entries(expandedLines)) {
@@ -701,11 +1037,12 @@
                     const btn = container && container.querySelector('.expand-btn');
 
                     if (content && btn && container) {
-                        if (container.style.display !== 'none') {
+                        const visible = container.style.display !== 'none';
+                        if (visible) {
                             fgFill(content); content.style.display = 'block';
                         }
-                        if (btn) btn.textContent = '-';
-                        container.classList.add('selected');
+                        fgSetTextSourceButton(btn, visible);
+                        container.classList.toggle('selected', visible);
                     }
                 }
             }
@@ -842,9 +1179,25 @@
         }, true);
 
         // 切换过滤语法帮助面板
+        function fgCloseFilterHelp(restoreFocus = false) {
+            const help = document.getElementById('filterSyntaxHelp');
+            if (!help || help.hidden) return false;
+            const trigger = document.getElementById('filterHelpToggle');
+            help.hidden = true;
+            trigger.setAttribute('aria-expanded', 'false');
+            if (restoreFocus) trigger.focus({preventScroll: true});
+            fgFitTextControlPanel(trigger.closest('.controls'));
+            return true;
+        }
         function toggleFilterHelp() {
             const help = document.getElementById('filterSyntaxHelp');
-            if (help) help.classList.toggle('visible');
+            if (!help || fgCloseFilterHelp(true)) return;
+            fgCloseFieldDropdowns();
+            help.hidden = false;
+            help.scrollTop = 0;
+            document.getElementById('filterHelpToggle').setAttribute('aria-expanded', 'true');
+            help.querySelector('.syntax-help-close').focus({preventScroll: true});
+            fgFitTextControlPanel(help.closest('.controls'));
         }
 
         // 显示过滤提示
@@ -879,8 +1232,68 @@
         }
 
         // 切换过滤器窗口的显示/隐藏
-        const fgTextCompactMedia = matchMedia('(any-pointer: coarse) and (max-width: 640px), (any-pointer: coarse) and (max-height: 480px)');
+        const fgTextCompactMedia = matchMedia('(max-width: 640px), (max-height: 400px), (any-pointer: coarse) and (max-height: 480px)');
         let fgFieldDropdown = null;
+        function fgTextOverlayBounds(visual = window.visualViewport) {
+            const left = visual?.offsetLeft ?? 0, top = visual?.offsetTop ?? 0;
+            return {left: left + 4, top: top + 4, right: left + (visual?.width ?? innerWidth) - 4,
+                bottom: top + (visual?.height ?? innerHeight) - 4};
+        }
+        function fgRevealOverlayFocus(panel) {
+            const active = document.activeElement;
+            if (!panel.contains(active)) return;
+            const top = panel.getBoundingClientRect().top + panel.clientTop;
+            const bounds = active.getBoundingClientRect();
+            if (bounds.top < top) panel.scrollTop += bounds.top - top;
+            else if (bounds.bottom > top + panel.clientHeight) panel.scrollTop += bounds.bottom - top - panel.clientHeight;
+        }
+        function fgPositionFieldDropdown(panel, owner) {
+            const compact = fgTextCompactMedia.matches;
+            const anchor = owner.getBoundingClientRect();
+            const viewport = fgTextOverlayBounds(compact ? window.visualViewport : null);
+            if (compact) {
+                const filter = owner.closest('#filterBox')?.getBoundingClientRect();
+                if (filter && (anchor.bottom <= filter.top || anchor.top >= filter.bottom)) {
+                    const focused = panel.contains(document.activeElement);
+                    fgCloseFieldDropdowns();
+                    if (focused) document.getElementById('textFilterToggle').focus({preventScroll: true});
+                    return;
+                }
+                const width = Math.max(0, viewport.right - viewport.left);
+                panel.style.maxWidth = width + 'px';
+                panel.style.minWidth = Math.min(140, width) + 'px';
+                panel.style.maxHeight = Math.max(0, Math.min(200, viewport.bottom - viewport.top)) + 'px';
+            }
+            const height = panel.offsetHeight;
+            const above = anchor.top - height - 4;
+            const top = above >= viewport.top ? above : anchor.bottom + 4;
+            panel.style.left = Math.max(viewport.left, Math.min(anchor.left, viewport.right - panel.offsetWidth)) + 'px';
+            panel.style.top = Math.max(viewport.top, Math.min(top, viewport.bottom - height)) + 'px';
+            fgRevealOverlayFocus(panel);
+        }
+        function fgFitTextControlPanel(controls) {
+            if (!fgTextCompactMedia.matches || !controls.dataset.panel) return;
+            const panel = controls.querySelector(controls.dataset.panel === 'filter' ? '.filter-box' : '.text-toolbar-options');
+            if (!panel || !panel.offsetParent) return;
+            const viewport = fgTextOverlayBounds(), anchor = controls.getBoundingClientRect();
+            const belowTop = Math.max(viewport.top, anchor.bottom);
+            let top = belowTop, room = Math.max(0, viewport.bottom - belowTop);
+            if (room < 64) {
+                const aboveBottom = Math.min(viewport.bottom, anchor.top - 4);
+                const above = Math.max(0, aboveBottom - viewport.top);
+                if (above >= 64) {
+                    top = aboveBottom - Math.min(above, innerHeight * .52, 370, panel.scrollHeight + 2);
+                    room = above;
+                } else {
+                    top = viewport.top;
+                    room = Math.max(0, viewport.bottom - top);
+                }
+            }
+            panel.style.setProperty('--text-panel-top', top - anchor.top - controls.clientTop + 'px');
+            panel.style.setProperty('--text-panel-room', room + 'px');
+            fgRevealOverlayFocus(panel);
+            if (fgFieldDropdown) fgPositionFieldDropdown(fgFieldDropdown.panel, fgFieldDropdown.owner);
+        }
         function fgCloseFieldDropdowns(restoreFocus = false) {
             const state = fgFieldDropdown;
             if (!state) return;
@@ -904,16 +1317,29 @@
             if (filter) filter.style.display = panel === 'filter' ? 'flex' : 'none';
             filterButton.setAttribute('aria-expanded', String(panel === 'filter'));
             moreButton.setAttribute('aria-expanded', String(panel === 'more'));
-            if (panel !== 'filter') fgCloseFieldDropdowns();
+            if (panel !== 'filter') {
+                fgCloseFieldDropdowns();
+                fgCloseFilterHelp();
+            }
+            if (panel) fgFitTextControlPanel(controls);
             if (restoreFocus) (previous === 'filter' ? filterButton : moreButton).focus({preventScroll: true});
         }
         function fgCloseTextControls() {
-            fgCloseFieldDropdowns();
             if (fgTextCompactMedia.matches && document.querySelector('.controls').dataset.panel) fgSetTextControlPanel('');
+            else {
+                fgCloseFieldDropdowns();
+                fgCloseFilterHelp();
+            }
         }
-        function fgToggleTextMore() {
+        function fgToggleTextMore(event) {
             if (!fgTextCompactMedia.matches) return;
-            fgSetTextControlPanel(document.querySelector('.controls').dataset.panel === 'more' ? '' : 'more');
+            const open = document.querySelector('.controls').dataset.panel !== 'more';
+            fgSetTextControlPanel(open ? 'more' : '');
+            if (open && event?.detail === 0) {
+                const options = document.getElementById('textToolbarOptions');
+                options.querySelector('button:not(:disabled):not([hidden])')?.focus({preventScroll: true});
+                fgRevealOverlayFocus(options);
+            }
         }
         function toggleFilterBox(event) {
             const filterBox = document.getElementById('filterBox');
@@ -923,7 +1349,10 @@
                 fgSetTextControlPanel(open ? 'filter' : '');
                 if (open && event?.detail === 0) document.getElementById('filterInput').focus({preventScroll: true});
             } else {
-                if (!open) fgCloseFieldDropdowns();
+                if (!open) {
+                    fgCloseFieldDropdowns();
+                    fgCloseFilterHelp();
+                }
                 filterBox.style.display = open ? 'flex' : 'none';
                 document.getElementById('textFilterToggle').setAttribute('aria-expanded', String(open));
                 lsSet('filterBoxVisible', String(open));
@@ -944,19 +1373,51 @@
             const controls = document.querySelector('.controls');
             const filter = document.getElementById('filterBox');
             const filterButton = document.getElementById('textFilterToggle');
+            const moreButton = document.getElementById('textMoreToggle');
+            const options = document.getElementById('textToolbarOptions');
+            let panelFrame = 0, refitPanel = false;
+            function schedulePanelFit(event) {
+                if (!fgTextCompactMedia.matches || !controls.dataset.panel) return;
+                const filterScroll = event?.currentTarget === filter;
+                if (filterScroll && !fgFieldDropdown) return;
+                refitPanel ||= !filterScroll;
+                if (panelFrame) return;
+                panelFrame = requestAnimationFrame(() => {
+                    const fit = refitPanel;
+                    panelFrame = 0;
+                    refitPanel = false;
+                    if (fit) fgFitTextControlPanel(controls);
+                    else if (fgFieldDropdown) fgPositionFieldDropdown(fgFieldDropdown.panel, fgFieldDropdown.owner);
+                });
+            }
             function sync() {
-                fgSetTextControlPanel('');
+                const active = document.activeElement;
+                const editingFilter = active.closest('#filterSyntaxHelp') ? document.getElementById('filterHelpToggle') :
+                    filter?.contains(active) ? active :
+                    fgFieldDropdown?.panel.contains(active) ? fgFieldDropdown.owner : null;
+                const editingOptions = options?.contains(active);
                 const compact = fgTextCompactMedia.matches;
                 controls.classList.toggle('text-compact', compact);
                 filterButton.hidden = compact && !filter;
-                if (filter && !compact && lsGet('filterBoxVisible') !== 'false') {
+                fgCloseFieldDropdowns();
+                fgCloseFilterHelp();
+                fgSetTextControlPanel(compact && editingFilter ? 'filter' : '');
+                if (filter && !compact && (editingFilter || lsGet('filterBoxVisible') !== 'false')) {
                     filter.style.display = 'flex';
                     filterButton.setAttribute('aria-expanded', 'true');
                 }
+                if (editingFilter) editingFilter.focus({preventScroll: true});
+                else if (compact && editingOptions) moreButton.focus({preventScroll: true});
+                else if (!compact && active === moreButton) filterButton.focus({preventScroll: true});
             }
             fgTextCompactMedia.addEventListener('change', sync);
             document.addEventListener('pointerdown', event => {
                 if (!controls.contains(event.target) && !event.target.closest('.field-dropdown')) fgCloseTextControls();
+            });
+            document.addEventListener('focusin', event => {
+                if (controls.dataset.panel === 'more' && event.target !== moreButton &&
+                        event.target !== fgClipboardProxy && !options.contains(event.target))
+                    fgSetTextControlPanel('');
             });
             document.addEventListener('keydown', event => {
                 if (event.key !== 'Escape' || event.defaultPrevented || event.isComposing || event.keyCode === 229 ||
@@ -967,6 +1428,12 @@
                     fgCloseFieldDropdowns(true);
                     return;
                 }
+                if (fgCloseFilterHelp(!!event.target.closest('#filterSyntaxHelp'))) {
+                    event.preventDefault();
+                    event.stopImmediatePropagation();
+                    return;
+                }
+                if (fgMountedFilterFrame !== null) fgCancelPendingFilter();
                 if (!fgTextCompactMedia.matches || !controls.dataset.panel) return;
                 event.preventDefault();
                 event.stopImmediatePropagation();
@@ -974,8 +1441,13 @@
             }, true);
             sync();
             fgUpdateTextControlHeight();
+            window.addEventListener('resize', schedulePanelFit, {passive:true});
+            window.addEventListener('scroll', schedulePanelFit, {passive:true});
+            filter?.addEventListener('scroll', schedulePanelFit, {passive:true});
+            window.visualViewport?.addEventListener('resize', schedulePanelFit, {passive:true});
+            window.visualViewport?.addEventListener('scroll', schedulePanelFit, {passive:true});
             if (window.ResizeObserver) {
-                const observer = new ResizeObserver(fgUpdateTextControlHeight);
+                const observer = new ResizeObserver(() => { fgUpdateTextControlHeight(); schedulePanelFit(); });
                 observer.observe(controls);
                 const tabs = document.querySelector('.view-tabs');
                 if (tabs) observer.observe(tabs);
@@ -1474,8 +1946,37 @@
             if (typeof window.fgOnFilterProgress === 'function') window.fgOnFilterProgress();
         }
 
+        function fgEndMountedFilter() {
+            document.getElementById('textFilterProgress').textContent = '';
+            document.getElementById('textViewport').removeAttribute('aria-busy');
+        }
+
+        function fgSubmitTextFilter(clear = false) {
+            const run = clear ? clearFilter : applyFilter;
+            const root = document.getElementById('content');
+            const status = document.getElementById('textFilterProgress');
+            if (fgTextWindow || fgTextDeferred() || !root.classList.contains('text-layout-measured') || !status) return run();
+            fgCancelPendingFilter(false);
+            const input = document.getElementById('filterInput'), text = input.value;
+            document.getElementById('textViewport').setAttribute('aria-busy', 'true');
+            status.textContent = clear ? 'Clearing filter…' : 'Applying filter…';
+            fgMountedFilterFrame = requestAnimationFrame(() => {
+                fgMountedFilterFrame = requestAnimationFrame(() => {
+                    fgMountedFilterFrame = null;
+                    try {
+                        if ((clear || input.value === text) && !root.classList.contains('fg-off')) run();
+                    } finally { fgEndMountedFilter(); }
+                });
+            });
+        }
+
         function fgCancelPendingFilter(notify = true) {
             fgFilterGeneration++;
+            if (fgMountedFilterFrame !== null) {
+                cancelAnimationFrame(fgMountedFilterFrame);
+                fgMountedFilterFrame = null;
+                fgEndMountedFilter();
+            }
             if (fgFilterController) fgFilterController.abort();
             fgFilterController = null;
             if (window.fgFilterProgress) {
@@ -1511,7 +2012,7 @@
                 if (generation !== fgFilterGeneration) return null;
                 total_lines = result.total;
                 window.fgFilterProgress = null;
-                fgNotifyFilter(result.text, result.lines);
+                fgNotifyFilter(result.text, result.lines, { data, result });
                 fgShowFilterCount(result.visible, result.total);
                 return true;
             } catch (error) {
@@ -1594,25 +2095,64 @@
             if (parser.childNodes.length !== 1 || !element?.classList.contains('text-chunk')) throw new Error('Invalid Text paint block');
             const rows = element.querySelectorAll('.line-container');
             if (rows.length !== block.count) throw new Error('Text paint block row count mismatch');
+            const fields = model.version === 6 ? fgTextModel.outcomeFields : model.version === 5 ? fgTextModel.symbolFields : fgTextModel.presentationFields;
+            const attributes = model.version >= 4 ? fields.map(field => 'data-' + field) : null;
+            let authoredCounts = options.countAuthoredRows && attributes ? { plain: 0, empty: 0, expandable: 0 } : null;
             for (let index = 0; index < rows.length; index++) {
                 const row = rows[index], record = model.records[block.first + index];
-                if (row.id !== 'L' + record.row[0] || row.getAttribute('data-line-number') !== String(record.row[0])) {
+                const lineNumber = String(record.row[0]);
+                if (row.id !== 'L' + lineNumber || row.getAttribute('data-line-number') !== lineNumber) {
                     throw new Error('Text paint block line identity mismatch');
                 }
-                if (model.version >= 2 && (row.classList.contains('expandable') !== (record.source !== null) ||
+                const expandable = model.version >= 2 && row.classList.contains('expandable');
+                if (model.version >= 2 && (expandable !== (record.source !== null) ||
                     record.source !== null && row.nextElementSibling?.getAttribute('data-src') !== String(record.source))) {
                     throw new Error('Text paint block source identity mismatch');
                 }
-                const fields = model.version === 6 ? fgTextModel.outcomeFields : model.version === 5 ? fgTextModel.symbolFields : fgTextModel.presentationFields;
-                if (model.version >= 4 && (row.querySelector('.line-content')?.textContent !== record.textContent ||
-                    fields.some(field => row.getAttribute('data-' + field) !== record.getAttribute('data-' + field)))) {
-                    throw new Error('Text paint block presentation metadata mismatch');
+                const content = attributes ? row.querySelector('.line-content') : null;
+                if (attributes) {
+                    if (content?.textContent !== record.textContent) throw new Error('Text paint block presentation metadata mismatch');
+                    for (let column = 0; column < attributes.length; column++) {
+                        if (row.getAttribute(attributes[column]) !== record.row[column + 2]) {
+                            throw new Error('Text paint block presentation metadata mismatch');
+                        }
+                    }
+                }
+                if (authoredCounts) {
+                    if (row.hasAttribute('style') || row.parentElement !== element) authoredCounts = null;
+                    else if (options.projectedVisibility && !options.projectedVisibility.positions.has(record.row[0])) {
+                        row.style.display = 'none';
+                        options.projectedVisibility.hidden.push(row);
+                    }
+                    else authoredCounts[expandable ? 'expandable' : content?.hasChildNodes() ? 'plain' : 'empty']++;
                 }
             }
-            return { first: block.first, count: block.count, element, line: rows[location.ordinal - block.first] };
+            return { first: block.first, count: block.count, element, line: rows[location.ordinal - block.first], authoredCounts };
         }
 
-        function applyFilter() {
+        function fgChangedFilterChunks(root, text) {
+            return root?.classList.contains('text-layout-auto') && !root.classList.contains('fg-off') &&
+                (fgTextEventsVisible || text === window.fgFilterState.text) ? new Set() : null;
+        }
+
+        let fgMountedFilterProjection = null;
+        function fgSparseFilterTargets(root, next, limit) {
+            const previous = fgMountedFilterProjection;
+            if (previous?.root !== root || previous.lines !== window.fgFilterState.lines ||
+                previous.lines.size + next.size > limit || Object.values(expandedLines).includes(true)) return null;
+            const numbers = new Set(previous.lines);
+            for (const number of next) numbers.add(number);
+            const targets = [];
+            for (const number of numbers) {
+                const line = document.getElementById('L' + number);
+                if (!line?.classList.contains('line-container') || !root.contains(line) ||
+                    +line.getAttribute('data-line-number') !== number) return null;
+                targets.push(line);
+            }
+            return targets;
+        }
+
+        function applyFilter({ initializeLayout = false, authoredBlocks = null } = {}) {
             fgCancelPendingFilter(false);
             const generation = fgFilterGeneration;
             const filterInput = document.getElementById('filterInput');
@@ -1625,23 +2165,35 @@
             if (fgTextDeferred()) return Promise.resolve(fgEnsureText()).then(api => {
                 if (generation !== fgFilterGeneration) return null;
                 if (!api) return false;
-                applyFilter();
+                applyFilter({ initializeLayout });
                 return true;
             });
 
             // Update tags display
             updateFilterTags(text);
+            if (initializeLayout && authoredBlocks && !text && fgTextOrder === 'time' && !fgTextSort && fgTextEventsVisible &&
+                fgTextNavigation?.visibleCount === total_lines && !Object.values(foldedBlocks).includes(true)) {
+                _graphFoldIds = {};
+                fgMountedFilterProjection = null;
+                fgRefreshTextLayout(null, false, null, null, false, authoredBlocks);
+                updateExpandableLines();
+                fgNotifyFilter('', null);
+                fgShowFilterCount(total_lines, total_lines);
+                return;
+            }
 
             // Parse the expression
             const { ast, sortDir } = parseFilterExpr(text);
             const hasFilter = ast !== null;
 
-            // Get all lines
-            const allLineElems = document.querySelectorAll('.line-container');
-            let visibleCount = allLineElems.length;
+            const root = document.getElementById('content');
+            let allLineElems;
+            const getLines = () => allLineElems ??= root.querySelectorAll('.line-container');
+            const getModel = () => fgDomTextModels.get(root) || fgGetTextModel(getLines(), root);
+            let visibleCount;
             let passLines = null;
             if (hasFilter) {
-                const iterator = fgTextModel.filter(fgGetTextModel(allLineElems), text);
+                const iterator = fgTextModel.filter(getModel(), text);
                 let result;
                 do { result = iterator.next(); } while (!result.done);
                 passLines = result.value.lines;
@@ -1649,15 +2201,29 @@
                 _graphFoldIds = result.value.graphSets;
             } else {
                 _graphFoldIds = {};
+                visibleCount = getLines().length;
             }
-            const visibleLines = Object.values(foldedBlocks).some(folded => folded === true)
-                ? fgTextModel.folding(fgGetTextModel(allLineElems)).visibleLines(foldedBlocks, passLines) : passLines;
+            const hasFolds = Object.values(foldedBlocks).includes(true);
+            const visibleLines = hasFolds ? fgTextModel.folding(getModel()).visibleLines(foldedBlocks, passLines) : passLines;
+            const appliedText = hasFilter || sortDir ? text : '';
+            if (!fgTextSort && sortDir && visibleCount > 0) fgTextOrderWidths = fgRememberTextOrderWidths(root);
+            const changedChunks = initializeLayout ? null : fgChangedFilterChunks(root, appliedText);
+            const deltaLimit = Math.min(2048, total_lines / 8);
+            const sparse = !initializeLayout && passLines && passLines.size <= deltaLimit && !hasFolds && !sortDir && !fgTextSort &&
+                root.classList.contains('text-layout-measured') && !root.classList.contains('fg-off');
+            const targets = (sparse && fgSparseFilterTargets(root, passLines, deltaLimit)) || getLines();
+            fgMountedFilterProjection = null;
 
             // Single-pass: filter lines + collapse expanded content
-            allLineElems.forEach(line => {
-                const show = (visibleLines === null || visibleLines.has(+line.getAttribute('data-line-number'))) && fgTextEventVisible(line);
-                line.style.display = show ? '' : 'none';
-                fgTextNavigation?.setVisible(+line.getAttribute('data-line-number'), show);
+            targets.forEach(line => {
+                const number = +line.getAttribute('data-line-number');
+                const show = (visibleLines === null || visibleLines.has(number)) && fgTextEventVisible(line);
+                const display = show ? '' : 'none';
+                if (line.style.display !== display) {
+                    line.style.display = display;
+                    changedChunks?.add(line.parentElement);
+                }
+                fgTextNavigation?.setVisible(number, show);
 
                 // Collapse expanded content for hidden or all filtered lines (single pass)
                 if (hasFilter && line.classList.contains('expandable')) {
@@ -1665,47 +2231,40 @@
                     const content = nextSib && nextSib.classList.contains('expanded-content') ? nextSib : null;
                     if (content && content.style.display === 'block') {
                         content.style.display = 'none';
+                        changedChunks?.add(line.parentElement);
                         const btn = line.querySelector('.expand-btn');
-                        if (btn) btn.textContent = '+';
+                        fgSetTextSourceButton(btn, false);
                         line.classList.remove('selected');
                     }
                 }
             });
 
-            // Apply duration sort if requested
-            if (sortDir && visibleCount > 0) {
-                const container = document.getElementById('content');
-                if (container) {
-                    const blocks = fgBlocks(container);
-                    blocks.sort((left, right) => {
-                        const leftHidden = left[0].style.display === 'none', rightHidden = right[0].style.display === 'none';
-                        if (leftHidden !== rightHidden) return leftHidden ? 1 : -1;
-                        if (leftHidden) return 0;
-                        const leftDuration = parseFloat(left[0].dataset.sortDuration || left[0].dataset.duration || '0');
-                        const rightDuration = parseFloat(right[0].dataset.sortDuration || right[0].dataset.duration || '0');
-                        return sortDir === 'desc' ? rightDuration - leftDuration : leftDuration - rightDuration;
-                    });
-                    const preferredOrder = fgTextOrder;
-                    fgReorder(container, 'time', blocks);
-                    fgTextOrder = preferredOrder;
-                    lsSet('textOrder', preferredOrder);
-                    fgTextSort = sortDir;
-                    const button = document.getElementById('textOrderBtn');
-                    if (button) button.textContent = 'Order: duration ' + (sortDir === 'desc' ? '↓' : '↑');
-                }
-            } else if (fgTextSort) fgSetTextOrder(fgTextOrder);
-
-            fgRefreshTextLayout();
-            updateExpandableLines();
-            fgNotifyFilter(hasFilter || sortDir ? text : '', passLines);
+            fgFinishMountedTextFilter(sortDir, visibleCount, changedChunks, passLines);
+            if (sparse) fgMountedFilterProjection = {root, lines: passLines};
+            fgNotifyFilter(appliedText, passLines);
 
             // Update visible lines count
             fgShowFilterCount(visibleCount, total_lines);
         }
 
+        function fgFinishMountedTextFilter(sortDir = '', visibleCount = 0, changedChunks = null, filterLines = null) {
+            let reordered = false;
+            if (sortDir && visibleCount > 0) {
+                const container = document.getElementById('content');
+                if (container) reordered = fgSortTextDuration(container, sortDir);
+                if (reordered) changedChunks = null;
+            } else if (fgTextSort) {
+                fgSetTextOrder(fgTextOrder, filterLines);
+                return;
+            }
+            fgRefreshTextLayout(changedChunks, false, filterLines, null, reordered);
+            updateExpandableLines();
+        }
+
         // Clear filter
         function clearFilter() {
             fgCancelPendingFilter(false);
+            fgMountedFilterProjection = null;
             const filterInput = document.getElementById('filterInput');
             if (filterInput) filterInput.value = '';
 
@@ -1720,14 +2279,13 @@
             const allLineElems = document.querySelectorAll('.line-container');
             const visibleLines = Object.values(foldedBlocks).some(folded => folded === true)
                 ? fgTextModel.folding(fgGetTextModel(allLineElems)).visibleLines(foldedBlocks, null) : null;
+            const changedChunks = fgTextSort ? null : fgChangedFilterChunks(document.getElementById('content'), '');
             allLineElems.forEach(line => {
-                const show = (visibleLines === null || visibleLines.has(+line.getAttribute('data-line-number'))) && fgTextEventVisible(line);
-                fgProjectFoldLine(line, show);
+                const show = visibleLines === null || visibleLines.has(+line.getAttribute('data-line-number'));
+                fgProjectFoldLine(line, show, changedChunks);
             });
 
-            if (fgTextSort) fgSetTextOrder(fgTextOrder);
-            fgRefreshTextLayout();
-            updateExpandableLines();
+            fgFinishMountedTextFilter('', 0, changedChunks);
             fgNotifyFilter('', null);
 
             const visibleLinesContainer = document.getElementById('visibleLinesContainer');
@@ -1749,6 +2307,8 @@
 
         function updateExpandableLines() {
             if (fgTextDeferred()) return;
+            if (lastClickTarget && !lastClickTarget.isConnected) fgResetTextDoubleClick();
+            if (highlightedLine && !highlightedLine.isConnected) highlightedLine = null;
             textGuideRevision++;
             if (!fgTextNavigation) {
                 const steps = fgPrepareTextNavigation(document.getElementById('content').querySelectorAll('.line-container'));
@@ -1768,47 +2328,12 @@
             if (!filterInput) return;
 
             // Enter key triggers filter
-            filterInput.addEventListener('keydown', function(e) {
-                if (e.key === 'Enter') {
-                    e.preventDefault();
-                    applyFilter();
+            filterInput.addEventListener('keydown', function(event) {
+                if (event.key === 'Enter' && !event.isComposing && event.keyCode !== 229) {
+                    event.preventDefault();
+                    fgSubmitTextFilter();
                 }
             });
-
-            // Helper: position dropdown near a button using fixed positioning, clamped to viewport
-            function positionDropdown(dropdown, btn) {
-                const rect = btn.getBoundingClientRect();
-                // Temporarily show off-screen to measure dimensions
-                dropdown.style.visibility = 'hidden';
-                dropdown.style.left = '0px';
-                dropdown.style.top = '0px';
-                document.body.appendChild(dropdown);
-                const visual = fgTextCompactMedia.matches ? window.visualViewport : null;
-                const margin = 4;
-                const leftEdge = (visual?.offsetLeft || 0) + margin;
-                const topEdge = (visual?.offsetTop || 0) + margin;
-                const rightEdge = leftEdge + (visual?.width || window.innerWidth) - 2 * margin;
-                const bottomEdge = topEdge + (visual?.height || window.innerHeight) - 2 * margin;
-                if (visual) dropdown.style.maxHeight = Math.max(0, Math.min(200, bottomEdge - topEdge)) + 'px';
-                const dropdownWidth = dropdown.offsetWidth;
-                const dropdownHeight = dropdown.offsetHeight;
-                dropdown.style.visibility = '';
-
-                // Horizontal: align left edge to button, clamp to viewport
-                const left = Math.max(leftEdge, Math.min(rect.left, rightEdge - dropdownWidth));
-
-                // Vertical: prefer above button, fall back to below if no room
-                let top = rect.top - dropdownHeight - margin;
-                if (top < topEdge) {
-                    top = rect.bottom + margin;
-                }
-                top = Math.max(topEdge, Math.min(top, bottomEdge - dropdownHeight));
-
-                dropdown.style.left = left + 'px';
-                dropdown.style.top = top + 'px';
-            }
-
-            // Helper: close all field dropdowns
 
             // Field button click handlers
             document.querySelectorAll('.field-btn').forEach(btn => {
@@ -1930,8 +2455,9 @@
                         });
                     }
                     dropdown.querySelectorAll('button').forEach(button => { button.type = 'button'; });
-                    positionDropdown(dropdown, this);
+                    document.body.appendChild(dropdown);
                     dropdown.querySelector('input').focus({preventScroll: true});
+                    fgPositionFieldDropdown(dropdown, this);
                 });
             });
 
@@ -1957,7 +2483,30 @@
             });
         }
 
+        function fgClearTextJumpFlash() {
+            const flash = fgTextJumpFlash;
+            if (!flash) return;
+            fgTextJumpFlash = null;
+            flash.row.classList.remove('tl-flash');
+            flash.animation.cancel();
+        }
+
+        function fgFlashTextJump(row) {
+            fgClearTextJumpFlash();
+            const animation = row.animate([{ backgroundColor: 'rgba(59, 111, 216, .45)' },
+                { backgroundColor: 'transparent' }], { duration: 1600, easing: 'ease-out' });
+            const flash = fgTextJumpFlash = { row, animation };
+            row.classList.add('tl-flash');
+            const settle = () => {
+                if (fgTextJumpFlash !== flash) return;
+                fgTextJumpFlash = null;
+                row.classList.remove('tl-flash');
+            };
+            animation.finished.then(settle, settle);
+        }
+
         function fgCancelTextNavigation() {
+            fgClearTextJumpFlash();
             fgTextLineRequest?.controller.abort();
             fgTextLineRequest = null;
             fgTextRequestedLine = null;
@@ -1982,7 +2531,8 @@
         function fgRequestTextLine(number, apply, options = {}) {
             fgCancelTextNavigation();
             const controller = new AbortController();
-            const request = { controller, current: () => fgTextLineRequest === request && !controller.signal.aborted &&
+            const request = { number, controller, revealFolds: options.revealFolds,
+                current: () => fgTextLineRequest === request && !controller.signal.aborted &&
                 (typeof fgCurrentView !== 'function' || fgCurrentView() === 'text') && (!options.guard || options.guard()) };
             fgTextLineRequest = request;
             const failed = error => {
@@ -2000,19 +2550,23 @@
                 return element;
             };
             try {
-                const value = window.fgEnsureTextLine(number, { signal: controller.signal });
+                const value = window.fgEnsureTextLine(number, { signal: controller.signal,
+                    revealFolds: request.revealFolds, deferScroll: options.deferScroll });
                 return value?.then ? Promise.resolve(value).then(finish).catch(failed) : finish(value);
             } catch (error) { return failed(error); }
         }
 
-        function fgSelectMountedTextLine(element, scrollIntoView = true) {
+        function fgSelectMountedTextLine(element, scrollIntoView = true, focus = true) {
+            if (fgTextJumpFlash && fgTextJumpFlash.row !== element) fgClearTextJumpFlash();
             // 清除之前的选择
             if (keyboardSelectedLine) {
                 keyboardSelectedLine.classList.remove('keyboard-selected');
             }
 
-            keyboardSelectedIndex = fgTextNavigation.indexOf(+element.getAttribute('data-line-number'));
+            const number = Number(element.dataset.lineNumber);
+            keyboardSelectedIndex = fgTextNavigation.indexOf(number);
             keyboardSelectedLine = element;
+            window.fgSetTextJumpLine?.(number);
 
             // 添加新的选择样式
             if (keyboardSelectedLine) {
@@ -2020,7 +2574,7 @@
 
                 // 移动焦点到该行，这样event.target会更新
                 // 这样Enter键就能正确处理
-                if (!fgHelpState?.panel.contains(document.activeElement) &&
+                if (focus && !fgHelpState?.panel.contains(document.activeElement) &&
                     (typeof fgCurrentView !== 'function' || fgCurrentView() === 'text')) keyboardSelectedLine.focus({ preventScroll: true });
 
                 // 只有在需要滚动时才滚动
@@ -2053,11 +2607,11 @@
             }
         }
 
-        function setKeyboardSelectedLine(index, scrollIntoView = true) {
+        function setKeyboardSelectedLine(index, scrollIntoView = true, focus = true) {
             if (!fgTextNavigation?.order.length) { fgCancelTextNavigation(); return null; }
             index = Math.max(0, Math.min(index, fgTextNavigation.order.length - 1));
             const number = fgTextNavigation.order[index];
-            const result = fgRequestTextLine(number, element => fgSelectMountedTextLine(element, scrollIntoView));
+            const result = fgRequestTextLine(number, element => fgSelectMountedTextLine(element, scrollIntoView, focus));
             if (result?.then) fgTextRequestedLine = number;
             return result;
         }
@@ -2075,9 +2629,22 @@
             if (next >= 0) return setKeyboardSelectedLine(next, true);
         }
         
+        function fgResetTextDoubleClick() {
+            clearTimeout(doubleClickTimer);
+            doubleClickTimer = null;
+            doubleClickState = 0;
+            lastClickTarget = null;
+        }
+
+        function fgCancelTextRowGestures() {
+            clearTimeout(clickTimer);
+            clickTimer = null;
+            fgResetTextDoubleClick();
+        }
+
         // 处理行点击事件 - 现在只处理单击
         function handleLineClick(event, lineId) {
-            if (event.target.closest('.fold-icon, .fold-brace')) return;
+            if (event.target.closest('.fold-icon, .fold-brace, .func-name-link')) return;
             // 记录点击前的滚动位置
             scrollPositionBeforeClick = {
                 x: window.scrollX,
@@ -2103,8 +2670,8 @@
             }
 
             // 检查是否正在进行文本选择
-            const selection = window.getSelection();
-            const hasSelection = selection.toString().trim().length > 0;
+            const expandButton = event.target.closest('.expand-btn');
+            const hasSelection = !expandButton && window.getSelection().toString().trim().length > 0;
 
             // 检查鼠标移动距离，判断是否是拖动选择
             const mouseUpInfo = { x: event.clientX, y: event.clientY, time: Date.now() };
@@ -2131,7 +2698,7 @@
             if (doubleClickTimer) {
                 clearTimeout(doubleClickTimer);
                 doubleClickTimer = null;
-                return;
+                if (!expandButton) return;
             }
 
             // 设置键盘选中行，但不滚动
@@ -2140,19 +2707,26 @@
             if (clickedLine?.getAttribute('data-line-id') === lineId) {
                 const lineIndex = fgTextNavigation.indexOf(+clickedLine.getAttribute('data-line-number'));
                 if (lineIndex >= 0) {
-                    setKeyboardSelectedLine(lineIndex, false);
+                    setKeyboardSelectedLine(lineIndex, false, expandButton !== document.activeElement);
                 }
+            }
+
+            if (expandButton) {
+                fgResetTextDoubleClick();
+                toggleExpand(lineId);
+                return;
             }
 
             // 设置延迟执行单击事件，以便在双击时可以取消
             clickTimer = setTimeout(() => {
-                toggleExpand(lineId, event);
                 clickTimer = null;
+                if (clickedLine?.isConnected && clickedLine.dataset.lineId === lineId) toggleExpand(lineId);
             }, 200);
         }
         
         // 处理双击事件
         function handleDoubleClick(event, lineId) {
+            if (event.target.closest('.func-name-link')) return;
             // 阻止事件冒泡
             event.stopPropagation();
             if (event.target.closest('.fold-icon, .fold-brace')) return;
@@ -2187,10 +2761,7 @@
                     if (doubleClickTimer) {
                         clearTimeout(doubleClickTimer);
                     }
-                    doubleClickTimer = setTimeout(() => {
-                        doubleClickState = 0;
-                        doubleClickTimer = null;
-                    }, 500);
+                    doubleClickTimer = setTimeout(fgResetTextDoubleClick, 500);
                     
                     return;
                 } else if (doubleClickState === 2) {
@@ -2213,11 +2784,8 @@
                     highlightSelectedLines();
                     
                     // 重置双击状态
-                    doubleClickState = 0;
-                    if (doubleClickTimer) {
-                        clearTimeout(doubleClickTimer);
-                        doubleClickTimer = null;
-                    }
+                    fgResetTextDoubleClick();
+                    return;
                 }
             } else {
                 // 新的双击序列
@@ -2230,10 +2798,7 @@
                 if (doubleClickTimer) {
                     clearTimeout(doubleClickTimer);
                 }
-                doubleClickTimer = setTimeout(() => {
-                    doubleClickState = 0;
-                    doubleClickTimer = null;
-                }, 500);
+                doubleClickTimer = setTimeout(fgResetTextDoubleClick, 500);
             }
             
             lastClickTime = now;
@@ -2249,12 +2814,23 @@
             return fgTextModel.folding(model);
         }
 
-        function fgProjectFoldLine(line, visible) {
+        function fgTextFoldBlockers(record) {
+            if (!record) return [];
+            const ids = (record.getAttribute('data-fold-ancestors') || '').split(' ');
+            const own = record.getAttribute('data-fold-id');
+            if (own && record.getAttribute('data-fold-type') !== 'entry') ids.push(own);
+            return [...new Set(ids.filter(id => id && foldedBlocks[id] === true))];
+        }
+
+        function fgProjectFoldLine(line, visible, changedChunks = null) {
             if (!line) return;
             visible = visible && fgTextEventVisible(line);
             fgTextNavigation?.setVisible(+line.getAttribute('data-line-number'), visible);
             const display = visible ? '' : 'none';
-            if (line.style.display !== display) line.style.display = display;
+            if (line.style.display !== display) {
+                line.style.display = display;
+                changedChunks?.add(line.parentElement);
+            }
             const content = line.nextElementSibling;
             if (!content?.classList.contains('expanded-content')) return;
             const expanded = visible && expandedLines[line.getAttribute('data-line-id')] === true &&
@@ -2262,10 +2838,12 @@
             if (expanded) fgFill(content);
             else fgCancelSource(content);
             const sourceDisplay = expanded ? 'block' : 'none';
-            if (content.style.display !== sourceDisplay) content.style.display = sourceDisplay;
+            if (content.style.display !== sourceDisplay) {
+                content.style.display = sourceDisplay;
+                changedChunks?.add(line.parentElement);
+            }
             const button = line.querySelector('.expand-btn');
-            const symbol = expanded ? '-' : '+';
-            if (button && button.textContent !== symbol) button.textContent = symbol;
+            fgSetTextSourceButton(button, expanded);
             line.classList.toggle('selected', expanded);
         }
 
@@ -2344,7 +2922,7 @@
             lsSet('foldedBlocks', JSON.stringify(foldedBlocks));
         }
 
-        function toggleExpand(lineId, event) {
+        function toggleExpand(lineId) {
             fgTextWindow?.suppressedSources.delete(lineId);
             // 保存当前滚动位置
             const scrollX = window.scrollX;
@@ -2353,7 +2931,7 @@
             const content = document.getElementById(lineId + '_content');
             const btn = document.querySelector('[data-line-id="' + lineId + '"] .expand-btn');
             const container = document.querySelector('[data-line-id="' + lineId + '"]');
-            if (container.style.display === 'none') return;
+            if (!content || !container || container.style.display === 'none') return;
 
             // 使用getComputedStyle获取计算后的显示状态
             const computedStyle = window.getComputedStyle(content);
@@ -2363,13 +2941,13 @@
                 fgCancelSource(content);
                 // 收起当前行
                 content.style.display = 'none';
-                if (btn) btn.textContent = '+';
+                fgSetTextSourceButton(btn, false);
                 container.classList.remove('selected');
                 saveExpandedState(lineId, false);
             } else {
                 // 展开当前行
                 fgFill(content); content.style.display = 'block';
-                if (btn) btn.textContent = '-';
+                fgSetTextSourceButton(btn, true);
                 container.classList.add('selected');
                 saveExpandedState(lineId, true);
             }
@@ -2557,7 +3135,7 @@
             }
         }
         
-        let fgClipboardGeneration = 0;
+        let fgClipboardGeneration = 0, fgClipboardProxy = null;
         const fgTextCopyStates = new WeakMap();
         async function copyVisibleContent(event) {
             const clipboardGeneration = ++fgClipboardGeneration;
@@ -2580,11 +3158,12 @@
                     fgTextCopyStates.delete(button);
                 }, 1000);
             };
-            const allLines = fgTextWindow ? fgTextWindow.visibleNumbers.map(number => fgTextModel.locate(fgTextWindow.model, number).record) : document.querySelectorAll('.line-container');
-            const textLines = [];
-            for (const line of allLines) {
-                if (fgTextWindow || line.style.display !== 'none' && !line.classList.contains('hidden')) {
-                    textLines.push(line.querySelector('.line-content').textContent);
+            const textLines = fgTextWindow ? fgTextWindow.copyLines() : [];
+            if (!fgTextWindow) {
+                for (const line of document.querySelectorAll('.line-container')) {
+                    if (line.style.display !== 'none' && !line.classList.contains('hidden')) {
+                        textLines.push(line.querySelector('.line-content').textContent);
+                    }
                 }
             }
             const textToCopy = textLines.join('\n');
@@ -2593,21 +3172,19 @@
                 return false;
             }
             button.textContent = 'Copying…';
+            const copied = await fgCopyPlainText(textToCopy, current, clipboardGeneration);
+            feedback(copied ? `Copied ${textLines.length} lines` : 'Copy failed', copied);
+            return copied;
+        }
+
+        async function fgCopyPlainText(text, isCurrent, generation = ++fgClipboardGeneration) {
             try {
                 if (typeof navigator.clipboard?.writeText === 'function') {
-                    await navigator.clipboard.writeText(textToCopy);
-                    feedback(`Copied ${textLines.length} lines`, true);
+                    await navigator.clipboard.writeText(text);
                     return true;
                 }
             } catch {}
-            if (!current()) return false;
-            if (clipboardGeneration !== fgClipboardGeneration) {
-                feedback('Copy failed', false);
-                return false;
-            }
-            const copied = fallbackCopy(textToCopy);
-            feedback(copied ? `Copied ${textLines.length} lines` : 'Copy failed', copied);
-            return copied;
+            return generation === fgClipboardGeneration && isCurrent() && fallbackCopy(text);
         }
 
         function fallbackCopy(text) {
@@ -2623,6 +3200,7 @@
             textArea.tabIndex = -1;
             textArea.setAttribute('aria-hidden', 'true');
             textArea.style.cssText = 'position:fixed;top:0;left:0;width:1px;height:1px;opacity:0;pointer-events:none';
+            fgClipboardProxy = textArea;
             document.body.appendChild(textArea);
             try {
                 textArea.select();
@@ -2631,6 +3209,7 @@
                 return false;
             } finally {
                 textArea.remove();
+                fgClipboardProxy = null;
                 if (active?.isConnected) active.focus({preventScroll:true});
                 if (selection) {
                     selection.removeAllRanges();
@@ -2707,10 +3286,16 @@
             }
             if (typeof fgCurrentView === 'function' && fgCurrentView() !== 'text') return;
             if (fgTextDeferred()) return;
+            if (event.key === 'Escape' && !event.shiftKey && !event.target.isContentEditable &&
+                !event.target.closest('input, textarea, select') && window.fgReturnFromPendingTextJump?.()) {
+                event.preventDefault();
+                return;
+            }
             const control = event.target.closest('button, input, textarea, select, summary, a, [role="button"]');
-            const foldLine = control?.matches('.fold-icon, .fold-brace') ? control.closest('#content .line-container') : null;
-            if (event.target.isContentEditable || (control && !foldLine)) return;
-            if (foldLine && (event.key === 'Enter' || event.key === ' ')) return;
+            const controlLine = control?.matches('.fold-icon, .fold-brace, .expand-btn') ? control.closest('#content .line-container') : null;
+            const cancelJump = event.key === 'Escape' && control?.id === 'textTimelineJump';
+            if (event.target.isContentEditable || (control && !controlLine && !cancelJump)) return;
+            if (controlLine && (event.key === 'Enter' || event.key === ' ')) return;
             
 
             
@@ -2744,7 +3329,7 @@
                     event.preventDefault();
                     const lineId = focusedLine.getAttribute('data-line-id');
                     if (lineId) {
-                        toggleExpand(lineId, event);
+                        toggleExpand(lineId);
                     }
                     return;
                 }
@@ -2756,7 +3341,7 @@
                     event.preventDefault();
                     const lineId = keyboardSelectedLine.getAttribute('data-line-id');
                     if (lineId) {
-                        toggleExpand(lineId, event);
+                        toggleExpand(lineId);
                     }
                     return;
                 }
@@ -2767,7 +3352,7 @@
                     event.preventDefault();
                     const lineId = keyboardSelectedLine.getAttribute('data-line-id');
                     if (lineId) {
-                        toggleExpand(lineId, event);
+                    toggleExpand(lineId);
                     }
                 }
             }
@@ -2775,6 +3360,7 @@
             // 按下ESC键取消选择
             if (event.key === 'Escape' || event.keyCode === 27) {
                 fgCancelTextNavigation();
+                window.fgSetTextJumpLine?.(null);
                 // 1. 清除键盘选中（键盘导航）
                 if (keyboardSelectedLine) {
                     keyboardSelectedLine.classList.remove('keyboard-selected');
@@ -2812,11 +3398,11 @@
             if (keyLower === 'j' || event.key === 'ArrowDown') {
                 event.preventDefault();
                 handled = true;
-                navigateToExpandableLine(1, foldLine ? +foldLine.dataset.lineNumber : null);
+                navigateToExpandableLine(1, controlLine ? +controlLine.dataset.lineNumber : null);
             } else if (keyLower === 'k' || event.key === 'ArrowUp') {
                 event.preventDefault();
                 handled = true;
-                navigateToExpandableLine(-1, foldLine ? +foldLine.dataset.lineNumber : null);
+                navigateToExpandableLine(-1, controlLine ? +controlLine.dataset.lineNumber : null);
             }
             
             // 处理水平滚动（h/l 键）
@@ -2989,8 +3575,9 @@
         async function expandAll(button) {
             const btn = button || event.target;
             if (fgTextWindow) {
-                try { await fgTextWindow.fullText(); return expandAll(btn); }
-                catch (error) { console.warn('Expand All:', error); return; }
+                try { await fgTextWindow.expandSources(); }
+                catch (error) { if (error.name !== 'AbortError') console.warn('Expand All:', error); }
+                return;
             }
 
             // 如果正在等待停止，忽略点击
@@ -3064,7 +3651,7 @@
 
                     if (content && isVisible) {
                         fgFill(content); content.style.display = 'block';
-                        if (expandBtn) expandBtn.textContent = '-';
+                        fgSetTextSourceButton(expandBtn, true);
                         container.classList.add('selected');
                         saveExpandedState(lineId, true);
                     }
@@ -3095,8 +3682,16 @@
         async function collapseAll(button) {
             const btn = button || event.target;
             if (fgTextWindow) {
-                try { await fgTextWindow.fullText(); return collapseAll(btn); }
-                catch (error) { console.warn('Collapse All:', error); return; }
+                try {
+                    await fgTextWindow.collapseSources();
+                    if (highlightedLine) {
+                        highlightedLine.classList.remove('highlighted');
+                        highlightedLine = null;
+                    }
+                } catch (error) {
+                    if (error.name !== 'AbortError') console.warn('Collapse All:', error);
+                }
+                return;
             }
 
             // 如果正在等待停止，忽略点击
@@ -3184,7 +3779,7 @@
                     if (content && isVisible) {
                         fgCancelSource(content);
                         content.style.display = 'none';
-                        if (expandBtn) expandBtn.textContent = '+';
+                        fgSetTextSourceButton(expandBtn, false);
                         container.classList.remove('selected');
                         saveExpandedState(lineId, false);
                     }
@@ -3225,22 +3820,19 @@
             const generation = ++fgClipboardGeneration;
             window.location.hash = anchorId;
             const fullUrl = window.location.href;
-            try {
-                if (typeof navigator.clipboard?.writeText === 'function') {
-                    await navigator.clipboard.writeText(fullUrl);
-                    return true;
-                }
-            } catch {}
-            if (generation !== fgClipboardGeneration || window.location.href !== fullUrl) return false;
-            return fallbackCopy(fullUrl);
+            return fgCopyPlainText(fullUrl, () => window.location.href === fullUrl, generation);
         }
         
         // 处理锚点导航
+        function fgTextAnchorNumber(hash = location.hash) {
+            if (!/^#L[1-9][0-9]*$/.test(hash)) return null;
+            const number = Number(hash.slice(2));
+            return Number.isSafeInteger(number) ? number : null;
+        }
         function handleAnchorNavigation() {
-            const hash = window.location.hash.substring(1);
-            if (!/^L[1-9][0-9]*$/.test(hash)) { fgCancelTextNavigation(); return; }
-            const number = Number(hash.slice(1));
-            if (!Number.isSafeInteger(number)) { fgCancelTextNavigation(); return; }
+            const hash = location.hash;
+            const number = fgTextAnchorNumber(hash);
+            if (number === null) { fgCancelTextNavigation(); return; }
             if (fgTextDeferred()) fgSwitchView('text');
             return fgRequestTextLine(number, (element, request) => {
                 if (highlightedLine) highlightedLine.classList.remove('highlighted');
@@ -3252,7 +3844,7 @@
                     }
                 }, 100);
                 fgSelectMountedTextLine(element, false);
-            }, { guard: () => location.hash.substring(1) === hash });
+            }, { guard: () => location.hash === hash });
         }
         
         // 初始加载时
@@ -3439,9 +4031,8 @@
             const pendingNavigation = fgTextLineRequest !== null;
             const root = document.getElementById('content');
             total_lines = renderer ? model.records.length : root.querySelectorAll('.line-container').length;
-            if (!mounted && !renderer && total_lines >= 4096 && window.CSS?.supports('content-visibility: auto') &&
-                CSS.supports('contain-intrinsic-block-size: calc(2 * (max(13px * 1.5 + 4px, 21px) + 2px))') &&
-                CSS.supports('selector(:has(*))')) root.classList.add('text-layout-auto', 'text-layout-measured');
+            if (!mounted && !renderer && total_lines >= 4096 && fgSupportsTextLayout())
+                root.classList.add('text-layout-auto', 'text-layout-measured');
             window.fgInlineTextStartup?.reveal();
             fgRefreshTextLayout();
             if (renderer && (renderer.model !== model || renderer.navigation !== navigation || renderer.root !== root ||
@@ -3454,9 +4045,12 @@
                 if (navigation.order.length !== total_lines) throw new Error('Text navigation does not cover mounted rows');
                 fgTextNavigation = navigation;
             }
-            if (root.classList.contains('text-layout-auto'))
-                matchMedia('(max-width: 768px)').addEventListener('change', () =>
-                    root.classList.contains('text-layout-measured') ? fgRefreshTextLayout() : fgResetTextLayout(root.children));
+            if (renderer || root.classList.contains('text-layout-auto'))
+                matchMedia('(max-width: 768px)').addEventListener('change', () => {
+                    if (!root.classList.contains('text-layout-auto')) return;
+                    if (root.classList.contains('text-layout-measured')) fgRefreshTextLayout();
+                    else fgResetTextLayout(root.children);
+                });
             fgTextInitialized = true;
             fgUpdateTextEventsButton();
             root.addEventListener('click', fgHandleTextInteraction);
@@ -3482,7 +4076,8 @@
             // restoreViewState(); // 注释掉，避免自动滚动
 
             // 初始化键盘导航
-            initKeyboardNavigation(!pendingNavigation);
+            const anchor = renderer ? fgTextAnchorNumber() : null;
+            initKeyboardNavigation(!pendingNavigation && (anchor === null || !document.getElementById('L' + anchor)));
             if (!fgTextEventsVisible && !renderer) fgSetTextEventsVisible(false);
 
             // 初始化统一过滤器（如果过滤框存在）
@@ -3491,7 +4086,7 @@
             }
 
             // 处理锚点导航
-            if (!pendingNavigation) handleAnchorNavigation();
+            if (!pendingNavigation && fgTextAnchorNumber() !== null) handleAnchorNavigation();
 
             // P0: Apply duration heatmap
             applyDurationHeatmap();

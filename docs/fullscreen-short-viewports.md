@@ -39,6 +39,50 @@ No button, setting, automatic panel expansion or new visual language is added.
 Old standalone reports embed their previous runtime and must be regenerated
 to receive the fix.
 
+### Short touch toolbar
+
+In narrow, short touch full screen (up to 420 × 360 CSS pixels), the toolbar
+uses shorter visible labels while retaining full accessible names and 44 px
+touch targets. Fit, Inline, and Notes stay directly available. A dot on Tools
+indicates an applied filter without widening the button; the accessible name
+still announces the filter. Search results can add height to keep the exact
+count and both navigation controls visible.
+
+The keyboard follows the displayed order: in compact layouts Tab moves from
+search to the full-screen and help controls, then to zoom and the other
+actions. Shift+Tab reverses that order. Crossing the compact breakpoint
+retains focus on the current action and keeps the search and selection.
+
+On the same `ping3` trace in Chromium touch emulation, at 320 × 240 the
+toolbar shrank from 198 to 102 px, increasing the visible chart from 34 to
+130 px without scrolling. At 390 × 295, visible chart height increased from
+137 to 160 px. At 844 × 390 the toolbar remained 54 px. Both native and page
+full screen had the same measurements. See
+`build/benchmarks/20261120-short-touch-toolbar/real-ab.jsonl`.
+
+### Recorded-call navigation in a short detail pane
+
+In the compact vertical split, the Actions button can be visible while the
+row of recorded-call navigation buttons is clipped by the detail pane.
+The Actions menu now also offers parent, first child, previous and next in
+that layout. These items use the same targets and disabled states as the
+navigation row and return focus to Actions on the newly selected call.
+The side-by-side landscape split and expanded details do not duplicate them.
+
+On offline `ping3` at 390 × 295 and 568 × 320 in Chromium touch emulation,
+a tap on Parent selected the recorded parent with unchanged page scroll and
+time range. Desktop at 1500 × 900 and touch landscape at 667 × 375 kept the
+direct controls without adding menu items. Browser regressions exercise all
+four directions with touch and keyboard in standalone and sidecar reports.
+Measurements: `build/benchmarks/short-action-reach/real.jsonl`.
+
+The **Navigate calls** group uses one row when it fits and wraps when the
+menu gets narrower. On the same two `ping3` viewports, the group shrank from
+176 to 66 CSS pixels with 58 × 44 px targets. Prototype, source and call
+stack shortcuts were all reachable without scrolling the menu; the filter
+shortcuts could still require scrolling. Baseline and updated layouts are
+recorded in `build/benchmarks/short-action-layout/paired.jsonl`.
+
 ## Validation
 
 - Native wheel input, not programmatic scrolling, first proves that the short
@@ -52,7 +96,7 @@ to receive the fix.
   makes no additional requests.
 - Bounded CDP touch sequences exercise actual native touch scrolling in both
   full-screen modes, including repeated edge swipes and return to the top.
-  These are Chromium-emulated touch checks, not universal physical-device or
+These are Chromium-emulated touch checks, not universal physical-device or
   mobile-browser guarantees.
 - Tab can reach the detail-expansion control, and Enter/Space activate the
   native button without changing the model or saved split. A normal-sized
@@ -95,3 +139,20 @@ and final validation logs are retained in `build/fullscreen-scroll-audit/` in
 the development checkout. The earlier broad panel audit is retained under
 `build/position-scroll-audit/`; off-screen controls in ordinary page mode are
 not counted as failures when normal page scrolling can reach them.
+
+## November 19: Keep Timeline Help inside the visible window
+
+Timeline Help no longer inherits its available height from the Timeline
+content. It fits the visual viewport, leaves room for a visible Help button
+when space permits, and keeps Close reachable while scrolling within the
+panel. Compact touch layouts give Close a 44px target. Escape returns focus
+without leaving full screen or moving the chart.
+
+In a 320 × 360 touch-emulated page, the old 76px-tall panel extended 12px
+below the viewport; the new 306px-tall panel fits. At 320 × 240 with fallback
+full screen scrolled down, available height increased from 76px to 216px
+without changing the scroll offset. An 844 × 320 native full-screen case and
+a 1500 × 900 desktop case also stayed within the viewport and retained the
+selected call. Browser tests additionally verify focus restoration and reachability
+of Close at the end of the panel. These are layout checks, not latency or
+physical-device measurements. Evidence: `build/validation/20261119-timeline-help/`.

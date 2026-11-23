@@ -307,6 +307,8 @@ class UftraceTimeline(TimelineBuilder):
             self.kernel_details[lineno] = {'retaddr': record['retaddr']}
             if caller_info:
                 self.caller_symbols[caller] = record['retaddr_symbol']
+        if not user and 'payload_hex' in record and 'args' not in record:
+            self.kernel_details.setdefault(lineno, {})['raw_payload'] = True
         self.caps['args'] |= bool(args)
         self.caps['retaddr'] |= caller >= 0
         index = self._new_slice(task, depth, timestamp, timestamp if is_exit else None,

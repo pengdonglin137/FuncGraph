@@ -436,7 +436,7 @@ class SidecarBrowserTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.kernel = helpers.FakeKernel(inline_source=True)
-        cls.kernel.run(helpers.fixture('pi4_sched'), '--timeline', '--enable-fold', '--filter', '--func-links',
+        cls.kernel.run(helpers.fixture('pi4_sched'), '--timeline', '--enable-fold', '--filter', '--func-links', '--overhead', '300,150',
                        '--compare', helpers.fixture('pi4_default'), '--report-mode', 'auto',
                        '--sidecar-threshold', '0', out='report')
         cls.kernel.run(helpers.fixture('pi4_sched'), '--timeline', '--enable-fold', '--filter', '--func-links',
@@ -570,14 +570,26 @@ class SidecarBrowserTest(unittest.TestCase):
         source_line.locator('.line-content').click()
         return source_line.locator('xpath=following-sibling::*[1]')
 
+    def timeline_source_index(self, same_chunk_as=None):
+        index = self.page.evaluate('''previous => {
+            const data = fgData.read('tlData');
+            const chunkSize = fgData.read('fgSourceChunks').chunk_size;
+            const previousSource = previous === null ? null : fgSourceForLine(data.cols.line[previous]);
+            return data.cols.caller.findIndex((caller, index) => {
+                if (!data.sources.callers[caller]?.length || index === previous) return false;
+                const source = fgSourceForLine(data.cols.line[index]);
+                return source !== null && (previous === null || (source !== previousSource &&
+                    Math.floor(source / chunkSize) === Math.floor(previousSource / chunkSize)));
+            });
+        }''', same_chunk_as)
+        self.assertGreaterEqual(index, 0)
+        return index
+
     def select_timeline_source(self):
         self.page.set_default_timeout(5000)
-        return self.page.evaluate('''() => {
-            const data = fgData.read('tlData'), probe = fgView('timeline').probe();
-            const index = data.cols.caller.findIndex(caller => data.sources.callers[caller]?.length);
-            probe.select(index);
-            return index;
-        }''')
+        index = self.timeline_source_index()
+        self.page.evaluate("index => fgView('timeline').probe().select(index)", index)
+        return index
 
     def test_source_chunks_are_absent_from_shell_and_only_fetched_on_expansion(self):
         self.assertEqual(self.page.locator('#fgSrc').count(), 0)
@@ -647,10 +659,20 @@ class SidecarBrowserTest(unittest.TestCase):
         self.page.evaluate("localStorage.setItem('fgTl.csOpen', '0')")
         self.select_timeline_source()
         details = self.page.locator('.tl-cs')
+        summary = details.locator(':scope > summary')
         self.assertFalse(details.evaluate('element => element.open'))
         self.assertFalse(any('/source-' in url for url in self.requests))
-        details.locator('summary').click()
-        details.locator('.source-line').first.wait_for(state='attached')
+        self.assertEqual(summary.evaluate('element => getComputedStyle(element).counterIncrement'), 'none')
+        self.assertEqual(summary.evaluate('element => getComputedStyle(element).listStyleType'), 'disclosure-closed')
+        summary.press('Space')
+        source = details.locator('.source-line').first
+        source.wait_for(state='attached')
+        self.assertTrue(details.evaluate('element => element.open'))
+        self.assertEqual(summary.evaluate('element => getComputedStyle(element).listStyleType'), 'disclosure-open')
+        summary.press('Enter')
+        self.assertFalse(details.evaluate('element => element.open'))
+        summary.click()
+        self.assertTrue(details.evaluate('element => element.open'))
         details.locator('[data-fg-source-mode]').wait_for()
         before = self.page.evaluate('fgSourceMode()')
         details.locator('[data-fg-source-mode]').click()
@@ -666,6 +688,71 @@ class SidecarBrowserTest(unittest.TestCase):
         self.assertTrue(self.page.evaluate('sourceJobs[0].signal.aborted'))
         self.page.evaluate('() => sourceJobs[0].finish()')
         self.assertEqual(self.page.locator('.tl-cs-src .source-line').count(), 0)
+
+    def test_replacing_call_preserves_source_toggle_before_native_event(self):
+        self.hold_sources()
+        index = self.select_timeline_source()
+        replacement = self.timeline_source_index(same_chunk_as=index)
+        self.page.locator('.tl-cs-src [role=status]').wait_for()
+        result = self.page.evaluate('''index => {
+            const old = document.querySelector('.tl-cs');
+            old.open = false;
+            fgView('timeline').probe().select(index);
+            const current = document.querySelector('.tl-cs');
+            return {replaced: current !== old, open: current.open,
+                cancelled: sourceJobs[0].signal.aborted, jobs: sourceJobs.length};
+        }''', replacement)
+        self.assertEqual(result, {'replaced': True, 'open': False, 'cancelled': True, 'jobs': 1})
+        summary = self.page.locator('.tl-cs > summary')
+        summary.press('Enter')
+        self.page.locator('.tl-cs-src [role=status]').wait_for()
+        self.page.evaluate('() => sourceJobs[0].finish()')
+        self.assertEqual(self.page.locator('.tl-cs-src .source-line').count(), 0)
+        self.page.evaluate('() => sourceJobs[1].finish()')
+        self.page.locator('.tl-cs [data-fg-source-mode]').wait_for()
+        self.assertEqual(self.page.evaluate('localStorage.getItem("fgTl.csOpen")'), '1')
+
+    def test_filter_keeps_selected_recorded_call_and_inflight_source(self):
+        self.hold_sources()
+        index = self.select_timeline_source()
+        source = self.page.locator('.tl-cs-src')
+        source.locator('[role=status]').wait_for()
+        trace_line = self.page.evaluate("index => fgData.read('tlData').cols.line[index]", index)
+        source.evaluate('node => { window.selectedCallSource = node; }')
+        self.page.evaluate('line => fgNotifyFilter("retained", new Set([line]))', trace_line)
+        self.assertTrue(source.evaluate('node => node === window.selectedCallSource'))
+        self.assertEqual(self.page.evaluate('sourceJobs.map(job => job.signal.aborted)'), [False])
+        self.page.evaluate('() => sourceJobs[0].finish()')
+        source.locator('.source-line').first.wait_for(state='attached')
+        mode = self.page.locator('.tl-cs [data-fg-source-mode]')
+        mode.focus()
+        self.page.evaluate('fgNotifyFilter("", null)')
+        self.assertTrue(mode.evaluate('node => node === document.activeElement'))
+        self.assertTrue(source.evaluate('node => node === window.selectedCallSource'))
+        self.assertEqual(self.page.evaluate("fgView('timeline').probe().sel()"), index)
+        self.page.evaluate('fgNotifyFilter("excluded", new Set())')
+        self.assertEqual(self.page.evaluate("fgView('timeline').probe().sel()"), -1)
+        self.assertFalse(self.page.locator('.tl-detail').is_visible())
+
+    def test_overhead_switch_preserves_inflight_and_loaded_timeline_source(self):
+        self.hold_sources()
+        self.select_timeline_source()
+        source = self.page.locator('.tl-cs-src')
+        source.locator('[role=status]').wait_for()
+        source.evaluate('node => { window.selectedCallSource = node; }')
+        self.page.locator('.tl-cs > summary').press('o')
+        self.assertIn('subtracted', self.page.locator('[data-act=adj]').text_content())
+        self.assertTrue(source.evaluate('node => node === window.selectedCallSource'))
+        self.assertEqual(self.page.evaluate('sourceJobs.map(job => job.signal.aborted)'), [False])
+        self.page.evaluate('() => sourceJobs[0].finish()')
+        mode = self.page.locator('.tl-cs [data-fg-source-mode]')
+        mode.wait_for()
+        excerpt = source.inner_html()
+        mode.press('o')
+        self.assertIn('measured', self.page.locator('[data-act=adj]').text_content())
+        self.assertTrue(mode.evaluate('node => node === document.activeElement'))
+        self.assertTrue(source.evaluate('node => node === window.selectedCallSource'))
+        self.assertEqual(source.inner_html(), excerpt)
 
     def test_timeline_source_resumes_after_view_reentry_without_text_loading(self):
         self.hold_sources()
@@ -683,17 +770,72 @@ class SidecarBrowserTest(unittest.TestCase):
     def test_replacing_timeline_detail_discards_late_source_completion(self):
         self.hold_sources()
         index = self.select_timeline_source()
+        replacement = self.timeline_source_index(same_chunk_as=index)
         self.page.locator('.tl-cs-src [role=status]').wait_for()
         self.page.evaluate("window.previousSourcePanel = document.querySelector('.tl-cs-src')")
-        self.page.evaluate("index => fgView('timeline').probe().select(index)", index)
+        self.page.evaluate("index => fgView('timeline').probe().select(index)", replacement)
         self.assertTrue(self.page.evaluate('sourceJobs[0].signal.aborted'))
         self.assertFalse(self.page.evaluate('previousSourcePanel.isConnected'))
+        self.page.locator('.tl-cs > summary').scroll_into_view_if_needed()
+        self.page.locator('.tl-cs-src [role=status]').wait_for()
+        self.assertTrue(self.page.evaluate('sourceJobs[0].source !== sourceJobs[1].source'))
         self.page.evaluate('() => sourceJobs[0].finish()')
         self.assertEqual(self.page.evaluate('previousSourcePanel.childElementCount'), 0)
         self.assertEqual(self.page.locator('.tl-cs-src .source-line').count(), 0)
         self.page.evaluate('() => sourceJobs[1].finish()')
         self.page.locator('.tl-cs-src .source-line').first.wait_for(state='attached')
         self.assertEqual(sum('/source-' in url for url in self.requests), 1)
+
+    def test_reselecting_timeline_call_keeps_inflight_source(self):
+        self.hold_sources()
+        index = self.select_timeline_source()
+        source = self.page.locator('.tl-cs-src')
+        source.locator('[role=status]').wait_for()
+        source.evaluate('node => { window.selectedCallSource = node; }')
+        self.page.evaluate("index => fgView('timeline').probe().select(index)", index)
+        self.assertTrue(source.evaluate('node => node === window.selectedCallSource'))
+        self.assertEqual(self.page.evaluate('sourceJobs.map(job => job.signal.aborted)'), [False])
+        self.page.evaluate('() => sourceJobs[0].finish()')
+        source.locator('.source-line').first.wait_for(state='attached')
+        self.assertEqual(sum('/source-' in url for url in self.requests), 1)
+
+    def test_switching_to_another_excerpt_shares_an_active_source_download(self):
+        self.page.evaluate('''() => {
+            const loadSource = fgData.loadSource;
+            window.followedSources = [];
+            fgData.loadSource = (source, options) => {
+                followedSources.push({source, signal:options.signal});
+                return loadSource(source, options);
+            };
+        }''')
+        held = []
+        pattern = '**/source-*.json'
+        self.page.route(pattern, lambda route: held.append(route))
+        try:
+            with self.page.expect_request(pattern):
+                index = self.select_timeline_source()
+                self.page.locator('.tl-cs > summary').scroll_into_view_if_needed()
+            self.page.wait_for_function('() => followedSources.length === 1')
+            replacement = self.timeline_source_index(same_chunk_as=index)
+            observed = self.page.evaluate('''index => {
+                const previous = document.querySelector('.tl-cs-src');
+                fgView('timeline').probe().select(index);
+                return {detached:!previous.isConnected, aborted:followedSources[0].signal.aborted};
+            }''', replacement)
+            self.assertEqual(observed, {'detached': True, 'aborted': True})
+            self.page.locator('.tl-cs > summary').scroll_into_view_if_needed()
+            self.page.wait_for_function('() => followedSources.length === 2')
+            self.assertTrue(self.page.evaluate('followedSources[0].source !== followedSources[1].source'))
+            self.assertEqual(len(held), 1)
+            self.assertIsNone(held[0].request.failure)
+            held.pop().continue_()
+            self.page.locator('.tl-cs-src .source-line').first.wait_for(state='attached')
+            self.assertEqual(sum('/source-' in url for url in self.requests), 1)
+            self.assertEqual(self.page.evaluate("fgView('timeline').probe().sel()"), replacement)
+        finally:
+            self.page.unroute(pattern)
+            for route in held:
+                route.abort()
 
     def test_ancestor_fold_cancels_pending_descendant_source(self):
         self.hold_sources()

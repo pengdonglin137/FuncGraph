@@ -224,7 +224,51 @@ class TimelineFullscreenTest(unittest.TestCase):
         self.page.wait_for_function('active => document.getElementById("timelineView").classList.contains("tl-fullscreen") === active', arg=active)
         self.page.wait_for_function('() => !document.querySelector("[data-act=max]").disabled')
         self.assertEqual(self.page.locator('[data-act=max]').get_attribute('aria-pressed'), str(active).lower())
-        self.assertEqual(self.page.locator('[data-act=max]').inner_text(), 'Exit full screen' if active else 'Full screen')
+        self.assertEqual(self.page.locator('[data-act=max]').get_attribute('aria-label'),
+                         'Exit full screen' if active else 'Full screen')
+
+    def test_help_fits_short_normal_and_scrolled_fullscreen_viewports(self):
+        for mode in ('normal', 'fallback', 'native'):
+            with self.subTest(mode=mode):
+                if mode == 'normal':
+                    self.page.set_viewport_size({'width': 320, 'height': 360})
+                    self.open_report()
+                    before = self.remember_state()
+                else:
+                    before = self.open_short_report(self.url, mode == 'native', True, 'dark')
+                    self.assertGreater(self.page.locator('#timelineView').evaluate('root => { root.scrollTop = root.scrollHeight; return root.scrollTop; }'), 0)
+                origin = self.page.locator('.tl-canvas')
+                geometry = '''() => [window.scrollY, document.getElementById('timelineView').scrollTop]'''
+                scroll = self.page.evaluate(geometry)
+                origin.evaluate('canvas => canvas.focus({preventScroll:true})')
+                self.page.keyboard.press('?')
+                panel = self.page.get_by_role('dialog', name='Timeline help')
+                panel.wait_for()
+                close = panel.get_by_role('button', name='Close help')
+                self.assertTrue(close.evaluate('button => button === document.activeElement'))
+                self.assertEqual(self.page.evaluate(geometry), scroll)
+                if mode != 'normal':
+                    self.assertGreaterEqual(close.bounding_box()['height'], 44)
+                self.assertTrue(panel.evaluate('''element => {
+                    const bounds = element.getBoundingClientRect(), viewport = window.visualViewport;
+                    return bounds.top >= viewport.offsetTop && bounds.bottom <= viewport.offsetTop + viewport.height &&
+                        bounds.left >= viewport.offsetLeft && bounds.right <= viewport.offsetLeft + viewport.width &&
+                        bounds.height >= 144;
+                }'''))
+                panel.evaluate('element => { element.scrollTop = element.scrollHeight; }')
+                self.assertTrue(close.evaluate('''button => {
+                    const bounds = button.getBoundingClientRect(), viewport = window.visualViewport;
+                    return bounds.top >= viewport.offsetTop && bounds.bottom <= viewport.offsetTop + viewport.height &&
+                        document.elementFromPoint(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2) === button;
+                }'''))
+                self.assertEqual(self.page.evaluate(geometry), scroll)
+                self.page.keyboard.press('Escape')
+                panel.wait_for(state='hidden')
+                self.assertTrue(origin.evaluate('canvas => canvas === document.activeElement'))
+                self.assertEqual(self.page.evaluate(geometry), scroll)
+                self.assert_state(before)
+                if mode != 'normal':
+                    self.wait_mode(True)
 
     def remember_state(self):
         self.page.evaluate('''() => {
@@ -307,6 +351,106 @@ class TimelineFullscreenTest(unittest.TestCase):
         tools.click()
         self.page.locator('[data-act=an-tasks]').click()
         self.assertFalse(self.page.locator('.tl-options').is_visible())
+
+    def test_touch_range_picker_has_reachable_controls_and_preserves_summary_on_cancel(self):
+        self.context.close()
+        self.context = self.browser.new_context(viewport={'width': 320, 'height': 680}, has_touch=True, is_mobile=True)
+        self.page = self.context.new_page()
+        self.page.set_default_timeout(5000)
+        self.page.on('pageerror', lambda error: self.errors.append(str(error)))
+        self.open_report()
+        canvas = self.page.locator('.tl-canvas')
+        group = self.page.get_by_role('group', name='Select range', exact=True)
+        status = group.get_by_role('status')
+        scope = group.get_by_role('combobox', name='Range scope')
+        cancel = group.get_by_role('button', name='Cancel', exact=True)
+        anchor = self.page.locator('.tl-range-anchor')
+        range_head = self.page.locator('.tl-range-head')
+        self.assertFalse(group.is_visible())
+
+        def begin():
+            self.page.locator('[data-act=options]').tap()
+            self.page.get_by_role('button', name='Select range', exact=True).tap()
+            self.assertEqual(status.inner_text(), 'Pick range start')
+            self.assertFalse(self.page.locator('.tl-options').is_visible())
+
+        def point(fraction, track=False):
+            bounds = canvas.bounding_box()
+            y = 16 if not track else self.page.evaluate('''() => {
+                const scroll = document.querySelector('.tl-scroll');
+                const {TRACKS} = fgView('timeline').probe();
+                return Math.min(...TRACKS.filter(track => !track.hidden && track.h && track.y >= scroll.scrollTop)
+                    .map(track => track.y - scroll.scrollTop)) + 8;
+            }''')
+            canvas.tap(position={'x': bounds['width'] * fraction, 'y': y})
+
+        for selected_scope in ('all', 'track'):
+            begin()
+            for control in (scope, cancel):
+                self.assertTrue(control.evaluate('''control => {
+                    const rect = control.getBoundingClientRect();
+                    return rect.height >= 44 && rect.left >= 0 && rect.right <= innerWidth;
+                }'''))
+            scope.select_option(selected_scope)
+            on_track = selected_scope == 'track'
+            if on_track:
+                point(.8)
+                self.assertEqual(status.inner_text(), 'Pick a task or CPU trace track')
+                self.assertFalse(anchor.is_visible())
+            point(.8, on_track)
+            anchor.wait_for(state='visible')
+            self.assertEqual(status.inner_text(), 'Pick range end')
+            point(.8, on_track)
+            self.assertEqual(status.inner_text(), 'Pick a different end')
+            self.page.evaluate('''() => document.querySelector('.tl-canvas').addEventListener('click',
+                event => event.stopImmediatePropagation(), {capture:true, once:true})''')
+            point(.2)
+            range_head.wait_for(state='visible')
+            self.assertEqual('all tracks' in range_head.inner_text(), selected_scope == 'all')
+            self.assertFalse(group.is_visible())
+            self.assertFalse(anchor.is_visible())
+
+        original = range_head.inner_text()
+        begin()
+        point(.25)
+        anchor.wait_for(state='visible')
+        cancel.tap()
+        self.assertFalse(group.is_visible())
+        self.assertFalse(anchor.is_visible())
+        self.assertEqual(range_head.inner_text(), original)
+
+    def test_range_picker_supports_keyboard_panning_and_cancels_on_view_change(self):
+        self.open_report()
+        canvas = self.page.locator('.tl-canvas')
+        group = self.page.get_by_role('group', name='Select range', exact=True)
+        def begin():
+            self.page.locator('[data-act=options]').press('Enter')
+            self.page.get_by_role('button', name='Select range', exact=True).press('Enter')
+            self.assertTrue(canvas.evaluate('element => document.activeElement === element'))
+
+        begin()
+        self.page.keyboard.press('+')
+        self.page.keyboard.press('Enter')
+        marker = self.page.locator('.tl-range-anchor')
+        marker.wait_for(state='visible')
+        initial = marker.evaluate('element => element.style.left')
+        self.page.keyboard.press('ArrowRight')
+        self.page.wait_for_function('left => document.querySelector(".tl-range-anchor").style.left !== left', arg=initial)
+        self.page.keyboard.press('Enter')
+        self.assertIn('all tracks', self.page.locator('.tl-range-head').inner_text())
+        self.assertFalse(group.is_visible())
+        begin()
+        self.page.keyboard.press('Enter')
+        self.page.keyboard.press('Escape')
+        self.assertFalse(group.is_visible())
+        self.assertTrue(self.page.locator('.tl-range-head').is_visible())
+        begin()
+        self.page.keyboard.press('Enter')
+        self.page.locator('.view-tab[data-view=text]').click()
+        self.page.locator('.view-tab[data-view=timeline]').click()
+        self.assertFalse(group.is_visible())
+        self.assertFalse(marker.is_visible())
+        self.assertTrue(self.page.locator('.tl-range-head').is_visible())
 
     def test_outside_click_closes_tools_without_clearing_filter(self):
         self.open_report()

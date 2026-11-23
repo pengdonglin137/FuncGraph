@@ -1,6 +1,34 @@
 const SEARCH_BATCH = 4096;
 
-function* buildSearchIndex(callNames, count) {
+function* buildDenseSearchIndex(callNames, count, nameCount) {
+    const cursors = new Uint32Array(nameCount), ordered = [];
+    for (let index = 0; index < count; index++) {
+        if (index && index % SEARCH_BATCH === 0) yield 'Indexing function calls…';
+        const name = callNames[index];
+        if ((name >>> 0) >= nameCount) return yield* buildSearchIndex(callNames, count);
+        if (cursors[name]++ === 0) ordered.push(name);
+    }
+    const names = new Int32Array(ordered.length), offsets = new Uint32Array(ordered.length + 1);
+    let total = 0;
+    for (let position = 0; position < ordered.length; position++) {
+        if (position && position % SEARCH_BATCH === 0) yield 'Indexing function calls…';
+        const name = ordered[position], size = cursors[name];
+        names[position] = name;
+        offsets[position] = total;
+        cursors[name] = total;
+        total += size;
+    }
+    offsets[ordered.length] = total;
+    const calls = new Uint32Array(count);
+    for (let index = 0; index < count; index++) {
+        if (index && index % SEARCH_BATCH === 0) yield 'Indexing function calls…';
+        calls[cursors[callNames[index]]++] = index;
+    }
+    return { names, offsets, calls };
+}
+
+function* buildSearchIndex(callNames, count, nameCount = 0) {
+    if (nameCount > 0 && nameCount <= count) return yield* buildDenseSearchIndex(callNames, count, nameCount);
     const counts = new Map();
     for (let index = 0; index < count; index++) {
         if (index && index % SEARCH_BATCH === 0) yield 'Indexing function calls…';
@@ -25,6 +53,25 @@ function* buildSearchIndex(callNames, count) {
         counts.set(name, cursor + 1);
     }
     return { names, offsets, calls };
+}
+
+function* collectNamedCallsSteps(index, callNames, count, name, accepted) {
+    const matches = [];
+    if (index) {
+        const position = index.names.indexOf(name);
+        if (position < 0) return matches;
+        const end = index.offsets[position + 1];
+        const start = index.offsets[position];
+        for (let offset = start; offset < end; offset++) {
+            if (offset !== start && (offset - start) % SEARCH_BATCH === 0) yield;
+            const call = index.calls[offset];
+            if (!accepted || accepted[call]) matches.push(call);
+        }
+    } else for (let call = 0; call < count; call++) {
+        if (call && call % SEARCH_BATCH === 0) yield;
+        if (callNames[call] === name && (!accepted || accepted[call])) matches.push(call);
+    }
+    return matches;
 }
 
 function* matchSearchNames(index, strings, matcher) {

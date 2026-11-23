@@ -1,6 +1,7 @@
 /* Shared by all non-text views (tabs, page chrome hiding). */
 .view-tabs {
     display: flex;
+    flex-wrap: wrap;
     position: sticky;
     top: 0;
     z-index: 1001;
@@ -9,7 +10,7 @@
     border-bottom: 1px solid var(--border-color);
     background: var(--container-bg);
 }
-.view-tab {
+.view-tab, .fg-jump-return {
     appearance: none;
     min-width: 0;
     overflow-wrap: anywhere;
@@ -24,13 +25,50 @@
     position: relative;
     top: 1px;
 }
-.view-tab:hover { color: var(--text-color); background: var(--container-bg-hover); }
+:is(.view-tab, .fg-jump-return):hover { color: var(--text-color); background: var(--container-bg-hover); }
 .view-tab.active {
     color: var(--text-color);
     background: var(--container-bg);
     border-color: var(--border-color);
 }
+.fg-jump-return {
+    margin-inline-start: auto;
+    flex: 0 1 auto;
+    padding-inline: clamp(6px, 2vw, 16px);
+    color: var(--text-color);
+}
+.fg-jump-return-short { display: none; }
+.fg-jump-status:empty { position: absolute; }
+.fg-jump-status:not(:empty) {
+    flex: 0 0 100%;
+    min-width: 0;
+    box-sizing: border-box;
+    overflow-wrap: anywhere;
+    padding: 5px 8px 6px;
+    border-top: 1px solid var(--border-color);
+    color: var(--text-color);
+    font-size: 12px;
+}
+.fg-jump-status.fg-jump-pending {
+    position: fixed;
+    inset: auto auto 12px 50%;
+    transform: translateX(-50%);
+    width: max-content;
+    max-width: calc(100vw - 24px);
+    padding: 6px 12px;
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    background: var(--container-bg);
+    text-align: center;
+    pointer-events: none;
+}
 .view-tab .tab-badge {
+    display: inline-block;
+    max-width: min(27vw, 20rem);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    vertical-align: bottom;
     font-weight: 500;
     font-size: 11px;
     margin-left: 6px;
@@ -45,10 +83,23 @@
    in a 50k-line report). #content is hidden with content-visibility so its layout is
    kept and switching back is cheap. */
 .fg-off { display: none !important; }
+#content.text-layout-auto { contain: style; }
 #content.fg-off { display: block !important; content-visibility: hidden; }
 .container.fg-wide { width: auto !important; min-width: 0 !important; }
 .fg-view { display: none; }
 .fg-view.fg-view-on { display: flex; }
+@supports (content-visibility: hidden) {
+    .fg-view { display: flex; contain: style; }
+    .fg-view:not(.fg-view-on, :fullscreen) {
+        position: fixed;
+        inset: 0 auto auto 0;
+        max-width: 0;
+        max-height: 0;
+        overflow: hidden;
+        visibility: hidden;
+        content-visibility: hidden;
+    }
+}
 .fg-loading {
     display: flex;
     flex: 1;
@@ -76,7 +127,24 @@
 }
 .fg-loading button:hover { background: var(--container-bg-hover); }
 
-@media (max-width: 640px) {
-    .view-tab { flex: 1 1 0; padding: 7px 6px 6px; }
-    .view-tab .tab-badge { margin-left: 0; }
+@media (max-width: 700px) {
+    .view-tab { flex: 1 0 auto; padding: 7px 6px 6px; }
+    .view-tab, .fg-jump-return { white-space: nowrap; }
+    .fg-jump-return { padding-inline: 6px; }
+    .view-tab .tab-badge, .fg-jump-return-full { display: none; }
+    .fg-jump-return-short { display: inline; }
+}
+
+@media (max-width: 316px) {
+    .view-tabs:has(> [data-view=compare]) > :is(.view-tab, .fg-jump-return) { padding-inline: 3px; }
+}
+
+@media (max-width: 298px) {
+    .view-tabs:has(> [data-view=compare]) > .fg-jump-return { min-width: 44px; }
+    .view-tabs:has(> [data-view=compare]) > .fg-jump-return::before { content: '←'; }
+    .view-tabs:has(> [data-view=compare]) > .fg-jump-return .fg-jump-return-short { display: none; }
+}
+
+@media (any-pointer: coarse) {
+    .view-tab, .fg-jump-return { min-width: 44px; min-height: 44px; }
 }

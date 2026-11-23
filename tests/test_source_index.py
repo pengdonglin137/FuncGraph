@@ -1,6 +1,7 @@
 import copy
 import contextlib
 import io
+import json
 import os
 from pathlib import Path
 import re
@@ -41,6 +42,42 @@ class TimelineSourceTest(unittest.TestCase):
         self.assertGreater(len(expected), 100)
         self.assertEqual(helpers.json_script(self.full, 'fgSrcLines'), expected)
         self.assertNotEqual(min(map(int, expected)), 1)
+
+    def test_browser_packed_index_preserves_call_site_ids(self):
+        try:
+            from playwright.sync_api import sync_playwright
+        except ImportError as error:
+            self.skipTest(str(error))
+        generator = HtmlGenerator([], None, None, timeline_json={})
+        originals = {int(line): source for line, source in helpers.json_script(self.full, 'fgSrcLines').items()}
+        expected = {line: line % 4095 for line in range(1024, 6144)}
+        expected.update(originals)
+        self.assertIn(4094, expected.values())
+        generator._src_lines = expected
+        packed = generator._source_line_index()
+        report = re.sub(r'(<script[^>]+id="fgSrcLines"[^>]*>).*?(</script>)',
+                        lambda match: match[1] + json.dumps(packed) + match[2], self.full, count=1, flags=re.S)
+        path = Path(self.kernel.dir, 'packed-source-index.html')
+        path.write_text(report, encoding='utf-8')
+        with sync_playwright() as playwright:
+            try:
+                browser = playwright.chromium.launch()
+            except Exception as error:
+                self.skipTest(str(error))
+            page = browser.new_page()
+            page.goto(path.as_uri())
+            slots = page.evaluate('length => Array.from({length}, (_, line) => fgSourceForLine(line))', 6146)
+            self.assertEqual(slots, [expected.get(line) for line in range(6146)])
+            line, source = page.evaluate('''async lines => {
+                await fgSwitchView('timeline');
+                const model = fgView('timeline').probe(), entries = fgData.read('tlData').cols.line;
+                const withSource = new Set(lines);
+                const index = entries.findIndex(line => withSource.has(line));
+                model.select(index);
+                return [entries[index], document.querySelector('.tl-cs-src')?.dataset.src];
+            }''', list(originals))
+            self.assertEqual(int(source), originals[line])
+            browser.close()
 
     def test_keep_source_retains_identical_pool_and_original_line_index(self):
         for name in ['fgSrc', 'fgSrcLines']:
@@ -107,6 +144,38 @@ class TimelineSourceTest(unittest.TestCase):
 
 
 class SourceBlockTest(unittest.TestCase):
+    def test_compact_index_preserves_one_based_lines_source_zero_and_gaps(self):
+        generator = HtmlGenerator([], None, None, timeline_json={})
+        expected = {line: line % 213 for line in range(2, 6156) if line % 3 != 0}
+        expected[2] = 0
+        expected[5] = 4094
+        generator._src_lines = expected.copy()
+        payload = helpers.json_script(generator._source_pool_script(), 'fgSrcLines')
+        self.assertIsInstance(payload, str)
+        self.assertEqual(len(payload), 2 * (max(expected) + 1))
+        self.assertEqual(payload[:2], 'AA')
+        self.assertEqual(payload[4:8], 'ABAA')
+        self.assertEqual(payload[10:12], '__')
+        digits = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_'
+        unpacked = [digits.index(payload[offset]) * 64 + digits.index(payload[offset + 1])
+                    for offset in range(0, len(payload), 2)]
+        self.assertEqual(expected, {line: source - 1 for line, source in enumerate(unpacked) if source})
+        self.assertEqual(generator._src_lines, expected)
+
+    def test_dense_indexes_with_source_ids_above_packed_limit_keep_the_array(self):
+        generator = HtmlGenerator([], None, None, timeline_json={})
+        generator._src_lines = {line: line - 1 for line in range(1, 4097)}
+        payload = helpers.json_script(generator._source_pool_script(), 'fgSrcLines')
+        self.assertEqual(payload, list(range(4097)))
+
+    def test_small_and_large_sparse_indexes_keep_the_object_representation(self):
+        generator = HtmlGenerator([], None, None, timeline_json={})
+        for index in ({2: 0, 4: 1}, {line * 10000 + 1: line % 4 for line in range(4096)}):
+            with self.subTest(entries=len(index)):
+                generator._src_lines = index
+                payload = helpers.json_script(generator._source_pool_script(), 'fgSrcLines')
+                self.assertEqual(payload, {str(line): source for line, source in index.items()})
+
     def test_explicit_lines_keep_numeric_colons_in_literal_filenames(self):
         for path in ['kernel/version:123/helper.c', 'kernel/literal.c:123']:
             with self.subTest(path=path):

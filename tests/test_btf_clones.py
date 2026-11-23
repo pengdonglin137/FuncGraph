@@ -84,6 +84,26 @@ class ClonePrototypeTest(unittest.TestCase):
             verify.assert_called_once()
             self.assertEqual(set(verify.call_args[0][1]), set(names))
 
+    def test_detail_projection_batches_clone_checks_without_changing_evidence(self):
+        database = database_for([('inner', [('value', 'u8')], 's32'),
+                                 ('exact.isra.0', [('value', 'u8')], 's32')], 'kernel.elf')
+        observations = [(1, 'inner.constprop.0', None, True, True),
+                        (2, 'exact.isra.0', None, True, True),
+                        (3, 'inner.isra.1', None, True, True),
+                        (4, 'inner.isra.1', 'other', True, True),
+                        (5, 'inner.isra.2', None, True, True)]
+        with patch('fglib.btf_abi.verified_clones',
+                   return_value={'inner.constprop.0', 'inner.isra.1'}) as verify:
+            detail = database.detail_data(iter(observations))
+            self.assertEqual(database.detail_data(iter(observations)), detail)
+            verify.assert_called_once()
+            self.assertEqual(set(verify.call_args.args[1]), {'inner.constprop.0', 'inner.isra.1', 'inner.isra.2'})
+        self.assertEqual(list(detail['functions']), [1, 2, 3])
+        self.assertTrue(detail['functions'][1]['clone'])
+        self.assertNotIn('clone', detail['functions'][2])
+        self.assertTrue(detail['functions'][3]['clone'])
+        self.assertNotIn('ret', detail['functions'][3])
+
     def test_negative_results_are_cached_and_unknown_suffixes_are_not_guessed(self):
         database = database_for([('inner', [('value', 'int')], 'int')], 'kernel.elf')
         with patch('fglib.btf_abi.verified_clones', return_value=set()) as verify:
@@ -228,10 +248,10 @@ class CloneDwarfTest(unittest.TestCase):
         self.blob = self.root / 'kernel.btf'
         self.blob.write_bytes(builder.blob())
 
-    def image(self, version=4, prefix=''):
+    def image(self, version=4, prefix='', extra_sources=()):
         target = self.root / ('kernel' + prefix + str(version))
-        subprocess.run([prefix + 'gcc', '-O2', '-gdwarf-' + str(version), '-o', str(target), str(self.source)],
-                       check=True, capture_output=True)
+        subprocess.run([prefix + 'gcc', '-O2', '-gdwarf-' + str(version), '-o', str(target), str(self.source),
+                        *(str(path) for path in extra_sources)], check=True, capture_output=True)
         subprocess.run([prefix + 'objcopy', '--add-section', '.BTF=' + str(self.blob), str(target)],
                        check=True, capture_output=True)
         return target
@@ -250,6 +270,39 @@ class CloneDwarfTest(unittest.TestCase):
                 for name in names[2:]:
                     self.assertEqual(database.argument_names(name, 6), ())
                     self.assertIsNone(database.function_types(name))
+
+    def test_failed_dwarf_unit_does_not_discard_another_units_proof(self):
+        from elftools.common.exceptions import DWARFError
+        from elftools.dwarf.dwarfinfo import DWARFInfo
+        from elftools.elf.elffile import ELFFile
+
+        second = self.root / 'second.c'
+        second.write_text('''
+unsigned int second_clone(unsigned char value) __asm__("second_clone.isra.0");
+unsigned int second_clone(unsigned char value) { return value + 1; }
+''')
+        target = self.image(extra_sources=(second,))
+        good, bad = 'safe_clone.constprop.0', 'second_clone.isra.0'
+        requests = {good: ('safe_clone', (('buffer', 'ptr', 8, 64), ('value', 'uint', 1, 8)), 8),
+                    bad: ('second_clone', (('value', 'uint', 1, 8),), 8)}
+        with target.open('rb') as source:
+            elf = ELFFile(source)
+            aranges = elf.get_dwarf_info().get_aranges()
+            offsets = {symbol.name: aranges.cu_offset_at_addr(symbol['st_value'])
+                       for symbol in elf.get_section_by_name('.symtab').iter_symbols() if symbol.name in requests}
+        self.assertEqual(set(offsets), set(requests))
+        self.assertTrue(all(offset is not None for offset in offsets.values()))
+        self.assertNotEqual(offsets[good], offsets[bad])
+        self.assertEqual(btf_abi.verified_clones(target, requests), {good, bad})
+        original = DWARFInfo.get_CU_at
+
+        def fail_one_unit(dwarf, offset):
+            if offset == offsets[bad]:
+                raise DWARFError('invalid compilation unit')
+            return original(dwarf, offset)
+
+        with patch.object(DWARFInfo, 'get_CU_at', fail_one_unit):
+            self.assertEqual(btf_abi.verified_clones(target, requests), {good})
 
     def test_gcc_generated_clones_with_removed_or_scalarized_parameters_stay_raw(self):
         from elftools.elf.elffile import ELFFile

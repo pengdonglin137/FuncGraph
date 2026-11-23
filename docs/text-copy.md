@@ -40,6 +40,23 @@ backward/collapsed document selection, input selection and reading position are
 preserved. This only handles copying: it does not modify capture data, record
 indexes, source mappings or Timeline data, and does not add dependencies.
 
+## Copying large windows
+
+Windowed Text now reads dense Copy results directly from the committed
+visibility mask and the time, task or duration order. It keeps one byte per
+indexed row for the dense projection. Sparse results still walk only the
+visible sequence. Neither path needs to mount rows, fetch sources or wait
+for an in-progress filter or sort. The compatibility path's temporary
+textarea no longer dismisses the compact More panel or loses Copy focus.
+
+On `ping3` in Chromium 145 at 4× CPU throttling, five alternating fresh-page
+pairs with seven measured copies per page gave median times to submit the
+clipboard payload of **33.9 → 23.1 ms** in time order and **32.6 → 25.1 ms**
+in task order. Each output matched its baseline byte for byte. These times
+measure collection and serialization up to a stubbed clipboard call, not
+the operating system's clipboard write. Results:
+`build/benchmarks/20261122-interaction-hotspot/copy-ab.log`.
+
 ## Regression coverage
 
 `tests/test_text_copy.py` includes thirteen browser tests covering native and

@@ -42,6 +42,43 @@ class ArgumentHTML(HTMLParser):
 
 
 @unittest.skipUnless(shutil.which('node'), 'node not installed')
+class SourceUrlCacheTest(unittest.TestCase):
+    def test_caches_only_bounded_resolutions_for_the_current_base(self):
+        panels = (Path(helpers.ROOT) / 'assets' / 'timeline' / 'panels.js').read_text()
+        script = panels[panels.index('const DETAIL_SOURCE_URL_LIMIT'):panels.index('const CALL_NAVIGATION')]
+        script += '''
+            const assert = require('node:assert/strict');
+            const document = {baseURI:'file:///reports/ping/index.html'};
+            const NativeURL = globalThis.URL;
+            let parses = 0;
+            globalThis.URL = class extends NativeURL {
+                constructor(...args) { super(...args); parses++; }
+            };
+            for (let repeat = 0; repeat < 2; repeat++) {
+                assert.equal(safeSourceUrl('../a.c'), 'file:///reports/a.c');
+                assert.equal(safeSourceUrl('  JAVASCRIPT:alert(1)'), '');
+                assert.equal(safeSourceUrl('vscode://file/tmp/a.c:4'), 'vscode://file/tmp/a.c:4');
+                assert.equal(safeSourceUrl(''), '');
+            }
+            assert.equal(parses, 3);
+            document.baseURI = 'https://example.test/sub/report.html';
+            assert.equal(safeSourceUrl('../a.c'), 'https://example.test/a.c');
+            assert.equal(safeSourceUrl('http://['), '');
+            assert.equal(safeSourceUrl('data:text/plain,a'), '');
+            const long = 'x'.repeat(DETAIL_SOURCE_URL_UNITS + 1);
+            const before = parses;
+            assert.equal(safeSourceUrl(long), 'https://example.test/sub/' + long);
+            assert.equal(safeSourceUrl(long), 'https://example.test/sub/' + long);
+            assert.equal(parses - before, 2);
+            for (let index = 0; index < DETAIL_SOURCE_URL_LIMIT; index++) safeSourceUrl('test' + index);
+            assert.equal(detailSourceUrls.size, DETAIL_SOURCE_URL_LIMIT);
+            assert.equal(detailSourceUrls.has('../a.c'), false);
+        '''
+        result = subprocess.run(['node', '-e', script], capture_output=True, text=True, timeout=20)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+
+@unittest.skipUnless(shutil.which('node'), 'node not installed')
 class ArgumentUnitTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -82,6 +119,11 @@ class ArgumentUnitTest(unittest.TestCase):
         self.assertEqual(self.render(dict(value=spaced))[0].units,
                          ['path="a  b,\t c\n  d",', 'count=3'])
 
+    def test_simple_delimiters_keep_empty_fields_and_whitespace(self):
+        value = ', flags=0x12,\t , count=-4,\n'
+        parsed = self.render(dict(value=value))[0]
+        self.assertEqual(parsed.units, [',', 'flags=0x12,', ',', 'count=-4,'])
+
     def test_recorded_names_with_commas_quotes_and_markup_stay_one_unit(self):
         name = 'count, "quoted"=<script>window.argumentExecuted=1</script>'
         value = name + '=3, slot2=0xffffffffffffffff'
@@ -90,6 +132,7 @@ class ArgumentUnitTest(unittest.TestCase):
 
     def test_unbalanced_or_unclosed_values_are_kept_as_one_safe_unit(self):
         values = ['first=(1, 2, second=3', 'first="a,b, second=3', 'first=[1, 2), second=3']
+        values.extend('first=' + closer + ', second=3' for closer in (')', ']', '}', "'"))
         for value, parsed in zip(values, self.render(*(dict(value=value) for value in values))):
             self.assertEqual(parsed.units, [value])
 
@@ -98,6 +141,78 @@ class ArgumentUnitTest(unittest.TestCase):
         for parsed in self.render(*(dict(value=value, names=names)
                                     for names in ([], ['other', 'flags'], ['count'], [False, 'flags']))):
             self.assertEqual(parsed.units, ['count=3,', 'flags=4'])
+
+    def test_argument_formatting_reuses_short_records_without_retaining_large_records(self):
+        script = self.script + r'''
+            const assert = require('node:assert/strict');
+            const split = splitDetailArguments;
+            let scans = 0;
+            splitDetailArguments = value => { scans++; return split(value); };
+            const raw = `count=3, path="<b>&, nested"`;
+            const first = detailRecordedArgumentsHtml(raw, 1);
+            assert.equal(detailRecordedArgumentsHtml(raw, 1), first);
+            assert.equal(scans, 1);
+            assert.match(first, /&lt;b&gt;&amp;/);
+
+            const withComma = 'count,name=3, flags=4';
+            const plain = detailRecordedArgumentsHtml(withComma, 2);
+            const named = detailArgumentsHtml(withComma, ['count,name', 'flags']);
+            assert.notEqual(named, plain);
+            assert.equal(detailRecordedArgumentsHtml(withComma, 2), plain);
+            assert.equal(scans, 2);
+
+            const large = 'payload=' + 'x'.repeat(4096);
+            assert.equal(detailRecordedArgumentsHtml(large, 3), detailRecordedArgumentsHtml(large, 3));
+            assert.equal(scans, 4);
+            const expands = '<'.repeat(510);
+            assert.equal(detailRecordedArgumentsHtml(expands, 4), detailRecordedArgumentsHtml(expands, 4));
+            assert.equal(scans, 6);
+
+            const collidingId = 1 + DETAIL_ARGUMENT_CACHE_LIMIT;
+            assert.notEqual(detailRecordedArgumentsHtml('value=99', collidingId), first);
+            assert.equal(scans, 7);
+            assert.equal(detailRecordedArgumentsHtml(raw, 1), first);
+            assert.equal(scans, 8);
+        '''
+        result = subprocess.run(['node', '-e', script], capture_output=True, text=True, timeout=20)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_btf_argument_cache_keeps_type_context_and_raw_payload_separate(self):
+        model = (Path(helpers.ROOT) / 'assets' / 'timeline' / 'model.js').read_text()
+        script = self.script + model[model.index('function scalarValue('):model.index('function rawRetOf(')] + r'''
+            const assert = require('node:assert/strict');
+            const D = {btf_detail: {enums: [
+                {bits: 32, values: {'1': ['FAST', 'QUICK']}}, {bits: 32, values: {'1': ['ACTIVE']}}
+            ]}};
+            const sArgs = [1, 1, 129, 2, 3], sLine = [10, 11, 12, 13, 14];
+            const first = {args: {0: ['mode', 0]}}, second = {args: {0: ['mode', 1]}};
+            const split = splitDetailArguments;
+            let scans = 0;
+            splitDetailArguments = value => { scans++; return split(value); };
+            const raw = 'mode=1 [QUICK]';
+            const parsed = btfEnumArguments(0, raw, first);
+            assert.strictEqual(btfEnumArguments(1, raw, first), parsed);
+            assert.equal(parsed.parts[0].match.name, 'QUICK');
+            assert.equal(scans, 1);
+            const other = btfEnumArguments(0, raw, second).parts[0].match;
+            assert.equal(other.name, 'ACTIVE');
+            assert.equal(other.labelMismatch, true);
+            assert.equal(btfEnumArguments(2, 'mode=2', first).parts[0].match.value, '2');
+            assert.deepEqual(btfEnumArguments(0, raw, first), parsed);
+            assert.equal(scans, 4);
+
+            for (let repeat = 0; repeat < 2; repeat++) assert.equal(btfEnumArguments(3, 'mode=(', first), null);
+            assert.equal(scans, 5);
+            const long = raw + ', label="' + 'x'.repeat(512) + '"';
+            for (let repeat = 0; repeat < 2; repeat++) assert.equal(btfEnumArguments(4, long, first).parts[0].match.name, 'QUICK');
+            assert.equal(scans, 7);
+
+            D.uftrace = {kernel_details: {10: {raw_payload: true}}};
+            assert.equal(btfEnumArguments(0, raw, first), null);
+            assert.equal(scans, 7);
+        '''
+        result = subprocess.run(['node', '-e', script], capture_output=True, text=True, timeout=20)
+        self.assertEqual(result.returncode, 0, result.stderr)
 
 
 @unittest.skipIf(detail_colors.sync_playwright is None, 'playwright not installed')
@@ -121,6 +236,61 @@ class DetailLayoutBrowserTest(unittest.TestCase):
     open = detail_colors.DetailColorBrowserTest.open
     select = detail_colors.DetailColorBrowserTest.select
     value = detail_colors.DetailColorBrowserTest.value
+
+    def test_compact_call_facts_give_values_room_in_portrait_and_landscape(self):
+        self.context.close()
+        for mode, viewport in (('single', (280, 480)), ('sidecar', (667, 375))):
+            with self.subTest(mode=mode, viewport=viewport):
+                with self.browser.new_context(viewport=dict(zip(('width', 'height'), viewport)),
+                                              is_mobile=True, has_touch=True) as context:
+                    self.page = context.new_page()
+                    self.page.on('pageerror', lambda error: self.errors.append(str(error)))
+                    self.open('dark', mode, name='inner')
+                    dimensions = self.page.locator('.tl-call-facts').evaluate('''grid => {
+                        const pairs = Array.from(grid.querySelectorAll(':scope > .k, :scope > .tl-recorded-field > .k'), label => {
+                            const value = label.nextElementSibling;
+                            return [label.textContent, label.clientWidth, value.clientWidth, value.scrollWidth];
+                        });
+                        const pane = grid.closest('.tl-detail');
+                        return {pairs, gridFits:grid.scrollWidth <= grid.clientWidth + 1,
+                                paneFits:pane.scrollWidth <= pane.clientWidth + 1};
+                    }''')
+                    self.assertTrue(dimensions['gridFits'] and dimensions['paneFits'], dimensions)
+                    self.assertTrue({'duration', 'start', 'args (BTF)', 'trace lines'}.issubset(
+                        pair[0] for pair in dimensions['pairs']), dimensions['pairs'])
+                    for field, label, value, content in dimensions['pairs']:
+                        with self.subTest(field=field):
+                            self.assertGreaterEqual(value, label * 2, dimensions['pairs'])
+                            self.assertLessEqual(content, value + 1, dimensions['pairs'])
+
+    def test_start_keeps_timestamp_and_unit_together_without_losing_precision(self):
+        self.context.close()
+        for mode, width, touch in (('single', 320, True), ('sidecar', 320, True), ('single', 1440, False)):
+            with self.subTest(mode=mode, width=width):
+                with self.browser.new_context(viewport={'width': width, 'height': 844},
+                                              is_mobile=touch, has_touch=touch) as context:
+                    self.page = context.new_page()
+                    self.page.on('pageerror', lambda error: self.errors.append(str(error)))
+                    self.open(mode=mode)
+                    facts = self.value('start').evaluate('''element => {
+                        const selection = getSelection(), range = document.createRange();
+                        range.selectNodeContents(element);
+                        selection.removeAllRanges(); selection.addRange(range);
+                        const copied = selection.toString().replace(/\\s+/g, ' ');
+                        selection.removeAllRanges();
+                        const right = element.getBoundingClientRect().right;
+                        const tokens = Array.from(element.querySelectorAll('.tl-time-value'), token => {
+                            range.selectNodeContents(token);
+                            const bounds = token.getBoundingClientRect();
+                            return {text:token.textContent, top:bounds.top, fits:bounds.right <= right + 1,
+                                    lines:range.getClientRects().length};
+                        });
+                        return {copied, tokens};
+                    }''')
+                    self.assertEqual(facts['copied'], '+100 ns 18446744000.000000200 s')
+                    self.assertEqual([token['text'] for token in facts['tokens']], ['+100 ns', '18446744000.000000200 s'])
+                    self.assertTrue(all(token['fits'] and token['lines'] == 1 for token in facts['tokens']), facts)
+                    self.assertEqual(facts['tokens'][1]['top'] > facts['tokens'][0]['top'], touch, facts)
 
     def test_touch_parameters_wrap_as_complete_units_and_copy_exactly(self):
         self.context.close()
@@ -161,6 +331,68 @@ class DetailLayoutBrowserTest(unittest.TestCase):
                         return root.scrollWidth <= root.clientWidth + 1;
                     }'''))
 
+    def test_return_explanation_wraps_between_words_and_keeps_original_text(self):
+        self.page.set_viewport_size({'width': 320, 'height': 844})
+        self.open(name='inner')
+        facts = self.value('return (BTF)').evaluate('''value => {
+            const text = Array.from(value.childNodes).find(node =>
+                node.nodeType === Node.TEXT_NODE && node.textContent.includes(' · '));
+            const before = value.textContent;
+            value.style.width = '13.5ch';
+            const words = [...text.textContent.matchAll(/\\S+/g)].map(word => {
+                const range = document.createRange();
+                range.setStart(text, word.index);
+                range.setEnd(text, word.index + word[0].length);
+                return [word[0], range.getClientRects().length];
+            });
+            return {words, same: before === value.textContent, fits: value.scrollWidth <= value.clientWidth + 1};
+        }''')
+        self.assertGreater(len(facts['words']), 4)
+        self.assertTrue(all(lines == 1 for word, lines in facts['words']), facts)
+        self.assertTrue(facts['same'] and facts['fits'], facts)
+
+    def test_raw_evidence_has_full_touch_targets_and_readable_records(self):
+        self.context.close()
+        for mode in ('single', 'sidecar'):
+            with self.subTest(mode=mode):
+                with self.browser.new_context(viewport={'width': 320, 'height': 844},
+                                              is_mobile=True, has_touch=True) as context:
+                    self.page = context.new_page()
+                    self.page.on('pageerror', lambda error: self.errors.append(str(error)))
+                    self.open(mode=mode, name='inner')
+                    self.page.get_by_role('button', name='Expand details into the chart area').tap()
+                    for label, column in (('args (BTF)', 'args'), ('return (BTF)', 'ret')):
+                        evidence = self.value(label).locator(':scope > details')
+                        summary = evidence.locator(':scope > summary')
+                        self.assertFalse(evidence.evaluate('node => node.open'))
+                        hit = summary.evaluate('''summary => {
+                            summary.scrollIntoView({block:'center', inline:'nearest'});
+                            const bounds = summary.getBoundingClientRect();
+                            const column = summary.closest('.v').getBoundingClientRect();
+                            const tapX = column.right - 4, tapY = bounds.top + bounds.height / 2;
+                            return {tapX, tapY, height: bounds.height, hit: summary.contains(document.elementFromPoint(tapX, tapY))};
+                        }''')
+                        self.assertGreaterEqual(hit['height'], 44, hit)
+                        self.assertTrue(hit['hit'], hit)
+                        self.page.touchscreen.tap(hit['tapX'], hit['tapY'])
+                        self.assertTrue(evidence.evaluate('node => node.open'))
+                        record = evidence.locator('.tl-code-raw')
+                        expected = self.page.evaluate('''column => {
+                            const data = fgData.read('tlData'), index = fgView('timeline').probe().sel();
+                            return data.strings[data.cols[column][index]];
+                        }''', column)
+                        self.assertEqual(record.text_content(), expected)
+                        self.assertTrue(record.evaluate('''record => {
+                            const body = record.closest('.tl-value-evidence-body');
+                            const grid = body.closest('.tl-call-facts').getBoundingClientRect();
+                            const bounds = body.getBoundingClientRect();
+                            return Math.abs(bounds.left - grid.left) < 1 && Math.abs(bounds.right - grid.right) < 1 &&
+                                body.scrollWidth <= body.clientWidth + 1;
+                        }'''))
+                        summary.press('Space')
+                        self.assertFalse(evidence.evaluate('node => node.open'))
+                        self.assertTrue(summary.evaluate('node => node === document.activeElement'))
+
     def test_primary_facts_prioritize_calls_values_and_visible_errors(self):
         for theme, mode in product(('light', 'dark'), ('single', 'sidecar')):
             with self.subTest(theme=theme, mode=mode):
@@ -182,6 +414,16 @@ class DetailLayoutBrowserTest(unittest.TestCase):
                 self.assertEqual(main.locator('.k').all_text_contents(),
                                  ['duration', 'self', 'start', 'task', 'args (BTF)', 'return (BTF)',
                                   'depth', 'trace lines'])
+                prototype = main.locator('.tl-btf-prototype')
+                self.assertIsNone(prototype.get_attribute('open'))
+                self.assertEqual(prototype.locator('summary').inner_text(), 'Function prototype · BTF')
+                self.assertEqual(prototype.evaluate('''node => [node.previousElementSibling.previousElementSibling.textContent,
+                                                                node.nextElementSibling.textContent]'''), ['start', 'task'])
+                self.assertTrue(prototype.locator('summary').evaluate('''summary => {
+                    const bounds = summary.getBoundingClientRect();
+                    const fields = summary.closest('.tl-call-facts').getBoundingClientRect();
+                    return Math.abs(bounds.left - fields.left) < 1 && Math.abs(bounds.right - fields.right) < 1;
+                }'''))
                 self.assertTrue(self.value('return (BTF)').is_visible())
                 self.assertTrue(self.page.locator('.tl-pill.err').is_visible())
                 self.assertTrue(main.locator('.v.err').is_visible())
@@ -205,7 +447,7 @@ class DetailLayoutBrowserTest(unittest.TestCase):
                 self.assertEqual(self.page.get_by_text('Trace metadata', exact=True).count(), 0)
                 self.assertTrue(self.value('recorded address').is_visible())
                 self.assertEqual(self.value('recorded address').locator('.tl-code-raw').inner_text(), '0x2')
-                link = self.value('trace lines').locator('a[data-line]').first
+                link = self.value('trace lines').locator('button[data-line]').first
                 self.assertTrue(link.is_visible())
                 provenance = self.value('user args').locator('details')
                 provenance.locator('summary').focus()

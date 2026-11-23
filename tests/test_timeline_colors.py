@@ -48,8 +48,10 @@ class DurationColorModelTest(unittest.TestCase):
             }});
             const sFlags = Array(N).fill(0), sName = Array(N).fill(0);
             const FL = {CTX:3, USER:1 << 25};
+            const P = {text:'#16202e'};
             let colorMode = 'total', dark = false;
             function hashOf() { throw new Error('Duration colors must not hash function names'); }
+            function baseColor(index) { return baseSliceStyle(index)[0]; }
         '''
         source = 'const input = ' + json.dumps({'durations': durations, 'parents': parents,
                                               'adjusted': adjusted}) + ';\n'
@@ -69,6 +71,16 @@ class DurationColorModelTest(unittest.TestCase):
             assert.notEqual(baseColor(0), total[0]);
             assert.equal(baseColor(1), heatColor(19));
             assert.equal(baseColor(3), heatColor(0));
+        ''')
+
+    def test_recorded_style_tuples_are_shared_per_bin_and_recreated_on_invalidation(self):
+        self.run_colors([1000, 1000, 0], [-1, -1, -1], '''
+            const style = baseSliceStyle(0);
+            assert.equal(baseSliceStyle(1), style);
+            assert.notEqual(baseSliceStyle(2), style);
+            colorCache.clear();
+            assert.notEqual(baseSliceStyle(0), style);
+            assert.deepEqual(baseSliceStyle(0), [heatColor(19), P.text, null]);
         ''')
 
     def test_legacy_self_palette_and_bounded_cache_are_preserved(self):
@@ -393,6 +405,15 @@ class TimelineColorsBrowserTest(unittest.TestCase):
             const model = fgView('timeline').probe();
             return model.NA > model.N && Array.from({length:model.NA - model.N},
                 (_, index) => model.styleOf(model.N + index)[0]).every(color => color.startsWith('rgba('));
+        }'''))
+
+    def test_console_style_sample_cannot_change_a_cached_paint_style(self):
+        self.open_report()
+        self.assertTrue(self.page.evaluate('''() => {
+            const model = fgView('timeline').probe();
+            const style = model.styleOf(0), original = style[0];
+            style[0] = 'magenta';
+            return model.styleOf(0)[0] === original;
         }'''))
 
     def test_packed_reports_keep_duration_colors_and_count_reports_hide_them(self):

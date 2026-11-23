@@ -9,6 +9,7 @@ from html.parser import HTMLParser
 FIELDS = ('cpu', 'pid', 'comm', 'ret', 'params', 'duration', 'func',
           'fold-id', 'fold-type', 'fold-ancestors', 'irqs', 'resched', 'hirq', 'preempt')
 PRESENTATION_FIELDS = ('sort-duration', 'fold-ret', 'call-depth')
+_TEXT_WRAPPERS = re.compile(r'</(?:span|button|a)>|<(?:span|button|a)(?: [a-z][a-z0-9-]*="[^"<>]*")*>')
 
 
 def is_trace_event(line):
@@ -36,9 +37,15 @@ class _LineText(HTMLParser):
         self.parts.append(data)
 
     def read(self, markup):
+        """Strip plain presentation wrappers without reparsing literal caller arrows."""
+        markup = _dom_text(markup)
+        if '&' not in markup:
+            text = _TEXT_WRAPPERS.sub('', markup) if '<' in markup else markup
+            if '<' not in text.replace('<-', ''):
+                return text
         self.reset()
         self.parts.clear()
-        self.feed(_dom_text(markup))
+        self.feed(markup)
         self.close()
         text = ''.join(self.parts)
         self.parts.clear()

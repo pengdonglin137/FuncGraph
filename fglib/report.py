@@ -25,6 +25,9 @@ from .util import build_source_url, clean_file_path, escape_html_preserve_spaces
 
 
 TEXT_CHUNK_ROWS = 512
+WINDOWED_TEXT_CHUNK_ROWS = 64
+DENSE_SOURCE_INDEX_MIN_ENTRIES = 4096
+SOURCE_INDEX_DIGITS = b'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_'
 _UNCLASSIFIED_RETURN = object()
 
 
@@ -160,6 +163,12 @@ class HtmlGenerator:
             else:
                 source_stats = f'<span class="header-sep">·</span> <span>{scope}</span>'
 
+        timeline_jump = ('<button type="button" class="control-btn btn-nav" id="textTimelineJump" disabled '
+                         'title="Select a trace row first">In Timeline<span class="text-jump-target" hidden>'
+                         '<span class="text-jump-separator" aria-hidden="true"> · </span>'
+                         '<span class="text-jump-number"></span></span></button>') if (
+                             self.timeline_json is not None and not self.timeline_json.get('no_text')) else ''
+
         # 生成信息面板内容
         info_items = format_args_info(self.script_args)
         env_items = get_environment_info()
@@ -262,12 +271,14 @@ class HtmlGenerator:
             <div id="filterPlaceholder"></div>
             <div class="toolbar">
                 <div class="btn-group">
-                    <button class="control-btn btn-nav" id="textFilterToggle" onclick="toggleFilterBox(event)" aria-expanded="false"{' aria-controls="filterBox"' if self.filter_html else ''}>&#x1F50D; Filter<span id="textFilterStatus" hidden> · On</span></button>
+                    <button class="control-btn btn-nav" id="textFilterToggle" onclick="toggleFilterBox(event)" aria-expanded="false"{' aria-controls="filterBox"' if self.filter_html else ''}><span class="text-filter-icon" aria-hidden="true">&#x1F50D; </span>Filter<span id="textFilterStatus" hidden> · On</span></button>
                     <button class="control-btn btn-nav" onclick="scrollToTop()">Top</button>
-                    {event_button}
-                    <button type="button" class="control-btn btn-nav text-more" id="textMoreToggle" onclick="fgToggleTextMore()" aria-expanded="false" aria-controls="textToolbarOptions">More</button>
+                    <button type="button" class="control-btn btn-nav text-more" id="textMoreToggle" onclick="fgToggleTextMore(event)" aria-expanded="false" aria-controls="textToolbarOptions">More</button>
                 </div>
+                {timeline_jump}
+                <button type="button" class="control-btn btn-tool" id="textWindowBtn" hidden onclick="fgToggleTextRenderer()" aria-label="Windowed Text" title="Render only the visible Text window"><span class="text-window-label">Windowed Text</span><span class="text-window-short" aria-hidden="true">Windowed</span></button>
                 <div class="text-toolbar-options" id="textToolbarOptions">
+                {event_button}
                 <div class="btn-group">
                     {tree_button}
                     <button class="control-btn btn-expand" onclick="expandAll()">Expand All</button>
@@ -279,12 +290,16 @@ class HtmlGenerator:
                     <button class="control-btn btn-tool" id="textOrderBtn" onclick="fgToggleTextOrder()" title="Line order: as captured (all CPUs interleaved by time) or grouped by task with context switches summarized">Order: time</button>
                     <button class="control-btn btn-tool" id="srcModeBtn" onclick="fgToggleSrcMode()" title="Source blocks: inline chain (outer to inner, collapsible) or flat faddr2line order">Source: chain</button>
                 </div>
-                <button class="control-btn btn-tool" id="textWindowBtn" hidden onclick="fgOpenWindowedText()" title="Reload this sidecar report with experimental bounded-DOM Text rendering">Windowed Text</button>
                 <span class="heatmap-legend" id="heatmapLegend"></span>
                 </div>
             </div>
         </div>
 
+        <div class="fg-window-full-loading" id="textWindowLoading" hidden>
+            <span id="textWindowStatus" role="status"></span>
+            <progress id="textWindowProgress" aria-label="Full Text rows prepared" hidden></progress>
+            <button type="button" id="textWindowCancel">Cancel</button>
+        </div>
         {startup_status}
         <div id="textViewport" role="region" aria-label="Trace text">
         {startup_script}
@@ -318,9 +333,11 @@ class HtmlGenerator:
         <ul>
             <li><kbd>j</kbd>/<kbd>k</kbd> or <kbd>↓</kbd>/<kbd>↑</kbd>: Move to next/prev expandable line</li>
             <li><kbd>h</kbd>/<kbd>l</kbd>: Scroll left/right</li>
-            <li><kbd>Enter</kbd>: Expand/collapse</li>
+            <li><kbd>Enter</kbd>: Expand/collapse</li>""" + (
+                '\n            <li><kbd>Alt</kbd>+<kbd>Enter</kbd>: Show the focused trace row in Timeline</li>'
+                if timeline_jump else '') + """
             <li><kbd>Space</kbd>: Scroll down</li>
-            <li><kbd>Esc</kbd>: Clear selection</li>
+            <li><kbd>Esc</kbd>: Clear selection; while locating a Text row from Timeline, cancel and return</li>
         </ul>
         <h3>Function Call Folding</h3>
         <ul>
@@ -377,6 +394,27 @@ class HtmlGenerator:
         for first in range(0, len(self._src_pool), rows):
             yield first, self._src_pool[first:first + rows]
 
+    def _source_line_index(self):
+        index = self._src_lines
+        entries = len(index)
+        if entries < DENSE_SOURCE_INDEX_MIN_ENTRIES:
+            return index
+        length = max(index) + 1
+        if length > 2 * entries:
+            return index
+        radix = len(SOURCE_INDEX_DIGITS)
+        if max(index.values()) + 1 < radix ** 2:
+            packed = bytearray(SOURCE_INDEX_DIGITS[:1] * (2 * length))
+            for line, source in index.items():
+                high, low = divmod(source + 1, radix)
+                packed[2 * line] = SOURCE_INDEX_DIGITS[high]
+                packed[2 * line + 1] = SOURCE_INDEX_DIGITS[low]
+            return packed.decode('ascii')
+        dense = [0] * length
+        for line, source in index.items():
+            dense[line] = source + 1
+        return dense
+
     def _iter_source_parts(self):
         yield 'source_open', '    <script type="application/json" id="fgSrc">'
         data = json.dumps(self._src_pool, ensure_ascii=False, separators=(',', ':')).replace('<', '\\u003c')
@@ -384,7 +422,7 @@ class HtmlGenerator:
         yield 'source_close', '</script>\n'
         if self.timeline_json is not None:
             yield 'source_index_open', '    <script type="application/json" id="fgSrcLines">'
-            yield 'source_index_data', json.dumps(self._src_lines, separators=(',', ':'))
+            yield 'source_index_data', json.dumps(self._source_line_index(), separators=(',', ':'))
             yield 'source_index_close', '</script>\n'
 
     # ---- Optional views (Timeline, Compare): tabs, containers, CSS, data, scripts ----
@@ -420,11 +458,17 @@ class HtmlGenerator:
         if not views:
             return ''
         h = ('        <div class="view-tabs">\n'
-             '            <button class="view-tab active" data-view="text" onclick="fgSwitchView(\'text\')">Text</button>\n')
+             '            <button class="view-tab active" data-view="text" aria-current="true" onclick="fgSwitchView(\'text\')">Text</button>\n')
         for name, label, badge, *_ in views:
-            badge_html = f'<span class="tab-badge">{html.escape(badge)}</span>' if badge else ''
+            badge_text = html.escape(badge)
+            badge_html = f'<span class="tab-badge" aria-hidden="true" title="{badge_text}">{badge_text}</span>' if badge else ''
             h += (f'            <button class="view-tab" data-view="{name}" onclick="fgSwitchView(\'{name}\')">'
                   f'{label}{badge_html}</button>\n')
+        if self.timeline_json is not None and not self.timeline_json.get('no_text'):
+            h += ('            <button type="button" class="fg-jump-return" id="fgJumpReturn" hidden>'
+                  '<span class="fg-jump-return-full">Return</span>'
+                  '<span class="fg-jump-return-short" aria-hidden="true"></span></button>\n'
+                  '            <div class="fg-jump-status" id="fgJumpStatus" role="status" aria-atomic="true"></div>\n')
         return h + '        </div>\n'
 
     def _view_containers(self):
@@ -714,17 +758,15 @@ class HtmlGenerator:
                 <div class="filter-tags" id="filterTags"></div>
                 <div class="filter-input-row">
                     <input type="text" id="filterInput" aria-label="Filter trace lines" placeholder="field:value, e.g. cpu:3 AND duration:>10 graph:funcname sort:desc" autocomplete="off" data-error-values="{error_values_json}">
-                    <button class="control-btn filter-btn" onclick="applyFilter()">Apply</button>
-                    <button class="control-btn clear-btn" onclick="clearFilter()">Clear</button>
-                    <button class="control-btn filter-help-btn" onclick="toggleFilterHelp()" title="Filter syntax help">?</button>
+                    <button class="control-btn filter-btn" onclick="fgSubmitTextFilter()">Apply</button>
+                    <button class="control-btn clear-btn" onclick="fgSubmitTextFilter(true)">Clear</button>
+                    <button type="button" class="control-btn filter-help-btn" id="filterHelpToggle" onclick="toggleFilterHelp()" aria-label="Filter syntax help" aria-controls="filterSyntaxHelp" aria-expanded="false" title="Filter syntax help">?</button>
                 </div>
-                <div class="filter-fields" id="filterFields">
-                    {''.join(field_buttons)}
-                </div>
-                <div class="filter-syntax-help" id="filterSyntaxHelp">
+                <div id="textFilterProgress" class="text-filter-progress" role="status"></div>
+                <section class="filter-syntax-help" id="filterSyntaxHelp" aria-labelledby="filterSyntaxTitle" hidden>
                     <div class="syntax-help-header">
-                        <span>Filter Syntax</span>
-                        <span class="syntax-help-close" onclick="toggleFilterHelp()">&times;</span>
+                        <span id="filterSyntaxTitle">Filter Syntax</span>
+                        <button type="button" class="syntax-help-close" onclick="fgCloseFilterHelp(true)" aria-label="Close filter syntax help">&times;</button>
                     </div>
                     <div class="syntax-help-body">
                         <div class="syntax-section">
@@ -760,6 +802,9 @@ class HtmlGenerator:
                             </div>
                         </div>
                     </div>
+                </section>
+                <div class="filter-fields" id="filterFields">
+                    {''.join(field_buttons)}
                 </div>
             </div>
             <div class="filter-hint" id="filterHint"></div>'''
@@ -1105,10 +1150,10 @@ class HtmlGenerator:
     def _iter_content_chunks(self):
         count = 0
         for fragment in self._iter_content_lines():
-            if count % TEXT_CHUNK_ROWS == 0:
+            if count % self.text_chunk_rows == 0:
                 if count:
                     yield '</div>'
-                yield f'<div class="text-chunk" data-chunk-size="{TEXT_CHUNK_ROWS}">'
+                yield f'<div class="text-chunk" data-chunk-size="{self.text_chunk_rows}">'
             yield fragment
             count += 1
         if count:
@@ -1464,7 +1509,9 @@ class HtmlGenerator:
             content_parts.append(f'<span class="line-content">{escaped_line}</span>')
 
             if is_expandable:
-                content_parts.append('<span class="expand-btn">+</span>')
+                content_parts.append(f'<button type="button" class="expand-btn" tabindex="-1" '
+                                     f'aria-label="Source for line {line_number}" aria-expanded="false" '
+                                     f'aria-controls="{line_id}_content">+</button>')
 
             content_parts.append('</div>')
 
@@ -1562,12 +1609,19 @@ def generate_html(parsed_lines, vmlinux_path, faddr2line_path, module_dirs=None,
 def write_html(path, parsed_lines, vmlinux_path, faddr2line_path, **options):
     """Stream a complete report atomically and return output metadata and resolver times."""
     report_mode = options.pop('report_mode', 'single')
+    windowed_compression = options.pop('windowed_compression', 'none')
     sidecar_threshold = options.pop('sidecar_threshold', None)
-    if report_mode not in ('single', 'sidecar', 'auto'):
-        raise ValueError('report mode must be single, sidecar or auto')
+    if report_mode not in ('single', 'single-windowed', 'sidecar', 'auto'):
+        raise ValueError('report mode must be single, single-windowed, sidecar or auto')
     if report_mode == 'auto' and sidecar_threshold is None:
         raise ValueError('auto report mode requires an explicit sidecar threshold in bytes')
+    if windowed_compression != 'none' and report_mode != 'single-windowed':
+        raise ValueError('windowed compression requires single-windowed report mode')
     generator = HtmlGenerator(parsed_lines, vmlinux_path, faddr2line_path, **options)
+    if report_mode == 'single-windowed':
+        from .sidecar import write_single_windowed
+        generator.text_chunk_rows = WINDOWED_TEXT_CHUNK_ROWS
+        return write_single_windowed(path, generator, compression=windowed_compression), generator.vmlinux_time, generator.module_time
     if report_mode in ('sidecar', 'auto'):
         from .sidecar import write_sidecar
         written = write_sidecar(path, generator, byte_limit=sidecar_threshold if report_mode == 'auto' else None)

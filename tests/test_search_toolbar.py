@@ -122,6 +122,81 @@ class SearchToolbarBrowserTest(unittest.TestCase):
                     self.assert_controls()
                     self.page.context.close()
 
+    def test_refresh_keeps_chart_and_toolbar_in_place_on_short_touch_screens(self):
+        for width, mode in ((320, 'single'), (350, 'single'), (720, 'sidecar'), (760, 'sidecar')):
+            with self.subTest(width=width, mode=mode):
+                self.open_report(width, 420, mode=mode)
+                self.start('.*')
+                geometry = self.page.locator('.tl-search').evaluate('''async input => {
+                    const selectors = ['.tl-primary', '.tl-search', '.tl-search-nav', '.tl-more', '.tl-canvas'];
+                    const read = () => selectors.map(selector => document.querySelector(selector).getBoundingClientRect().toJSON());
+                    const idle = () => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+                    input.focus({preventScroll:true});
+                    await idle();
+                    const before = read();
+                    input.dispatchEvent(new CompositionEvent('compositionstart', {bubbles:true}));
+                    await idle();
+                    const during = read(), status = document.querySelector('.tl-count');
+                    const result = status.querySelector('.tl-count-value');
+                    const details = {busy:status.getAttribute('aria-busy'), message:status.innerText,
+                        oldCountHidden:!!result && getComputedStyle(result).visibility === 'hidden',
+                        focused:document.activeElement === input};
+                    input.dispatchEvent(new CompositionEvent('compositionend', {bubbles:true}));
+                    return {before, during, details};
+                }''')
+                self.assertEqual(geometry['during'], geometry['before'])
+                self.assertEqual(geometry['details'], dict(busy='true', message='Composing…', oldCountHidden=True, focused=True))
+                self.page.locator('.tl-count[aria-busy=false]').wait_for(state='attached')
+                self.assert_controls()
+
+    def test_short_landscape_filter_badge_preserves_the_search_toolbar(self):
+        for width, height, mode in ((660, 360, 'single'), (720, 400, 'sidecar'), (844, 390, 'single')):
+            with self.subTest(width=width, height=height, mode=mode):
+                self.open_report(width, height, mode=mode)
+                self.start('.*')
+                toolbar = self.page.locator('.tl-toolbar')
+                idle_height = toolbar.evaluate('toolbar => toolbar.offsetHeight')
+                self.page.evaluate('''() => fgNotifyFilter('test scope', new Set(fgData.read('tlData').cols.line))''')
+                self.page.locator('.tl-count[aria-busy=false]').wait_for(state='attached')
+                self.settle()
+                tools = self.page.get_by_role('button', name='Tools · Filter on', exact=True)
+                self.assertTrue(tools.is_visible())
+                self.assertEqual(tools.locator('.tl-more-filter').is_visible(), width > 800)
+                if width <= 800:
+                    self.assertEqual(toolbar.evaluate('toolbar => toolbar.offsetHeight'), idle_height)
+                    self.assertEqual(tools.evaluate("node => getComputedStyle(node, '::after').content"), '"●"')
+                self.assert_controls()
+                tools.tap()
+                self.page.get_by_role('dialog', name='Timeline tools', exact=True).wait_for()
+                self.page.context.close()
+
+    def test_focused_navigation_waits_without_activating_and_has_a_fallback(self):
+        self.open_report(width=390, height=740)
+        self.start('.*')
+        initial = self.page.evaluate('fgView("timeline").probe().sel()')
+        next_button = self.page.get_by_role('button', name='Next search match')
+        next_button.focus()
+        for query in ('.*?', '['):
+            with self.subTest(query=query):
+                state = next_button.evaluate('''(button, query) => {
+                    const input = document.querySelector('.tl-search');
+                    input.value = query;
+                    input.dispatchEvent(new Event('input', {bubbles:true}));
+                    button.click();
+                    return {focused:button === document.activeElement, tabIndex:button.tabIndex,
+                        disabled:button.getAttribute('aria-disabled'),
+                        busy:document.querySelector('.tl-count').getAttribute('aria-busy')};
+                }''', query)
+                self.assertEqual(state, dict(focused=True, tabIndex=-1, disabled='true', busy='true'))
+                self.page.locator('.tl-count[aria-busy=false]').wait_for(state='attached')
+                self.assertEqual(self.page.evaluate('fgView("timeline").probe().sel()'), initial)
+                if query == '.*?':
+                    self.assertTrue(next_button.evaluate('button => button === document.activeElement && button.tabIndex === 0'))
+                    self.assertTrue(next_button.is_enabled())
+                else:
+                    self.assertEqual(self.page.locator('.tl-count').inner_text(), 'Invalid regex')
+                    self.assertTrue(self.page.locator('.tl-search').evaluate('input => input === document.activeElement'))
+
     def test_touch_next_and_previous_do_not_accidentally_activate_fullscreen(self):
         for mode, theme in product(('single', 'sidecar'), ('light', 'dark')):
             with self.subTest(mode=mode, theme=theme):
@@ -171,6 +246,67 @@ class SearchToolbarBrowserTest(unittest.TestCase):
         self.assertEqual(self.page.locator('.tl-search').input_value(), '')
         self.assertFalse(self.page.locator('.tl-search-nav').is_visible())
         self.assert_controls()
+
+    def test_fullscreen_keyboard_follows_the_compact_toolbar_order(self):
+        for mode, native, height in product(('single', 'sidecar'), (True, False), (240, 640)):
+            with self.subTest(mode=mode, native=native, height=height):
+                self.open_report(width=320, height=height, mode=mode)
+                if not native:
+                    self.page.evaluate('Element.prototype.requestFullscreen = undefined')
+                self.page.locator('[data-act=max]').tap()
+                self.page.wait_for_function('native => !!document.fullscreenElement === native && !document.querySelector("[data-act=max]").disabled', arg=native)
+                self.start('.*')
+                search = self.page.locator('.tl-search')
+                search.focus()
+                zoom = ['zoomout', 'zoomin', 'fit']
+                zoom_in_tools = height == 240
+                order = ['searchprev', 'searchnext', 'max', 'help']
+                if not zoom_in_tools:
+                    order += zoom
+                order += ['inl', 'notes', 'options']
+                for action in order:
+                    self.page.keyboard.press('Tab')
+                    self.assertEqual(self.page.evaluate('document.activeElement.dataset.act'), action)
+                if zoom_in_tools:
+                    self.page.keyboard.press('Enter')
+                    for position, action in enumerate(zoom):
+                        if position:
+                            self.page.keyboard.press('Tab')
+                        self.assertEqual(self.page.evaluate('document.activeElement.dataset.act'), action)
+                    self.page.keyboard.press('Escape')
+                    self.assertEqual(self.page.evaluate('document.activeElement.dataset.act'), 'options')
+                for action in reversed(order[:-1]):
+                    self.page.keyboard.press('Shift+Tab')
+                    self.assertEqual(self.page.evaluate('document.activeElement.dataset.act'), action)
+                self.page.keyboard.press('Shift+Tab')
+                self.assertTrue(search.evaluate('input => input === document.activeElement'))
+
+    def test_toolbar_breakpoint_preserves_focus_and_restores_desktop_order(self):
+        self.open_report(width=390, height=740)
+        self.start('.*')
+        select_state = '() => [fgView("timeline").probe().sel(), document.querySelector(".tl-search").value]'
+        before = self.page.evaluate(select_state)
+        fit = self.page.locator('[data-act=fit]')
+        fit.focus()
+        for width, height, compact, next_after_search in ((1200, 800, False, 'zoomout'),
+                                                          (390, 740, True, 'max')):
+            with self.subTest(compact=compact):
+                self.page.set_viewport_size({'width': width, 'height': height})
+                self.page.wait_for_function('compact => document.querySelector("#timelineView").classList.contains("tl-compact") === compact', arg=compact)
+                self.assertTrue(fit.evaluate('button => button === document.activeElement'))
+                self.assertEqual(self.page.evaluate(select_state), before)
+                self.page.locator('[data-act=searchnext]').focus()
+                self.page.keyboard.press('Tab')
+                self.assertEqual(self.page.evaluate('document.activeElement.dataset.act'), next_after_search)
+                fit.focus()
+        tools = self.page.locator('[data-act=options]')
+        tools.press('Enter')
+        self.assertTrue(self.page.locator('.tl-options').evaluate('options => options.contains(document.activeElement)'))
+        self.page.set_viewport_size({'width': 1200, 'height': 800})
+        self.page.wait_for_function('() => !document.querySelector("#timelineView").classList.contains("tl-compact")')
+        self.assertEqual(tools.get_attribute('aria-expanded'), 'false')
+        self.assertTrue(tools.evaluate('button => button === document.activeElement'))
+        self.assertEqual(self.page.evaluate(select_state), before)
 
     def test_orientation_changes_keep_query_selection_and_open_tools_usable(self):
         self.open_report(width=390, height=740)

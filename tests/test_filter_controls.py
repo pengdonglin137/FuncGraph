@@ -229,6 +229,58 @@ class FilterControlsTest(unittest.TestCase):
                 self.assertTrue(page.locator('#textFilterToggle').evaluate('button => button === document.activeElement'))
                 self.assertEqual(self.trace_state(page), before)
 
+    def test_compact_filter_panels_follow_a_shrinking_visual_viewport(self):
+        page = self.open_report(width=390, height=844, touch=True)
+        before = self.trace_state(page)
+        panel = page.locator('#filterBox')
+        original_height = panel.bounding_box()['height']
+        page.locator('#filterInput').fill('func:worker')
+        page.evaluate('''() => {
+            const viewport = visualViewport;
+            const initial = {offsetTop: viewport.offsetTop, height: viewport.height};
+            window.setFilterViewport = async (bounds = initial, type = 'resize') => {
+                for (const [key, value] of Object.entries(bounds))
+                    Object.defineProperty(viewport, key, {configurable:true, value});
+                viewport.dispatchEvent(new Event(type));
+                await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+            };
+        }''')
+        page.evaluate('setFilterViewport({offsetTop:60,height:180})')
+        bounds = panel.bounding_box()
+        self.assertGreaterEqual(bounds['y'], 60)
+        self.assertLessEqual(bounds['y'] + bounds['height'], 240)
+        self.assertLess(bounds['height'], original_height)
+        self.assertTrue(page.locator('#filterInput').evaluate('''input => {
+            const bounds = input.getBoundingClientRect();
+            return document.activeElement === input && bounds.top >= 60 && bounds.bottom <= 240;
+        }'''))
+        self.assertEqual(page.locator('#filterInput').input_value(), 'func:worker')
+
+        page.evaluate('setFilterViewport()')
+        self.assertAlmostEqual(panel.bounding_box()['height'], original_height, delta=1)
+        owner, popup = self.open_field(page, 'func')
+        page.evaluate('setFilterViewport({offsetTop:100,height:150}, "scroll")')
+        bounds = popup.bounding_box()
+        self.assertGreaterEqual(bounds['y'], 100)
+        self.assertLessEqual(bounds['y'] + bounds['height'], 250)
+        self.assertTrue(popup.locator('input').evaluate('''input => {
+            const bounds = input.getBoundingClientRect();
+            return document.activeElement === input && bounds.top >= 100 && bounds.bottom <= 250;
+        }'''))
+        page.evaluate('setFilterViewport()')
+        page.keyboard.press('Escape')
+        self.assertFalse(popup.is_visible())
+        self.assert_owner_focused(owner)
+        page.locator('#textMoreToggle').click()
+        more = page.locator('#textToolbarOptions')
+        page.evaluate('setFilterViewport({offsetTop:0,height:140})')
+        bounds = more.bounding_box()
+        self.assertGreaterEqual(bounds['y'], 0)
+        self.assertLessEqual(bounds['y'] + bounds['height'], 140)
+        page.keyboard.press('Escape')
+        self.assertFalse(more.is_visible())
+        self.assertEqual(self.trace_state(page), before)
+
     def test_resize_and_switching_compact_panels_close_child_popup(self):
         page = self.open_report(width=390, height=844, touch=True)
         owner, popup = self.open_field(page)
@@ -241,6 +293,45 @@ class FilterControlsTest(unittest.TestCase):
         page.locator('#textMoreToggle').wait_for(state='hidden')
         self.assertFalse(popup.is_visible())
         self.assertEqual(owner.get_attribute('aria-expanded'), 'false')
+
+    def test_short_desktop_compacts_controls_without_losing_filter_editing_or_preferences(self):
+        width = 800
+        page = self.open_report(width=width, height=620, touch=False)
+        controls = page.locator('.controls')
+        more = page.locator('#textMoreToggle')
+        filter_button = page.locator('#textFilterToggle')
+        editor = page.locator('#filterInput')
+        self.assertFalse(more.is_visible())
+        filter_button.click()
+        self.assertFalse(editor.is_visible())
+        self.assertEqual(page.evaluate('lsGet("filterBoxVisible")'), 'false')
+        before = self.trace_state(page)
+
+        page.set_viewport_size(dict(width=width, height=320))
+        more.wait_for()
+        self.assertTrue(controls.evaluate('node => innerHeight - node.getBoundingClientRect().bottom > 100'))
+        self.assertFalse(editor.is_visible())
+        filter_button.press('Enter')
+        editor.fill('func:unapplied-draft')
+        editor.evaluate('input => input.setSelectionRange(5, 14)')
+
+        for height, compact in ((620, False), (320, True)):
+            with self.subTest(height=height):
+                page.set_viewport_size(dict(width=width, height=height))
+                more.wait_for(state='visible' if compact else 'hidden')
+                self.assertTrue(editor.evaluate('''input => input === document.activeElement &&
+                    input.selectionStart === 5 && input.selectionEnd === 14'''))
+                self.assertEqual(editor.input_value(), 'func:unapplied-draft')
+                self.assertEqual(filter_button.get_attribute('aria-expanded'), 'true')
+        page.keyboard.press('Escape')
+        self.assertFalse(editor.is_visible())
+        self.assertTrue(filter_button.evaluate('button => button === document.activeElement'))
+
+        page.set_viewport_size(dict(width=width, height=620))
+        more.wait_for(state='hidden')
+        self.assertFalse(editor.is_visible())
+        self.assertEqual(page.evaluate('lsGet("filterBoxVisible")'), 'false')
+        self.assertEqual(self.trace_state(page), before)
 
     def test_composition_modifiers_and_consumed_keys_do_not_dismiss_or_apply(self):
         page = self.open_report()

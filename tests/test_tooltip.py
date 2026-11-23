@@ -96,20 +96,31 @@ class TimelineTooltipBrowserTest(unittest.TestCase):
                 self.assertIn(arguments, self.page.locator('.tl-call-facts').inner_text())
                 self.assertEqual(self.ev('JSON.stringify(fgData.read("tlData"))'), original)
 
-    def test_repeated_hover_after_expanding_text_reuses_size_and_updates_position(self):
-        self.open_range_data(['worker'], durations=[1000000])
+    def test_repeated_hover_after_expanding_text_reuses_content_and_updates_position(self):
+        self.open_range_data(['worker'], durations=[1000000], columns={'args': [1]},
+                             extra={'strings': ['worker', 'count=17']})
+        self.ev('''() => {
+            const strings = fgView('timeline').probe().S;
+            const args = strings[1];
+            window.tooltipArgReads = 0;
+            Object.defineProperty(strings, '1', {get() { tooltipArgReads++; return args; }});
+        }''')
         self.ev('fgSwitchView("text")')
         self.page.locator('.line-container.expandable').first.locator('.line-content').click()
         self.page.locator('.expanded-content:visible').first.wait_for(state='visible')
         self.open_timeline()
         point = self.move_to()
         original = self.page.locator('.tl-tip').inner_text()
+        self.assertIn('count=17', original)
+        self.assertGreater(self.ev('tooltipArgReads'), 0)
         first_transform = self.page.locator('.tl-tip').evaluate('node => node.style.transform')
         self.instrument_geometry()
+        self.ev('tooltipArgReads = 0')
         for index in range(12):
             self.page.mouse.move(point[0] + index + 1, point[1])
             self.settle()
         self.assertEqual(self.ev('tooltipReads'), 0)
+        self.assertEqual(self.ev('tooltipArgReads'), 0)
         self.assertEqual(self.page.locator('.tl-tip').inner_text(), original)
         self.assertNotEqual(self.page.locator('.tl-tip').evaluate('node => node.style.transform'), first_transform)
         self.assertFalse(self.page.locator('.tl-tip-more').is_visible())
@@ -121,6 +132,12 @@ class TimelineTooltipBrowserTest(unittest.TestCase):
         self.page.mouse.move(point[0] + 16, point[1])
         self.settle()
         self.assertEqual(self.ev('tooltipReads'), 0)
+        self.assertEqual(self.ev('tooltipArgReads'), 0)
+        self.page.mouse.move(0, 0)
+        self.page.locator('.tl-tip').wait_for(state='hidden')
+        self.move_to()
+        self.assertEqual(self.page.locator('.tl-tip').inner_text(), original)
+        self.assertGreater(self.ev('tooltipArgReads'), 0)
 
     def test_target_and_overhead_changes_cannot_reuse_stale_content(self):
         self.open_range_data(['first', 'second_with_a_longer_name'], durations=[1000, 2000], starts=[0, 3000],
@@ -213,11 +230,16 @@ class TimelineTooltipBrowserTest(unittest.TestCase):
         self.page.mouse.move(*point)
         self.page.wait_for_function('typeof resolveTipSource === "function"')
         self.settle()
-        return target
+        return dict(target, point=point)
 
     def test_async_source_position_refreshes_size_and_preserves_exact_location(self):
         target = self.prepare_async_source()
         self.assertEqual(self.page.locator('.tl-tip .t-k', has_text='source').count(), 0)
+        pending = self.page.locator('.tl-tip-body').inner_html()
+        latest = [round(target['point'][0]) + 12, round(target['point'][1])]
+        self.page.mouse.move(*latest)
+        self.settle()
+        self.assertEqual(self.page.locator('.tl-tip-body').inner_html(), pending)
         self.instrument_geometry()
         self.ev('resolveTipSource()')
         self.page.wait_for_function('source => document.querySelector(".tl-tip").textContent.includes(source)', arg=target['source'])
@@ -225,6 +247,13 @@ class TimelineTooltipBrowserTest(unittest.TestCase):
         self.assertGreater(self.ev('tooltipReads'), 0)
         self.assertIn(target['source'], self.page.locator('.tl-tip').inner_text())
         self.assert_fits()
+        fresh = self.page.locator('.tl-tip-body').inner_html()
+        placement = self.ev('document.querySelector(".tl-tip").style.transform')
+        self.ev('''([clientX, clientY]) => document.querySelector('.tl-canvas').dispatchEvent(
+            new MouseEvent('mousemove', {bubbles:true, clientX, clientY}))''', latest)
+        self.settle()
+        self.assertEqual(self.page.locator('.tl-tip-body').inner_html(), fresh)
+        self.assertEqual(self.ev('document.querySelector(".tl-tip").style.transform'), placement)
 
     def test_late_source_completion_does_not_revive_a_hidden_tooltip(self):
         self.prepare_async_source()
@@ -237,7 +266,7 @@ class TimelineTooltipBrowserTest(unittest.TestCase):
 
     def test_async_source_failure_stays_bounded_and_escapes_its_message(self):
         self.page.set_viewport_size(dict(width=390, height=480))
-        self.prepare_async_source()
+        target = self.prepare_async_source()
         message = 'missing/' * 150 + '<img src=x onerror="window.tooltipExecuted=1">'
         self.ev('message => rejectTipSource(new Error(message))', message)
         self.page.wait_for_function('document.querySelector(".tl-tip").textContent.includes("Source not loaded:")')
@@ -247,3 +276,15 @@ class TimelineTooltipBrowserTest(unittest.TestCase):
         self.assertIsNone(self.ev('window.tooltipExecuted'))
         self.assert_fits()
         self.assertTrue(self.page.locator('.tl-tip-more').is_visible())
+        failure = self.page.locator('.tl-tip-body').inner_html()
+        self.instrument_geometry()
+        for offset in (3, 6, 9):
+            self.page.mouse.move(target['point'][0] + offset, target['point'][1])
+            self.settle()
+            self.assertEqual(self.page.locator('.tl-tip-body').inner_html(), failure)
+        self.assertEqual(self.ev('tooltipReads'), 0)
+        self.ev('tipSourceReady = true')
+        self.page.mouse.move(target['point'][0] + 10, target['point'][1])
+        self.settle()
+        self.assertIn(target['source'], self.page.locator('.tl-tip-body').text_content())
+        self.assertNotIn('Source not loaded:', self.page.locator('.tl-tip-body').text_content())

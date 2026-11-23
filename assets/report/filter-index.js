@@ -40,15 +40,21 @@
             if (!Array.isArray(events) || events.some((number, index) => !Number.isSafeInteger(number) || number <= 0 ||
                 index && number <= events[index - 1])) throw new Error('Invalid Text event index');
             const eventNumbers = new Set(events);
+            const attributeEnd = expected.length + 2;
+            const hasSource = data.version >= 2;
+            const rowLength = attributeEnd + Number(hasSource);
             let previous = 0;
             for (let index = 0; index < data.rows.length; index++) {
                 const row = data.rows[index];
-                const source = row?.[expected.length + 2];
-                if (!Array.isArray(row) || row.length !== expected.length + (data.version >= 2 ? 3 : 2) ||
-                    !Number.isSafeInteger(row[0]) || row[0] <= previous || typeof row[1] !== 'string' ||
-                    row.some((value, column) => column >= 2 && column < expected.length + 2 && value !== null && typeof value !== 'string') ||
-                    data.version >= 2 && source !== null && (!Number.isSafeInteger(source) || source < 0)) {
+                const source = row?.[attributeEnd];
+                if (!Array.isArray(row) || row.length !== rowLength || !Number.isSafeInteger(row[0]) ||
+                    row[0] <= previous || typeof row[1] !== 'string' ||
+                    hasSource && source !== null && (!Number.isSafeInteger(source) || source < 0)) {
                     throw new Error('Invalid Text filter index row ' + (index + 1));
+                }
+                for (let column = 2; column < attributeEnd; column++) {
+                    const attribute = row[column];
+                    if (attribute !== null && typeof attribute !== 'string') throw new Error('Invalid Text filter index row ' + (index + 1));
                 }
                 previous = row[0];
                 const record = new TextRecord(row, data.version, eventNumbers.delete(row[0]));
@@ -63,20 +69,20 @@
     }
     function* filter(model, text) {
         const { ast, sortDir } = parseFilterExpr(text);
+        const total = model.records.length;
+        if (!ast) return { text: sortDir ? text : '', lines: null, visible: total, total, sortDir, graphSets: {} };
         const graphSets = yield* fgGraphSetsSteps(collectGraphConditions(ast), model.records);
-        const lines = ast ? new Set() : null;
-        let visible = 0;
+        const lines = new Set();
         let scanned = 0;
         for (const line of model.records) {
             const trimmed = line.querySelector('.line-content').textContent.trim();
-            if (!ast || trimmed !== '' && !/^-+$/.test(trimmed) && evalExpr(line, ast, graphSets)) {
-                visible++;
-                if (lines) lines.add(+line.getAttribute('data-line-number'));
+            if (trimmed !== '' && !/^-+$/.test(trimmed) && evalExpr(line, ast, graphSets)) {
+                lines.add(+line.getAttribute('data-line-number'));
             }
             scanned++;
-            if (scanned % 1024 === 0) yield 'Filtering all Text rows: ' + scanned + ' / ' + model.records.length + '…';
+            if (scanned % 1024 === 0) yield 'Filtering all Text rows: ' + scanned + ' / ' + total + '…';
         }
-        return { text: ast || sortDir ? text : '', lines, visible, total: model.records.length, sortDir, graphSets };
+        return { text, lines, visible: lines.size, total, sortDir, graphSets };
     }
     function locate(model, number) {
         if (!Number.isSafeInteger(number) || number <= 0) throw new Error('Invalid Text line identity');
@@ -120,70 +126,103 @@
         if (foldModels.has(model)) return foldModels.get(model);
         const blocks = new Map();
         const ancestry = new Map();
-        const memberRanges = new Map();
-        let rangeValues = 0;
-        function addMember(id, index) {
-            if (!memberRanges.has(id)) memberRanges.set(id, []);
-            const ranges = memberRanges.get(id);
-            if (ranges.length && ranges[ranges.length - 1] === index) ranges[ranges.length - 1] = index + 1;
-            else { ranges.push(index, index + 1); rangeValues += 2; }
+        const firstRangeOffsets = new Map(), firstRanges = [], extraRanges = new Map();
+        const foldId = columns.get('data-fold-id'), foldType = columns.get('data-fold-type');
+        const foldAncestors = columns.get('data-fold-ancestors'), functionName = columns.get('data-func');
+        function addRange(id, start, end) {
+            const offset = firstRangeOffsets.get(id);
+            if (offset === undefined) {
+                firstRangeOffsets.set(id, firstRanges.length);
+                firstRanges.push(start, end);
+                return;
+            }
+            if (firstRanges[offset + 1] === start) {
+                firstRanges[offset + 1] = end;
+                return;
+            }
+            let ranges = extraRanges.get(offset);
+            if (!ranges) extraRanges.set(offset, ranges = []);
+            if (ranges.length && ranges[ranges.length - 1] === start) ranges[ranges.length - 1] = end;
+            else ranges.push(start, end);
         }
         function* recordsIn(start, end) {
             for (let index = start; index < end; index++) yield model.records[index];
         }
-        const ancestors = record => {
-            const text = record.getAttribute('data-fold-ancestors') || '';
-            if (!ancestry.has(text)) ancestry.set(text, Array.from(new Set(text.split(/\s+/).filter(Boolean))));
-            return ancestry.get(text);
-        };
-        const block = id => {
-            if (!blocks.has(id)) blocks.set(id, { id, entry: null, exit: null, calls: 0 });
-            return blocks.get(id);
-        };
-        let scanned = 0;
-        for (const record of model.records) {
-            const id = record.getAttribute('data-fold-id');
-            const type = record.getAttribute('data-fold-type');
-            const parents = ancestors(record);
-            const ownsAncestor = parents.includes(id);
-            const call = type === 'entry' || type === 'inner' && record.getAttribute('data-func');
-            if (id && (type === 'entry' || type === 'exit')) block(id)[type] = record;
-            for (const ancestor of parents) {
-                addMember(ancestor, scanned);
-                if (call && (ancestor !== id || type === 'inner')) block(ancestor).calls++;
+        const ancestorNames = text => {
+            let parents = ancestry.get(text);
+            if (!parents) {
+                const separator = text.lastIndexOf(' ');
+                const prefix = separator > 0 ? ancestry.get(text.slice(0, separator)) : null;
+                if (prefix) {
+                    const tail = text.slice(separator + 1);
+                    if (tail && !/\s/.test(tail)) parents = prefix.includes(tail) ? prefix : [...prefix, tail];
+                }
+                if (!parents) parents = text && !/\s/.test(text) ? [text] : Array.from(new Set(text.split(/\s+/).filter(Boolean)));
+                ancestry.set(text, parents);
             }
-            if (!ownsAncestor) addMember(id, scanned);
-            if (call && type === 'inner' && id && !ownsAncestor) block(id).calls++;
+            return parents;
+        };
+        const ancestors = record => ancestorNames(record.getAttribute('data-fold-ancestors') || '');
+        const block = id => {
+            let state = blocks.get(id);
+            if (!state) blocks.set(id, state = { id, entry: null, exit: null, calls: 0 });
+            return state;
+        };
+        let scanned = 0, calls = 0, active = ancestorNames('');
+        const rangeStarts = [], callStarts = [];
+        function closeAncestors(keep) {
+            for (let depth = active.length - 1; depth >= keep; depth--) {
+                const id = active[depth], count = calls - callStarts[depth];
+                addRange(id, rangeStarts[depth], scanned);
+                if (count) block(id).calls += count;
+            }
+        }
+        for (const record of model.records) {
+            const row = record.row, id = row[foldId], type = row[foldType];
+            const parents = ancestorNames(row[foldAncestors] || '');
+            if (parents !== active) {
+                let keep = 0;
+                const shared = Math.min(active.length, parents.length);
+                while (keep < shared && active[keep] === parents[keep]) keep++;
+                closeAncestors(keep);
+                for (let depth = keep; depth < parents.length; depth++) {
+                    rangeStarts[depth] = scanned;
+                    callStarts[depth] = calls;
+                }
+                active = parents;
+            }
+            const call = type === 'entry' || type === 'inner' && row[functionName];
+            if (id && (type === 'entry' || type === 'exit')) block(id)[type] = record;
+            const own = id ? parents.lastIndexOf(id) : -1;
+            if (call) {
+                calls++;
+                if (type === 'entry' && own >= 0) callStarts[own]++;
+                if (type === 'inner' && id && own < 0) block(id).calls++;
+            }
+            if (own < 0) addRange(id, scanned, scanned + 1);
             scanned++;
             if (scanned % 512 === 0) yield 'Preparing Text fold metadata: ' + scanned + ' / ' + model.records.length + '…';
         }
-        const rangeIndex = new Uint32Array(rangeValues + memberRanges.size);
-        let indexed = 0, position = 0;
-        for (const [id, ranges] of memberRanges) {
-            rangeIndex[position] = ranges.length;
-            rangeIndex.set(ranges, position + 1);
-            memberRanges.set(id, position);
-            position += ranges.length + 1;
-            indexed++;
-            if (indexed % 512 === 0) yield 'Indexing Text fold ranges: ' + indexed + ' / ' + memberRanges.size + '…';
-        }
+        closeAncestors(0);
         const result = {
             records: model.records,
             eventRecords: model.eventRecords,
             blocks,
             *members(id) {
-                const position = memberRanges.get(id);
-                if (position === undefined) return;
-                const end = position + 1 + rangeIndex[position];
-                for (let offset = position + 1; offset < end; offset += 2) yield* recordsIn(rangeIndex[offset], rangeIndex[offset + 1]);
+                const offset = firstRangeOffsets.get(id);
+                if (offset === undefined) return;
+                yield* recordsIn(firstRanges[offset], firstRanges[offset + 1]);
+                const ranges = extraRanges.get(offset);
+                for (let index = 0; ranges && index < ranges.length; index += 2) yield* recordsIn(ranges[index], ranges[index + 1]);
             },
             *membersOf(ids) {
                 const selected = [];
                 for (const id of new Set(ids)) {
-                    const position = memberRanges.get(id);
-                    if (position === undefined) continue;
-                    const end = position + 1 + rangeIndex[position];
-                    for (let offset = position + 1; offset < end; offset += 2) selected.push([rangeIndex[offset], rangeIndex[offset + 1]]);
+                    const offset = firstRangeOffsets.get(id);
+                    if (offset === undefined) continue;
+                    selected.push([firstRanges[offset], firstRanges[offset + 1]]);
+                    const ranges = extraRanges.get(offset);
+                    for (let index = 0; ranges && index < ranges.length; index += 2) selected.push([ranges[index], ranges[index + 1]]);
                 }
                 selected.sort((left, right) => left[0] - right[0] || right[1] - left[1]);
                 let start = -1, end = -1;
@@ -205,13 +244,12 @@
                 let hidden = null;
                 for (const id of Object.keys(folds)) if (folds[id] === true) {
                     for (const key of id === 'null' ? [id, null] : [id]) {
-                        const position = memberRanges.get(key);
-                        if (position === undefined) continue;
+                        const offset = firstRangeOffsets.get(key);
+                        if (offset === undefined) continue;
                         if (hidden === null) hidden = new Uint8Array(model.records.length);
-                        const end = position + 1 + rangeIndex[position];
-                        for (let offset = position + 1; offset < end; offset += 2) {
-                            hidden.fill(1, rangeIndex[offset], rangeIndex[offset + 1]);
-                        }
+                        hidden.fill(1, firstRanges[offset], firstRanges[offset + 1]);
+                        const ranges = extraRanges.get(offset);
+                        for (let index = 0; ranges && index < ranges.length; index += 2) hidden.fill(1, ranges[index], ranges[index + 1]);
                     }
                 }
                 if (hidden === null) return null;
@@ -426,18 +464,23 @@
         } finally { iterator.return(); }
     }
     function navigation(order, expandable, hidden = []) {
-        const original = new Set(order);
+        if (!Array.isArray(order)) throw new Error('Invalid Text navigation order');
+        const positions = new Map();
+        for (let index = 0; index < order.length; index++) {
+            const line = order[index];
+            if (!Number.isSafeInteger(line) || line <= 0 || positions.has(line)) throw new Error('Invalid Text navigation records');
+            positions.set(line, index);
+        }
         const sources = new Set(expandable);
         const concealed = new Set(hidden);
-        if (original.size !== order.length || [...sources, ...concealed].some(line => !original.has(line))) {
-            throw new Error('Invalid Text navigation records');
+        for (const lines of [sources, concealed]) for (const line of lines) {
+            if (!positions.has(line)) throw new Error('Invalid Text navigation records');
         }
-        for (const line of order) {
-            if (!Number.isSafeInteger(line) || line <= 0) throw new Error('Invalid Text navigation records');
-        }
-        let positions = new Map();
-        let visibleTree = new Uint32Array(1), expandableTree = new Uint32Array(1);
-        let visibleCount = 0, expandableCount = 0;
+        return createNavigation(order.slice(), positions, sources, concealed);
+    }
+    function createNavigation(order, positions, sources, concealed, initialTrees = null) {
+        let visibleTree = initialTrees?.visible, expandableTree = initialTrees?.expandable;
+        let visibleCount = order.length, expandableCount = sources.size;
         let visibleSnapshot = null, expandableSnapshot = null;
         let visibilityState = null;
         let updates = 0, rebuildPending = false;
@@ -510,14 +553,14 @@
             }
         }
         const result = {
-            order: [],
+            order,
             get visibleCount() { return visibleCount; },
             get expandableCount() { return expandableCount; },
             get visible() { return visibleSnapshot ??= snapshot(false); },
             get expandable() { return expandableSnapshot ??= snapshot(true); },
             indexOf(line) { return positions.get(line) ?? -1; },
             setVisible(line, visible) {
-                if (!original.has(line)) throw new Error('Invalid Text navigation line');
+                if (!positions.has(line)) throw new Error('Invalid Text navigation line');
                 if (concealed.has(line) === !visible) return;
                 changeVisibility(line, visible);
             },
@@ -537,21 +580,21 @@
                 return result;
             },
             reorder(next) {
-                if (Array.isArray(next) && next.length === original.size && result.order.length === original.size) {
+                if (!Array.isArray(next) || next.length !== positions.size) throw new Error('Invalid Text navigation order');
+                if (result.order.length === positions.size) {
                     let unchanged = true;
                     for (let index = 0; index < next.length; index++) {
                         if (positions.get(next[index]) !== index || result.order[index] !== next[index]) { unchanged = false; break; }
                     }
                     if (unchanged) { result.refresh(); return; }
                 }
-                if (!Array.isArray(next) || next.length !== original.size) throw new Error('Invalid Text navigation order');
                 const updated = new Map();
                 for (let index = 0; index < next.length; index++) {
                     const line = next[index];
-                    if (!original.has(line)) throw new Error('Invalid Text navigation order');
+                    if (!positions.has(line)) throw new Error('Invalid Text navigation order');
                     updated.set(line, index);
                 }
-                if (updated.size !== original.size) throw new Error('Invalid Text navigation order');
+                if (updated.size !== positions.size) throw new Error('Invalid Text navigation order');
                 result.order = next.slice();
                 positions = updated;
                 visibilityState = null;
@@ -576,19 +619,29 @@
                 return count ? positionAt(expandableCount ? expandableTree : visibleTree, last ? count - 1 : 0) : -1;
             },
         };
-        result.reorder(order);
-        result.refresh();
+        if (!initialTrees) rebuildTrees();
         return result;
     }
     function* prepareNavigation(model) {
         if (model.version < 2) throw new Error('Text source metadata is unavailable');
-        const order = [], expandable = [];
-        for (const record of model.records) {
-            order.push(record.row[0]);
-            if (record.source !== null) expandable.push(record.row[0]);
-            if (order.length % 512 === 0) yield 'Preparing Text navigation: ' + order.length + ' / ' + model.records.length + '…';
+        const length = model.records.length;
+        const order = new Array(length), positions = new Map(), sources = new Set();
+        const visible = new Uint32Array(length + 1), expandable = new Uint32Array(length + 1);
+        for (let index = 0; index < length; index++) {
+            const record = model.records[index], line = record.row[0];
+            if (!Number.isSafeInteger(line) || line <= 0 || positions.has(line)) throw new Error('Invalid Text navigation records');
+            order[index] = line;
+            positions.set(line, index);
+            const position = index + 1, width = position & -position;
+            visible[position] = width;
+            if (record.source !== null) {
+                sources.add(line);
+                expandable[position]++;
+            }
+            if (position + width <= length) expandable[position + width] += expandable[position];
+            if (position % 512 === 0) yield 'Preparing Text navigation: ' + position + ' / ' + length + '…';
         }
-        return navigation(order, expandable);
+        return createNavigation(order, positions, sources, new Set(), { visible, expandable });
     }
     window.fgTextModel = { fields, presentationFields, symbolFields, outcomeFields, prepare, locate, filter, folding, visibility, prepareFolding, order, prepareOrder, rankDuration, prepareDuration, rankDurationAsync, navigation, prepareNavigation };
     window.fgIndexedFilter = async function (data, text, signal, progress) {

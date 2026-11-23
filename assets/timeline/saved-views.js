@@ -1,6 +1,6 @@
 const SAVED_VIEWS_LIMIT = 50, SAVED_VIEWS_BYTES = 1024 * 1024;
 let savedViewsStore = null, savedViewsGeneration = 0, savedViewsBusy = false;
-let savedViewsReturnFocus = null;
+let savedViewsReturnFocus = null, savedViewsBusyFocus = null;
 
 function savedViewsIdentity() {
     const element = document.getElementById('fgTimelineIdentity');
@@ -92,41 +92,64 @@ function captureSavedView() {
 }
 function savedViewsMessage(message) { savedViewsDialog.querySelector('[data-saved-status]').textContent = message; }
 function savedViewsSetBusy(busy) {
+    if (savedViewsBusy === busy) return;
+    const close = savedViewsDialog.querySelector('[data-saved-close]');
+    const controls = Array.from(savedViewsDialog.querySelectorAll('button:not([data-saved-close]), input, textarea'));
+    if (busy && controls.includes(document.activeElement)) {
+        savedViewsBusyFocus = document.activeElement;
+        close.focus({ preventScroll: true });
+    }
     savedViewsBusy = busy;
     savedViewsDialog.setAttribute('aria-busy', String(busy));
-    for (const control of savedViewsDialog.querySelectorAll('button:not([data-saved-close]), input, textarea')) control.disabled = busy;
-    if (!busy) renderSavedViews();
+    for (const control of controls) control.disabled = busy;
+    if (!busy) {
+        const restore = savedViewsBusyFocus;
+        savedViewsBusyFocus = null;
+        renderSavedViews();
+        if (savedViewsDialog.open && document.activeElement === close && restore?.isConnected && !restore.disabled) restore.focus();
+    }
+}
+function savedViewRow(entry) {
+    const row = document.createElement('li'), heading = document.createElement('div');
+    row.className = 'tl-saved-row'; row.dataset.savedId = entry.id; heading.className = 'tl-saved-row-head';
+    const restore = document.createElement('button');
+    restore.type = 'button'; restore.className = 'tl-saved-name'; restore.dataset.savedRestore = entry.id;
+    restore.textContent = entry.name; restore.title = 'Restore this view'; restore.disabled = savedViewsBusy;
+    const remove = document.createElement('button');
+    remove.type = 'button'; remove.className = 'tl-btn'; remove.dataset.savedRemove = entry.id;
+    remove.textContent = 'Remove'; remove.setAttribute('aria-label', 'Remove view ' + entry.name); remove.disabled = savedViewsBusy;
+    heading.append(restore, remove); row.append(heading);
+    const context = document.createElement('p');
+    context.className = 'tl-saved-context';
+    context.textContent = (MODE === 'count' ? 'Call order · ' : MODE === 'compressed' ? 'Packed position · ' : 'Time · ') +
+        fmtDur(entry.state.view[0]) + ' → ' + fmtDur(entry.state.view[1]) +
+        (entry.state.range ? ' · Selected range' : entry.state.selected >= 0 ? ' · ' + nameOf(entry.state.selected) : '') +
+        (entry.state.filter ? ' · Filter: ' + entry.state.filter : '') +
+        (entry.state.adjusted ? ' · Overhead-subtracted estimate' : '');
+    row.append(context);
+    if (entry.note) {
+        const note = document.createElement('p'); note.className = 'tl-saved-note'; note.textContent = entry.note; row.append(note);
+    }
+    return row;
 }
 function renderSavedViews() {
     const store = savedViewsRead(), list = savedViewsDialog.querySelector('[data-saved-list]');
-    list.replaceChildren();
     savedViewsDialog.querySelector('[data-saved-empty]').hidden = !!store.data.views.length;
     savedViewsDialog.querySelector('[data-saved-export]').disabled = !store.data.views.length || savedViewsBusy;
     savedViewsDialog.querySelector('[data-saved-save]').disabled = !!store.error || savedViewsBusy;
     savedViewsDialog.querySelector('[data-saved-import]').disabled = !!store.error || savedViewsBusy;
     savedViewsDialog.querySelector('[data-saved-storage]').textContent = store.error || store.warning;
-    for (const entry of store.data.views) {
-        const row = document.createElement('li'), heading = document.createElement('div');
-        row.className = 'tl-saved-row'; heading.className = 'tl-saved-row-head';
-        const restore = document.createElement('button');
-        restore.type = 'button'; restore.className = 'tl-saved-name'; restore.dataset.savedRestore = entry.id;
-        restore.textContent = entry.name; restore.title = 'Restore this view'; restore.disabled = savedViewsBusy;
-        const remove = document.createElement('button');
-        remove.type = 'button'; remove.className = 'tl-btn'; remove.dataset.savedRemove = entry.id;
-        remove.textContent = 'Remove'; remove.setAttribute('aria-label', 'Remove view ' + entry.name); remove.disabled = savedViewsBusy;
-        heading.append(restore, remove); row.append(heading);
-        const context = document.createElement('p');
-        context.className = 'tl-saved-context';
-        context.textContent = (MODE === 'count' ? 'Call order · ' : MODE === 'compressed' ? 'Packed position · ' : 'Time · ') +
-            fmtDur(entry.state.view[0]) + ' → ' + fmtDur(entry.state.view[1]) +
-            (entry.state.range ? ' · Selected range' : entry.state.selected >= 0 ? ' · ' + nameOf(entry.state.selected) : '') +
-            (entry.state.filter ? ' · Filter: ' + entry.state.filter : '') +
-            (entry.state.adjusted ? ' · Overhead-subtracted estimate' : '');
-        row.append(context);
-        if (entry.note) {
-            const note = document.createElement('p'); note.className = 'tl-saved-note'; note.textContent = entry.note; row.append(note);
-        }
-        list.append(row);
+    const entries = store.data.views, ids = new Set(entries.map(entry => entry.id)), rows = new Map();
+    for (const row of Array.from(list.children)) {
+        const id = row.dataset.savedId;
+        if (ids.has(id)) rows.set(id, row);
+        else row.remove();
+    }
+    let cursor = list.firstElementChild;
+    for (const entry of entries) {
+        const row = rows.get(entry.id) || savedViewRow(entry);
+        if (row === cursor) cursor = cursor.nextElementSibling;
+        else list.insertBefore(row, cursor);
     }
 }
 async function restoreSavedView(entry) {
@@ -146,21 +169,23 @@ async function restoreSavedView(entry) {
                 throw new Error('The saved filter could not be applied. Retry after the report data is available.');
         }
         if (generation !== savedViewsGeneration || !savedViewsDialog.open) return;
-        if (hideUnmatched !== state.hideUnmatched) { hideUnmatched = state.hideUnmatched; applyTextFilter(); }
+        setHideUnmatched(state.hideUnmatched);
         if (adjOn !== state.adjusted) {
             setAdjusted(state.adjusted);
             const button = tlRoot.querySelector('[data-act=adj]');
             button.textContent = 'Overhead: ' + (adjOn ? 'subtracted' : 'measured'); button.classList.toggle('on', adjOn);
             colorCache.clear(); updateHeatLegend();
         }
-        inlineView = state.inline; applyView();
-        const inlineButton = tlRoot.querySelector('[data-act=inl]');
-        inlineButton.textContent = 'Inline: ' + (inlineView ? 'shown' : 'hidden'); inlineButton.classList.toggle('on', inlineView);
+        if (inlineView !== state.inline) {
+            inlineView = state.inline;
+            applyView();
+            updateInlineButton();
+        }
         const collapsed = new Set(state.collapsed);
         for (const task of ORDER) task.collapsed = collapsed.has(task.id);
         AN.kind = null; range = null;
         select(state.selected);
-        if (state.range) { range = { ...state.range }; showRangeSummary(); }
+        if (state.range) { range = { ...state.range }; requestRangeSummary(); }
         view.s = state.view[0]; view.e = state.view[1];
         layout();
         const track = state.scroll && ORDER.find(task => task.id === state.scroll.track && !task.hidden);
@@ -191,6 +216,7 @@ function showSavedViews() {
         savedViewsDialog.setAttribute('aria-labelledby', 'tlSavedViewsTitle');
         savedViewsDialog.setAttribute('aria-describedby', 'tlSavedViewsHint');
         savedViewsDialog.innerHTML = `<header><h3 id="tlSavedViewsTitle">Saved views</h3><button class="tl-close" type="button" data-saved-close aria-label="Close saved views">×</button></header>
+            <div class="tl-saved-body">
             <p id="tlSavedViewsHint">Keep a position, selected call or range, and applied filter. Views are saved in this browser for this report only.</p>
             <form><label>Name<input name="name" maxlength="100" required autocomplete="off"></label>
             <details class="tl-saved-note-entry"><summary>Add a note (optional)</summary><label>Note<textarea name="note" maxlength="2000" rows="3"></textarea></label></details>
@@ -200,7 +226,7 @@ function showSavedViews() {
             <ul data-saved-list aria-label="Saved views"></ul>
             <details class="tl-saved-transfer"><summary>Import / export</summary><p>Transfer views and notes, not trace data. Import requires matching report data.</p>
             <button class="tl-btn" type="button" data-saved-export>Export views</button><button class="tl-btn" type="button" data-saved-import>Import views…</button>
-            <input type="file" accept=".json,application/json" data-saved-file hidden></details>`;
+            <input type="file" accept=".json,application/json" data-saved-file hidden></details></div>`;
         tlRoot.append(savedViewsDialog);
         savedViewsDialog.querySelector('form').addEventListener('submit', event => {
             event.preventDefault();

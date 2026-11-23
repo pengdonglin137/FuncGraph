@@ -306,6 +306,61 @@ class CpuHoverTest(unittest.TestCase):
                 self.assertGreater(result['yields'], 0)
                 self.assertEqual(self.snapshot(), before)
 
+    def test_cpu_run_paint_reuses_styles_without_skipping_runs(self):
+        self.open()
+        result = self.page.evaluate('''() => {
+            const model = fgView('timeline').probe(), cpu = model.CPU_LIST[0];
+            const primary = model.TRACKS.find(track => track.kind === 0 && track.lo >= 0);
+            const secondary = model.TRACKS.find(track => track.kind === 0 && track.comm !== primary.comm);
+            const lines = fgData.read('tlData').cols.line;
+            const line = lines[model.sTask.findIndex((tid, index) => tid === primary.id && lines[index])];
+            fgNotifyFilter('first task', new Set([line]));
+            const starts = [0, ...Array.from({length: 16}, (_, index) => 100 + index)];
+            const runs = model.CPU_SEGS.get(cpu);
+            model.CPU_SEGS.set(cpu, {
+                s: Float64Array.from(starts),
+                e: Float64Array.from(starts, start => start ? start + 1 : 90),
+                t: Int32Array.from(starts, (_, index) => index < 9 ? primary.id : secondary.id),
+            });
+            const ctx = document.querySelector('.tl-canvas').getContext('2d');
+            const rects = [], labels = [], writes = {globalAlpha: 0, fillStyle: 0};
+            for (const name of Object.keys(writes)) {
+                const {get, set} = Object.getOwnPropertyDescriptor(CanvasRenderingContext2D.prototype, name);
+                Object.defineProperty(ctx, name, {configurable: true, get, set(value) {
+                    if (rects.length < starts.length) writes[name]++;
+                    set.call(this, value);
+                }});
+            }
+            const {fillRect, fillText} = ctx;
+            ctx.fillRect = function(...args) {
+                rects.push({x: args[0], alpha: this.globalAlpha, color: this.fillStyle});
+                return fillRect.apply(this, args);
+            };
+            ctx.fillText = function(...args) {
+                if (rects.length < starts.length) labels.push(this.fillStyle);
+                return fillText.apply(this, args);
+            };
+            try {
+                model.cpuPaint(0, 200);
+                return {writes, labels, runs: rects.slice(0, starts.length), finalAlpha: ctx.globalAlpha};
+            } finally {
+                model.CPU_SEGS.set(cpu, runs);
+                for (const name of [...Object.keys(writes), 'fillRect', 'fillText']) delete ctx[name];
+            }
+        }''')
+        runs = result['runs']
+        self.assertEqual(len(runs), 17)
+        self.assertTrue(all(left['x'] < right['x'] for left, right in zip(runs, runs[1:])))
+        self.assertEqual([run['alpha'] for run in runs], [1] * 9 + [0.25] * 8)
+        self.assertLessEqual(result['writes']['globalAlpha'], 2)
+        self.assertLessEqual(result['writes']['fillStyle'], 4)
+        first, second = runs[0]['color'], runs[-1]['color']
+        self.assertNotEqual(first, second)
+        self.assertEqual([run['color'] for run in runs], [first] * 9 + [second] * 8)
+        self.assertEqual(len(result['labels']), 1)
+        self.assertNotIn(result['labels'][0], (first, second))
+        self.assertEqual(result['finalAlpha'], 1)
+
     def test_cpu_strip_pixels_match_linear_paint_with_nested_and_touching_intervals(self):
         cases = [(kind, 'single') for kind in ('interrupts', 'large', 'nested-large', 'indexed')]
         cases.extend([('interrupts', 'sidecar'), ('indexed', 'sidecar')])

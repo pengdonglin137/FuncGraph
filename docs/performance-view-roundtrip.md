@@ -325,3 +325,277 @@ JavaScript syntax, 184 local documentation links/anchors and `git diff --check`
 also pass. The original real report is not overwritten; the updated local
 preview at that stage uses `write4.fixed.html`; the current source-expansion
 preview is `write4.source-hover.html`.
+
+## Timeline source controls on repeated selection
+
+The Timeline detail pane handles source-ready, disclosure and source-layout
+events at the pane boundary instead of registering new handlers for each
+selected call. Before replacing or closing a panel, it saves any user change
+to the disclosure that the browser's queued `toggle` event has not handled
+yet. Initial markup and replaced panels no longer write the preference;
+closing and immediately selecting another call no longer reopens the source
+or starts an unnecessary fetch. Loading, errors and retry are unchanged.
+
+In a Chromium run with 35 distinct clicks on the same `ping3` slices, the
+number of listener registrations on the disclosure and source container fell
+from 70 to 0 during selection. Writes of the unchanged source-open preference
+fell from 35 to 0. Both versions displayed a source excerpt for the same 32
+selections. This counts avoided work, not a measured frame-time improvement or
+evidence of a persistent memory leak.
+
+Replacing or closing a Timeline detail also unregisters that panel's source
+excerpt and layout control immediately. The source-mode switch no longer walks
+entries from old panels while waiting for garbage collection. Text rows and
+panels retained during a tab switch keep their existing source-mode behavior.
+
+On offline `ping3`, a regression probe clicked 20 different slices and held
+references to each panel's source nodes to make collection timing irrelevant.
+The source-mode index held up to 40 Timeline entries before the change and at
+most two after it; closing Details left zero instead of 40. All 20 excerpts
+matched. This tests index membership, not browser memory usage or click
+latency. The log is in `build/benchmarks/20261119-trace-jump/source-index-teardown-ab.jsonl`.
+
+## Reuse an unchanged Timeline canvas on return
+
+Returning to Timeline still measures the split and resumes pending work. It
+only redraws the tracks if their geometry, scroll position, pixel ratio, or
+paint state changed. Suspending a hovered chart marks the old highlight dirty
+so it is removed on return. Theme changes while Text is open also still
+repaint both canvases.
+
+On standalone `ping3` with Windowed Text mounted, 12 tab round trips at each
+of 1500 × 900 and 844 × 390 dropped from two track paints per return to zero.
+Both canvases were pixel-identical to the initial view after every return,
+with the same selected slice. In these Chromium runs at 4× CPU throttling,
+median browser script time for a return was 9.71 → 2.11 ms on desktop and
+3.26 → 2.12 ms in touch emulation. These are script times, not display
+latency. Logs: `build/benchmarks/timeline-resume-paint/`.
+
+The toolbar observer also retains its last visible measurements while Text
+is active. Returning with the same toolbar size no longer schedules another
+split calculation. Visible toolbar growth and changes made while hidden
+still reach the chart. Twelve round trips per viewport on the same offline
+`ping3` data at 1500 × 900 and 844 × 390 each reduced Timeline root size
+reads from two to one per return, with identical selection, canvas dimensions,
+and canvas pixels. Chromium's layout count did not change; the probe measures
+avoided work, not a latency improvement. Logs:
+`build/benchmarks/timeline-control-observer/`.
+
+## Keep the Text reading position after rotation
+
+When Windowed Text is hidden, the report remembers the line immediately under
+the toolbar and how far that line is scrolled under it. If a width change
+invalidates row heights, it restores that reading position after the existing
+window rebuild. With unchanged width and projection, returning reuses the
+existing window. Return restores focus to the jump's source row only if it is
+still visible and focus has not moved elsewhere during the rebuild.
+
+On the same standalone `ping3` data in Chromium touch emulation, both
+844 × 390 → 390 × 844 and the reverse kept `L63548` under the toolbar within
+0.5 CSS pixels of the starting offset and restored focus to `L63550`. Before
+the change, the first rotation moved the reading line to `L63547`; the reverse
+kept the line but changed its offset by 12.5 CSS pixels. The window still held
+160 rows. Log: `build/benchmarks/return-rotated-text/ab.jsonl`.
+
+## Reuse an in-flight Sidecar source chunk across selections
+
+Reselecting the same call keeps its existing source panel and request. When a
+different recorded call needs another excerpt from the same external chunk,
+the old panel still cancels immediately. The existing download can be reused
+while the new source disclosure is waiting for its first visibility callback.
+If no subscriber takes over, the provider schedules cancellation after 120 ms.
+Other chunks and standalone reports retain the existing cancellation behavior.
+
+In the Chromium Sidecar test, holding the first source response and switching
+between two excerpts in the same chunk previously aborted the fetch and
+requested the same URL again. The new path makes one HTTP request and renders
+only the replacement excerpt. A separate provider test covers expiration and
+immediate cancellation when the new excerpt belongs to a different chunk.
+
+## Recheck the first recorded-call selection
+
+With Windowed Text already mounted and Chromium 145 at 4× CPU throttling,
+the first 1500 × 900 `ping3` canvas click spent 19.6 ms in the measured event
+handler and 20.4 ms in its longest subsequent layout event. The same CSS/font
+probes initially suggested a font fallback effect, but four runs per variant
+with rotated order did not show a consistent improvement from changing the
+monospace stack. The existing typography stays in place. The separate
+argument-splitting improvement reduces formatter work without establishing a
+first-paint improvement. Logs: `build/benchmarks/ping3-first-selection/recheck.Z6Ej4y/summary.jsonl`
+and `build/benchmarks/ping3-first-selection/fonts.V5N3OX/results.jsonl`.
+
+## Repeat the original ping3 slice-click workload
+
+At 1500 × 900 in Chromium 145 with 4× CPU throttling, alternate canvas clicks
+between slices 665 and 2366. Over 40 clicks, the original `ping3.html` showed
+roughly **232 ms** median mouse-up handler time in both the first and last
+ten clicks. The current build stays around **3–4 ms** when opening Timeline
+directly, after Windowed Text, and after Full Text (82,529 mounted rows).
+This reproduces severe per-click latency in the original report, but not
+progressive per-click degradation in this workload. Two-frame callback
+medians were about **250 ms** in the original and **24–29 ms** in the current
+build; callbacks are not a measurement of screen presentation.
+
+The new audit also reports browser long tasks overlapping the selection
+sample windows, not startup or isolated forced GC. In a 40-click run on the
+shared Windowed Text preview, one overlapping task lasted 54 ms, and node and
+listener counts were unchanged at all post-GC checkpoints. A separate
+six-click check on the old report recorded seven overlapping long tasks
+(143–359 ms). Logs: `build/benchmarks/selection-current-audit/run.xAythQ/`.
+Reproduce the Windowed Text check with the standalone preview:
+
+```sh
+python3 tests/benchmark_timeline_selection.py /vol_1t/Qemu/x86_64/share/ping3-current-preview-20261121.html \
+  --text windowed --indices 665,2366 --batches 20 --gc-every 5 \
+  --retained-growth-limit 128,0 --warm-frame-ratio-limit 1.20
+```
+
+The warm latency check compares the p95 two-frame callback time of the last
+three batches with the first three warm batches, excluding the cold first
+batch. The ratio is a repeatability check, not an absolute frame-time budget.
+
+On the `ping3` compact Text toolbar preview, Chromium 145 at 4× throttling
+passed the check with Windowed Text on desktop (240 clicks, 30.82 → 31.50 ms)
+and landscape touch (120 taps, 32.45 → 32.52 ms), and after mounting all
+82,529 rows in Full Text (180 clicks, 31.32 → 31.00 ms). Identical post-GC
+checkpoints showed no increase in retained nodes or listeners in any of these
+three runs. A separate 480-click desktop run without forced GC during sampling
+measured 31.31 → 31.40 ms. Cold detail opening is outside this drift check.
+Logs: `build/benchmarks/20261121-click-stability/`.
+
+### Coalesce pending call-detail work
+
+Navigation, the child summary and the time breakdown can defer work until
+after the first paint. The detail pane now shares one frame callback and
+schedules only jobs for the current selection. Work keeps its existing time
+budgets, and leaving Timeline still pauses it until return.
+
+On `ping3`, a scripted burst of 60 selections in one browser task went from
+180 detail-specific animation-frame callbacks and 180 timers to one callback
+and three timers. This measures bounded scheduling work, not pointer latency.
+Separately, 240 real canvas clicks across 20 slices in the pre-change preview
+showed no progressive slowdown: the first and last 60 handler medians were
+3.45 and 3.30 ms at 4× CPU throttling, and post-GC node and listener counts
+were stable. Logs: `build/benchmarks/20261121-selection-varied/`.
+
+## Save Text state before updating the return button
+
+On November 21, 2026, the warm standalone `ping3` trace showed that showing
+or hiding the return button before leaving Text invalidated the layout.
+Reading the native selection then laid out the still-visible Text view before
+the switch laid out Timeline. The switch now saves Text selection and scroll
+state, including the Windowed Text reading anchor, before updating the button.
+It still clears an empty caret, but does so only once when leaving Text.
+
+With Windowed Text already mounted in Chromium at 4× CPU throttling, the
+median layout count fell from **3 to 2** when jumping from Text to Timeline
+and from **2 to 1** when using **Return to Timeline**, at both 1500 × 900 and
+844 × 390. Returning to Text and plain tab switches were unchanged. These
+counts cover each action and its settling frames. The follow-up traces confirm
+the pre-switch layout is gone; the change did not establish a consistent
+two-frame latency improvement. Logs: `build/benchmarks/view-roundtrip-warm/`.
+
+Full Text behaved differently in the 1500 × 900 baseline: switching tabs spent
+about 140 ms recalculating styles at the same throttling rate. The Windowed
+Text result does not address or measure a fix for that larger cost.
+
+## Keep style containment stable when leaving Full Text
+
+Large Full Text now keeps `contain: style` on its content root in every view.
+The existing hidden Text rule still uses `content-visibility: hidden`; explicit
+style containment avoids changing that boundary when hiding the document. In
+isolation, `contain: layout` and `contain: paint` alone did not remove the cost.
+There is no new layout or paint containment on visible Text, and the change
+does not alter Windowed Text, small reports, or Text-only reports.
+
+Three warm tab clicks per direction on standalone `ping3` (82,529 mounted
+rows, Chromium at 4× CPU throttling) gave these medians when **leaving** Full
+Text for Timeline:
+
+| Viewport | Style/layout-tree time, before → after | Click to second animation frame, before → after |
+| --- | ---: | ---: |
+| 1500 × 900, mouse | 146.4 → 2.2 ms | 159.7 → 26.6 ms |
+| 844 × 390, touch | 130.0 → 2.1 ms | 140.0 → 25.3 ms |
+
+The second animation frame is a proxy, not measured screen presentation.
+Coming back to Full Text still spent 129–140 ms in style/layout-tree work in
+the new trace; skipping the horizontal scroll write only moved work out of
+the handler, so that experiment was not kept. Traces and isolation logs:
+`build/benchmarks/full-text-warm/`.
+
+## Keep inactive Timeline and Compare out of the document flow
+
+Removing Text's own visibility changes did not remove the remaining delay when
+returning to Full Text. In the same `ping3` report, disabling only the optional
+view's display toggle removed it. Timeline and Compare now keep their flex
+containers while inactive. Their roots have no size in the document flow,
+and hidden content is neither painted nor focusable. Browsers without
+`content-visibility: hidden` support retain the display toggle. The views still
+suspend their own work, and startup, loading cancellation, and data delivery
+are unchanged.
+
+An inactive Timeline root is exempt while it still matches `:fullscreen`.
+Switching back from Text can happen before the browser finishes exiting
+native full screen. Collapsing the root with `content-visibility: hidden`
+during that interval reproduced a stall in Chromium. The ordinary inactive
+rule applies again as soon as the browser exits full screen; no delay is
+added to view switching.
+
+Three warm returns from Timeline to Full Text at each viewport, using the same
+82,529-row standalone report and 4× CPU throttling, gave these medians:
+
+| Viewport | Style/layout-tree time, before → after | Click to second animation frame, before → after |
+| --- | ---: | ---: |
+| 1500 × 900, mouse | 140.1 → 1.0 ms | 174.7 → 41.4 ms |
+| 844 × 390, touch | 128.7 → 1.2 ms | 160.7 → 41.7 ms |
+
+The reverse direction stayed at 24–26 ms to the second animation frame. This
+is not actual display latency, and does not cover cold Full Text initialization.
+Isolation logs and traces: `build/benchmarks/full-text-resume/`.
+
+## Skip focus geometry for non-focusable Text rows
+
+**Return to Text** restores the reading position even when a plain trace row
+cannot receive focus. In that case it now focuses the Text tab directly,
+without measuring or hit-testing the row. Focusable rows still get the
+visibility check, so a hidden or covered row cannot take focus.
+
+Four returns to line 1021 of `ping3` in both 844 × 390 Windowed Text and
+1500 × 900 Full Text dropped from one focus-related row measurement per
+return to zero. Scroll positions and focus targets matched. These are
+avoided reads, not a measured end-to-end latency improvement. Logs:
+`build/benchmarks/20261122-roundtrip-latest/real-return.log`.
+
+## Reuse Text guide rows between scroll frames
+
+The guide canvas still measures the viewport and repaints during scrolling,
+but reuses the visible row lists for groups that remain in view. A Text
+revision change discards those lists, including after folds, filters, order
+changes, window slides and renderer switches. Groups that scroll out of view
+are dropped from the row cache. Disabling guides drops the whole cache.
+
+On November 22, 2026, eight warm scroll steps within one 160-row window of
+the standalone `ping3` report reduced group row queries from **8 to 0** (1,280
+candidate row visits avoided per run). This held in Chromium at 1500 × 900 and
+844 × 390 in both time and task order. The smaller viewport also panned
+horizontally. The old and new reports matched in guide-canvas pixels before
+and after scrolling, row and scroll positions, mounted rows, and the sticky
+task label. These are work counts, not measured latency. Audit script, logs,
+and report: `build/benchmarks/20261122-text-guide-rows/`.
+
+## Reuse bounds when drawing Text guides
+
+When the mounted Windowed Text rows span the guide viewport, their bounds
+are enough to decide whether the canvas can paint without also measuring the
+full Text root. At the edges and in Full Text, the root still defines the clip.
+Both renderers reuse the bounds of the first intersecting row from the search
+that located it. Bounds are read again on the next paint instead of caching
+positions across frames.
+
+Eight in-window `ping3` scroll steps at both 1500 × 900 and 844 × 390, in time
+and task order, saved **24 bounding-rectangle reads** per run: eight each for
+the Text root, the mounted row group, and the first intersecting row. The
+guide pixels, reading position, and mounted rows matched, including at the
+start and at the end after the destination rows had loaded. The counts do not
+measure frame latency. Logs and the standalone preview are in
+`build/benchmarks/20261122-text-guide-geometry/`.

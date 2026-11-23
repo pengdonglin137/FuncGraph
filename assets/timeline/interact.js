@@ -1,9 +1,17 @@
 /* FuncGraph Timeline: interaction */
+function trackAtY(position) {
+    const track = visibleTracks[firstTrackEndingAfter(position)];
+    return track && position >= track.y && position < track.y + track.h - GAP ? track : null;
+}
+function rangeTrackAtY(position) {
+    const track = trackAtY(position);
+    return track && TRACKS[track.id] === track ? track : null;
+}
 function hitTest(mx, my) {
     // returns {track, slice, off, header}
     const yy = my + elScroll.scrollTop;
-    const t = visibleTracks[firstTrackEndingAfter(yy)];
-    if (!t || yy < t.y || yy >= t.y + t.h - GAP) return { track: null, slice: -1, off: null, header: false };
+    const t = trackAtY(yy);
+    if (!t) return { track: null, slice: -1, off: null, header: false };
     if (yy < t.y + HDR) return { track: t, slice: -1, off: null, header: true };
     const k = W / (view.e - view.s), tm = view.s + mx / k;
     const d = t.collapsed ? 0 : Math.floor((yy - t.y - HDR) / ROW);
@@ -34,30 +42,95 @@ function hitTest(mx, my) {
         const exactWide = best >= 0 && (sEnd[best] - sStart[best]) * k >= 1.5 &&
             mx >= (sStart[best] - view.s) * k && mx < (sEnd[best] - view.s) * k;
         if (!exactWide) {
-            const summary = densePixelAt(row, Math.floor(mx), view.s, k);
+            const summary = denseHitAt(row, Math.floor(mx), view.s, k);
             if (summary) { best = summary.index; if (summary.count > 1) dense = summary; }
         }
     }
-    let off = null;
+    let off = null, denseOff = 0;
     if (best < 0 && ov.off && !t.collapsed && t.off.length) {
-        off = visitSchedulingIntervals(t.off, t.offIndex, tm, tm, record => offRow(record) === d);
+        off = visitOffIntervals(t, tm, tm, d, d, () => true);
+        if (!off && groupsDenseOff(t) && mx >= 0 && mx < W) {
+            const group = denseOffAt(t, Math.floor(mx), d, k);
+            if (group) { off = group.record; denseOff = group.count; }
+        }
     }
-    return { track: t, slice: best, off: off, header: false, dense };
+    return { track: t, slice: best, off: off, header: false, dense, denseOff };
+}
+const unfilteredDenseHit = {};
+function denseHitAt(row, pixel, start, scale) {
+    const matching = matchingState();
+    const hit = matching ? (matching.hit ||= {}) : unfilteredDenseHit;
+    if (hit.row === row && hit.pixel === pixel && hit.start === start && hit.scale === scale) return hit.summary;
+    const summary = densePixelAt(row, pixel, start, scale);
+    hit.row = row;
+    hit.pixel = pixel;
+    hit.start = start;
+    hit.scale = scale;
+    hit.summary = summary;
+    return summary;
+}
+let lastDenseOff = null;
+function denseOffAt(track, pixel, depth, scale) {
+    const start = view.s, records = track.off;
+    if (lastDenseOff?.track === track && lastDenseOff.records === records &&
+            lastDenseOff.pixel === pixel && lastDenseOff.depth === depth && lastDenseOff.inline === inlineView &&
+            lastDenseOff.start === start && lastDenseOff.scale === scale && lastDenseOff.width === W) return lastDenseOff.group;
+    const left = start + (pixel - 1) / scale, right = start + (pixel + 2) / scale;
+    let first = null, count = 0;
+    visitOffIntervals(track, left, right, depth, depth, record => {
+        if (offStartPixel(record, start, scale) !== pixel) {
+            if (count >= DENSE_OFF_LIMIT) return true;
+            first = null;
+            count = 0;
+        } else {
+            first ??= record;
+            count++;
+        }
+        return false;
+    });
+    const group = count >= DENSE_OFF_LIMIT ? {record: first, count} : null;
+    lastDenseOff = {track, records, pixel, depth, inline: inlineView, start, scale, width: W, group};
+    return group;
+}
+function denseOffMessage(count) {
+    return count + ' waits start in this pixel. Showing the first; zoom in for individual waits.';
 }
 
-function zoomFrom(span, anchor, mx) {
-    const minSpan = MODE === 'count' ? 2000 : 50;
-    const nextSpan = Math.max(minSpan, Math.min(tMax * 1.05, span));
-    view.s = anchor - (mx / W) * nextSpan;
-    view.e = view.s + nextSpan;
-    clampView();
+const MIN_ZOOM_SPAN = MODE === 'count' ? 2000 : 50;
+const MAX_ZOOM_SPAN = Math.max(MIN_ZOOM_SPAN, tMax * 1.05);
+function zoomFrom(span, anchor, horizontal) {
+    const nextSpan = Math.max(MIN_ZOOM_SPAN, Math.min(MAX_ZOOM_SPAN, span));
+    if (panTo(anchor - horizontal / W * nextSpan, nextSpan)) draw();
+}
+function zoomAt(factor, horizontal, surface = null) {
+    const span = view.e - view.s, limit = factor < 1 ? MIN_ZOOM_SPAN : MAX_ZOOM_SPAN;
+    const spanPrecision = Number.EPSILON * Math.max(Math.abs(view.s), Math.abs(view.e), limit);
+    if (factor === 1 || Math.abs(span - limit) <= spanPrecision) return;
+    const position = surface ? horizontal - surface.getBoundingClientRect().left : horizontal;
+    zoomFrom(span * factor, view.s + position / W * span, position);
+}
+function panBy(offset) {
+    const start = view.s, end = view.e, pad = tMax * 0.02;
+    const minimumOffset = -pad - start, maximumOffset = tMax + pad - end;
+    const bounded = Math.min(maximumOffset, Math.max(minimumOffset, offset));
+    if (!bounded) return false;
+    const nextStart = bounded === minimumOffset ? -pad : start + bounded;
+    const nextEnd = bounded === maximumOffset ? tMax + pad : end + bounded;
+    if (nextStart === start && nextEnd === end) return false;
+    view.s = nextStart;
+    view.e = nextEnd;
     draw();
+    return true;
 }
-function zoomAt(factor, mx) {
-    const span = view.e - view.s;
-    zoomFrom(span * factor, view.s + (mx / W) * span, mx);
+function panTo(start, span) {
+    const pad = tMax * 0.02, maximum = tMax + pad;
+    let nextStart = Math.max(-pad, start), nextEnd = nextStart + span;
+    if (nextEnd > maximum) { nextEnd = maximum; nextStart = maximum - span; }
+    if (nextStart === view.s && nextEnd === view.e) return false;
+    view.s = nextStart;
+    view.e = nextEnd;
+    return true;
 }
-function panBy(dt) { view.s += dt; view.e += dt; clampView(); draw(); }
 function clampView() {
     const span = view.e - view.s, pad = tMax * 0.02;
     if (view.s < -pad) { view.s = -pad; view.e = view.s + span; }
@@ -69,40 +142,102 @@ function fitCalls() {
     view.s = callStart; view.e = Math.max(callStart + 1, callEnd); draw();
 }
 function zoomTo(s, e, revealSlice) {
-    const span = Math.max(e - s, MODE === 'count' ? 2000 : 50);
+    const span = Math.max(e - s, MIN_ZOOM_SPAN);
     const pad = span * 0.08;
     view.s = s - pad; view.e = s + span + pad;
     clampView();
     if (revealSlice >= 0) revealRow(revealSlice);
     draw();
 }
-function revealRow(i, expand = true) {
+function frameTraceSlice(index) {
+    const start = sStart[index], end = sEnd[index], duration = end - start;
+    const span = view.e - view.s;
+    if (duration > span) { zoomTo(start, end, -1); return; }
+    const nextSpan = duration > 0 && W > 0 && duration * W < span * 48
+        ? Math.min(span, Math.max(MIN_ZOOM_SPAN, duration * Math.max(2, W / 56))) : span;
+    if (nextSpan === span && start >= view.s && end <= view.e && start < view.e && end > view.s) return;
+    view.s = start + (duration - nextSpan) / 2;
+    view.e = view.s + nextSpan;
+    clampView();
+}
+function revealSliceControls(rowOffset, keepSearch = false) {
+    const controls = elDetail.querySelector('.tl-call-controls') || elDetail.querySelector('.tl-close');
+    if (!controls) return;
+    const viewport = window.visualViewport;
+    const viewportTop = viewport?.offsetTop ?? 0;
+    const viewportBottom = viewportTop + (viewport?.height ?? innerHeight);
+    const delta = Math.ceil(controls.getBoundingClientRect().bottom - viewportBottom);
+    if (delta <= 0) return;
+    const fullscreen = tlRoot.classList.contains('tl-fullscreen');
+    const stickyInset = fullscreen ? detailViewportTop(viewportTop) : window.fgPageChrome().tabs[0]?.parentElement.offsetHeight || 0;
+    const rowTop = elCv.getBoundingClientRect().top + Math.max(0, rowOffset);
+    const topLimit = Math.max(viewportTop, stickyInset);
+    if (rowTop - delta < topLimit) return;
+    if (keepSearch && elSearch.parentElement.getBoundingClientRect().top - delta < topLimit) return;
+    (fullscreen ? tlRoot : window).scrollBy({ top: delta, behavior: 'instant' });
+}
+function revealRow(i, { expand = true, page = false, nearest = false, openedDetail = false, keepSearch = false } = {}) {
     const t = TRACKS[sTask[i]];
     if (t.collapsed && expand) { t.collapsed = false; layout(); }
     const y = t.y + HDR + (t.collapsed ? 0 : rowOf(i)) * ROW;
-    if (y < elScroll.scrollTop + 4 || y + ROW > elScroll.scrollTop + H - 4) elScroll.scrollTop = Math.max(0, y - H / 3);
+    const scrollTop = elScroll.scrollTop;
+    const maximumScroll = y - 4, minimumScroll = y + (nearest && t.collapsed ? MINI : ROW) + 4 - H;
+    if (scrollTop > maximumScroll || scrollTop < minimumScroll) {
+        elScroll.scrollTop = Math.max(0, nearest ? Math.min(maximumScroll, Math.max(minimumScroll, scrollTop)) : y - H / 3);
+    }
+    if ((openedDetail || page || keepSearch) && H && !t.hidden) revealSliceControls(y - elScroll.scrollTop, keepSearch);
+    if (page && H && !t.hidden) {
+        const viewport = window.visualViewport;
+        const viewportBottom = (viewport?.offsetTop ?? 0) + (viewport?.height ?? innerHeight);
+        const rowBottom = elScroll.getBoundingClientRect().top + Math.min(H, y + ROW - elScroll.scrollTop);
+        if (rowBottom > viewportBottom) window.scrollBy({ top: rowBottom - viewportBottom + 4, behavior: 'instant' });
+    }
 }
-function setSelection(index) {
+function setSelection(index, errorCode) {
     closeCallActions();
     selKvm = null;
+    const changed = sel !== index;
     sel = index;
-    updateSearchLabel();
+    syncErrorPosition(index, errorCode);
+    if (changed) updateSearchSelection();
+}
+function showsSelectedSlice(index) {
+    return index === sel && index === detailSliceIndex && !range && AN.kind === null && elDetail.classList.contains('show');
 }
 function select(i, opts) {
     opts = opts || {};
+    const reuseDetail = i >= 0 && showsSelectedSlice(i);
     setSelection(i);
     if (i >= 0) {
-        if (opts.zoom) zoomTo(sStart[i], sEnd[i], i);
+        const previousChartHeight = H;
+        let revealedOnOpen = false;
+        const revealBeforeMount = !opts.zoom && opts.reveal && !opts.revealPage && (!opts.keepSearch || landscapeDetails.matches);
+        const firstCanvasClick = opts.canvasDetailOpen === false && !opts.zoom && !opts.reveal;
+        const revealOnOpen = revealBeforeMount || firstCanvasClick ? () => {
+            revealRow(i, revealBeforeMount ? undefined : { expand: false, nearest: true });
+            revealedOnOpen = true;
+        } : null;
+        if (opts.zoom) zoomTo(sStart[i], sEnd[i], -1);
+        else if (opts.frameTrace) frameTraceSlice(i);
         else if (opts.reveal) {
-            const span = view.e - view.s;
-            if (sEnd[i] < view.s || sStart[i] > view.e || sEnd[i] - sStart[i] > span) {
-                if (sEnd[i] - sStart[i] > span) zoomTo(sStart[i], sEnd[i], i);
-                else { const c = (sStart[i] + sEnd[i]) / 2; view.s = c - span / 2; view.e = c + span / 2; clampView(); }
+            const start = sStart[i], end = sEnd[i], span = view.e - view.s;
+            const outside = start >= view.e || end < view.s || (end === view.s && start < end);
+            if (end - start > span) zoomTo(start, end, -1);
+            else if (outside) {
+                const center = start + (end - start) / 2;
+                view.s = center - span / 2;
+                view.e = center + span / 2;
+                clampView();
             }
-            revealRow(i);
         }
-        showDetail(i);
-        if (compactToolbar.matches) revealRow(i, false);
+        if (reuseDetail) updateDenseSelection(elDetail.firstElementChild, opts.dense);
+        else showDetail(i, opts.dense, revealOnOpen);
+        if (opts.zoom || opts.reveal) {
+            if (!revealedOnOpen) revealRow(i, { page: opts.revealPage, keepSearch: opts.keepSearch });
+        } else if (opts.canvasDetailOpen !== undefined) {
+            if (!revealedOnOpen && (!opts.canvasDetailOpen || H < previousChartHeight))
+                revealRow(i, { expand: false, nearest: true, openedDetail: !opts.canvasDetailOpen });
+        } else if (compactToolbar.matches) revealRow(i, { expand: false });
     } else hideDetail();
     draw();
 }
@@ -163,6 +298,34 @@ function inlineLine(i) {
     const ch = inlChain(i);
     return ch && ch.length > 1 ? ch.slice(1).map(frame => symbolLabel(frame[0])).join(' › ') : '';
 }
+function tipEnumText(match) {
+    const {name, value, names, recordedMatch, labelMismatch} = match;
+    return (name ? name + ' (' + value + ')' : value + ' · No BTF match') +
+        (names.length > 1 ? (recordedMatch ? ' · ' : ' · first of ') + names.length + ' names' : '') +
+        (recordedMatch ? ' · Recorded label' : labelMismatch ? ' · Label mismatch' : '');
+}
+function tipEnumArguments(index, raw, signature) {
+    if (!signature?.args || !raw || raw.length > 4096) return null;
+    const args = btfEnumArguments(index, raw, signature);
+    if (!args) return null;
+    const limit = 180, omitted = ', …';
+    const preview = [], enums = [];
+    for (const {name, match, field, value} of args.parts) {
+        const text = match ? name + '=' + tipEnumText(match) : field || name + '=' + value;
+        preview.push(text);
+        if (match) enums.push(text);
+    }
+    if (!enums.length) return null;
+    if (args.truncation) preview.push(args.truncation);
+    const complete = preview.join(', ');
+    if (complete.length <= limit) return complete;
+    let compact = '';
+    for (const text of enums) {
+        const separator = compact ? ', ' : '';
+        if (compact.length + separator.length + text.length + omitted.length <= limit) compact += separator + text;
+    }
+    return compact ? compact + omitted : null;
+}
 function tipSlice(i) {
     if (i >= N) return isGhost(i) ? tipGhost(i) : tipInline(i);
     const d = durOf(i), f = sFlags[i];
@@ -175,14 +338,16 @@ function tipSlice(i) {
     h += row('task', esc(trackLabel(t)) + (cpuOf(i) >= 0 ? ' &nbsp;CPU ' + cpuOf(i) : ''));
     if (D.uftrace) h += row('space', f & FL.BOUNDARY ? 'Kernel · entered from user' : f & FL.USER ? 'User' : 'Kernel');
     if (!D.uftrace || f & FL.LAT) h += row('context', contextName(f) + (f & FL.CTXINF ? ' (inferred)' : '') + ctxFlagText(f));
-    const r = retOf(i);
+    const btf = btfDetailOf(i);
+    const enumReturn = btf?.ret != null ? btfEnumMatch(rawRetOf(i), btf.ret) : null;
+    const r = enumReturn ? tipEnumText(enumReturn) : retOf(i);
     const userDetail = f & FL.USER ? D.uftrace?.user_details?.[sLine[i]] : null;
     if (userDetail?.retval !== undefined) {
         const failure = USER_ERRORS.get(i);
         h += row('user return', esc(userDetail.retval) + (failure ? ' · ' + esc(failure.summary) : ''), failure ? 't-err' : '');
     }
     if (r !== null) {
-        const field = kernelTypesOf(i)?.ret ? 'return (BTF)' : D.uftrace ? 'raw return' : 'return';
+        const field = enumReturn || kernelTypesOf(i)?.ret ? 'return (BTF)' : D.uftrace ? 'raw return' : 'return';
         if (eRole[i] >= 0) h += row(field, esc(r) + ' ' + (errName(eErr[i]) || '') + ' — ' + errRoleText(i), 't-err');
         else h += row(field, esc(r) + (f & FL.NULLRET ? ' (NULL)' : ''));
     }
@@ -196,8 +361,10 @@ function tipSlice(i) {
     const il = inlineLine(i);
     if (il) h += row(returnSiteOwner(i) === i ? 'inlined in' : 'return-site inline context', esc(il));
     const a = argsOf(i);
-    const namedArgs = namedArgsOf(i) || a;
-    if (namedArgs) h += row('args', esc(namedArgs.length > 180 ? namedArgs.slice(0, 180) + '…' : namedArgs));
+    const enumArgs = tipEnumArguments(i, a, btf);
+    const namedArgs = enumArgs || namedArgsOf(i) || a;
+    if (namedArgs) h += row(enumArgs ? 'args (BTF)' : 'args',
+        esc(!enumArgs && namedArgs.length > 180 ? namedArgs.slice(0, 180) + '…' : namedArgs));
     if (f & FL.TRUNC) h += '<div class="t-warn">exit not captured (trace window ended or events lost)</div>';
     if (f & FL.ORPHAN) h += '<div class="t-warn">entry not captured (started before trace window)</div>';
     return h;
@@ -259,21 +426,26 @@ function tipCpu(c) {
     return h + '<div class="t-warn">click to open this task</div>';
 }
 function revealTaskTrack(task) {
-    if (!ORDER.includes(task)) ORDER.push(task);
-    task.hidden = false;
-    task.collapsed = false;
-    layout();
+    if (!task.h || task.hidden || task.collapsed) {
+        if (!task.h && !ORDER.includes(task)) ORDER.push(task);
+        task.hidden = false;
+        task.collapsed = false;
+        layout();
+    }
     elScroll.scrollTop = Math.max(0, task.y - 4);
 }
 function openTaskAt(tid, tm) {
     const task = TRACKS[tid];
     if (!task) return;
-    revealTaskTrack(task);
     for (let depth = task.rowsT.length - 1; depth >= 0; depth--) {
         const row = task.rowsT[depth], position = lbEnd(row, tm);
         if (position < row.length) {
             const index = row[position];
-            if (index < N && sStart[index] <= tm && sEnd[index] > tm) { select(index); return; }
+            if (index < N && sStart[index] <= tm && sEnd[index] > tm) {
+                revealTaskTrack(task);
+                select(index);
+                return;
+            }
         }
     }
     setSelection(-1);
@@ -284,6 +456,17 @@ function openTaskAt(tid, tm) {
 }
 let hoverSourceRequest = null;
 let hoverSourcePointer = null;
+let sliceTip = null;
+function showSliceTip(index, dense, event) {
+    if (hoverSourceRequest?.warning && fgData.sourceReady(hoverSourceRequest.source)) {
+        hoverSourceRequest = null;
+        sliceTip = null;
+    }
+    if (sliceTip?.index !== index || sliceTip.adjusted !== adjOn) {
+        sliceTip = { index, adjusted: adjOn, html: tipSlice(index) };
+    }
+    showTip(sliceTip.html + (dense ? tipDense(dense) : '') + (hoverSourceRequest?.warning || ''), event);
+}
 function loadCallSitePosition(index, source) {
     if (index !== hov || !hoverSourcePointer) return;
     if (hoverSourceRequest?.index === index && hoverSourceRequest.source === source) return;
@@ -293,14 +476,16 @@ function loadCallSitePosition(index, source) {
     fgData.loadSource(source, { signal: request.controller.signal }).then(() => {
         if (hoverSourceRequest !== request || hov !== index || !hoverSourcePointer || fgCurrentView() !== 'timeline') return;
         const { event, dense } = hoverSourcePointer;
-        showTip(tipSlice(index) + (dense ? tipDense(dense) : ''), event);
+        sliceTip = null;
+        showSliceTip(index, dense, event);
     }).catch(error => {
         if (hoverSourceRequest !== request || error.name === 'AbortError' || hov !== index) return;
-        if (hoverSourcePointer) showTip(elTipBody.innerHTML + '<div class="t-warn">Source not loaded: ' +
-            esc(error.message) + '. Select the call to retry.</div>', hoverSourcePointer.event);
+        request.warning = '<div class="t-warn">Source not loaded: ' + esc(error.message) + '. Select the call to retry.</div>';
+        if (hoverSourcePointer) showSliceTip(index, hoverSourcePointer.dense, hoverSourcePointer.event);
     });
 }
 let tipHtml = null, tipSize = null, tipPointer = null, pendingHover = null;
+let pendingHoverNeedsTargetCheck = false;
 function showTip(html, ev) {
     if (tipHtml !== html) {
         elTipBody.innerHTML = html;
@@ -335,10 +520,12 @@ function positionTip(ev) {
 }
 function hideTip() {
     pendingHover = null;
+    pendingHoverNeedsTargetCheck = false;
     elTip.style.display = 'none';
     tipHtml = null;
     tipSize = null;
     tipPointer = null;
+    sliceTip = null;
     hoverSourceRequest?.controller.abort();
     hoverSourceRequest = null;
     hoverSourcePointer = null;
@@ -351,10 +538,10 @@ if (typeof ResizeObserver !== 'undefined') {
     });
     tipObserver.observe(elTip);
 }
-window.addEventListener('resize', hideTip, { passive: true });
-window.addEventListener('scroll', hideTip, { passive: true });
-window.visualViewport?.addEventListener('resize', hideTip, { passive: true });
-window.visualViewport?.addEventListener('scroll', hideTip, { passive: true });
+window.addEventListener('resize', resizeTimelineHover, { passive: true });
+window.addEventListener('scroll', dismissTimelineHover, { passive: true });
+window.visualViewport?.addEventListener('resize', resizeTimelineHover, { passive: true });
+window.visualViewport?.addEventListener('scroll', dismissTimelineHover, { passive: true });
 document.fonts?.addEventListener('loadingdone', () => {
     if (!tipPointer) return;
     tipSize = null;
@@ -362,119 +549,277 @@ document.fonts?.addEventListener('loadingdone', () => {
 });
 
 // ---- mouse ----
-let drag = null;   // {mode:'pan'|'range'|'ov', x0, s0, e0, moved, track}
+let drag = null;
+const MOUSE_DRAG_SLOP = 3;
+let rangePick = null;
+let firstCanvasZoomHit = null, pendingCanvasZoomHit = null;
+function rememberCanvasZoomHit(hit = null, clickCount = 0) {
+    const previous = firstCanvasZoomHit;
+    firstCanvasZoomHit = null;
+    pendingCanvasZoomHit = null;
+    if (!hit || (hit.slice < 0 && hit.kvm?.kind !== 'interval' && !hit.off)) return;
+    if (clickCount === 1) firstCanvasZoomHit = hit;
+    else if (clickCount === 2 && previous) {
+        const same = hit.slice >= 0 ? hit.slice === previous.slice : hit.kvm?.kind === 'interval' ?
+            previous.kvm?.kind === 'interval' && previous.kvm.index === hit.kvm.index : hit.off === previous.off;
+        if (same) pendingCanvasZoomHit = hit;
+    }
+}
+function paintedRange() { return drag?.rangePreview ?? range; }
+function takeTimelineMouseDrag() {
+    const gesture = drag;
+    drag = null;
+    if (gesture?.mode === 'pan' && gesture.moved) elCv.classList.remove('grab');
+    return gesture;
+}
+function cancelTimelineMouseDrag() {
+    rememberCanvasZoomHit();
+    if (takeTimelineMouseDrag()?.rangePreview) draw();
+}
 function localXY(ev, el) { const b = el.getBoundingClientRect(); return [ev.clientX - b.left, ev.clientY - b.top]; }
-function activateCanvas(mx, my) {
-    const h = hitTest(mx, my);
-    if (h.header && h.track) { h.track.collapsed = !h.track.collapsed; layout(); draw(); return; }
-    if (h.cpuSeg) { openTaskAt(h.cpuSeg.t, h.tm); return; }
-    if (h.kvm) { showKvmDetail(h.kvm); return; }
-    if (h.slice >= 0) select(h.slice);
-    else if (h.off) { setSelection(-1); showWaitChain(h.off); draw(); }
+function beginRangePick() {
+    rangePick = { start: null, track: null };
+    elRangeScope.value = 'all';
+    elRangePickHint.textContent = 'Pick range start';
+    elRangePick.hidden = false;
+    elCv.setAttribute('aria-describedby', 'tlRangePickHint');
+    elCv.dataset.rangePick = '';
+    if (clearTimelineHover()) drawTracks();
+    if (detailExpanded) setDetailExpanded(false);
+    else resize();
+    focusTimelineControl();
+}
+function cancelRangePick(restoreFocus = false, updateLayout = true) {
+    if (!rangePick) return;
+    rangePick = null;
+    elRangeAnchor.hidden = true;
+    elRangePick.hidden = true;
+    elCv.removeAttribute('aria-describedby');
+    delete elCv.dataset.rangePick;
+    if (updateLayout) resize();
+    if (restoreFocus) focusTimelineControl();
+}
+function pickRangePoint(horizontal, vertical) {
+    const point = Math.max(0, Math.min(tMax, view.s + horizontal / W * (view.e - view.s)));
+    if (rangePick.start === null) {
+        const track = elRangeScope.value === 'track' ? rangeTrackAtY(vertical + elScroll.scrollTop) : null;
+        if (elRangeScope.value === 'track' && !track) {
+            elRangePickHint.textContent = 'Pick a task or CPU trace track';
+            return;
+        }
+        rangePick = { start: point, track: track?.id ?? null };
+        elRangePickHint.textContent = 'Pick range end';
+        drawCursor();
+        return;
+    }
+    if (point === rangePick.start) {
+        elRangePickHint.textContent = 'Pick a different end';
+        return;
+    }
+    range = { s: Math.min(rangePick.start, point), e: Math.max(rangePick.start, point), track: rangePick.track };
+    cancelRangePick(true);
+    requestRangeSummary();
+}
+elRangeScope.addEventListener('change', () => {
+    if (!rangePick) return;
+    rangePick = { start: null, track: null };
+    elRangePickHint.textContent = 'Pick range start';
+    elRangeAnchor.hidden = true;
+});
+elRangePick.querySelector('[data-range-pick-cancel]').addEventListener('click', () => cancelRangePick(true));
+function activateCanvas(mx, my, clickCount = 0) {
+    if (rangePick) { rememberCanvasZoomHit(); pickRangePoint(mx, my); return; }
+    const hit = hitTest(mx, my);
+    rememberCanvasZoomHit(hit, clickCount);
+    if (hit.header && hit.track) { hit.track.collapsed = !hit.track.collapsed; layout(); draw(); return; }
+    if (hit.cpuSeg) { openTaskAt(hit.cpuSeg.t, hit.tm); return; }
+    if (hit.kvm) { showKvmDetail(hit.kvm); return; }
+    if (hit.slice >= 0) {
+        if (document.activeElement !== elCv) focusTimelineControl();
+        let dense = null;
+        if (hit.dense) {
+            const pixelWidth = (view.e - view.s) / W;
+            const start = view.s + Math.floor(mx) * pixelWidth;
+            dense = { ...hit.dense, start, end: start + pixelWidth, filtered: !!(searchHits || textHits) };
+        }
+        if (showsSelectedSlice(hit.slice)) {
+            updateDenseSelection(elDetail.firstElementChild, dense);
+            return;
+        }
+        select(hit.slice, { canvasDetailOpen: elDetail.classList.contains('show'), dense });
+    } else if (hit.off) { setSelection(-1); showWaitChain(hit.off, hit.denseOff); draw(); }
     else if (range) { range = null; hideDetail(); draw(); }
-    else select(-1);
+    else if (sel >= 0 || selKvm || elDetail.classList.contains('show')) select(-1);
 }
 elCv.addEventListener('mousedown', ev => {
     if (ev.button !== 0) return;
-    pendingHover = null;
+    if (drag) cancelTimelineMouseDrag();
+    if (clearTimelineHover()) drawTracks();
     const [mx, my] = localXY(ev, elCv);
-    const h = hitTest(mx, my);
-    drag = { mode: ev.shiftKey ? 'range' : 'pan', x0: mx, s0: view.s, e0: view.e, moved: false,
-        track: ev.shiftKey && !ev.altKey && h.track ? h.track.id : null };
+    const pickingByDrag = ev.shiftKey && !rangePick;
+    const track = pickingByDrag && !ev.altKey ? rangeTrackAtY(my + elScroll.scrollTop) : null;
+    drag = { mode: pickingByDrag ? 'range' : 'pan', x0: mx, start: view.s, span: view.e - view.s, moved: false,
+        clientX: ev.clientX, clientY: ev.clientY, verticalMotion: false, track: track?.id ?? null };
     ev.preventDefault();
 });
 window.addEventListener('mousemove', ev => {
     if (window.fgCurrentView() !== 'timeline') return;
+    if (drag && !(ev.buttons & 1)) cancelTimelineMouseDrag();
     if (drag) {
+        if (!drag.moved) {
+            if (Math.abs(ev.clientY - drag.clientY) > MOUSE_DRAG_SLOP) drag.verticalMotion = true;
+            if (Math.abs(ev.clientX - drag.clientX) <= MOUSE_DRAG_SLOP) return;
+            drag.moved = true;
+            if (drag.mode === 'pan') elCv.classList.add('grab');
+        }
         const [mx] = localXY(ev, drag.mode === 'ov' ? elHead : elCv);
-        if (Math.abs(mx - drag.x0) > 3) drag.moved = true;
-        if (drag.mode === 'pan' && drag.moved) {
-            elCv.classList.add('grab');
-            const dt = (mx - drag.x0) / W * (drag.e0 - drag.s0);
-            view.s = drag.s0 - dt; view.e = drag.e0 - dt; clampView();
-        } else if (drag.mode === 'range' && drag.moved) {
+        if (drag.mode === 'pan') {
+            if (!panTo(drag.start - (mx - drag.x0) / W * drag.span, drag.span)) return;
+        } else if (drag.mode === 'range') {
             const k = W / (view.e - view.s);
             const a = view.s + drag.x0 / k, b = view.s + mx / k;
-            range = { s: Math.max(0, Math.min(a, b)), e: Math.min(tMax, Math.max(a, b)), track: drag.track };
+            const visible = paintedRange();
+            const repaintTracks = !visible || visible.track !== drag.track;
+            drag.rangePreview = { s: Math.max(0, Math.min(a, b)), e: Math.min(tMax, Math.max(a, b)), track: drag.track };
+            hideTip();
+            if (repaintTracks) draw();
+            else drawRuler();
+            return;
         } else if (drag.mode === 'ov') {
-            centerOn(ovT(mx));
+            if (!panTo(ovT(mx) - drag.span / 2, drag.span)) return;
         }
         hideTip();
         draw();
         return;
     }
-    if (ev.target !== elCv) return;
+    if (ev.target !== elCv || rangePick) return;
     pendingHover = ev;
+    pendingHoverNeedsTargetCheck = false;
     drawCursor();
 });
+function paintedHoverSlice(index, scale) {
+    if (index < 0 || index >= N) return index;
+    if (index === sel) return -1;
+    const width = (sEnd[index] - view.s) * scale - (sStart[index] - view.s) * scale;
+    return width < DENSE_SLICE_WIDTH ? -1 : index;
+}
+function additionalWakeHoverTask(index) {
+    if (index < 0) return -1;
+    const task = sTask[index];
+    return (sel >= 0 && sTask[sel] === task) || range?.track === task ? -1 : task;
+}
+function hoverSliceChangesPaint(next, previous) {
+    if (next === previous) return false;
+    const scale = W / (view.e - view.s);
+    return paintedHoverSlice(next, scale) !== paintedHoverSlice(previous, scale) ||
+        (ov.wk && WAKES.length > 0 && additionalWakeHoverTask(next) !== additionalWakeHoverTask(previous));
+}
 function flushHover() {
     const event = pendingHover;
+    const checkTarget = pendingHoverNeedsTargetCheck;
     pendingHover = null;
-    if (!event || drag || window.fgCurrentView() !== 'timeline') return false;
+    pendingHoverNeedsTargetCheck = false;
+    if (!event || drag || rangePick || window.fgCurrentView() !== 'timeline') return null;
+    if (checkTarget && document.elementFromPoint(event.clientX, event.clientY) !== elCv) return null;
     const [horizontal, vertical] = localXY(event, elCv);
     cursorX = horizontal;
     const hit = hitTest(horizontal, vertical);
     const slice = hit.slice;
+    if (slice < 0) sliceTip = null;
     hoverSourcePointer = { event, dense: hit.dense };
     if (hoverSourceRequest && hoverSourceRequest.index !== slice) {
         hoverSourceRequest.controller.abort(); hoverSourceRequest = null;
     }
     const nextCpu = hit.cpuSeg || null;
-    const changed = slice !== hov || hit.off !== hovOff || nextCpu?.cpu !== hovCpu?.cpu || nextCpu?.j !== hovCpu?.j ||
+    const changed = hoverSliceChangesPaint(slice, hov) ||
+        hit.off !== hovOff || nextCpu?.cpu !== hovCpu?.cpu || nextCpu?.j !== hovCpu?.j ||
         hit.kvm?.kind !== hovKvm?.kind || hit.kvm?.index !== hovKvm?.index;
     hov = slice; hovOff = hit.off;
     hovCpu = nextCpu;
     hovKvm = hit.kvm || null;
-    elCv.classList.toggle('ptr', slice >= 0 || hit.header || !!hovCpu || !!hovKvm);
+    elCv.classList.toggle('ptr', slice >= 0 || hit.header || !!hit.off || !!hovCpu || !!hovKvm);
+    return {changed, event, hit};
+}
+function renderHoverTip({event, hit}) {
     if (hovKvm) showTip(tipKvm(hovKvm), event);
     else if (hovCpu) showTip(tipCpu(hovCpu), event);
-    else if (slice >= 0) showTip(tipSlice(slice) + (hit.dense ? tipDense(hit.dense) : ''), event);
-    else if (hit.off) showTip(tipOff(hit.off), event);
+    else if (hov >= 0) showSliceTip(hov, hit.dense, event);
+    else if (hit.off) showTip(tipOff(hit.off) + (hit.denseOff ? '<div>' + denseOffMessage(hit.denseOff) + '</div>' : ''), event);
     else hideTip();
-    return changed;
 }
 window.addEventListener('mouseup', ev => {
-    if (!drag) return;
-    const d = drag;
-    drag = null;
-    elCv.classList.remove('grab');
-    if (d.mode === 'range') {
-        if (d.moved && range) showRangeSummary();
-        else { range = null; draw(); }
+    if (ev.button !== 0) return;
+    const gesture = takeTimelineMouseDrag();
+    if (!gesture) { rememberCanvasZoomHit(); return; }
+    if (gesture.mode === 'range') {
+        rememberCanvasZoomHit();
+        if (gesture.rangePreview) {
+            range = gesture.rangePreview;
+            requestRangeSummary();
+        }
+        else { if (rangeJob) hideDetail(); range = null; draw(); }
         return;
     }
-    if (d.mode !== 'pan' || d.moved || ev.target !== elCv) return;
-    activateCanvas(...localXY(ev, elCv));
+    if (gesture.mode !== 'pan' || gesture.moved || gesture.verticalMotion || ev.target !== elCv ||
+            Math.max(Math.abs(ev.clientX - gesture.clientX), Math.abs(ev.clientY - gesture.clientY)) > MOUSE_DRAG_SLOP) {
+        rememberCanvasZoomHit();
+        return;
+    }
+    activateCanvas(...localXY(ev, elCv), ev.detail);
 });
-elCv.addEventListener('mouseleave', () => {
-    const changed = hov >= 0 || hovOff !== null || hovCpu !== null || hovKvm !== null;
-    cursorX = -1; hov = -1; hovOff = null; hovCpu = null; hideTip();
+function clearTimelineHover() {
+    const changed = hoverSliceChangesPaint(-1, hov) || hovOff !== null || hovCpu !== null || hovKvm !== null;
+    cursorX = -1; hov = -1; hovOff = null; hovCpu = null;
     hovKvm = null;
-    if (changed) draw();
-    else drawCursor();
-});
-elCv.addEventListener('dblclick', ev => {
-    const [mx, my] = localXY(ev, elCv);
-    const h = hitTest(mx, my);
-    if (h.slice >= 0) select(h.slice, { zoom: true });
-    else if (h.kvm?.kind === 'interval') {
-        const interval = KVM_INTERVALS[h.kvm.index];
-        showKvmDetail(h.kvm); zoomTo(interval[1], interval[2], -1);
+    elCv.classList.remove('ptr');
+    elHoverCursor.hidden = true;
+    hideTip();
+    return changed;
+}
+function dismissTimelineHover() {
+    if (window.fgCurrentView() === 'timeline' && clearTimelineHover()) drawTracks();
+}
+function resizeTimelineHover() {
+    const pointer = pendingHover;
+    dismissTimelineHover();
+    if (pointer) {
+        pendingHover = pointer;
+        pendingHoverNeedsTargetCheck = true;
     }
-    else if (h.off) zoomTo(h.off[1], h.off[2], -1);
-});
-elCv.addEventListener('wheel', ev => {
-    const [mx] = localXY(ev, elCv);
-    if (ev.ctrlKey || ev.metaKey || ev.altKey) {
-        ev.preventDefault();
-        zoomAt(Math.exp(ev.deltaY * (ev.deltaMode === 1 ? 0.05 : 0.0022)), mx);
-    } else if (ev.shiftKey || Math.abs(ev.deltaX) > Math.abs(ev.deltaY)) {
-        ev.preventDefault();
-        const dd = ev.shiftKey && !ev.deltaX ? ev.deltaY : ev.deltaX;
-        panBy(dd / W * (view.e - view.s));
+}
+elCv.addEventListener('mouseleave', dismissTimelineHover);
+elCv.addEventListener('dblclick', () => {
+    const hit = pendingCanvasZoomHit;
+    rememberCanvasZoomHit();
+    if (!hit || rangePick) return;
+    if (hit.slice >= 0) select(hit.slice, { zoom: true });
+    else if (hit.kvm?.kind === 'interval') {
+        const interval = KVM_INTERVALS[hit.kvm.index];
+        showKvmDetail(hit.kvm); zoomTo(interval[1], interval[2], -1);
     }
+    else if (hit.off) zoomTo(hit.off[1], hit.off[2], -1);
+});
+function timelineWheelPixels(delta, mode, pageExtent) {
+    return delta * (mode === WheelEvent.DOM_DELTA_LINE ? 24 : mode === WheelEvent.DOM_DELTA_PAGE ? pageExtent : 1);
+}
+function zoomWithTimelineWheel(event, canvas) {
+    const mode = event.deltaMode;
+    const pixels = timelineWheelPixels(event.deltaY, mode, H);
+    if (!W || !pixels) return;
+    event.preventDefault();
+    zoomAt(Math.exp(pixels * 0.0022), event.clientX, canvas);
+}
+elCv.addEventListener('wheel', event => {
+    if (event.ctrlKey || event.metaKey || event.altKey) { zoomWithTimelineWheel(event, elCv); return; }
+    const mode = event.deltaMode;
+    const { deltaX, deltaY } = event;
+    if (!W || (!event.shiftKey && Math.abs(deltaX) <= Math.abs(deltaY))) return;
+    const pixels = timelineWheelPixels(deltaX || deltaY, mode, W);
+    if (!pixels) return;
+    event.preventDefault();
+    panBy(pixels / W * (view.e - view.s));
 }, { passive: false });
-elScroll.addEventListener('scroll', () => { hideTip(); draw(); });
+elScroll.addEventListener('scroll', () => { clearTimelineHover(); drawTracks(); });
 
 const touchPoints = new Map();
 const TOUCH_SLOP = 7;
@@ -487,6 +832,7 @@ function pinchGeometry() {
     };
 }
 elCv.addEventListener('pointerdown', ev => {
+    pendingTouchTap = null;
     if (ev.pointerType !== 'touch' || !W) return;
     ev.preventDefault();
     elCv.setPointerCapture(ev.pointerId);
@@ -495,9 +841,7 @@ elCv.addEventListener('pointerdown', ev => {
     const span = view.e - view.s;
     if (touchPoints.size === 1) {
         touchGesture = { mode: 'tap', x, y, start: view.s, span };
-        cursorX = -1; hov = -1; hovOff = null; hovCpu = null;
-        hideTip();
-        draw();
+        if (clearTimelineHover()) drawTracks();
     } else if (touchPoints.size === 2 && touchGesture.mode !== 'blocked') {
         const { center, distance } = pinchGeometry();
         touchGesture = { mode: 'pinch', distance, span, anchor: view.s + center / W * span };
@@ -520,12 +864,21 @@ elCv.addEventListener('pointermove', ev => {
     if (gesture.mode === 'tap' && Math.max(Math.abs(dx), Math.abs(dy)) >= TOUCH_SLOP) {
         gesture.mode = Math.abs(dx) > Math.abs(dy) ? 'pan' : 'blocked';
     }
-    if (gesture.mode === 'pan') {
-        view.s = gesture.start - dx / W * gesture.span;
-        view.e = view.s + gesture.span;
-        clampView();
-        draw();
+    if (gesture.mode === 'pan' && panTo(gesture.start - dx / W * gesture.span, gesture.span)) draw();
+});
+let pendingTouchTap = null;
+function cancelTimelineGestures() {
+    cancelTimelineMouseDrag();
+    pendingTouchTap = null;
+    touchGesture = null;
+    for (const pointerId of touchPoints.keys()) {
+        touchPoints.delete(pointerId);
+        if (elCv.hasPointerCapture(pointerId)) elCv.releasePointerCapture(pointerId);
     }
+}
+window.addEventListener('blur', cancelTimelineGestures);
+document.addEventListener('visibilitychange', () => {
+    if (document.hidden) cancelTimelineGestures();
 });
 function finishTouch(ev) {
     if (!touchPoints.delete(ev.pointerId)) return;
@@ -535,36 +888,64 @@ function finishTouch(ev) {
     if (ev.type !== 'pointerup' || gesture.mode !== 'tap' || window.fgCurrentView() !== 'timeline') return;
     const [x, y] = localXY(ev, elCv);
     if (x >= 0 && x < W && y >= 0 && y < H &&
-            Math.max(Math.abs(x - gesture.x), Math.abs(y - gesture.y)) < TOUCH_SLOP) activateCanvas(x, y);
+            Math.max(Math.abs(x - gesture.x), Math.abs(y - gesture.y)) < TOUCH_SLOP) {
+        if (rangePick) activateCanvas(x, y);
+        else pendingTouchTap = { pointerId: ev.pointerId, x, y };
+    }
 }
 for (const event of ['pointerup', 'pointercancel', 'lostpointercapture']) elCv.addEventListener(event, finishTouch);
+elCv.addEventListener('click', ev => {
+    const tap = pendingTouchTap;
+    pendingTouchTap = null;
+    if (!tap || window.fgCurrentView() !== 'timeline') return;
+    if (ev.pointerType ? ev.pointerType !== 'touch' || ev.pointerId !== tap.pointerId :
+        !ev.detail && !ev.sourceCapabilities?.firesTouchEvents) return;
+    activateCanvas(tap.x, tap.y, ev.detail);
+});
 
-function centerOn(t) {
-    const span = view.e - view.s;
-    view.s = t - span / 2; view.e = t + span / 2; clampView();
-}
 elHead.addEventListener('mousedown', ev => {
+    if (ev.button !== 0) return;
     const [mx, my] = localXY(ev, elHead);
     if (my > OV_H) return;
-    drag = { mode: 'ov', x0: mx, moved: true };
-    centerOn(ovT(mx));
-    draw();
+    if (drag) cancelTimelineMouseDrag();
+    const hoverChanged = clearTimelineHover(), span = view.e - view.s;
+    drag = { mode: 'ov', span, moved: true };
+    if (panTo(ovT(mx) - span / 2, span)) draw();
+    else if (hoverChanged) drawTracks();
     ev.preventDefault();
 });
-elHead.addEventListener('wheel', ev => {
-    ev.preventDefault();
-    const [mx] = localXY(ev, elHead);
-    zoomAt(Math.exp(ev.deltaY * 0.0022), mx);
-}, { passive: false });
+elHead.addEventListener('wheel', event => zoomWithTimelineWheel(event, elHead), { passive: false });
 
 // ---- error navigation ----
 let errList = [], errPos = -1;
-function errorSpan(code) { return code < 0 ? [-code - 1, -code - 1] : CHAINS[code]; }
+function errorOrigin(code) { return code < 0 ? -code - 1 : CHAINS[code][0]; }
+function errorTime(code) { return sStart[errorOrigin(code)]; }
+function errorTieOrder(code) { return code < 0 ? CHAINS.length - code - 1 : code; }
+function errorLowerBound(time, tieOrder) {
+    let low = 0, high = errList.length;
+    while (low < high) {
+        const middle = (low + high) >>> 1, code = errList[middle], start = errorTime(code);
+        if (start < time || (start === time && errorTieOrder(code) < tieOrder)) low = middle + 1;
+        else high = middle;
+    }
+    return low;
+}
+function syncErrorPosition(index, code) {
+    let position = errPos;
+    if (code !== undefined) {
+        position = errorLowerBound(sStart[index], errorTieOrder(code));
+        if (errList[position] !== code) position = -1;
+    } else if (position >= 0 && errorOrigin(errList[position]) !== index) position = -1;
+    if (position !== errPos) {
+        errPos = position;
+        updateErrLabel();
+    }
+}
 function rebuildErrList() {
     errList = [];
     for (let c = 0; c < CHAINS.length; c++) if (chainShown(c) && (!errFilter || CHAINS[c][3] === 1) && (!textHits || textHits[CHAINS[c][0]])) errList.push(c);
     if (!errFilter) for (const index of USER_ERRORS.keys()) if (!textHits || textHits[index]) errList.push(-index - 1);
-    errList.sort((left, right) => sStart[errorSpan(left)[0]] - sStart[errorSpan(right)[0]]);
+    errList.sort((left, right) => errorTime(left) - errorTime(right) || errorTieOrder(left) - errorTieOrder(right));
     errPos = -1;
     updateErrLabel();
 }
@@ -584,15 +965,14 @@ function gotoErr(dir) {
         return;
     }
     if (errPos < 0) {
-        const mid = sel >= 0 ? sStart[sel] : view.s;
-        errPos = dir > 0 ? errList.findIndex(code => sStart[errorSpan(code)[0]] > mid) : -1;
-        if (dir < 0) for (let position = errList.length - 1; position >= 0; position--) if (sStart[errorSpan(errList[position])[0]] < mid) { errPos = position; break; }
-        if (errPos < 0) errPos = dir > 0 ? 0 : errList.length - 1;
+        const time = sel >= 0 ? sStart[sel] : view.s;
+        const boundary = errorLowerBound(time, dir > 0 ? Infinity : -Infinity);
+        errPos = (boundary + (dir < 0 ? errList.length - 1 : 0)) % errList.length;
     } else errPos = (errPos + dir + errList.length) % errList.length;
-    const ch = errorSpan(errList[errPos]);
+    const code = errList[errPos], origin = errorOrigin(code), top = code < 0 ? origin : CHAINS[code][1];
     // frame the whole chain, select the origin
-    zoomTo(sStart[ch[1]], sEnd[ch[1]], ch[0]);
-    select(ch[0], { reveal: true });
+    zoomTo(sStart[top], sEnd[top], origin);
+    select(origin, { reveal: true });
     updateErrLabel();
 }
 
@@ -602,8 +982,11 @@ let searchPostingIndex = null, searchMatchQuery = null, searchNameHits = null;
 let searchMatches = new Uint32Array(0), searchVisibleMatches = searchMatches;
 let searchFilterBasis = null, searchWork = null, searchProgress = '', searchPaused = false;
 let searchReadyQuery = '', searchComposing = false, searchWorkerUnavailable = false;
+let searchRefreshStatus = null;
+const searchNavButtons = [elSearchPrev, elSearchNext];
 const searchDefaultTitle = 'Case-insensitive regular expression; highlights and navigates recorded function names. ' +
-    'Complex expressions use cancellable background search when available; Escape clears and cancels. ' +
+    'Enter jumps to the next match; Shift+Enter jumps to the previous match. Escape clears and cancels. ' +
+    'Complex expressions use cancellable background search when available. ' +
     (document.getElementById('filterInput') ? 'Search is limited by the shared filter; it does not change that filter.' :
         'Shared filtering is not enabled for this report.');
 function searchIndex(target) {
@@ -615,31 +998,80 @@ function searchIndex(target) {
     }
     return low;
 }
+function renderSearchStatus(message, value, refreshing) {
+    if (refreshing) {
+        if (!searchRefreshStatus) {
+            searchRefreshStatus = document.createElement('span');
+            searchRefreshStatus.className = 'tl-count-refresh';
+            searchRefreshStatus.innerHTML = '<span class="tl-count-refresh-mark" aria-hidden="true"></span><span class="tl-count-refresh-text"></span>';
+            elCount.append(searchRefreshStatus);
+            elCount.setAttribute('data-refreshing', '');
+        }
+        const label = searchRefreshStatus.lastElementChild;
+        if (label.textContent !== message) label.textContent = message;
+        return;
+    }
+    if (searchRefreshStatus) {
+        searchRefreshStatus.remove();
+        searchRefreshStatus = null;
+        elCount.removeAttribute('data-refreshing');
+    }
+    if (value === null) {
+        if (elCount.firstElementChild || elCount.textContent !== message) elCount.textContent = message;
+        return;
+    }
+    if (!elCount.firstElementChild)
+        elCount.innerHTML = '<span class="tl-count-result"><span class="tl-count-value"></span> calls</span>';
+    const digits = elCount.firstElementChild.firstElementChild;
+    if (digits.textContent !== value) digits.textContent = value;
+}
+function searchInProgress() {
+    return searchComposing || !!searchTimer || !!searchWork;
+}
+function renderSearchPosition() {
+    const count = searchVisibleMatches.length, position = searchIndex(sel);
+    const atMatch = position < count && searchVisibleMatches[position] === sel;
+    renderSearchStatus('', (atMatch ? (position + 1) + ' / ' : '') + count, false);
+}
+function updateSearchSelection() {
+    if (searchQuery && searchVisibleMatches.length && !searchInProgress() && !searchPaused && !searchError)
+        renderSearchPosition();
+}
 function updateSearchLabel() {
-    const busy = searchComposing || !!searchTimer || !!searchWork;
+    const busy = searchInProgress();
     const invalid = !busy && searchErrorKind === 'regex';
     elSearch.classList.toggle('bad', invalid);
     elSearch.setAttribute('aria-invalid', String(invalid));
     elSearch.title = !busy && searchError ? searchError : searchDefaultTitle +
         (searchWorkerUnavailable && searchNeedsWorker(searchQuery) ? ' Background search is unavailable; this expression uses the page thread and may block it.' : '');
     elCount.setAttribute('aria-busy', String(busy));
-    elCount.title = searchComposing ? 'Finish text composition to search.' : busy ? searchProgress : searchError;
+    elCount.title = searchComposing ? 'Finish text composition to search.' : busy ? searchProgress || 'Searching…' : searchError;
     const count = searchVisibleMatches.length;
-    elSearchPrev.disabled = elSearchNext.disabled = busy || searchPaused || !!searchError || !count;
-    if (searchComposing) elCount.textContent = 'Composing…';
-    else if (busy) elCount.textContent = searchProgress || 'Searching…';
-    else if (searchPaused) elCount.textContent = 'Search paused';
-    else if (invalid) elCount.textContent = 'Invalid regex';
-    else if (searchError) elCount.textContent = 'Search unavailable';
-    else if (!searchQuery) elCount.textContent = '';
-    else {
-        const position = searchIndex(sel);
-        const value = (position < count && searchVisibleMatches[position] === sel ? (position + 1) + ' / ' : '') + count;
-        elCount.innerHTML = '<span class="tl-count-value">' + value + '</span> calls';
+    const refreshing = busy && !searchPaused && !elSearchNext.disabled;
+    const disable = !refreshing && (busy || searchPaused || !!searchError || !count);
+    if (disable && !searchPaused && (document.activeElement === elSearchPrev || document.activeElement === elSearchNext))
+        elSearch.focus({ preventScroll: true });
+    const tabIndex = refreshing ? -1 : 0;
+    for (const button of searchNavButtons) {
+        if (button.disabled !== disable) button.disabled = disable;
+        if (button.tabIndex !== tabIndex) button.tabIndex = tabIndex;
+        if (refreshing && !button.hasAttribute('aria-disabled')) button.setAttribute('aria-disabled', 'true');
+        else if (!refreshing && button.hasAttribute('aria-disabled')) button.removeAttribute('aria-disabled');
+    }
+    let message = '';
+    if (searchComposing) message = 'Composing…';
+    else if (busy) message = searchProgress || 'Searching…';
+    else if (searchPaused) message = 'Search paused';
+    else if (invalid) message = 'Invalid regex';
+    else if (searchError) message = 'Search unavailable';
+    else if (searchQuery) {
         if (!count) elCount.title = textHits && searchMatches.length ?
             'The shared filter excludes all matching calls. Adjust or clear it in Tools → Filter calls.' :
             'No recorded function names match this expression. Try a different case-insensitive regular expression.';
+        renderSearchPosition();
+        return;
     }
+    renderSearchStatus(message, null, refreshing);
 }
 function cancelSearchWork() {
     const work = searchWork;
@@ -657,10 +1089,11 @@ function navigateSearch(dir) {
         else if (searchVisibleMatches[position] === sel) position++;
         position = (position + count) % count;
     }
-    select(searchVisibleMatches[position], { reveal: true });
+    const keepSearch = compactToolbar.matches && innerHeight <= 480 && innerWidth > innerHeight;
+    select(searchVisibleMatches[position], { reveal: true, keepSearch });
 }
 function* prepareSearchMatches(query, matcher, accepted, signal) {
-    if (!searchPostingIndex) searchPostingIndex = yield* buildSearchIndex(sName, N);
+    if (!searchPostingIndex) searchPostingIndex = yield* buildSearchIndex(sName, N, input.strings.length);
     if (searchMatchQuery !== query) {
         let hits = null;
         if (!matcher && !searchWorkerUnavailable) {
@@ -795,8 +1228,9 @@ function scheduleSearchInput(event) {
     cancelSearchWork();
     searchPaused = window.fgCurrentView() !== 'timeline';
     if (searchComposing || event?.isComposing || searchPaused) { updateSearchLabel(); return; }
-    if (!elSearch.value.trim()) { applySearch(''); return; }
-    searchTimer = setTimeout(() => applySearch(elSearch.value), 150);
+    const query = elSearch.value.trim();
+    if (!query) { applySearch(''); return; }
+    searchTimer = setTimeout(() => applySearch(query), searchNeedsWorker(query) ? 150 : 90);
     updateSearchLabel();
 }
 elSearch.addEventListener('input', scheduleSearchInput);
@@ -815,7 +1249,14 @@ function timelineShortcutBlocked(event) {
 elSearch.addEventListener('keydown', ev => {
     if (timelineShortcutBlocked(ev)) return;
     if (ev.key === 'Enter') { searchNext(ev.shiftKey ? -1 : 1); ev.preventDefault(); }
-    else if (ev.key === 'Escape') { elSearch.value = ''; applySearch(''); elSearch.blur(); }
+    else if (ev.key === 'Escape') {
+        if (jumpTools.contains(elSearch) && elOptions.classList.contains('open')) {
+            ev.preventDefault();
+            setToolbarOptions(false, true);
+        } else {
+            elSearch.value = ''; applySearch(''); elSearch.blur();
+        }
+    }
     ev.stopPropagation();
 });
 
@@ -930,6 +1371,7 @@ elPosition.addEventListener('close', () => {
 });
 
 // ---- keyboard (capture phase: keeps the text view's shortcuts from firing) ----
+const callNavigationKeys = new Map([['ArrowUp', 'parent'], ['ArrowDown', 'child'], ['[', 'previous'], [']', 'next']]);
 window.addEventListener('keydown', ev => {
     if (window.fgCurrentView() !== 'timeline' || timelineShortcutBlocked(ev)) return;
     if (elHelp.classList.contains('show') && elHelp.contains(ev.target instanceof Node ? ev.target : document.activeElement)) return;
@@ -956,19 +1398,41 @@ window.addEventListener('keydown', ev => {
         setToolbarOptions(false, true);
         return;
     }
+    if (taskFiltersKey(ev)) { ev.stopPropagation(); ev.preventDefault(); return; }
+    if (windowResultKey(ev)) { ev.stopPropagation(); return; }
+    if (ev.key === 'Escape' && rangePick && !elHelp.classList.contains('show')) {
+        ev.stopPropagation(); ev.preventDefault();
+        cancelRangePick(true);
+        return;
+    }
+    if (ev.key === 'Escape' && !elHelp.classList.contains('show') &&
+            ev.target.closest?.('.tl-detail') === elDetail &&
+            !ev.target.closest('input, textarea, select, [contenteditable]') && closeReadingDisclosure()) {
+        ev.stopPropagation(); ev.preventDefault();
+        return;
+    }
     if (ev.key === 'Escape' && tlRoot.classList.contains('tl-fullscreen') && !elHelp.classList.contains('show')) {
         ev.stopPropagation(); ev.preventDefault();
         leaveFullscreen();
         return;
     }
     if (ev.target.matches && ev.target.matches('input, textarea, select')) return;
-    if (elOptions.contains(ev.target instanceof Node ? ev.target : document.activeElement) &&
+    const focused = ev.target instanceof Node ? ev.target : document.activeElement;
+    if ((elOptions.contains(focused) || focused?.matches?.('.tl-source-code')) &&
             ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End', 'PageUp', 'PageDown'].includes(ev.key)) {
         ev.stopPropagation();
         return;
     }
     ev.stopPropagation();
     if ((ev.key === 'Enter' || ev.key === ' ') && ev.target.closest && ev.target.closest('button, a[href], summary')) return;
+    const navigation = callNavigationKeys.get(ev.key);
+    if (navigation) {
+        ev.preventDefault();
+        const fromDetailNav = !!focused?.closest?.('[data-call-nav]');
+        navigateCall(navigation, fromDetailNav);
+        if (!fromDetailNav) focusTimelineControl();
+        return;
+    }
     const span = view.e - view.s, cx = cursorX >= 0 ? cursorX : W / 2;
     let handled = true;
     switch (ev.key) {
@@ -987,15 +1451,26 @@ window.addEventListener('keydown', ev => {
         case 'E': gotoErr(-1); break;
         case 'n': searchNext(1); break;
         case 'N': searchNext(-1); break;
-        case 'ArrowUp': navigateCall('parent'); break;
-        case 'ArrowDown': navigateCall('child'); break;
-        case '[': navigateCall('previous'); break;
-        case ']': navigateCall('next'); break;
-        case 'Enter': if (sel >= 0) gotoText(sLine[sel]); break;
-        case '/': elSearch.focus(); elSearch.select(); break;
+        case 'Enter':
+            if (rangePick && focused === elCv) pickRangePoint(W / 2, H / 2);
+            else if (sel >= 0) {
+                const exit = sEline?.[sel];
+                if (focused !== elCv || !exit || !window.fgReturnToTextOrigin(exit))
+                    gotoText(sLine[sel], focused === elCv ? elCv : null);
+            }
+            break;
+        case '/':
+            if (jumpTools.contains(elSearch) && !elOptions.classList.contains('open')) setToolbarOptions(true);
+            elSearch.focus(); elSearch.select(); break;
         case 'g': case 'G': showPosition(); break;
         case 'h': case 'H': if (sel >= 0) showDist(sName[sel]); break;
-        case 'o': case 'O': toggleAdjusted(); break;
+        case 'o': case 'O':
+            toggleAdjusted();
+            if (elDetail.contains(document.activeElement)) {
+                ev.preventDefault();
+                return;
+            }
+            break;
         case 'i': case 'I': toggleInlineView(); break;
         case 'm': case 'M': toggleFullscreen(); break;
         case '?': setToolbarOptions(false); showKeyboardHint(); break;
@@ -1011,6 +1486,28 @@ window.addEventListener('keydown', ev => {
     }
 }, true);
 
+const CALL_NAV_SCAN_LIMIT = 256;
+function nearbyCallSibling(index, step) {
+    const track = TRACKS[sTask[index]], parent = sParent[index];
+    if (parent >= 0 && (parent < track.lo || parent >= track.hi || sTask[parent] !== track.id || sDepth[parent] >= sDepth[index])) return -1;
+    let candidate = index + step;
+    for (let scanned = 0; scanned < CALL_NAV_SCAN_LIMIT && candidate >= track.lo && candidate < track.hi; scanned++, candidate += step) {
+        if (sTask[candidate] !== track.id) continue;
+        if (parent < 0 ? sParent[candidate] < 0 : sParent[candidate] === parent && sDepth[parent] < sDepth[candidate]) return candidate;
+    }
+    return candidate < track.lo || candidate >= track.hi ? -1 : null;
+}
+function nearbyCallChild(index) {
+    if (sFlags[index] & FL.LEAF) return -1;
+    const track = TRACKS[sTask[index]];
+    const start = track.orderedParents ? index + 1 : track.lo;
+    const end = Math.min(track.hi, start + CALL_NAV_SCAN_LIMIT);
+    const depth = sDepth[index];
+    for (let candidate = start; candidate < end; candidate++) {
+        if (sParent[candidate] === index && sTask[candidate] === track.id && sDepth[candidate] > depth) return candidate;
+    }
+    return end === track.hi ? -1 : null;
+}
 function callTarget(index, action) {
     if (index < 0 || index >= NA) return -1;
     if (action === 'parent') {
@@ -1018,17 +1515,29 @@ function callTarget(index, action) {
         return parent >= 0 && parent < N && sTask[parent] === sTask[index] &&
             (isSyn(index) || sDepth[parent] < sDepth[index]) ? parent : -1;
     }
-    const tree = callTreeIndex();
     if (isSyn(index)) return action === 'child' ? SYN[index - N].kids[0] ?? -1 : -1;
-    return action === 'child' ? tree.first[index] : action === 'previous' ? tree.previous[index] : action === 'next' ? tree.next[index] : -1;
+    if (action !== 'child' && action !== 'previous' && action !== 'next') return -1;
+    const tree = callTreeFor(index);
+    if (!tree) {
+        return action === 'child' ? nearbyCallChild(index) : nearbyCallSibling(index, action === 'previous' ? -1 : 1);
+    }
+    const position = index - tree.offset;
+    return action === 'child' ? tree.first[position] : action === 'previous' ? tree.previous[position] : action === 'next' ? tree.next[position] : -1;
 }
+const reverseCallNavigation = { parent: 'child', child: 'parent', previous: 'next', next: 'previous' };
 function navigateCall(action, focusControl) {
     const target = callTarget(sel, action);
+    if (target === null) {
+        toast('Preparing recorded call navigation…');
+        return;
+    }
     if (target < 0) return;
     select(target, { reveal: true });
-    elDetail.scrollTop = 0; elDetail.scrollLeft = 0;
-    if (focusControl) {
-        const button = elDetail.querySelector('[data-call-nav="' + action + '"]');
-        (button && !button.disabled ? button : elCv).focus({ preventScroll: true });
-    }
+    const fromActions = focusControl === 'actions';
+    const button = fromActions ? elDetail.querySelector('[data-call-actions]') : focusControl ?
+        elDetail.querySelector('[data-call-nav="' + action + '"]:enabled') ||
+        elDetail.querySelector('[data-call-nav="' + reverseCallNavigation[action] + '"]:enabled') : null;
+    resetDetailScroll(fromActions ? null : button);
+    if (button) button.focus({ preventScroll: true });
+    else if (focusControl) focusTimelineControl();
 }

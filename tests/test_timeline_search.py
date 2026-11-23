@@ -50,7 +50,7 @@ class SearchIndexTest(unittest.TestCase):
         self.check('''
             const names = Int32Array.from([0, 2, 0, 4, 2]);
             const strings = ['Root<int>', 'argument text', 'child+symbol', 'unused', 'CHILD<int>'];
-            const index = drain(buildSearchIndex(names, names.length));
+            const index = drain(buildSearchIndex(names, names.length, strings.length));
             const tested = [];
             const hits = drain(matchSearchNames(index, strings, {test(value) {
                 tested.push(value); return /child/i.test(value);
@@ -59,6 +59,23 @@ class SearchIndexTest(unittest.TestCase):
             assert.deepEqual([...hits], [0, 0, 1, 0, 1]);
             const matches = drain(collectSearchCalls(index, names, names.length, hits));
             assert.deepEqual([...matches], [1, 3, 4]);
+        ''')
+
+    def test_exact_name_collects_only_its_postings_without_mutating_the_index(self):
+        self.check('''
+            const names = Int32Array.from([4, 0, 2, 0, 4, 0, 0]);
+            const accepted = Uint8Array.from([1, 1, 0, 0, 1, 1, 1]);
+            const index = drain(buildSearchIndex(names, 6));
+            const forbidden = new Proxy(names, {get() {throw new Error('Full call-name scan');}});
+            let reads = 0;
+            const calls = new Proxy(index.calls, {get(target, key) {reads++; return target[key];}});
+            const matches = drain(collectNamedCallsSteps({...index, calls}, forbidden, 6, 0, accepted));
+            assert.deepEqual(matches, [1, 5]);
+            assert.equal(reads, 3);
+            matches.reverse();
+            assert.deepEqual(drain(collectNamedCallsSteps(index, forbidden, 6, 0, null)), [1, 3, 5]);
+            assert.deepEqual(drain(collectNamedCallsSteps(index, forbidden, 6, 1, null)), []);
+            assert.deepEqual(drain(collectNamedCallsSteps(null, names, 6, 0, accepted)), [1, 5]);
         ''')
 
     def test_sparse_queries_merge_postings_without_reading_every_call(self):
@@ -101,7 +118,7 @@ class SearchIndexTest(unittest.TestCase):
                 if (Number.isInteger(Number(key))) reads++;
                 return Reflect.get(target, key, target);
             }});
-            const steps = buildSearchIndex(observed, names.length);
+            const steps = buildSearchIndex(observed, names.length, 97);
             let result, yields = 0;
             do {
                 reads = 0;
@@ -119,6 +136,24 @@ class SearchIndexTest(unittest.TestCase):
             const filtered = filterSearchCalls(matches, new Uint8Array(names.length).fill(1));
             assert.equal(filtered.next().done, false);
             assert.equal(drain(filtered), matches);
+        ''')
+
+    def test_dense_and_sparse_indexes_preserve_first_seen_order_and_postings(self):
+        self.check('''
+            for (const [realNames, nameCount] of [
+                [[7, 0, 4, 7, 0, 4, 7, 7], 8],
+                [[1, 0, 7000000, 1, 0], 7000001],
+                [[1, 0, 7000000, 1, 0], 3],
+                [[1, 0, -1, 1, 0], 3],
+                [[], 3],
+            ]) {
+                const names = Int32Array.from([...realNames, 999]);
+                const sparse = drain(buildSearchIndex(names, realNames.length));
+                const optimized = drain(buildSearchIndex(names, realNames.length, nameCount));
+                assert.deepEqual(optimized, sparse);
+                assert.deepEqual([...optimized.names], [...new Set(realNames)]);
+                assert.deepEqual([...names], [...realNames, 999]);
+            }
         ''')
 
     def test_randomized_sparse_dense_and_filtered_queries_match_full_scan(self):
@@ -154,7 +189,8 @@ class SearchPreparationBrowserTest(unittest.TestCase):
         cls.addClassCleanup(cls.kernel.close)
         trace = Path(cls.kernel.dir, 'search.txt')
         trace.write_text('# tracer: function_graph\n' + ''.join(
-            f'1.{position:06d} |   0)   task-42   |  ...1. |   0.100 us   |  function_{position % cls.function_count}();\n'
+            f'1.{position:06d} |   0)   task-42   |  ...1. |   {"0.000" if position == 32 else "0.100"} us   |  '
+            f'function_{position % cls.function_count}();\n'
             for position in range(cls.count)))
         cls.kernel.run(str(trace), '--timeline', '--filter', out='single.html')
         cls.kernel.run(str(trace), '--timeline', '--filter', '--report-mode', 'sidecar', out='sidecar')
@@ -232,6 +268,72 @@ class SearchPreparationBrowserTest(unittest.TestCase):
                     self.assertFalse(any(url.endswith(('text.html', 'text-index.json')) for url in self.requests))
                     self.assertEqual(self.page.locator('#content .line-container').count(), 0)
 
+    def test_first_desktop_search_sizes_the_split_before_mounting_details(self):
+        self.open_report()
+        self.page.evaluate('''() => {
+            const detail = document.querySelector('.tl-detail');
+            const chart = document.querySelector('.tl-scroll');
+            const html = Object.getOwnPropertyDescriptor(Element.prototype, 'innerHTML');
+            window.firstSearchSplit = {closed: chart.clientHeight};
+            Object.defineProperty(detail, 'innerHTML', {
+                configurable: true, get: html.get,
+                set(markup) {
+                    if (markup.includes('tl-recorded-call-head')) {
+                        window.firstSearchSplit.open = chart.clientHeight;
+                        window.firstSearchSplit.count = this.childElementCount;
+                        delete detail.innerHTML;
+                    }
+                    html.set.call(this, markup);
+                },
+            });
+        }''')
+        self.start('^function_31$')
+        self.ready()
+        self.assertEqual(self.selected(), 31)
+        self.assertEqual(self.page.locator('.tl-detail .tl-recorded-call-head').get_attribute('data-recorded-call'), '31')
+        split = self.page.evaluate('''() => ({...firstSearchSplit,
+            final: document.querySelector('.tl-scroll').clientHeight})''')
+        self.assertLess(split['open'], split['closed'])
+        self.assertEqual(split['open'], split['final'])
+        self.assertEqual(split['count'], 0)
+        self.assertTrue(self.page.locator('.tl-canvas').evaluate('''canvas =>
+            document.elementFromPoint(...fgView('timeline').probe().xyOf(31)) === canvas'''))
+
+    def test_search_pans_calls_touching_either_edge_without_changing_zoom(self):
+        for mode in ('single', 'sidecar'):
+            self.open_report(mode)
+            for index, edge, pan in ((31, 'right', True), (31, 'left', True), (31, 'overlap', False),
+                                     (32, 'right', True), (32, 'left', False)):
+                with self.subTest(mode=mode, index=index, edge=edge):
+                    before = self.page.evaluate('''({index, edge}) => {
+                        const model = fgView('timeline').probe(), span = 10000, pad = 800;
+                        const start = model.sStart[index], end = model.sEnd[index];
+                        model.select(-1);
+                        const offset = edge === 'right' ? start - span - pad :
+                            (edge === 'left' ? end : (start + end) / 2) + pad;
+                        model.zoomTo(offset, offset + span, -1);
+                        return {view: model.view(), start, end};
+                    }''', dict(index=index, edge=edge))
+                    self.assertEqual(before['start'] == before['end'], index == 32)
+                    if edge == 'right':
+                        self.assertEqual(before['view'][1], before['start'])
+                    elif edge == 'left':
+                        self.assertEqual(before['view'][0], before['end'])
+                    self.start(f'^function_{index}$')
+                    self.ready()
+                    self.assertEqual(self.selected(), index)
+                    after = self.page.evaluate("fgView('timeline').probe().view()")
+                    if pan:
+                        self.assertLess(after[0], before['start'])
+                        self.assertGreater(after[1], before['end'])
+                        self.assertEqual(after[1] - after[0], before['view'][1] - before['view'][0])
+                        self.assertTrue(self.page.locator('.tl-canvas').evaluate('''canvas => {
+                            const model = fgView('timeline').probe();
+                            return document.elementFromPoint(...model.xyOf(model.sel())) === canvas;
+                        }'''))
+                    else:
+                        self.assertEqual(after, before['view'])
+
     def test_replacing_and_restarting_an_unfinished_query_never_reuses_empty_cache(self):
         self.open_report()
         self.start('^function_1$')
@@ -253,6 +355,40 @@ class SearchPreparationBrowserTest(unittest.TestCase):
         self.start('^function_3$')
         self.ready()
         self.assertEqual(self.selected(), 3)
+
+    def test_simple_input_uses_shorter_debounce_and_enter_skips_it(self):
+        self.open_report()
+        result = self.page.evaluate('''() => {
+            const schedule = window.setTimeout, cancel = window.clearTimeout;
+            const input = document.querySelector('.tl-search');
+            const timers = [], cancelled = [];
+            function type(value) {
+                input.value = value;
+                input.dispatchEvent(new Event('input', {bubbles: true}));
+            }
+            try {
+                window.setTimeout = (callback, delay, ...args) => {
+                    if (delay > 0) { timers.push(delay); return -timers.length; }
+                    return schedule(callback, delay, ...args);
+                };
+                window.clearTimeout = timer => {
+                    if (timer < 0) cancelled.push(timer);
+                    else cancel(timer);
+                };
+                type('^function_2$');
+                type('^function_(2|3)$');
+                type('^function_3$');
+                input.dispatchEvent(new KeyboardEvent('keydown', {key: 'Enter', bubbles: true}));
+                return {timers, cancelled};
+            } finally {
+                window.setTimeout = schedule;
+                window.clearTimeout = cancel;
+            }
+        }''')
+        self.assertEqual(result, dict(timers=[90, 150, 90], cancelled=[-1, -2, -3]))
+        self.ready()
+        self.assertEqual(self.selected(), 3)
+        self.assertEqual(self.page.locator('.tl-count').inner_text(), '1 / 250 calls')
 
     def test_filter_change_during_preparation_uses_only_the_latest_scope(self):
         self.open_report()
@@ -322,6 +458,45 @@ class SearchPreparationBrowserTest(unittest.TestCase):
         self.ready()
         self.assertIn('No recorded function names match', self.page.locator('.tl-count').get_attribute('title'))
 
+    def test_selecting_a_slice_only_updates_the_ready_match_position(self):
+        self.open_report()
+        self.page.evaluate('''() => {
+            const status = document.querySelector('.tl-count'), model = fgView('timeline').probe();
+            let delivered = [];
+            const observer = new MutationObserver(records => delivered.push(...records));
+            observer.observe(status.parentElement, {subtree:true, attributes:true, childList:true, characterData:true});
+            window.selectAndMeasureSearch = index => {
+                observer.takeRecords();
+                delivered = [];
+                model.select(index);
+                return [status.textContent, delivered.concat(observer.takeRecords()).map(record => record.type === 'attributes' ?
+                    record.attributeName : (record.type === 'characterData' ? record.target.parentElement : record.target).className)];
+            };
+        }''')
+        self.assertEqual(self.page.evaluate('selectAndMeasureSearch(2)'), ['', []])
+
+        self.start('^function_1$')
+        self.ready()
+        self.assertEqual(self.selected(), 81)
+        self.assertEqual(self.page.evaluate('selectAndMeasureSearch(161)'), ['3 / 250 calls', ['tl-count-value']])
+        self.assertEqual(self.page.evaluate('selectAndMeasureSearch(161)'), ['3 / 250 calls', []])
+        self.assertEqual(self.page.evaluate('selectAndMeasureSearch(162)'), ['250 calls', ['tl-count-value']])
+        self.assertEqual(self.page.evaluate('selectAndMeasureSearch(163)'), ['250 calls', []])
+        self.assertEqual(self.page.evaluate('selectAndMeasureSearch(-1)'), ['250 calls', []])
+
+        busy, pending, measured = self.page.evaluate('''() => {
+            const input = document.querySelector('.tl-search');
+            input.value = '^function_2$';
+            input.dispatchEvent(new Event('input', {bubbles:true}));
+            const status = document.querySelector('.tl-count');
+            return [status.getAttribute('aria-busy'), status.textContent, selectAndMeasureSearch(84)];
+        }''')
+        self.assertEqual(busy, 'true')
+        self.assertIn('Searching', pending)
+        self.assertEqual(measured, [pending, []])
+        self.ready()
+        self.assertEqual(self.page.locator('.tl-count').inner_text(), '250 calls')
+
     def test_busy_and_ready_search_status_fit_touch_viewports_and_themes(self):
         screenshots = Path('/tmp/fg-search-review')
         screenshots.mkdir(exist_ok=True)
@@ -367,7 +542,7 @@ class SearchPreparationBrowserTest(unittest.TestCase):
                     self.assertEqual(self.page.locator('.tl-count').inner_text(), f'{self.count} / {self.count} calls')
                     facts = self.page.evaluate('''() => {
                         const value = document.querySelector('.tl-count-value');
-                        const status = value.parentElement;
+                        const status = value.closest('.tl-count');
                         const range = document.createRange();
                         range.selectNodeContents(value);
                         return {lines:range.getClientRects().length,
