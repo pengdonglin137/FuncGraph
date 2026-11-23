@@ -2,195 +2,154 @@
 
 **Follow Linux execution from application functions into the kernel.**
 
-Turn ftrace and uftrace recordings into interactive reports: explore call trees,
-find where time went, inspect arguments and return values, and jump to source.
-Use kernel-only, user-only or mixed recordings—without changing how you read them.
-The default output is a single HTML file you can open offline.
+Turn Linux ftrace and uftrace recordings into interactive HTML you can open offline. Follow call trees to find slow calls, inspect recorded arguments and returns, and jump to source.
 
 [English](README.md) · [简体中文](README.cn.md) ·
-[Live demos](https://pengdonglin137.github.io/FuncGraph/) ·
 [User guide](docs/guide.en.md) ·
+[CLI options](docs/cli.md) ·
 [Releases](https://github.com/pengdonglin137/FuncGraph/releases)
 
 [![CI](https://github.com/pengdonglin137/FuncGraph/actions/workflows/ci.yml/badge.svg)](https://github.com/pengdonglin137/FuncGraph/actions/workflows/ci.yml)
 
+**Choose a starting point:**
+
+- **Record your first trace:** [Install](#install), then follow the [quick start](#quick-start) to capture, generate a report, and inspect a call.
+- **Already have a trace:** [Skip capture and generate a report](#already-have-a-trace-generate-a-report-directly).
+- **Just want to see it:** Open the [live mixed report](https://pengdonglin137.github.io/FuncGraph/sample_mixed.html) and select `dispatch_datagram` to inspect its arguments and caller site. No installation needed; there's also a [kernel-only report](https://pengdonglin137.github.io/FuncGraph/sample.html).
+
 [![Mixed user/kernel Timeline with recorded arguments and source](sample_mixed.png)](https://pengdonglin137.github.io/FuncGraph/sample_mixed.html)
-
-**Try the [mixed report](https://pengdonglin137.github.io/FuncGraph/sample_mixed.html):**
-follow `main → run_round → exchange_loopback → send_frame → dispatch_datagram → sendto`
-into `__x64_sys_sendto`. Select `dispatch_datagram` for named arguments, its return
-value and caller site; the divider marks a matched user/kernel boundary.
-Or explore the [kernel-only report](https://pengdonglin137.github.io/FuncGraph/sample.html)
-and its [source/error-path screenshot](sample.png). No installation required.
-
-## What can you investigate?
-
-| Question | Explore it with |
-| --- | --- |
-| Which functions ran, and in what order? | **Timeline** task and CPU tracks, nested slices, matched user/kernel boundaries, and recorded exec/exit events. |
-| Where did the time go? | Total/self-time colors, function statistics, slow calls, off-CPU intervals, wakeup paths and wait chains. Self time is not necessarily on-CPU time. |
-| Why did this call fail? | Recorded arguments and returns, BTF-aware kernel errno paths, [user API failure hints](docs/user-api-failures.md), and linked caller/source details. |
-| Was execution delayed or in a critical section? | Recorded context flags, IRQ/preemption regions and scheduler latency. These need the corresponding trace fields/events. |
-| How do I read or compare the evidence? | **Text** with folding, filtering, source expansion and keyboard navigation; **Compare** for per-function differences; JSON/CSV export for scripts. |
-
-Timeline offers full-screen viewing, resizable details, compact menus and
-light/dark themes. Text's **Events: shown / hidden** button, beside **Top**, hides
-event rows without deleting data or changing Timeline. It appears only when the
-trace contains events; regenerate older HTML reports to use it.
-Text and Timeline share reachable view tabs and trace-line navigation.
-**Tools → Saved views…** keeps named analysis positions and notes,
-with export/import for someone using the same report data.
-Selected-call **Actions → Focus this task / Focus this function** prepares an exact filter draft for confirmation, with one-step undo after applying it.
-Missing events or debug information are not replaced with invented
-callers, parameters or timing.
-
-**On this page:** [Install](#install) · [Quick start](#quick-start) ·
-[Capture](#capture-user-and-kernel-calls) · [Source and types](#source-and-type-information) ·
-[Large traces](#large-traces) · [Documentation](#documentation)
 
 ## Install
 
-Python **3.8+** is required for report generation. Reading ordinary text or a saved
-FuncGraph uftrace JSONL export does not require a recorder, root or `vmlinux`.
+Use Python **3.8+**. Download a wheel from [GitHub Releases](https://github.com/pengdonglin137/FuncGraph/releases), not PyPI. Pick one for your task:
 
-Download a wheel from [GitHub Releases](https://github.com/pengdonglin137/FuncGraph/releases)
-and install the local file. For recording on x86_64 Linux:
+- **Generate reports or capture kernel calls only:** Use the `py3-none-any.whl` wheel. Kernel capture also needs Linux tracefs and root on the target.
+- **Capture user or mixed calls, or open a uftrace recording directory:** Use `linux_x86_64.whl` or `linux_aarch64.whl` for your architecture; they bundle patched uftrace. A saved FuncGraph JSONL export doesn't need it.
 
-```bash
-python3 -m pip install './funcgraph-<version>-py3-none-linux_x86_64.whl[all]'
-fguftrace --version
-```
-
-Replace `<version>` with the downloaded filename. Choose `linux_aarch64` on ARM64.
-Both platform wheels include **patched uftrace and its libmcount recording
-libraries**; `fgcapture`, `funcgraph` and `fgreport` select the bundled recorder
-automatically. `--uftrace-bin PATH` is an override, not a required argument.
-
-The `py3-none-any` wheel and source distribution are Python-only. Native wheels
-are built on Ubuntu 22.04, are not manylinux, and still require compatible glibc
-and system libraries. `[all]` adds pyelftools and Pygments, not those system
-libraries. See [package selection and requirements](docs/capture.md#choose-a-package-and-capture-mode).
-The release workflow does not publish to PyPI.
-
-For report development or replaying the repository's samples, clone the project
-and run from its root:
+For example, install the portable wheel. Replace `<version>` with the version in the file you downloaded:
 
 ```bash
-git clone https://github.com/pengdonglin137/FuncGraph.git
-cd FuncGraph
-python3 -m pip install '.[all]'
+python3 -m pip install './funcgraph-<version>-py3-none-any.whl'
+fgreport --help
 ```
 
-This source install does **not** compile uftrace. Use a native wheel or follow the
-[pinned native build instructions](docs/uftrace.md#reproducible-native-build)
-for fresh user/mixed recording. Text and saved JSONL replay need no submodules.
+Add `[all]` after the wheel filename inside the quotes for fast symbol lookup and source highlighting. See [package selection and requirements](docs/capture.md#choose-a-package-and-capture-mode) for platform libraries and recorder overrides.
 
 ## Quick start
 
-### Open your existing trace
+### Recommended workflow: capture, generate, analyze
+
+**1. Capture:** Start with a short, repeatable command. On a Linux target with
+root access and idle tracefs (`tracing_on=0`), record the kernel calls for `cat /etc/hostname` to `kernel.txt`.
+Kernel capture is the default, so you don't need `--kernel`.
 
 ```bash
-funcgraph --no-config trace.txt --timeline --enable-fold --filter --output report.html
+sudo "$(command -v fgcapture)" -o kernel.txt -- cat /etc/hostname
 ```
 
-Open `report.html` directly in a browser. Start in Timeline, select a call, then
-follow its trace-line link into Text. `--no-config` keeps unrelated personal
-kernel presets out of this first run; source enrichment is optional.
+To investigate your own program, replace the command after `--` with the workload that reproduces the issue.
+[Choose `--user` or `--mixed`](#capture-user-and-kernel-calls) only when you need user-space calls.
+If the recorder reports active tracing, don't stop another session; use an idle test environment or [replay a sample](#replay-the-included-samples).
 
-| Input | How to use it | Additional requirement |
+**2. Generate:** Read `kernel.txt` with `fgreport`. Viewing call structure doesn't require root, `vmlinux`, or a preset. If you regularly need source for the same kernel, [save a kernel preset](#optional-save-a-kernel-preset).
+
+```bash
+fgreport --open kernel.txt
+```
+
+By default, this writes `kernel.html` next to the trace. On a headless target, move the trace to your workstation and generate the report there, or omit `--open` and copy the HTML instead.
+
+**3. Analyze:** Select a call in Timeline and follow its trace-line link into Text for context.
+Try the report's filters before narrowing the report or recording again. Keep the raw trace so you can regenerate reports with different options.
+
+You normally need just two commands: `fgcapture` records raw data; `fgreport` uses the underlying `funcgraph` converter to generate the report. Reuse an existing trace without recording again, or open an existing HTML directly in your browser.
+
+### Already have a trace? Generate a report directly
+
+Skip capture and use the command for your input below. Without capture access, you can still [replay an included sample](#replay-the-included-samples).
+
+| Input you have | Open with `fgreport` | Additional requirement |
 | --- | --- | --- |
-| ftrace `function_graph` text | Pass `trace.txt`; `.gz`, `.xz`, `.bz2`, stdin and multiple files also work. | None for call visualization. |
-| trace-cmd binary container | Pass `trace.dat`; format detection is automatic. | Optional native decoding libraries and a host C compiler; [raw input setup](docs/raw-input.md). Bare `trace_pipe_raw` pages are not standalone inputs. |
-| uftrace recording directory | Use `--uftrace capture.data` instead of a trace file. | FuncGraph's patched uftrace, selected automatically when bundled. |
-| FuncGraph uftrace JSONL export | Pass `capture.jsonl` directly. | No local uftrace needed; not an arbitrary upstream JSON format. |
+| ftrace `function_graph` text | `fgreport --open trace.txt`; `.gz`, `.xz`, `.bz2`, stdin and multiple files also work. | None for call visualization. |
+| trace-cmd binary container | `fgreport --open trace.dat`; format detection is automatic. | Optional native decoding libraries and a host C compiler; [raw input setup](docs/raw-input.md). Bare `trace_pipe_raw` pages are not standalone inputs. |
+| uftrace recording directory | `fgreport --open --uftrace capture.data`; don't pass the directory as a trace file. | FuncGraph's patched uftrace, selected automatically when bundled. |
+| FuncGraph uftrace JSONL export | `fgreport --open capture.jsonl` | No local uftrace needed; not an arbitrary upstream JSON format. |
 
-Host QEMU/KVM recordings also open in this same Timeline, including event-only
-traces: vCPU / Host TID tracks, Guest/Host boundary windows, exit reasons and original
-event evidence, without inventing function calls or Guest internal stacks.
-See [Host KVM capture and interpretation](docs/kvm.md).
+### Optional: save a kernel preset
+
+If you often analyze traces from the same kernel, use `fgreport init` to save the `vmlinux` and source paths **matching the kernel that ran during capture**. `target` is a name you choose; replace the example paths with your own:
+
+```bash
+fgreport init target --vmlinux /path/to/matching/vmlinux --kernel-src /path/to/linux
+fgreport -p target --open kernel.txt
+```
+
+`init` only saves settings; it doesn't record a trace or generate a report. List presets with `fgreport presets`. Add `--default` to `init` to omit `-p target` on later runs when `FG_PRESET` is unset. For a one-off report, pass options directly instead.
+
+### Pass options without a preset
+
+To use an image and source tree for just one report, pass them to `fgreport` directly without running `init`:
+
+```bash
+fgreport -P --open trace.txt -- --vmlinux ./vmlinux --kernel-src ./linux
+```
+
+- **`--` separates the options**: `fgreport` options come first, followed by [funcgraph options](docs/cli.md#funcgraph). Explicit values override the configuration file.
+- **`-P` skips preset selection**, but `[default]` can still apply. Omit it if neither a default preset nor `FG_PRESET` is set.
+- **`--no-config` is optional**: pass it after `--` to have the converter ignore config files. Use it when local settings should not affect the result, as in the examples.
 
 ### Replay the included samples
 
-From the checkout root after installation:
+Get a checkout of this repository (the wheel doesn't contain `samples/`), then run from its root. These commands skip local settings and don't need root, a recorder, or a matching kernel image:
 
 ```bash
 mkdir -p build/examples
-funcgraph --no-config samples/sample_io.txt --timeline --enable-fold --filter \
-    --output build/examples/kernel.html
-funcgraph --no-config samples/sample_mixed.jsonl --timeline --enable-fold --filter \
-    --user-src samples --output build/examples/mixed.html
+fgreport -P -o build/examples/kernel.html samples/sample_io.txt -- --no-config
+fgreport -P -o build/examples/mixed.html samples/sample_mixed.jsonl -- --no-config --user-src samples
 ```
 
-These reproduce the call structure and recorded values without root, QEMU,
-uftrace or a matching kernel image. They do not recreate the published report's
-kernel source/BTF enrichment without the matching debug files. A wheel install
-does not put `samples/` in your working directory.
+Open `build/examples/kernel.html` and select CPU 6 in **Text → Filter → cpu** to see calls
+from `demo_io` (PID 613). Once you've checked the scope, save a second report focused on
+that task's `read` call trees. The first command's `-n` previews the invocation; the second writes the file:
+
+```bash
+fgreport -P -n -o build/examples/task.html samples/sample_io.txt -- --no-config --pid 613 --graph '^__x64_sys_read$'
+fgreport -P -o build/examples/task.html samples/sample_io.txt -- --no-config --pid 613 --graph '^__x64_sys_read$'
+```
+
+## Read the report
+
+| What do you want to check? | Next step |
+| --- | --- |
+| Where did the time go? | Select a slow call in **Timeline** and check its call tree and total/self time. Self time isn't CPU time; investigating waits and wakeups needs scheduling events. |
+| Why did a call fail? | Check recorded arguments, return values and the caller site in call details. Follow the trace-line link to **Text** for context. |
+| Just one CPU or event type? | Pick CPUs in **Text → Filter → cpu** or pick events from **Event type** (under **More** on phones). The report needs the corresponding records; regenerate older reports to get the controls. |
+| Need a smaller report for one task? | Confirm the scope, then [save a smaller report](#replay-the-included-samples). Keep the original trace: report filters can be cleared, but records omitted before generation can't be restored. Use report filters for uftrace directories and JSONL. |
+| Did a change make a difference? | Record the same workload with the same settings, then run `fgreport -c baseline.txt --open current.txt`. In **Compare**, check call counts before comparing per-call timings. Don't filter different runs on a single PID. |
 
 ## Capture user and kernel calls
 
-One entry point, three modes:
-
-| Mode | Captures | Needs |
+| What do you need to record? | Mode | Output and requirements |
 | --- | --- | --- |
-| `fgcapture --kernel` | A command's kernel function graphs; no application rebuild. | Root, Linux tracefs and Bash; no uftrace. |
-| `fgcapture --user` | Instrumented application/library functions, arguments, returns and caller sites. | Patched uftrace and suitable build/debug information; no root or tracefs. |
-| `fgcapture --mixed` | User/kernel calls in one recording, plus available scheduling and exec/exit events. | User-mode requirements, root and idle dedicated tracefs. |
+| Kernel only, without rebuilding the app | `fgcapture` (default) | Text file; Linux tracefs and root. |
+| User-space calls only | `fgcapture --user` | uftrace directory; application instrumentation and patched uftrace, no root. |
+| User and kernel calls from the same run | `fgcapture --mixed` | uftrace directory; user-mode requirements plus root and idle dedicated tracefs. |
 
-For an existing program's kernel path:
-
-```bash
-sudo "$(command -v fgcapture)" --kernel --sched -o kernel.txt -- cat /etc/hostname
-fgreport -P kernel.txt
-```
-
-For application-to-kernel exploration, use the layered file-copy/UDP demo.
-Run from the checkout root; the following compiler flags are for **x86_64**.
-On **ARM64**, replace `-pg` with `-fpatchable-function-entry=2`.
-
-```bash
-cc -pg -g -O0 -fno-omit-frame-pointer -o demo_mixed samples/demo_mixed.c
-printf 'FuncGraph demo\n' > demo-input.txt
-: > demo-output.txt
-fgcapture --user -o user.data -- ./demo_mixed demo-input.txt demo-output.txt
-funcgraph --no-config --uftrace user.data --timeline --enable-fold --filter \
-    --user-src "$PWD" --output user.html
-```
-
-On an **idle experimental host**, capture the same program in mixed mode:
-
-```bash
-: > demo-output.txt
-sudo "$(command -v fgcapture)" --mixed -o mixed.data -- ./demo_mixed demo-input.txt demo-output.txt
-fgreport -P --uftrace mixed.data -- --user-src "$PWD"
-```
-
-Use a new recording directory for each run. User/mixed modes request arguments,
-returns and call sites by default; actual coverage depends on instrumentation
-and recorded metadata. Kernel-only mode probes argument support before enabling
-it. Mixed capture checks and restores tracefs settings, including on failure;
-it defaults to syscall roots and **eight kernel levels**, not all kernel code.
-It is not a production tracing isolation mechanism.
-
-See the [complete capture cases](docs/capture.md) for scope controls, scheduling,
-exec/exit checks and troubleshooting. For a real tool and instrumented dependency,
-follow the [pigz + zlib case](docs/pigz.md): build flags, bounded workload,
-recording, both source trees and saved-artifact checks.
+For scheduling and wakeup analysis, add `--sched` before `--` in the kernel-only capture command. For user or mixed capture, use a new recording directory for each run and open it with `fgreport --open --uftrace DIR`.
+See the [user and mixed capture walkthrough](docs/capture.md#quick-start) for commands from build and instrumentation through report generation, or [recording extra events](docs/capture.md#record-functions-and-extra-events-together) for event selection.
 
 ## Source and type information
 
-Keep **user and kernel sources separate**. For a mixed recording, replace the
-paths and revisions with those of the kernel **running during capture**, not the
-machine generating the report:
+Keep **user and kernel sources separate**. After the [mixed capture walkthrough](docs/capture.md#quick-start) produces `mixed.data`, add source as shown here. Use paths and revisions for the kernel **running during capture**, not the analysis machine's kernel:
 
 ```bash
 VMLINUX=/path/to/matching/vmlinux
 KERNEL_SRC=/path/to/linux
 KERNEL_REV=recorded-kernel-commit
 KERNEL_WEB_REV=matching-upstream-tag-or-commit
-funcgraph --no-config --uftrace mixed.data --timeline --enable-fold --filter \
+fgreport -P --uftrace mixed.data -o mixed.html -- --no-config \
     --user-src "$PWD" --vmlinux "$VMLINUX" --kernel-src "$KERNEL_SRC" \
-    --source-rev "$KERNEL_REV" --func-links --highlight-code --fast \
-    --source-browser github --source-browser-rev "$KERNEL_WEB_REV" --output mixed.html
+    --source-rev "$KERNEL_REV" --source-browser github --source-browser-rev "$KERNEL_WEB_REV"
 ```
 
 - **User code:** `--user-src` allows local source embedding. Choose the root from
@@ -206,60 +165,31 @@ funcgraph --no-config --uftrace mixed.data --timeline --enable-fold --filter \
   from available recorded DWARF/specifications, not kernel BTF. Raw evidence and
   unsupported/missing information remain distinguishable.
 
-Save repeated kernel settings in a preset instead of retyping them:
-
-```bash
-fgreport init target --vmlinux "$VMLINUX" --kernel-src "$KERNEL_SRC" \
-    --source-rev "$KERNEL_REV" --source-browser github --source-browser-rev "$KERNEL_WEB_REV" --default
-fgreport trace.txt
-fgreport --uftrace mixed.data -- --user-src "$PWD"
-```
-
+You can [save the kernel settings in a preset](#optional-save-a-kernel-preset) and still specify user source with `-- --user-src "$PWD"` at report time.
 See the [source/configuration guide](docs/guide.en.md#4-generating-a-report) for
 modules, cross-toolchains, path remapping and custom source browsers.
 
 ## Large traces
 
-**Single HTML remains the default.** Complete inline Text at 4,096 or more rows
-automatically skips offscreen rendering in supported browsers. This speeds
-repeated Timeline → Text entry without discarding rows, source, native selection
-or horizontal reading space. Initial preparation can still be expensive; see
-[measurements and limits](docs/performance-view-roundtrip.md).
-
-Offline reports with Timeline and at least 75,000 Text rows after CLI filtering
-default to gzip-windowed HTML. Use `--report-mode single` for eager Full Text,
-or `--timeline --report-mode single-windowed` to request a windowed file at any size.
-See the [offline mode guide](docs/viewer.md).
-
-To read report resources separately on demand, choose a **sidecar directory**:
+**Start with the default single HTML.** It opens offline, is easy to share, and
+automatically uses windowed Text for large reports. If you want Text and source
+resources read from disk on demand, generate a **sidecar directory**:
 
 ```bash
-funcgraph --no-config trace.txt --timeline --enable-fold --filter \
-    --report-mode sidecar --output trace.report
-fgview trace.report --open
+fgreport --report-mode sidecar -o trace.report --open trace.txt
 ```
 
-- Sidecar loads Text and source resources when needed; Compare loads separately.
-  Serve it with `fgview`, and share the **whole directory**, not just `index.html`.
-- To switch only above a size you choose, use `--report-mode auto` with
-  `--sidecar-threshold 67108864` and a directory output. This example is **64 MiB
-  of complete HTML**, not a built-in default or a trace-line threshold.
-- New chunked sidecars use **Windowed Text** by default at 65,536 records or
-  64 MiB of Text HTML. This limits mounted rows, **not total report memory**.
-  Choose **Full Text** for whole-document browser operations. [Windowed-mode guide](docs/performance-text-window.md).
-- With no mode specified, `fgreport` keeps Text and uses offline gzip-windowed HTML at 75,000
-  or more report rows after pre-filtering. Only explicit `single` mode keeps the legacy
-  Timeline-only fallback above 150,000 plain-text input lines; add `--text` to keep Full Text there.
-  Use `--no-text-view --keep-source` for a source-enabled Timeline-only report.
+Reopen it with `fgview trace.report --open`, and share the **whole directory**, not just `index.html`.
+For the browser's own whole-document Find, switch from windowed Text to **Full Text**.
+See the [viewer guide](docs/viewer.md) for other modes and thresholds.
 
-See the [viewer guide](docs/viewer.md) for serving, automatic selection and
-resource-loading behavior. `fgview` binds to loopback; serve a dedicated report
-directory, not an entire source/work tree.
+Before sharing a report, check embedded arguments, paths, and source for sensitive information. Keep the raw trace and matching debug files separately so you can regenerate the report.
 
 ## Documentation
 
 | Goal | Start here |
 | --- | --- |
+| Look up each command's options, defaults and restrictions | [Command-line reference](docs/cli.md) |
 | Learn controls, filters, colors and analysis panels | [User guide](docs/guide.en.md) |
 | Replay, use presets, compare runs or export JSON/CSV | [Scenario examples](docs/examples.md) |
 | Record kernel, user or mixed execution | [Capture cases](docs/capture.md) |
@@ -271,6 +201,8 @@ directory, not an entire source/work tree.
 | Understand implementation or publish a release | [Design](docs/design.md) · [Release checklist and verified records](docs/releasing.md) |
 
 ## Development and validation
+
+Run `python3 -m pip install '.[all]'` from the checkout root to install from source. This doesn't compile uftrace; see the [pinned native build instructions](docs/uftrace.md#reproducible-native-build) if you need to build the recorder.
 
 ```bash
 tests/run.sh

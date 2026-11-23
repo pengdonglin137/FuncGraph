@@ -2,183 +2,152 @@
 
 **从用户函数到内核调用，看清执行过程和时间去向。**
 
-将 ftrace、uftrace 记录变成交互式报告：沿调用链下探，定位耗时，查看参数、
-返回值和对应源码。纯内核态、纯用户态、用户态与内核态混合记录，使用同一套阅读方式。
-默认生成一个可离线打开的 HTML，无需部署服务。
+将 Linux ftrace、uftrace 记录变成可离线打开的交互式 HTML。沿调用链找慢调用，查看记录到的参数、返回值和对应源码。
 
 [English](README.md) · [简体中文](README.cn.md) ·
-[在线演示](https://pengdonglin137.github.io/FuncGraph/) ·
 [使用指南](docs/guide.cn.md) ·
+[命令行参数](docs/cli.cn.md) ·
 [下载安装包](https://github.com/pengdonglin137/FuncGraph/releases)
 
 [![CI](https://github.com/pengdonglin137/FuncGraph/actions/workflows/ci.yml/badge.svg)](https://github.com/pengdonglin137/FuncGraph/actions/workflows/ci.yml)
 
+**从你的任务出发：**
+
+- **第一次自己录制：** [安装](#安装)后，跟着[快速开始](#快速开始)采集、出报告、找调用。
+- **手里已有 trace：** [跳过采集，直接生成报告](#已有记录直接生成报告)。
+- **只想先看效果：** 打开[在线混合报告](https://pengdonglin137.github.io/FuncGraph/sample_mixed.html)，点 `dispatch_datagram` 查看参数和调用点。无需安装，也可看[纯内核报告](https://pengdonglin137.github.io/FuncGraph/sample.html)。
+
 [![用户态与内核态混合 Timeline，展示记录的参数与源码](sample_mixed.png)](https://pengdonglin137.github.io/FuncGraph/sample_mixed.html)
-
-**先试试[混合报告](https://pengdonglin137.github.io/FuncGraph/sample_mixed.html)：**
-沿 `main → run_round → exchange_loopback → send_frame → dispatch_datagram → sendto`
-进入 `__x64_sys_sendto`。选中 `dispatch_datagram`，查看具名参数、返回值和调用点；
-分界线标出已匹配的用户态／内核态边界。
-也可以打开[纯内核报告](https://pengdonglin137.github.io/FuncGraph/sample.html)，
-或查看其[源码与错误路径截图](sample.png)。无需安装即可体验。
-
-## 你能用它解决什么问题？
-
-| 想弄清楚什么 | 从哪里看 |
-| --- | --- |
-| 执行了哪些函数，调用顺序是什么？ | **Timeline** 的任务与 CPU 轨道、嵌套 slice、已匹配的用户态／内核态边界，以及记录到的 exec/exit 事件。 |
-| 时间花在哪里？ | Total/Self 耗时配色、函数统计、慢调用、off-CPU 区间、唤醒路径与等待链。Self time 不等同于纯 CPU 执行时间。 |
-| 这个调用为什么失败？ | 记录的参数与返回值、BTF 内核 errno 路径、[用户态 API 失败提示](docs/user-api-failures.md)，以及调用点和源码详情。 |
-| 是否存在调度延迟或长临界区？ | 上下文 flags、关中断／关抢占区间与调度延迟；需要 trace 中实际记录了对应字段或事件。 |
-| 如何逐行阅读、比较和复用数据？ | **Text** 的折叠、过滤、源码展开与键盘导航；**Compare** 的函数级差异；面向脚本的 JSON/CSV 导出。 |
-
-Timeline 支持全屏、可调整大小的详情区、紧凑菜单和明暗主题。
-Text 与 Timeline 之间保留可达的标签页和 trace 行跳转入口。
-Text 工具栏 **Top** 右侧的 **Events: shown / hidden** 按钮可收起事件行，便于专注函数调用；不删除数据或改变 Timeline。
-按钮仅在 trace 包含事件时显示；旧 HTML 需要重新生成才能使用。
-通过 **Tools → Saved views…** 为分析位置命名、添加备注，或导出给使用同一份报告的人恢复。
-选中调用后，**Actions → Focus this task / Focus this function** 可生成精确筛选草稿，确认后应用，并支持撤销本次筛选。
-缺少事件或调试信息时，不补造调用点、参数和时间数据。
-
-**本页导航：**[安装](#安装) · [快速开始](#快速开始) ·
-[采集](#采集用户态与内核态) · [源码与类型](#源码与类型信息) ·
-[大型 trace](#大型-trace) · [文档](#文档导航)
 
 ## 安装
 
-报告生成需要 Python **3.8+**。读取普通文本或已导出的 FuncGraph uftrace JSONL，
-不需要采集器、root 权限或 `vmlinux`。
+需要 Python **3.8+**。从 [GitHub Releases](https://github.com/pengdonglin137/FuncGraph/releases) 下载 wheel（不从 PyPI 安装），按用途选：
 
-从 [GitHub Releases](https://github.com/pengdonglin137/FuncGraph/releases)
-下载安装包，再安装本地文件。以下适用于在 x86_64 Linux 上采集：
+- **生成报告或只录内核：** 选 `py3-none-any.whl`；纯内核采集另需目标机的 Linux tracefs 和 root 权限。
+- **录用户态或混合模式，或读取 uftrace 采集目录：** 按架构选 `linux_x86_64.whl` 或 `linux_aarch64.whl`，内置补丁版 uftrace；已导出的 FuncGraph JSONL 不需要它。
 
-```bash
-python3 -m pip install './funcgraph-<version>-py3-none-linux_x86_64.whl[all]'
-fguftrace --version
-```
-
-将 `<version>` 替换为下载文件的版本号；ARM64 选择 `linux_aarch64`。
-两种平台 wheel 均包含**打过补丁的 uftrace 和 libmcount 采集库**，
-`fgcapture`、`funcgraph`、`fgreport` 会自动选择内置采集器，
-`--uftrace-bin PATH` 只是覆盖选项，不是必传参数。
-
-`py3-none-any` wheel 与源码发行包不包含编译好的 uftrace。
-原生 wheel 基于 Ubuntu 22.04 构建，并非 manylinux，仍依赖兼容的 glibc 和系统库；
-`[all]` 安装 pyelftools、Pygments，不会安装系统动态库。
-详见[安装包选择与依赖](docs/capture.cn.md#选择安装包与采集模式)。
-当前发布流程不向 PyPI 上传。
-
-开发报告功能或重放仓库样例时，克隆项目并在根目录执行：
+例如安装通用 wheel，将 `<version>` 换成下载文件的版本号：
 
 ```bash
-git clone https://github.com/pengdonglin137/FuncGraph.git
-cd FuncGraph
-python3 -m pip install '.[all]'
+python3 -m pip install './funcgraph-<version>-py3-none-any.whl'
+fgreport --help
 ```
 
-源码安装**不会**编译 uftrace。新采集用户态／混合记录时，请使用原生 wheel，
-或按[固定版本构建步骤](docs/uftrace.cn.md)准备采集器。
-文本和已保存 JSONL 的重放不需要初始化 submodule。
+需要快速符号解析和源码高亮时，在引号内的 wheel 文件名后加 `[all]`。平台 wheel 的系统库要求和手动指定采集器的方法见[安装包选择与依赖](docs/capture.cn.md#选择安装包与采集模式)。
 
 ## 快速开始
 
-### 打开已有 trace
+### 最佳实践：采集 → 生成报告 → 分析
+
+**1. 采集：** 从一个短而可重复的命令开始。以下示例在有 root 权限、tracefs 空闲（`tracing_on=0`）的 Linux 目标机上
+录制 `cat /etc/hostname` 的内核调用并保存为 `kernel.txt`。内核是默认模式，不用传 `--kernel`。
 
 ```bash
-funcgraph --no-config trace.txt --timeline --enable-fold --filter --output report.html
+sudo "$(command -v fgcapture)" -o kernel.txt -- cat /etc/hostname
 ```
 
-直接用浏览器打开 `report.html`。先在 Timeline 选中调用，再通过 trace 行链接进入 Text。
-`--no-config` 避免首次使用受个人内核预设干扰；源码解析不是查看调用结构的前提。
+分析自己的程序时，把 `--` 后面的命令换成能复现问题的工作负载。只有需要用户态调用时，才[选择 `--user` 或 `--mixed`](#采集用户态与内核态)。
+如果采集器提示追踪活动中，不要关闭其他会话；改用空闲测试环境，或[重放样例](#重放内置样例)。
 
-| 输入 | 用法 | 额外要求 |
+**2. 生成报告：** 用 `fgreport` 读取刚才保存的 `kernel.txt`。只看调用结构不需要 root、`vmlinux` 或预设；经常用同一个内核看源码时，可以[保存内核预设](#可选保存内核预设)。
+
+```bash
+fgreport --open kernel.txt
+```
+
+默认在记录旁生成 `kernel.html`。目标机没有浏览器时，可以把原始记录带到工作站再生成报告，或省略 `--open`，只把生成的 HTML 拿到本地打开。
+
+**3. 分析：** 在 Timeline 选中感兴趣的调用，再点击 trace 行链接跳到 Text 查看上下文。
+先试界面筛选，确认范围后再决定是否需要缩小报告或重新采集。保留原始 trace，便于用不同参数生成报告。
+
+日常只需要两个命令：`fgcapture` 录原始数据，`fgreport` 调用底层的 `funcgraph` 生成报告。已有记录不用重新录，已有 HTML 直接用浏览器打开。
+
+### 已有记录：直接生成报告
+
+已有 trace 就跳过采集，按下表选择输入方式。没有采集权限也可以[重放内置样例](#重放内置样例)。
+
+| 手上的输入 | 用 `fgreport` 打开 | 额外要求 |
 | --- | --- | --- |
-| ftrace `function_graph` 文本 | 直接传 `trace.txt`，也支持 `.gz`、`.xz`、`.bz2`、stdin 和多文件输入。 | 仅查看调用结构无额外依赖。 |
-| trace-cmd 二进制容器 | 直接传 `trace.dat`，自动识别格式。 | 可选原生解码库与主机 C 编译器，见 [raw 输入配置](docs/raw-input.cn.md)；裸 `trace_pipe_raw` 页不是独立输入文件。 |
-| uftrace 采集目录 | 使用 `--uftrace capture.data`，不要当作普通文件传入。 | FuncGraph 补丁版 uftrace；安装包内置时自动选用。 |
-| FuncGraph uftrace JSONL 导出 | 直接传 `capture.jsonl`。 | 无需本机 uftrace；并非任意上游 JSON 格式。 |
+| ftrace `function_graph` 文本 | `fgreport --open trace.txt`；也支持 `.gz`、`.xz`、`.bz2`、stdin 和多文件输入。 | 仅查看调用结构无额外依赖。 |
+| trace-cmd 二进制容器 | `fgreport --open trace.dat`；自动识别格式。 | 可选原生解码库与主机 C 编译器，见 [raw 输入配置](docs/raw-input.cn.md)；裸 `trace_pipe_raw` 页不是独立输入文件。 |
+| uftrace 采集目录 | `fgreport --open --uftrace capture.data`；目录不能当普通文件传入。 | FuncGraph 补丁版 uftrace；安装包内置时自动选用。 |
+| FuncGraph uftrace JSONL 导出 | `fgreport --open capture.jsonl` | 无需本机 uftrace；并非任意上游 JSON 格式。 |
 
-Host QEMU/KVM 事件也直接使用同一个 Timeline，包括只有事件、没有函数调用的记录：
-展示 vCPU / Host TID 轨道、Guest/Host 边界窗口、退出原因及原始证据，
-不将其冒充函数调用或 Guest 内部栈。详见 [Host KVM 采集与读图](docs/kvm.cn.md)。
+### 可选：保存内核预设
+
+经常分析同一内核的 trace 时，用 `fgreport init` 保存**与采集时运行的内核匹配**的 `vmlinux` 和源码路径。`target` 是自选名称，把示例路径换成实际路径：
+
+```bash
+fgreport init target --vmlinux /path/to/matching/vmlinux --kernel-src /path/to/linux
+fgreport -p target --open kernel.txt
+```
+
+`init` 只保存配置，不采集也不生成报告。用 `fgreport presets` 查看已有预设；在 `init` 时加 `--default`，之后未设置 `FG_PRESET` 时可不写 `-p target`。只用一次则直接传参。
+
+### 不用预设，直接传参
+
+如果只为本次报告指定镜像和源码，可直接传给 `fgreport`，不用先运行 `init`：
+
+```bash
+fgreport -P --open trace.txt -- --vmlinux ./vmlinux --kernel-src ./linux
+```
+
+- **`--` 是分隔符**：前面是 `fgreport` 的选项，后面是 [funcgraph 的选项](docs/cli.cn.md#funcgraph)。显式传入的值优先于配置文件。
+- **`-P` 跳过预设**，但 `[default]` 仍可生效；没有默认预设、也没设置 `FG_PRESET` 时可以省略。
+- **`--no-config` 非必需**：放在 `--` 后让转换器忽略配置文件。只在希望不受本机配置影响时使用，例如重放样例。
 
 ### 重放内置样例
 
-安装后，在仓库根目录执行：
+先取得本仓库（wheel 不含 `samples/`），再从仓库根目录执行。命令特意跳过本机配置，不需要 root、采集器或匹配的内核镜像：
 
 ```bash
 mkdir -p build/examples
-funcgraph --no-config samples/sample_io.txt --timeline --enable-fold --filter \
-    --output build/examples/kernel.html
-funcgraph --no-config samples/sample_mixed.jsonl --timeline --enable-fold --filter \
-    --user-src samples --output build/examples/mixed.html
+fgreport -P -o build/examples/kernel.html samples/sample_io.txt -- --no-config
+fgreport -P -o build/examples/mixed.html samples/sample_mixed.jsonl -- --no-config --user-src samples
 ```
 
-不需要 root、QEMU、uftrace 或匹配的内核镜像，就能查看调用结构和记录值。
-没有匹配的调试文件时，这些命令不会重建公开 HTML 中的内核源码与 BTF 增强信息。
-安装 wheel 不会自动在工作目录放置 `samples/`。
+打开 `build/examples/kernel.html`，在 **Text → Filter → cpu** 选择 CPU 6，可以看到
+`demo_io`（PID 613）的调用。确认范围后，用同一份 trace 另存只保留该任务 `read` 调用树的小报告。
+第一条命令的 `-n` 只预览转交给 `funcgraph` 的命令，第二条才写入文件：
+
+```bash
+fgreport -P -n -o build/examples/task.html samples/sample_io.txt -- --no-config --pid 613 --graph '^__x64_sys_read$'
+fgreport -P -o build/examples/task.html samples/sample_io.txt -- --no-config --pid 613 --graph '^__x64_sys_read$'
+```
+
+## 报告怎么看
+
+| 你想确认什么 | 下一步 |
+| --- | --- |
+| 慢在哪里？ | 在 **Timeline** 选中慢调用，看调用树和 Total/Self 耗时。Self 不等于 CPU 执行时间；分析等待和唤醒需要调度事件。 |
+| 调用为什么失败？ | 在调用详情查看记录到的参数、返回值和调用点；跳到 **Text** 核对 trace 上下文。 |
+| 只看某个 CPU 或事件？ | 在 **Text → Filter → cpu** 勾选 CPU，或用 **Event type**（手机端在 **More** 中）勾选事件类型。控件需要报告中有相应记录；旧报告可重新生成。 |
+| trace 太大，只分析一个任务？ | 确认目标后再[另存小报告](#重放内置样例)，保留原始记录。界面筛选可以清除，生成前裁掉的数据不能恢复；uftrace 目录和 JSONL 使用界面筛选。 |
+| 改动前后有区别吗？ | 用同一工作负载和采集设置各录一次，再运行 `fgreport -c baseline.txt --open current.txt`。在 **Compare** 里先核对调用次数，再看单次耗时；不要用同一个 PID 筛不同运行。 |
 
 ## 采集用户态与内核态
 
-统一入口，三种模式：
-
-| 模式 | 采集内容 | 环境要求 |
+| 想录什么 | 选哪个模式 | 输出与要求 |
 | --- | --- | --- |
-| `fgcapture --kernel` | 命令执行期间的内核函数图，无需重新编译应用。 | root、Linux tracefs、Bash；无需 uftrace。 |
-| `fgcapture --user` | 插桩的应用／库函数、参数、返回值与调用点。 | 补丁版 uftrace 和适合的编译／调试信息；无需 root 或 tracefs。 |
-| `fgcapture --mixed` | 同次运行中的用户态／内核态调用，以及可用的调度和 exec/exit 事件。 | 用户态采集条件、root、空闲的专用 tracefs。 |
+| 只看内核，不重编应用 | `fgcapture`（默认） | 文本文件；需要 Linux tracefs 和 root。 |
+| 只看用户态调用 | `fgcapture --user` | uftrace 目录；需要应用插桩和补丁版 uftrace，不需要 root。 |
+| 同一次运行中关联用户态与内核态 | `fgcapture --mixed` | uftrace 目录；在用户态要求之外，还需要 root 和空闲的专用 tracefs。 |
 
-只看现有程序的内核执行路径：
-
-```bash
-sudo "$(command -v fgcapture)" --kernel --sched -o kernel.txt -- cat /etc/hostname
-fgreport -P kernel.txt
-```
-
-想看完整的用户态调用层次，可以使用多层文件复制／UDP 示例。
-从仓库根目录执行，以下编译选项适用于 **x86_64**；
-**ARM64** 请将 `-pg` 改为 `-fpatchable-function-entry=2`。
-
-```bash
-cc -pg -g -O0 -fno-omit-frame-pointer -o demo_mixed samples/demo_mixed.c
-printf 'FuncGraph demo\n' > demo-input.txt
-: > demo-output.txt
-fgcapture --user -o user.data -- ./demo_mixed demo-input.txt demo-output.txt
-funcgraph --no-config --uftrace user.data --timeline --enable-fold --filter \
-    --user-src "$PWD" --output user.html
-```
-
-在**空闲的实验机**上，用混合模式采集同一个程序：
-
-```bash
-: > demo-output.txt
-sudo "$(command -v fgcapture)" --mixed -o mixed.data -- ./demo_mixed demo-input.txt demo-output.txt
-fgreport -P --uftrace mixed.data -- --user-src "$PWD"
-```
-
-每次使用新的采集目录。用户态／混合模式默认请求参数、返回值和调用点，实际覆盖取决于
-插桩和记录元数据；纯内核模式先探测参数支持，再决定是否启用。
-混合模式会检查、恢复 tracefs 设置，失败时也会恢复；默认范围是系统调用根函数、
-**八层内核调用**，并非整个内核的无限深度追踪，也不能代替生产环境的追踪隔离机制。
-
-[完整采集案例](docs/capture.cn.md)提供范围控制、调度、exec/exit 检查与排错步骤。
-需要真实业务工具及依赖库的案例，可看 [pigz + zlib](docs/pigz.cn.md)：
-从编译选项、短时工作负载，到采集、两套源码配置与产物核对。
+需要分析调度和唤醒时，在纯内核采集命令的 `--` 前加 `--sched`。用户态和混合模式每次使用新的采集目录，录完用 `fgreport --open --uftrace DIR` 打开。
+从编译、插桩到生成报告的可执行命令见[用户态与混合采集示例](docs/capture.cn.md#最短流程)；跟踪额外事件见[函数调用与额外事件一起采集](docs/capture.cn.md#函数调用与额外事件一起采集)。
 
 ## 源码与类型信息
 
-**用户态与内核态源码分别配置。**以下混合报告示例中的路径、版本必须对应
-**采集时实际运行的内核**，不是生成报告的主机内核：
+**用户态与内核态源码分别配置。** 用[混合模式示例](docs/capture.cn.md#最短流程)得到 `mixed.data` 后，可按下面的方式添加源码。内核路径和版本必须对应**采集时运行的内核**，而不是分析机的内核：
 
 ```bash
 VMLINUX=/path/to/matching/vmlinux
 KERNEL_SRC=/path/to/linux
 KERNEL_REV=recorded-kernel-commit
 KERNEL_WEB_REV=matching-upstream-tag-or-commit
-funcgraph --no-config --uftrace mixed.data --timeline --enable-fold --filter \
+fgreport -P --uftrace mixed.data -o mixed.html -- --no-config \
     --user-src "$PWD" --vmlinux "$VMLINUX" --kernel-src "$KERNEL_SRC" \
-    --source-rev "$KERNEL_REV" --func-links --highlight-code --fast \
-    --source-browser github --source-browser-rev "$KERNEL_WEB_REV" --output mixed.html
+    --source-rev "$KERNEL_REV" --source-browser github --source-browser-rev "$KERNEL_WEB_REV"
 ```
 
 - **用户源码：**`--user-src` 指定允许嵌入的本地源码根目录，按记录路径选择：
@@ -192,53 +161,28 @@ funcgraph --no-config --uftrace mixed.data --timeline --enable-fold --filter \
   用户参数名和类型来自可用的已记录 DWARF／规格信息，而不是内核 BTF。
   原始证据、未知信息和不支持的情况保持可区分。
 
-经常使用同一个内核时，保存为预设：
-
-```bash
-fgreport init target --vmlinux "$VMLINUX" --kernel-src "$KERNEL_SRC" \
-    --source-rev "$KERNEL_REV" --source-browser github --source-browser-rev "$KERNEL_WEB_REV" --default
-fgreport trace.txt
-fgreport --uftrace mixed.data -- --user-src "$PWD"
-```
-
+内核配置可[保存为预设](#可选保存内核预设)，用户源码仍可在生成报告时用 `-- --user-src "$PWD"` 指定。
 模块、交叉工具链、路径映射和自定义浏览器等配置，见[使用指南](docs/guide.cn.md)。
 
 ## 大型 trace
 
-**默认仍是单 HTML。**内嵌 Text 达到 4,096 行后，在支持的浏览器中自动跳过屏外渲染，
-减轻 Timeline → Text 反复切换的开销，不丢弃行、源码、原生选区或横向阅读空间。
-首次准备仍可能耗时，详见[实测与边界](docs/performance-view-roundtrip.md)。
-
-带 Timeline 且预筛选后至少有 75,000 行 Text 的离线报告默认使用 gzip 窗口化 HTML。
-用 `--report-mode single` 可直接挂载完整 Text；要在任意规模指定窗口化，可用
-`--timeline --report-mode single-windowed`。详见[离线窗口化模式](docs/viewer.cn.md)。
-
-需要按需从磁盘读取报告资源时，显式选择 **sidecar 目录**：
+**先试默认单 HTML**：可离线打开、方便分享，大报告会自动采用窗口化 Text。
+如果希望 Text 和源码按需从磁盘读取，再生成 **sidecar 目录**：
 
 ```bash
-funcgraph --no-config trace.txt --timeline --enable-fold --filter \
-    --report-mode sidecar --output trace.report
-fgview trace.report --open
+fgreport --report-mode sidecar -o trace.report --open trace.txt
 ```
 
-- sidecar 按需加载 Text 与源码资源，Compare 单独加载。请使用 `fgview` 打开，
-  分享时保留**整个目录**，不能只发送 `index.html`。
-- 若只想超过指定大小才切换，使用 `--report-mode auto --sidecar-threshold 67108864`，
-  输出指定为目录。这里的 **64 MiB 指完整 HTML 大小**，不是内置默认值或 trace 行数阈值。
-- 新生成的分块 sidecar 达到 65,536 条记录或 64 MiB Text 正文时默认使用
-  **Windowed Text**，限制挂载行数，**不代表限制整个报告内存**。整篇浏览器操作可切换
-  **Full Text**。详见[窗口化模式说明](docs/performance-text-window.md)。
-- `fgreport` 未指定模式时保留 Text，命令行预筛选后报告达到 75,000 行即使用离线 gzip 窗口化 HTML。
-  只有显式选择 `single` 时，才沿用纯文本输入超过 150,000 行则只显示 Timeline 的规则；加 `--text` 可保留 Full Text。
-  可用 `--no-text-view --keep-source` 生成保留源码的纯 Timeline 报告。
+用 `fgview trace.report --open` 重新打开，分享时发送**整个目录**，不是单独的 `index.html`。
+需要浏览器原生整篇查找时，在窗口化 Text 中切换 **Full Text**。其他模式和阈值见[本地查看器](docs/viewer.cn.md)。
 
-服务启动、自动模式和资源加载行为见[本地查看器](docs/viewer.cn.md)。
-`fgview` 只监听 loopback；请服务专用报告目录，不要把整个源码／工作目录作为根目录。
+分享报告前，检查嵌入的参数、路径和源码是否有敏感信息。要能重生成报告，请单独保存原始 trace 和匹配的调试文件。
 
 ## 文档导航
 
 | 目标 | 从这里开始 |
 | --- | --- |
+| 查每个命令的参数、默认值、限制和选项归属 | [命令行参数参考](docs/cli.cn.md) |
 | 了解控件、过滤、配色和分析面板 | [使用指南](docs/guide.cn.md) |
 | 重放、预设、对比与 JSON/CSV 导出 | [场景用例](docs/examples.cn.md) |
 | 采集纯内核、纯用户或混合执行流 | [完整采集案例](docs/capture.cn.md) |
@@ -250,6 +194,8 @@ fgview trace.report --open
 | 理解实现或维护发布流程 | [设计文档](docs/design.md) · [发布操作清单与验收记录](docs/releasing.cn.md) |
 
 ## 开发与验证
+
+从仓库根目录执行 `python3 -m pip install '.[all]'` 可安装源码版；它不会编译 uftrace。需要构建采集器时，见[固定版本构建步骤](docs/uftrace.cn.md)。
 
 ```bash
 tests/run.sh
