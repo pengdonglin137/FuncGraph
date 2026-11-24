@@ -13,10 +13,27 @@ jobs:
   checks:
     uses: ./.github/workflows/test-and-package.yml
 
+  pages-artifact:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+    runs-on: ubuntu-latest
+    outputs:
+      name: ${{ steps.site.outputs.artifact_name }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Assemble site
+        id: site
+        run: |
+          bash site/build.sh _site
+          printf 'artifact_name=github-pages-%s\n' "$GITHUB_RUN_ATTEMPT" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          name: ${{ steps.site.outputs.artifact_name }}
+          path: _site
+          include-hidden-files: true
+
   pages:
     # Publishes the site and both reports (Settings -> Pages -> Source: GitHub Actions).
-    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
-    needs: checks
+    needs: [checks, pages-artifact]
     runs-on: ubuntu-latest
     permissions:
       pages: write
@@ -28,11 +45,7 @@ jobs:
       group: pages
       cancel-in-progress: true
     steps:
-      - uses: actions/checkout@v4
-      - name: Assemble site
-        run: bash site/build.sh _site
-      - uses: actions/upload-pages-artifact@v3
-        with:
-          path: _site
       - id: deploy
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v5
+        with:
+          artifact_name: ${{ needs.pages-artifact.outputs.name }}

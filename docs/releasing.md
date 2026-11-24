@@ -224,9 +224,9 @@ gh run list --workflow ci.yml --branch master --limit 5
 ```
 
 Use `gh run watch RUN_ID --exit-status` with the actual ID, or wait in the browser.
-Python 3.8 / 3.12, raw, both native architectures, both Python package jobs and
-`pages` must all succeed. A manual CI run does not deploy Pages, and another
-commit's successful run cannot satisfy this gate.
+Python 3.8 / 3.12, raw, both native architectures, both Python package jobs,
+`pages-artifact` and `pages` must all succeed. A manual CI run does not deploy
+Pages, and another commit's successful run cannot satisfy this gate.
 
 #### Accept the deployed Pages files
 

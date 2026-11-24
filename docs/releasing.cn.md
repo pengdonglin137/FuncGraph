@@ -208,7 +208,7 @@ gh run list --workflow ci.yml --branch master --limit 5
 ```
 
 找到实际运行 ID，执行 `gh run watch RUN_ID --exit-status`，或在网页等待。
-必须包括 Python 3.8 / 3.12、raw、双架构 uftrace、两种 Python 的安装包检查和 `pages`，
+必须包括 Python 3.8 / 3.12、raw、双架构 uftrace、两种 Python 的安装包检查、`pages-artifact` 和 `pages`，
 全部成功才继续。手动触发 CI 不会部署 Pages；也不能借用其他 SHA 的绿色记录。
 
 ### 验收实际部署的 Pages
