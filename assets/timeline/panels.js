@@ -3367,7 +3367,8 @@ function refreshRangeTable(table, summary) {
     rangeTableSummaries.set(table, summary);
     updateRangeControls(summary);
     if (!detailHeadObserver) sizeDetailHead();
-    if (restoreFocus && (!focused.isConnected || focused.disabled) && !elDetail.contains(document.activeElement))
+    const active = document.activeElement;
+    if (restoreFocus && (!focused.isConnected || focused.disabled) && (active === focused || !elDetail.contains(active)))
         activeHeader?.firstElementChild.focus({ preventScroll: true });
 }
 function showRangeSummary(table = null) {

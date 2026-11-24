@@ -427,12 +427,15 @@ class TextChunkBrowserTest(unittest.TestCase):
         for covered in (False, True):
             with self.subTest(covered=covered):
                 caption.wait_for(state='visible')
-                row.evaluate('''(row, covered) => {
+                row.evaluate('''async (row, covered) => {
                     const caption = document.querySelector('.fg-window-context > .task-group-head').getBoundingClientRect();
                     scrollBy({top:row.getBoundingClientRect().bottom - caption.bottom + (covered ? 2 : -8), behavior:'instant'});
+                    await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+                    await fgTextWindow.settled;
                 }''', covered)
+                jump.evaluate('button => button.focus({preventScroll:true})')
                 before = self.page.evaluate(position)
-                jump.press('Enter')
+                self.page.keyboard.press('Enter')
                 back.press('Enter')
                 caption.wait_for(state='visible')
                 self.assertEqual(self.page.evaluate(position), before)

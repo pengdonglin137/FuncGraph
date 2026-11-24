@@ -364,6 +364,11 @@ class DetailExpandTest(unittest.TestCase):
                     self.page.evaluate(settle)
                     self.assertEqual(pane.evaluate('pane => pane.originResets'), 0)
 
+                    duration = pane.locator('.tl-call-duration')
+                    if touch:
+                        duration.tap()
+                    else:
+                        duration.click()
                     reading_position = scroll_down()
                     click_call(0)
                     self.assertEqual(scroll(), reading_position)
@@ -561,6 +566,8 @@ class DetailExpandTest(unittest.TestCase):
                 self.assertEqual(resize.get_attribute('aria-orientation'), 'horizontal')
                 self.page.reload()
                 self.page.evaluate("async () => { await fgSwitchView('timeline'); fgView('timeline').probe().select(1); }")
+                self.assertEqual(self.page.evaluate(width_pref), saved_width)
+                self.page.locator(f'.tl-resizer[aria-orientation="vertical"][aria-valuenow="{default_width + 16}"]').wait_for()
                 self.assertAlmostEqual(pane.bounding_box()['width'], default_width + 16, delta=1)
                 resize.dblclick()
                 self.assertAlmostEqual(pane.bounding_box()['width'], default_width, delta=1)
