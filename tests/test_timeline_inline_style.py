@@ -16,6 +16,7 @@ class InlineSliceDrawingTest(unittest.TestCase):
         fonts = source[source.index('const FONT ='):source.index('let charW =')]
         palette = source[source.index('function palette()'):source.index('function makeHatch(')]
         style = source[source.index('function sliceStyle('):source.index('let matchingCache =')]
+        thresholds = source[source.index('const DENSE_SLICE_WIDTH'):source.index('const DENSE_ROW_GROUP_LIMIT')]
         drawing = source[source.index('function drawSlice('):source.index('function drawOff(')]
         setup = '''
             const assert = require('node:assert/strict');
@@ -70,7 +71,7 @@ class InlineSliceDrawingTest(unittest.TestCase):
             }
             palette();
         '''
-        result = subprocess.run(['node', '-e', fonts + setup + palette + style + drawing + assertions],
+        result = subprocess.run(['node', '-e', fonts + setup + palette + style + thresholds + drawing + assertions],
                                 capture_output=True, text=True, timeout=20)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 

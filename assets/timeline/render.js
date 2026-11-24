@@ -22,7 +22,7 @@ function palette() {
         ovBar: '#4f7fd9', ovWin: 'rgba(255,255,255,.10)', ovMask: 'rgba(0,0,0,.35)', axis: '#a7afbc',
         range: 'rgba(80,140,255,.16)', rangeLine: '#6ea0ff', selBand: 'rgba(110,160,255,.07)', selLine: 'rgba(130,175,255,.8)', selTag: '#3b6fd8',
         errO: '#e53935', errOh: '#d9822b', errP: '#7d3434', errPh: '#6b4a26', errLine: '#ff6b6b', errLineH: '#f0a050',
-        rs: '#f59e0b', io: 'rgba(225,230,240,.75)', mis: '#c18cf0', dense: 0.75
+        rs: '#f59e0b', io: 'rgba(225,230,240,.75)', mis: '#c18cf0', dense: 0.75, denseFill: '#a3a3a3'
     } : {
         bg: '#ffffff', hdr: '#f3f5f8', hdrText: '#1d2433', sub: '#7a8494', grid: 'rgba(0,0,0,.045)',
         text: '#16202e', textDim: '#3b4555', sel: '#111827', hov: 'rgba(17,24,39,.55)',
@@ -31,7 +31,7 @@ function palette() {
         ovBar: '#3b6fd8', ovWin: 'rgba(59,111,216,.10)', ovMask: 'rgba(255,255,255,.55)', axis: '#5b6573',
         range: 'rgba(59,111,216,.12)', rangeLine: '#3b6fd8', selBand: 'rgba(59,111,216,.05)', selLine: 'rgba(59,111,216,.75)', selTag: '#3b6fd8',
         errO: '#d32f2f', errOh: '#e8873a', errP: '#f6b8b8', errPh: '#f8d6b3', errLine: '#c62828', errLineH: '#d9822b',
-        rs: '#f59e0b', io: '#4b5563', mis: '#8e44ad', dense: 0.85
+        rs: '#f59e0b', io: '#4b5563', mis: '#8e44ad', dense: 0.85, denseFill: '#737373'
     };
     sliceStyles = {
         inline: [P.inlineFill, P.textDim, P.inlineEdge],
@@ -229,7 +229,7 @@ function lbPixel(row, pixel, start, scale, low = 0) {
 function densePixelAt(row, pixel, start, scale) {
     const first = lbPixel(row, pixel, start, scale);
     let end = lbPixel(row, pixel + 1, start, scale, first);
-    if (end > first && (sEnd[row[end - 1]] - sStart[row[end - 1]]) * scale >= 1.5) end--;
+    if (end > first && (sEnd[row[end - 1]] - sStart[row[end - 1]]) * scale >= DENSE_SLICE_WIDTH) end--;
     return end > first ? denseSummary(row, first, end) : null;
 }
 
@@ -553,6 +553,7 @@ function rulerStep(start, end) {
 }
 
 const DENSE_SLICE_WIDTH = 1.5;
+const DENSE_AGGREGATE = -1, SLICE_DIM_OPACITY = 0.18;
 const DENSE_ROW_GROUP_LIMIT = 32768;
 const DENSE_ROW_PAINT_LIMIT = 32768;
 const WIDE_ROW_CACHE_LIMIT = 1024;
@@ -1023,9 +1024,10 @@ function bandRect(s, e, y, h, color, vs, k) {
 }
 
 function drawDenseRun(index, left, right, dim, top, height, paint) {
-    const opacity = dim ? 0.2 : P.dense;
+    const aggregate = index === DENSE_AGGREGATE;
+    const opacity = aggregate ? (dim ? 0.2 : P.dense) : (dim ? SLICE_DIM_OPACITY : 1);
     if (opacity !== paint.opacity) ctx.globalAlpha = paint.opacity = opacity;
-    const fill = sliceStyle(index)[0];
+    const fill = aggregate ? P.denseFill : sliceStyle(index)[0];
     if (fill !== paint.fill) ctx.fillStyle = paint.fill = fill;
     ctx.fillRect(left, top, Math.max(1, right - left), height);
 }
@@ -1053,7 +1055,7 @@ function drawRow(row, ry, h, vs, ve, k, labels) {
     const cachedEnds = cached?.ends;
     const capacity = cached ? 0 : denseRowView.remaining;
     let j = first, group = 0, recordedEnds = null;
-    let dx0 = -1, dx1 = -1, representative = -1, ddim = true;
+    let denseLeft = null, denseRight = 0, denseDim = false;
     let paints = denseRowView.recordPaints && denseRowView.paintRemaining && (!cached || cachedEnds) ? [] : null;
     let hasDenseRun = false;
     const keepPaint = (index, left, right, dim) => {
@@ -1062,18 +1064,17 @@ function drawRow(row, ry, h, vs, ve, k, labels) {
         else paints.push(index, left, right, dim);
     };
     const flush = () => {
-        if (dx0 < 0) return;
-        drawDenseRun(representative, dx0, dx1, ddim, ry, h, paint);
-        keepPaint(representative, dx0, dx1, ddim);
-        hasDenseRun = true;
-        dx0 = -1;
+        if (denseLeft === null) return;
+        drawDenseRun(DENSE_AGGREGATE, denseLeft, denseRight, denseDim, ry, h, paint);
+        keepPaint(DENSE_AGGREGATE, denseLeft, denseRight, denseDim);
+        denseLeft = null;
     };
     while (j < count) {
         const i = row[j];
         const s = sStart[i];
         if (s > ve) break;
         const x0 = (s - vs) * k, x1 = (sEnd[i] - vs) * k;
-        if (x1 - x0 < DENSE_SLICE_WIDTH) {
+        if ((sEnd[i] - s) * k < DENSE_SLICE_WIDTH) {
             const px = Math.floor(x0);
             // skip the other thin slices that start in this pixel. Slices of a row do not overlap,
             // so only the last one starting here can be wide: never skip that one.
@@ -1084,9 +1085,14 @@ function drawRow(row, ry, h, vs, ve, k, labels) {
                 if (jj - 1 > j && (sEnd[row[jj - 1]] - sStart[row[jj - 1]]) * k >= DENSE_SLICE_WIDTH) jj--;
                 if (capacity && (recordedEnds?.length || 0) < capacity) (recordedEnds ||= []).push(jj);
             }
-            const summary = filtered ? denseSummary(row, j, jj) : null, dim = summary ? !summary.matches : false;
-            if (dx0 >= 0 && px <= dx1 + 1 && ddim === dim) { if (px + 1 > dx1) dx1 = px + 1; }
-            else { flush(); dx0 = px; dx1 = px + 1; representative = summary ? summary.index : i; ddim = dim; }
+            const dim = filtered && !denseSummary(row, j, jj).matches;
+            hasDenseRun = true;
+            if (jj - j === 1) {
+                flush();
+                drawDenseRun(i, px, px + 1, dim, ry, h, paint);
+                keepPaint(i, px, px + 1, dim);
+            } else if (denseLeft !== null && px === denseRight && denseDim === dim) denseRight = px + 1;
+            else { flush(); denseLeft = px; denseRight = px + 1; denseDim = dim; }
             j = jj > j ? jj : j + 1;
             continue;
         }
@@ -1120,7 +1126,7 @@ function drawSlice(i, x0, x1, y, h, labels, previousOpacity) {
     const dim = isDim(i);
     const f = sFlags[i];
     const inlineFrame = i >= N && !isGhost(i);
-    const opacity = dim ? 0.18 : 1;
+    const opacity = dim ? SLICE_DIM_OPACITY : 1;
     if (opacity !== previousOpacity) ctx.globalAlpha = opacity;
     ctx.fillStyle = st[0];
     ctx.fillRect(cx0, y, ww, h);

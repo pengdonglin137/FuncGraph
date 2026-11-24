@@ -264,7 +264,7 @@ class TimelinePreparationTest(unittest.TestCase):
         cache = interact[interact.index('const unfilteredDenseHit'):interact.index('let lastDenseOff')]
         result = subprocess.run(['node', '-e', lookup + cache + '''
             const assert = require('node:assert/strict');
-            const N = 7, NA = N, range = null;
+            const DENSE_SLICE_WIDTH = 1.5, N = 7, NA = N, range = null;
             const sName = [0, 1, 2, 3, 4, 5, 6];
             const sStart = [0.05, 0.2, 0.45, 0.75, 2.85, 3.1, 0.45];
             const sEnd = [0.05, 0.2, 0.45, 2.8, 2.85, 3.1, 0.45];
@@ -308,12 +308,12 @@ class TimelinePreparationTest(unittest.TestCase):
         row = asset[asset.index('function drawDenseRun('):asset.index('function drawSlice(')]
         result = subprocess.run(['node', '-e', pixel + cache + row + '''
             const assert = require('node:assert/strict');
-            const P = { dense: 0.65 }, searchHits = true, textHits = false;
+            const P = { dense: 0.65, denseFill: 'gray' }, searchHits = true, textHits = false;
             const lbEnd = () => 0, lbStart = () => 0, sliceStyle = index => [index];
             let sStart, sEnd, matches, spans, fills, wide, searches, reads;
             const originalSearch = lbPixel;
             lbPixel = (...args) => { searches++; return originalSearch(...args); };
-            const ctx = { fillRect(x, y, width) { fills.push([x, width, this.fillStyle, this.globalAlpha]); } };
+            const ctx = {globalAlpha: 1, fillRect(left, top, width) { fills.push([left, width, this.fillStyle, this.globalAlpha]); }};
             const drawSlice = (index, start, end) => wide.push([index, start, end]);
             function denseSummary(row, first, end) {
                 spans.push([first, end]);
@@ -340,26 +340,29 @@ class TimelinePreparationTest(unittest.TestCase):
             paint(singletons, [0, 2]);
             assert.equal(searches, 4);
             assert.deepEqual(spans, [[0, 1], [1, 2], [2, 3], [3, 4]]);
-            assert.deepEqual(fills, [[0, 1, 0, 0.65], [1, 1, 1, 0.2], [2, 1, 2, 0.65], [3, 1, 3, 0.2]]);
+            assert.deepEqual(fills, [[0, 1, 0, 1], [1, 1, 1, 0.18], [2, 1, 2, 1], [3, 1, 3, 0.18]]);
             paint(singletons, [1, 3]);
             assert.equal(searches, 0);
-            assert.deepEqual(fills, [[0, 1, 0, 0.2], [1, 1, 1, 0.65], [2, 1, 2, 0.2], [3, 1, 3, 0.65]]);
+            assert.deepEqual(fills, [[0, 1, 0, 0.18], [1, 1, 1, 1], [2, 1, 2, 0.18], [3, 1, 3, 1]]);
             const boundary = setup([0, 1 - Number.EPSILON / 2, 1], [0, 1, 1]);
             paint(boundary, [1]);
             assert.deepEqual(spans, [[0, 2], [2, 3]]);
-            assert.deepEqual(fills, [[0, 1, 1, 0.65], [1, 1, 2, 0.2]]);
+            assert.deepEqual(fills, [[0, 1, 'gray', 0.65], [1, 1, 2, 0.18]]);
             assert.equal(densePixelAt(boundary, 0, 0, 1).index, 1);
+            const starts = [0.1, 0.2, 1.1, 1.2, 3.1, 3.2, 4.1];
+            paint(setup(starts, starts), [1, 3, 5, 6]);
+            assert.deepEqual(fills, [[0, 2, 'gray', 0.65], [3, 1, 'gray', 0.65], [4, 1, 6, 1]]);
             const dense = setup([...Array(4096).fill(0), 0.75, 3], [...Array(4096).fill(0), 2.25, 3]);
             paint(dense, [2500]);
             assert.equal(searches, 2);
             assert.ok(reads < 40, `read ${reads} row members for one dense group`);
             assert.deepEqual(spans, [[0, 4096], [4097, 4098]]);
-            assert.deepEqual(fills, [[0, 1, 2500, 0.65], [3, 1, 4097, 0.2]]);
+            assert.deepEqual(fills, [[0, 1, 'gray', 0.65], [3, 1, 4097, 0.18]]);
             assert.deepEqual(wide, [[4096, 0.75, 2.25]]);
             assert.deepEqual(densePixelAt(dense, 0, 0, 1), { index: 2500, count: 4096, matches: 1 });
             paint(dense, [3999]);
             assert.equal(searches, 0);
-            assert.deepEqual(fills, [[0, 1, 3999, 0.65], [3, 1, 4097, 0.2]]);
+            assert.deepEqual(fills, [[0, 1, 'gray', 0.65], [3, 1, 4097, 0.18]]);
             assert.deepEqual(wide, [[4096, 0.75, 2.25]]);
             paint(dense, [3999], 0, 10, 0.5);
             assert.equal(searches, 2);
@@ -383,8 +386,9 @@ class TimelinePreparationTest(unittest.TestCase):
         row = asset[asset.index('function drawDenseRun('):asset.index('function drawSlice(')]
         result = subprocess.run(['node', '-e', pixel + cache + row + '''
             const assert = require('node:assert/strict');
-            const P = {dense: 0.65}, searchHits = true, textHits = null;
-            const sStart = [0, 3, 6, 10, 13, 16], sEnd = [0, 3, 8, 10, 13, 16];
+            const P = {dense: 0.65, denseFill: 'gray'}, searchHits = true, textHits = null;
+            const sStart = [0, 0.5, 3, 3.5, 6, 10, 10.5, 13, 13.5, 16];
+            const sEnd = sStart.map((start, index) => index === 4 ? 8 : start);
             const row = Array.from(sStart.keys()), matching = {};
             const lbEnd = () => 0, lbStart = () => 0;
             let denseColor = 'red', fill, assignments, rects;
@@ -394,7 +398,7 @@ class TimelinePreparationTest(unittest.TestCase):
                 set fillStyle(value) { fill = value; assignments.push(value); },
                 fillRect(left, top, width, height) { rects.push([left, width, fill, this.globalAlpha]); }
             };
-            function denseSummary(row, first) { return {index: row[first], matches: Number(first % 2 === 0)}; }
+            function denseSummary(row, first) { return {index: row[first], matches: Number(first === 0 || first === 7)}; }
             function drawSlice(index, left, right, top, height) {
                 ctx.fillStyle = 'blue';
                 ctx.globalAlpha = 1;
@@ -403,13 +407,13 @@ class TimelinePreparationTest(unittest.TestCase):
             for (const replay of [false, false, true]) {
                 prepareDenseRowView(0, 20, 1, matching);
                 assert.equal(denseRowView.paints.has(row), replay);
-                if (replay) denseColor = 'green';
+                if (replay) { P.denseFill = 'silver'; denseColor = 'green'; }
                 assignments = []; rects = [];
                 drawRow(row, 0, 12, 0, 20, 1, true);
-                assert.deepEqual(assignments, [denseColor, 'blue', denseColor]);
+                assert.deepEqual(assignments, [P.denseFill, 'blue', P.denseFill, denseColor]);
                 assert.deepEqual(rects, [
-                    [0, 1, denseColor, 0.65], [3, 1, denseColor, 0.2], [6, 2, 'blue', 1],
-                    [10, 1, denseColor, 0.2], [13, 1, denseColor, 0.65], [16, 1, denseColor, 0.2]
+                    [0, 1, P.denseFill, 0.65], [3, 1, P.denseFill, 0.2], [6, 2, 'blue', 1],
+                    [10, 1, P.denseFill, 0.2], [13, 1, P.denseFill, 0.65], [16, 1, denseColor, 0.18]
                 ]);
                 assert.equal(ctx.globalAlpha, 1);
             }
@@ -460,7 +464,7 @@ class TimelinePreparationTest(unittest.TestCase):
             prepareDenseRowView(0, 20, 0.5, matching);
             drawRow(row, 0, 12, 0, 20, 0.5, true);
             assert(denseRowView.paints.has(row));
-            assert.equal(denseRuns, 2);
+            assert.equal(denseRuns, 6);
         '''], capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stderr)
 

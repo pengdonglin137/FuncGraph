@@ -39,7 +39,7 @@ function hitTest(mx, my) {
             const dx = mx < x0 ? x0 - mx : mx > x1 ? mx - x1 : 0;
             if (dx < bestDx || (dx === 0 && bestDx === 0 && sEnd[i] - sStart[i] < sEnd[best] - sStart[best])) { bestDx = dx; best = i; }
         }
-        const exactWide = best >= 0 && (sEnd[best] - sStart[best]) * k >= 1.5 &&
+        const exactWide = best >= 0 && (sEnd[best] - sStart[best]) * k >= DENSE_SLICE_WIDTH &&
             mx >= (sStart[best] - view.s) * k && mx < (sEnd[best] - view.s) * k;
         if (!exactWide) {
             const summary = denseHitAt(row, Math.floor(mx), view.s, k);
@@ -264,8 +264,10 @@ function ghostFacts(i) {
     return syntheticGeometry(i);
 }
 function tipDense(summary) {
-    return '<div class="t-sep"></div><div class="t-warn">Dense pixel: ' + summary.count + ' frames in this task/depth row; ' + summary.matches +
-        ' match the current search/filter. Showing the ' + (summary.matches ? 'first matching' : 'first') + ' representative frame, not every call. Zoom in to separate them.</div>';
+    const filtered = !!(searchHits || textHits);
+    const matching = filtered ? '; ' + summary.matches + ' match the current search/filter' : '';
+    return '<div class="t-warn">Dense pixel: ' + summary.count + ' frames share this pixel' + matching +
+        '. Zoom in to separate them. Details show the ' + (filtered && summary.matches ? 'first matching' : 'first') + ' frame.</div><div class="t-sep"></div>';
 }
 function tipSymbol(value) { return '<span title="' + esc(value) + '">' + esc(symbolSiteLabel(value)) + '</span>'; }
 function tipGhost(i) {
@@ -467,7 +469,7 @@ function showSliceTip(index, dense, event) {
     if (sliceTip?.index !== index || sliceTip.adjusted !== adjOn) {
         sliceTip = { index, adjusted: adjOn, html: tipSlice(index) };
     }
-    showTip(sliceTip.html + (dense ? tipDense(dense) : '') + (hoverSourceRequest?.warning || ''), event);
+    showTip((dense ? tipDense(dense) : '') + sliceTip.html + (hoverSourceRequest?.warning || ''), event);
 }
 function loadCallSitePosition(index, source) {
     if (index !== hov || !hoverSourcePointer) return;

@@ -9166,6 +9166,41 @@ class BrowserSmokeTest(unittest.TestCase):
         self.page.wait_for_timeout(80)
         self.assertEqual(self.canvas_pixel(4)['color'], bright[1])
 
+    def test_dense_color_is_neutral_and_isolated_thin_slices_keep_their_zoomed_color(self):
+        self.open_range_data(['root', 'first', 'second'], starts=[0, 100000, 100020],
+                             durations=[1000000, 1, 1], parents=[-1, 0, 0], columns={'depth': [0, 1, 1]})
+        self.ev('''async () => {
+            window.settleDenseColor = () => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+            await settleDenseColor();
+        }''')
+        helpers.open_timeline_tools(self.page)
+        picker = self.page.get_by_label('Color', exact=True)
+        picker.select_option('name')
+        self.ev('settleDenseColor()')
+        aggregate = self.canvas_pixel(1)
+        self.assertEqual(aggregate['color'], self.canvas_pixel(2)['color'])
+        self.assertEqual(len(set(aggregate['color'][:3])), 1)
+        picker.select_option('total')
+        self.ev('settleDenseColor()')
+        self.assertEqual(self.canvas_pixel(1)['color'], aggregate['color'])
+        picker.select_option('name')
+        self.page.locator('[data-act=options]').click()
+        self.page.mouse.move(*aggregate['point'])
+        self.page.locator('.tl-tip > :first-child').filter(has_text='Dense pixel: 2 frames').wait_for()
+        self.page.mouse.move(1, 1)
+
+        self.ev('''async () => {
+            fgView('timeline').probe().zoomTo(99900, 101500);
+            await settleDenseColor();
+        }''')
+        separated = [self.canvas_pixel(index, at_start=True)['color'] for index in [1, 2]]
+        self.assertNotEqual(*separated)
+        self.ev('''async () => {
+            fgView('timeline').probe().zoomTo(99990, 100030);
+            await settleDenseColor();
+        }''')
+        self.assertEqual(separated, [self.canvas_pixel(index)['color'] for index in [1, 2]])
+
     def test_dense_row_paint_reuses_runs_and_refreshes_filter_membership(self):
         self.open_dense_pixels()
         result = self.ev('''async () => {
